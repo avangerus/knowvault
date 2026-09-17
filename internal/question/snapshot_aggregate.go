@@ -1885,27 +1885,10 @@ func (service *Service) readStructuredRowset(ctx context.Context, access databas
 		}
 	}
 
-	columnOrder := make([]string, 0, len(selected[0].cells))
-	seenColumn := make(map[string]struct{}, len(selected[0].cells))
-	for _, cell := range selected[0].cells {
-		if _, seen := seenColumn[cell.column]; seen {
-			continue
-		}
-		seenColumn[cell.column] = struct{}{}
-		columnOrder = append(columnOrder, cell.column)
-	}
-	limit := len(selected)
-	if limit > 50 {
-		limit = 50
-	}
-	tableRows := make([]map[string]string, 0, limit)
-	versionIDs := make([]string, 0, limit)
-	for _, row := range selected[:limit] {
-		values := make(map[string]string, len(row.cells))
-		for _, cell := range row.cells {
-			values[cell.column] = cell.value
-		}
-		tableRows = append(tableRows, values)
+	displayed := snapshotRowsetDisplayRows(selected)
+	columnOrder, tableRows := snapshotRowsetTable(displayed)
+	versionIDs := make([]string, 0, len(displayed))
+	for _, row := range displayed {
 		versionIDs = append(versionIDs, row.versionID)
 	}
 	var capturedAt *time.Time
@@ -1920,6 +1903,64 @@ func (service *Service) readStructuredRowset(ctx context.Context, access databas
 		FilterLabel: filterLabel,
 		Snapshot:    AnswerSnapshot{ID: scopeID, RowCount: len(group), CapturedAt: capturedAt},
 	}, nil
+}
+
+// rowsetDisplayRowLimit caps how many already-authorized rows
+// readStructuredRowset renders as RowsetEvidence.Rows. It is display-only:
+// Total still counts every selected row, and Columns may only name columns
+// carried by rows actually rendered under this cap.
+const rowsetDisplayRowLimit = 50
+
+// snapshotRowsetDisplayRows returns the prefix of selected that
+// readStructuredRowset renders: all of it when within rowsetDisplayRowLimit,
+// otherwise the first rowsetDisplayRowLimit rows. It never widens the
+// already-authorized selection.
+func snapshotRowsetDisplayRows(selected []snapshotRow) []snapshotRow {
+	if len(selected) > rowsetDisplayRowLimit {
+		return selected[:rowsetDisplayRowLimit]
+	}
+	return selected
+}
+
+// snapshotRowsetTable assembles headers and values from the displayed rows.
+func snapshotRowsetTable(displayed []snapshotRow) ([]string, []map[string]string) {
+	columns := snapshotRowsetColumns(displayed)
+	rows := make([]map[string]string, 0, len(displayed))
+	for _, row := range displayed {
+		values := make(map[string]string, len(row.cells))
+		for _, cell := range row.cells {
+			values[cell.column] = cell.value
+		}
+		rows = append(rows, values)
+	}
+	return columns, rows
+}
+
+// snapshotRowsetColumns derives RowsetEvidence.Columns from every rendered row,
+// never from displayed[0] alone: a column whose value is absent (NULL or empty)
+// on the first rendered row but present on a later one must still appear.
+//
+// Each column name maps to the ordinal of its first-encountered cell; names are
+// appended in first-seen order, then stably sorted ascending by that ordinal, so
+// header order follows the owner's declared column order while first-seen order
+// breaks ordinal ties. A name seen again keeps its first ordinal and is emitted
+// once. Empty input yields a non-nil empty slice.
+func snapshotRowsetColumns(displayed []snapshotRow) []string {
+	ordinals := make(map[string]int, len(displayed))
+	order := make([]string, 0)
+	for _, row := range displayed {
+		for _, cell := range row.cells {
+			if _, seen := ordinals[cell.column]; seen {
+				continue
+			}
+			ordinals[cell.column] = cell.ordinal
+			order = append(order, cell.column)
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return ordinals[order[i]] < ordinals[order[j]]
+	})
+	return order
 }
 
 // matchedStructuredRowset is FIX-7 #1's core: it finds fragmentID's own most

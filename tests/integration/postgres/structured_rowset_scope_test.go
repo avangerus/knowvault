@@ -147,7 +147,7 @@ func TestStructuredRowsetDefaultsToMatchedRowsAndFullIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aggregate question: %v (code=%s)", err, question.CodeOf(err))
 	}
-	if run.ResultStatus != "COMPLETED" || run.AnswerResult == nil || run.AnswerResult.Operation != "COUNT" || run.AnswerResult.Value != "2" || !strings.HasPrefix(run.Answer, "\u041e\u0442\u0432\u0435\u0442: 2.") || !strings.Contains(run.Answer, "\u041e\u0442\u0431\u043e\u0440: note = target-note") {
+	if run.ResultStatus != "COMPLETED" || run.AnswerResult == nil || run.AnswerResult.Operation != "COUNT" || run.AnswerResult.Value != "2" || !strings.HasPrefix(run.Answer, "Answer: 2.") || !strings.Contains(run.Answer, "Selection: note = target-note") {
 		t.Fatalf("run=%#v, want explicit COUNT=2 over the target-note rows", run)
 	}
 	if len(run.Citations) != 2 {

@@ -530,6 +530,11 @@ func (store *Store) ResolveSession(ctx context.Context, request ResolveSessionRe
 		id, principalID, providerID, principalStatus, providerStatus                                 string
 		issuedPrincipalRevision, providerRevision, currentPrincipalRevision, currentProviderRevision int64
 		expiresAt                                                                                    time.Time
+		// databaseNow is the transaction's own clock, read in the SAME
+		// statement as the session snapshot. A session must never be treated as
+		// live past the instant the database itself considers it expired, so
+		// validation uses the later of this and the app clock.
+		databaseNow time.Time
 	}
 	var record sessionRecord
 	var renewed bool
@@ -545,6 +550,7 @@ func (store *Store) ResolveSession(ctx context.Context, request ResolveSessionRe
 			       COALESCE(max(session.principal_session_revision), 0),
 			       COALESCE(max(session.provider_revision), 0),
 			       COALESCE(max(session.expires_at), transaction_timestamp()),
+			       transaction_timestamp(),
 			       COALESCE(max(principal.status), ''),
 			       COALESCE(max(principal.session_revision), 0),
 			       COALESCE(max(provider.status), ''),
@@ -566,6 +572,7 @@ func (store *Store) ResolveSession(ctx context.Context, request ResolveSessionRe
 		`, string(request.OrganizationID), request.SessionTokenDigest.Value()).Scan(
 			&record.id, &record.principalID, &record.providerID,
 			&record.issuedPrincipalRevision, &record.providerRevision, &record.expiresAt,
+			&record.databaseNow,
 			&record.principalStatus, &record.currentPrincipalRevision, &record.providerStatus, &record.currentProviderRevision,
 		); scanErr != nil {
 			return scanErr
@@ -621,7 +628,7 @@ func (store *Store) ResolveSession(ctx context.Context, request ResolveSessionRe
 	if providerErr != nil {
 		return AuthenticatedSession{}, providerErr
 	}
-	if validationErr := identity.Validate(store.now().UTC(), claims, principal, provider); validationErr != nil {
+	if validationErr := store.validateSession(claims, principal, provider, record.databaseNow); validationErr != nil {
 		return AuthenticatedSession{}, validationErr
 	}
 	return AuthenticatedSession{
@@ -630,6 +637,17 @@ func (store *Store) ResolveSession(ctx context.Context, request ResolveSessionRe
 		Access:    database.AccessContext{OrganizationID: string(request.OrganizationID), PrincipalID: record.principalID, RequestID: request.RequestID},
 		Renewed:   renewed,
 	}, nil
+}
+
+// validateSession uses the later application or database instant for final
+// validation, so a lagging app clock cannot accept a database-expired session.
+// The shared validator retains its existing typed errors and their ordering.
+func (store *Store) validateSession(claims identity.Claims, principal identity.CurrentPrincipal, provider identity.CurrentProvider, databaseNow time.Time) error {
+	validationNow := store.now().UTC()
+	if databaseNow.After(validationNow) {
+		validationNow = databaseNow
+	}
+	return identity.Validate(validationNow, claims, principal, provider)
 }
 
 // RevokeSession transitions the exact session row into the revoked shape in
