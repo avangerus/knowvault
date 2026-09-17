@@ -326,7 +326,7 @@ jobs:
           image=knowvault-worker:architecture-check
           trap 'docker image rm -f "$image" >/dev/null 2>&1 || true' EXIT
           docker build --file deploy/images/Dockerfile.worker --tag "$image" .
-          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '65532:65532'
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '65530:65530'
           test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$image")" = '["/knowvault-worker"]'
           container=$(docker create "$image")
           docker export --output /tmp/knowvault-worker-rootfs.tar "$container"

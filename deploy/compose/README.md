@@ -1,13 +1,39 @@
 # Install KnowVault
 
-One compose stack, one bootstrap script. Requires Docker with the Compose
-plugin and `openssl`/`bash` (WSL, macOS or Linux).
+One compose stack, one bootstrap script. This is a Docker Compose install for
+a Linux host; the only environment this bootstrap is documented and prepared
+for. It is not a turnkey macOS or WSL procedure.
+
+**Prerequisites.** A Linux environment; Docker with the Compose plugin; `bash`,
+`openssl`, `curl` and GNU coreutils; and root ownership authority over the
+protected host files the install creates. A real bootstrap needs root: it
+creates root-owned PKI, secrets and per-role mount directories with fixed
+ownership (`install -o 0 -g <service gid>`), which an unprivileged user cannot
+do. Run it as root, e.g.:
 
 ```bash
 cd deploy/compose
 cp .env.example .env        # edit the passwords and organization/owner names
-./bootstrap.sh
+sudo ./bootstrap.sh
 ```
+
+The root invocation must reach the intended Docker daemon. Check
+`sudo docker info` first; a rootless daemon or a user-specific Docker context
+may require additional setup. Docker group membership alone does not grant
+the host ownership changes required by the bootstrap. `--dry-run` itself does not need root: it only
+prints the steps and validates `compose.yaml` against `.env`.
+
+**Dedicated Docker host or context.** The stack declares fixed container names
+(`knowvault-postgres`, `knowvault-server`, `knowvault-worker`, ...), a fixed
+network (`knowvault-net`) and fixed named volumes
+(`knowvault-pgdata`, `knowvault-osdata`, `knowvault-keycloak-data`,
+`knowvault-embedding-cache`), and binds fixed host ports
+(`127.0.0.1:5432`, `:8443`, `:8080`, `:8480`). Treat it as the only KnowVault
+install on the Docker host/context it targets: a second checkout sharing that
+daemon collides on those names, ports and volumes. Passing `-p` to change the
+Compose project name does **not** isolate them — the names above are literals,
+not project-prefixed, so `-p other` still fails or silently reuses the same
+resources.
 
 `bootstrap.sh` builds the server/worker/operator images (the embedding
 runtime, PostgreSQL, OpenSearch, Keycloak and the proxy are pinned upstream
@@ -39,7 +65,9 @@ Then:
 
 1. Add `127.0.0.1 knowvault.local knowvault-idp.local` to your OS hosts file.
 2. Open `https://knowvault.local:8480` (accept the local development certificate) and log in with the OWNER username from `.env` — its generated password is in `deploy/compose/secrets/owner.password`.
-3. Add a source (folder, Git or SQL) from **Sources**.
+3. Add a source from **Sources**: a mounted server folder or a prepared
+   PostgreSQL view. Other connector families are roadmap, not part of this
+   pilot (see `docs/CONNECTOR-ROADMAP.md`).
 4. Open the workspace's **Access** tab to create an MCP access code for an agent — see `docs/MCP_ACCESS_CODE.md` for the three-line Claude Code/Desktop configuration.
 
 `docker compose -f compose.yaml --env-file .env stop` stops every container

@@ -5,9 +5,10 @@
 # What it does, in order:
 #   1. generates local PKI (platform CA, postgres/proxy/keycloak/embedding
 #      certs) and per-install secrets, once;
-#   2. builds the five images this compose file needs from
-#      deploy/images/Dockerfile.* (server, worker, operator, embedding) at the
-#      pinned base-image digests already in those Dockerfiles;
+#   2. builds the three images this compose file builds from our own
+#      Dockerfiles (server, worker, operator) at the pinned base-image digests
+#      already in those files; the embedding runtime is a pinned upstream
+#      image, pulled by digest, not built here;
 #   3. starts postgres/opensearch/keycloak/embedding/embedding-proxy and waits
 #      for them to be healthy;
 #   4. runs `knowvault-operator bootstrap` (roles + migrations),
@@ -234,7 +235,7 @@ docker compose --env-file .env -f compose.yaml build server worker
 # ---------------------------------------------------------------------------
 docker compose --env-file .env -f compose.yaml up -d postgres opensearch keycloak embedding embedding-proxy
 echo "waiting for postgres/opensearch/embedding to become healthy ..."
-for container in knowvault-postgres knowvault-opensearch knowvault-embedding; do
+for container in knowvault-postgres knowvault-opensearch knowvault-embedding-runtime; do
   for _ in $(seq 1 90); do
     status=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "")
     [ "$status" = "healthy" ] && break

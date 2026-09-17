@@ -5,7 +5,7 @@
     ".dockerignore": "b9f5490b18e89d2b8245793326728dd6c71a31f6b5c5cce70e90c3f04805ef3e",
     ".gitattributes": "93353ef461b2552a06bc1f3eec4fb3a45b93ada969abb36dd2b0637241075e14",
     ".github/CODEOWNERS": "bb969a91a0110a442b8313c3f4a80f78c1b94139dec23dc4ba6f47fbc6b1429a",
-    ".github/workflows/architecture.yml": "a7dd01ab75159257e549477903277b1997f801f4570a03ea64ffacf82202d752",
+    ".github/workflows/architecture.yml": "932a441c4ab7726eac2d6aa9dad2a260c36e4325258cbb1909c3665de46f2075",
     ".gitignore": "8c758da1cd7d15e6d86f6198aa60c67ba6ba11df7dd30fc665842ae4c9ba1c0d",
     "ARCHITECTURE.md": "77799aebd38da5dac337853abf1b9607f06c6a3ae49d8046bc9e2e8a1bcf47e5",
     "POKA_YOKE.md": "22befa6604615557cf1aaaa54d6bb80767a43271df73843e77771b25da23141c",
