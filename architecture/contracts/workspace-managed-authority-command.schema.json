@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/workspace-managed-authority-command.schema.json",
+  "title": "Workspace-Managed Authority Command 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operation", "request"],
+  "properties": {
+    "schema_version": { "const": "workspace-managed-authority-command-v1" },
+    "operation": {
+      "enum": [
+        "WORKSPACE_CONFIRMATION_GRANT_ISSUE",
+        "WORKSPACE_CONFIRMATION_GRANT_REVOKE",
+        "WORKSPACE_MANAGED_CONFIRM",
+        "WORKSPACE_MANAGED_CONFIRM_REVOKE"
+      ]
+    },
+    "request": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operation": { "const": "WORKSPACE_CONFIRMATION_GRANT_ISSUE" },
+        "request": { "$ref": "#/$defs/grantIssueRequest" }
+      },
+      "required": ["operation", "request"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": { "const": "WORKSPACE_CONFIRMATION_GRANT_REVOKE" },
+        "request": { "$ref": "#/$defs/grantRevokeRequest" }
+      },
+      "required": ["operation", "request"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": { "const": "WORKSPACE_MANAGED_CONFIRM" },
+        "request": { "$ref": "#/$defs/managedConfirmRequest" }
+      },
+      "required": ["operation", "request"]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": { "const": "WORKSPACE_MANAGED_CONFIRM_REVOKE" },
+        "request": { "$ref": "#/$defs/managedConfirmRevokeRequest" }
+      },
+      "required": ["operation", "request"]
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "workspaceSourceId": {
+      "type": "string",
+      "pattern": "^binding_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "sha256Hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "ttlSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "policyRevision": {
+      "allOf": [
+        { "$ref": "#/$defs/id" },
+        { "not": { "type": "string", "pattern": "^[0-9]+$" } },
+        { "not": { "type": "string", "pattern": "^sha256:" } }
+      ]
+    },
+    "grantIssueRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "workspace_id",
+        "expected_workspace_revision",
+        "expected_workspace_configuration_hash",
+        "target_principal_id",
+        "ttl_seconds",
+        "expected_policy_revision"
+      ],
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "expected_workspace_revision": { "$ref": "#/$defs/revision" },
+        "expected_workspace_configuration_hash": { "$ref": "#/$defs/sha256Hash" },
+        "target_principal_id": { "$ref": "#/$defs/id" },
+        "ttl_seconds": { "$ref": "#/$defs/ttlSeconds" },
+        "expected_policy_revision": { "$ref": "#/$defs/policyRevision" }
+      }
+    },
+    "grantRevokeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "workspace_id",
+        "grant_id",
+        "grant_revision",
+        "grant_hash",
+        "expected_policy_revision"
+      ],
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "grant_id": { "$ref": "#/$defs/id" },
+        "grant_revision": { "$ref": "#/$defs/revision" },
+        "grant_hash": { "$ref": "#/$defs/sha256Hash" },
+        "expected_policy_revision": { "$ref": "#/$defs/policyRevision" }
+      }
+    },
+    "managedConfirmRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "workspace_id",
+        "workspace_revision",
+        "workspace_configuration_hash",
+        "workspace_source_id",
+        "source_scope_id",
+        "source_scope_revision",
+        "scope_config_hash",
+        "access_mode",
+        "confirmation_actor_grant_id",
+        "confirmation_actor_grant_revision",
+        "confirmation_actor_grant_hash",
+        "warning_version",
+        "warning_contract_hash",
+        "acknowledgement_code",
+        "expected_policy_revision"
+      ],
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "workspace_revision": { "$ref": "#/$defs/revision" },
+        "workspace_configuration_hash": { "$ref": "#/$defs/sha256Hash" },
+        "workspace_source_id": { "$ref": "#/$defs/workspaceSourceId" },
+        "source_scope_id": { "$ref": "#/$defs/id" },
+        "source_scope_revision": { "$ref": "#/$defs/revision" },
+        "scope_config_hash": { "$ref": "#/$defs/sha256Hash" },
+        "access_mode": { "const": "WORKSPACE_MANAGED" },
+        "confirmation_actor_grant_id": { "$ref": "#/$defs/id" },
+        "confirmation_actor_grant_revision": { "$ref": "#/$defs/revision" },
+        "confirmation_actor_grant_hash": { "$ref": "#/$defs/sha256Hash" },
+        "warning_version": { "const": "workspace-managed-risk-v1" },
+        "warning_contract_hash": { "$ref": "#/$defs/sha256Hash" },
+        "acknowledgement_code": { "const": "WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL" },
+        "expected_policy_revision": { "$ref": "#/$defs/policyRevision" }
+      }
+    },
+    "managedConfirmRevokeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "workspace_id",
+        "confirmation_id",
+        "confirmation_hash",
+        "expected_policy_revision"
+      ],
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/id" },
+        "workspace_id": { "$ref": "#/$defs/id" },
+        "confirmation_id": { "$ref": "#/$defs/id" },
+        "confirmation_hash": { "$ref": "#/$defs/sha256Hash" },
+        "expected_policy_revision": { "$ref": "#/$defs/policyRevision" }
+      }
+    }
+  }
+}

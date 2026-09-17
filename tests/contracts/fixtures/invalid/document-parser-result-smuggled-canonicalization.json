@@ -1,0 +1,23 @@
+{
+  "result_version": "document-parser-result-v1",
+  "observed_format": "DOCX",
+  "parser": { "name": "w", "version": "1.0", "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "observation_profile_revision": "docx-obs-v1" },
+  "text_units": [
+    {
+      "ordinal": 1,
+      "locator": {
+        "kind": "DOCX",
+        "section_path": ["body"],
+        "paragraph_ordinal": 1,
+        "text_start": 0,
+        "text_end": 11,
+        "normalization_version": "text-v1"
+      },
+      "raw_text": "Hello world",
+      "canonical_text": "Hello world",
+      "evidence_text_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "anchor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "warnings": []
+}

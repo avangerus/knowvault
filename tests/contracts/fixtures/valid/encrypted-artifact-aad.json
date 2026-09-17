@@ -1,0 +1,9 @@
+{
+  "schema_version": "encrypted-artifact-aad-v1",
+  "organization_id": "org1",
+  "owner_table": "question_model_execution_plan",
+  "owner_column": "canonical_artifact_id",
+  "resource_type": "MODEL_EXECUTION_PLAN",
+  "resource_id": "qr_0001",
+  "field": "CANONICAL_BYTES"
+}

@@ -1,0 +1,32 @@
+{
+  "scenario_version": "1.0",
+  "persisted_source_objects": [
+    {
+      "id": "so_1",
+      "organization_id": "org_alpha",
+      "connection_id": "conn_files",
+      "external_object_id": "shared-file-42"
+    },
+    {
+      "id": "so_2",
+      "organization_id": "org_alpha",
+      "connection_id": "conn_files",
+      "external_object_id": "shared-file-42"
+    }
+  ],
+  "scope_memberships": [
+    {
+      "source_object_id": "so_1",
+      "source_scope_id": "scope_projects",
+      "source_scope_revision": 3
+    },
+    {
+      "source_object_id": "so_2",
+      "source_scope_id": "scope_audit",
+      "source_scope_revision": 8
+    }
+  ],
+  "expected": {
+    "commit_allowed": false
+  }
+}

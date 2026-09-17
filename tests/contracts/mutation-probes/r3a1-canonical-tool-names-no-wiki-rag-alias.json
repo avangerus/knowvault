@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-canonical-tool-names-no-wiki-rag-alias",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.tools.canonical-names-no-wiki-rag-alias",
+  "control_id": "acceptance.r3a1.tools.canonical-names-no-wiki-rag-alias",
+  "description": "R3a-1 Outcome 2 canonical tool-name contract: the one workspace knowledge dispatch table internal/workspacetools/registry.go must never resolve a wiki-rag tool name, so no former name (wiki_search, wiki_get_page, wiki_list_pages, wiki_find_related, code_search, code_get_file) is advertised or dispatched by the product. The REST parity surface resolves /workspaces/{workspace_id}/tools/{segment} through Registry.LookupREST and stores the resolved Kind; an unregistered segment has no Kind and is refused with the existing content-free NOT_FOUND before any evidence, source or question capability is entered. The weakening registers the wiki-rag token wiki_search as the search entry's REST subpath (`RESTPath: \"search\"` -> `RESTPath: \"wiki_search\"`), so the removed name becomes the dispatch segment for KindSearch and the route is accepted instead of refused. TestWorkspaceToolRESTUnregisteredSegmentIsNotFoundWithoutCapability requires every segment in {wiki_search, wiki_get_page} to resolve to NOT_FOUND with an empty dispatcher Kind and requires an unrecognised-tool dispatch to answer 404 NOT_FOUND without touching a capability, so the mutant is RED.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestWorkspaceToolRESTUnregisteredSegmentIsNotFoundWithoutCapability",
+  "mutations": [
+    {
+      "id": "r3a1-tools-wiki-rag-name-registered-as-rest-dispatch-segment",
+      "target": "internal/workspacetools/registry.go",
+      "kind": "GO_TOOLS_WIKI_RAG_NAME_DISPATCH_WEAKENING",
+      "expected": "RED",
+      "old": "RESTPath: \"search\"",
+      "new": "RESTPath: \"wiki_search\""
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree the canonical search entry carries RESTPath \"search\" and no registry entry or alias carries a wiki-rag token, so Registry.LookupREST(\"wiki_search\") reports false, parseEndpointPath returns NOT_FOUND with an empty workspaceToolKind, and workspaceToolDispatch on an unrecognised segment answers 404 NOT_FOUND without entering a nil capability. TestWorkspaceToolRESTUnregisteredSegmentIsNotFoundWithoutCapability observes exactly that refusal.",
+  "mutant_meaning": "With the search entry's REST subpath renamed to wiki_search, LookupREST(\"wiki_search\") resolves the KindSearch entry, parseEndpointPath accepts the route with endpointWorkspaceToolSearch and a non-empty dispatcher Kind, and the removed wiki-rag name is dispatchable through /workspaces/{id}/tools/wiki_search. TestWorkspaceToolRESTUnregisteredSegmentIsNotFoundWithoutCapability fails the NOT_FOUND and empty-kind assertions, which is exactly the declared RED negative control (a wiki-rag name must never be advertised or dispatched), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.tools.canonical-names-no-wiki-rag-alias`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

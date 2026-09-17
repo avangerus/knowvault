@@ -1,0 +1,26 @@
+{
+  "scenario_version": "1.0",
+  "question_run_id": "qr_0001",
+  "retention_state": "PURGED",
+  "stored": {
+    "question_text": null,
+    "answer_markdown": null,
+    "answer_structured_json": null,
+    "cited_excerpts": null,
+    "manifest_canonical_bytes": null,
+    "manifest_hash": "sha256:52942a9655d801f4f8bee92b4ea450ea271f9c101d5df3dee20e41673b38807f",
+    "manifest_signing_bytes_retained": true,
+    "manifest_signature_metadata_retained": true,
+    "audit_tombstone_retained": true
+  },
+  "read_request": {
+    "include_answer_body": true,
+    "include_cited_excerpts": true,
+    "include_manifest": true
+  },
+  "expected": {
+    "disclosure_allowed": false,
+    "hash_verification_allowed": true,
+    "error_code": "ANSWER_CONTENT_PURGED"
+  }
+}

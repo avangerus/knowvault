@@ -1,0 +1,9 @@
+[
+  {
+    "ordinal": 1,
+    "type_fingerprint": "oid:2950",
+    "logical_type": "UUID",
+    "value_tag": "BOOL",
+    "value": true
+  }
+]

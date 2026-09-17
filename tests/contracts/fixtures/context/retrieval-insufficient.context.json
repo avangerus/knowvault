@@ -1,0 +1,51 @@
+{
+  "live_workspace_revision": {
+    "organization_id": "org_alpha",
+    "workspace_id": "ws_alpha",
+    "workspace_revision": 7,
+    "workspace_configuration_hash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "status": "ACTIVE",
+    "bindings": [
+      {"organization_id": "org_alpha", "workspace_source_id": "binding_projects", "source_scope_id": "scope_projects", "source_scope_revision": 3, "scope_config_hash": "sha256:c2f04f0025efc3d6a652e2e75b74539d3f33b90e3f5ffea7aff3be97d1a99570", "access_mode": "WORKSPACE_MANAGED", "workspace_managed_confirmation_id": "wmc_projects_3", "enabled": true},
+      {"organization_id": "org_alpha", "workspace_source_id": "binding_site", "source_scope_id": "scope_site", "source_scope_revision": 5, "scope_config_hash": "sha256:4def49ad35a7ddc0521fd3d32c991856b5649ead84cd78c7e45f02c648a58fa0", "access_mode": "WORKSPACE_MANAGED", "workspace_managed_confirmation_id": "wmc_site_5", "enabled": true}
+    ]
+  },
+  "live_workspace_memberships": [
+    {"organization_id": "org_alpha", "workspace_id": "ws_alpha", "workspace_revision": 7, "human_principal_id": "user_anna", "membership_revision": 12, "status": "ACTIVE", "role": "MEMBER", "permissions": ["evidence.read", "question.create"]}
+  ],
+  "live_workspace_managed_confirmations": [
+    {"schema_version": "workspace-managed-confirmation-v1", "confirmation_id": "wmc_projects_3", "confirmation_hash": "sha256:1dcc82b4e917a7fe8564a8ba9e7fdc087544ac700d9853d99bd0ff25f1a7c51f", "organization_id": "org_alpha", "workspace_id": "ws_alpha", "workspace_revision": 7, "workspace_configuration_hash": "sha256:7777777777777777777777777777777777777777777777777777777777777777", "workspace_source_id": "binding_projects", "source_scope_id": "scope_projects", "source_scope_revision": 3, "scope_config_hash": "sha256:c2f04f0025efc3d6a652e2e75b74539d3f33b90e3f5ffea7aff3be97d1a99570", "access_mode": "WORKSPACE_MANAGED", "confirmation_actor_grant_id": "confirm-grant-admin", "confirmation_actor_grant_revision": 1, "confirmation_actor_grant_hash": "sha256:d9144e1208500ac0b86a7743d20eb7e70ccc779bc354692e314fbc8b17ed15e4", "warning_version": "workspace-managed-risk-v1", "warning_contract_hash": "sha256:58a05c0a7a3960ed45ccea66d8c9a570e581ff97438f407c20ec9c669512cd2d", "acknowledgement_code": "WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL", "confirmed_by": "user_admin", "confirmed_at": "2026-07-14T12:50:00Z", "policy_revision": "policy-0007"},
+    {"schema_version": "workspace-managed-confirmation-v1", "confirmation_id": "wmc_site_5", "confirmation_hash": "sha256:f501997f5d12b4032618b836531476df0b4d4f01723c8f83f329a63087d8ec42", "organization_id": "org_alpha", "workspace_id": "ws_alpha", "workspace_revision": 7, "workspace_configuration_hash": "sha256:7777777777777777777777777777777777777777777777777777777777777777", "workspace_source_id": "binding_site", "source_scope_id": "scope_site", "source_scope_revision": 5, "scope_config_hash": "sha256:4def49ad35a7ddc0521fd3d32c991856b5649ead84cd78c7e45f02c648a58fa0", "access_mode": "WORKSPACE_MANAGED", "confirmation_actor_grant_id": "confirm-grant-admin", "confirmation_actor_grant_revision": 1, "confirmation_actor_grant_hash": "sha256:d9144e1208500ac0b86a7743d20eb7e70ccc779bc354692e314fbc8b17ed15e4", "warning_version": "workspace-managed-risk-v1", "warning_contract_hash": "sha256:58a05c0a7a3960ed45ccea66d8c9a570e581ff97438f407c20ec9c669512cd2d", "acknowledgement_code": "WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL", "confirmed_by": "user_admin", "confirmed_at": "2026-07-14T12:50:00Z", "policy_revision": "policy-0007"}
+  ],
+  "confirmation_actor_grants": [
+    {"schema_version": "workspace-source-confirmation-grant-v1", "grant_id": "confirm-grant-admin", "revision": 1, "organization_id": "org_alpha", "workspace_id": "ws_alpha", "principal_id": "user_admin", "permission": "workspace.source.confirm", "valid_from": "2026-07-14T00:00:00Z", "valid_until": "2026-07-15T00:00:00Z", "policy_revision": "policy-0007", "granted_by": "user_security_admin", "granted_at": "2026-07-13T23:55:00Z", "grant_hash": "sha256:d9144e1208500ac0b86a7743d20eb7e70ccc779bc354692e314fbc8b17ed15e4"}
+  ],
+  "confirmation_actor_grant_revocations": [],
+  "workspace_managed_confirmation_revocations": [],
+  "live_object_scope_memberships": [],
+  "live_policy_decisions": [],
+  "live_acl_snapshots": [],
+  "live_source_acl_pointers": [],
+  "authorized_candidate_set": [],
+  "live_entry_hashes": {},
+  "authorization_snapshot": {
+    "schema_version": "retrieval-authorization-v1",
+    "question_run_id": "qr_insufficient_1",
+    "captured_at": "2026-07-14T13:00:02Z",
+    "pipeline_version": "hybrid-r1",
+    "pipeline_profile_hash": "sha256:9e39a40315912d7f70deb1d4a394a9116abf407f0780d3d624ff923b2e44706a",
+    "model_execution_plan_hash": "sha256:49a56c27cfc085dd3a2d8b1a2a1e949d1c3f41cb0eac09f1a54fcf91a2dc95b5",
+    "embedding_model_run_id": "mr_embedding_zero_1",
+    "embedding_output_hash": "sha256:86ac54a6aa12d52750ff1476f36ffe53fe308787026cf5ffa4066c63c3b0e49e",
+    "authorized_candidate_set_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "reranking_model_run_id": null,
+    "reranking_output_hash": null,
+    "authorized_candidate_count": 0,
+    "context_count": 0,
+    "truncated": false,
+    "truncation_reason": null,
+    "error_codes": [],
+    "entries": []
+  },
+  "authorization_snapshot_hash": "sha256:7b2e51319494eeef6c09cc719ad58ff5fb616a76a8283bf2cfab4bec6b560162"
+}

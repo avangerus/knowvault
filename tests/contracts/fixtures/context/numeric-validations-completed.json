@@ -1,0 +1,45 @@
+{
+  "C1": {
+    "output": {
+      "claim_id": "C1",
+      "material_literals": [
+        {
+          "citation_numbers": [
+            1
+          ],
+          "claim_end": 70,
+          "claim_start": 59,
+          "class": "DATE_TIME",
+          "text": "25 \u0438\u044e\u043b\u044f"
+        }
+      ],
+      "outcome": "PASSED",
+      "schema_version": "1.0",
+      "unsupported_literals": [],
+      "validation_input_hash": "sha256:6b397a686d0a7c475b3144897c9c61ca8ef85392119e459fea0744e848ae929f"
+    },
+    "validated_at": "2026-07-14T12:00:14Z"
+  },
+  "C2": {
+    "output": {
+      "claim_id": "C2",
+      "material_literals": [],
+      "outcome": "PASSED",
+      "schema_version": "1.0",
+      "unsupported_literals": [],
+      "validation_input_hash": "sha256:23c3ddbdbb3d786c2c79aeaab3a03f305430a83bba35f320d2d3abb1c05da0eb"
+    },
+    "validated_at": "2026-07-14T12:00:14Z"
+  },
+  "C4": {
+    "output": {
+      "claim_id": "C4",
+      "material_literals": [],
+      "outcome": "PASSED",
+      "schema_version": "1.0",
+      "unsupported_literals": [],
+      "validation_input_hash": "sha256:32ead5040b21f51a9eb328f7d97a06604d4716052c5e7f0004d307705e05922d"
+    },
+    "validated_at": "2026-07-14T12:00:14Z"
+  }
+}

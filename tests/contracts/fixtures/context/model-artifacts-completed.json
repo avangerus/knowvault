@@ -1,0 +1,195 @@
+{
+  "mr_embedding_1": {
+    "input": {
+      "profile_hash": "sha256:bf9298c5b4d89dea9c825ecd5b09e863e22a08b3d07bfd2bbfec74462e0a43c7",
+      "profile_revision": "embedding-profile-v1",
+      "question_hash": "sha256:b3d7896b5f40286b77da6eb12cc5ef66ced60a39d3d4f764481e1cbd4123296d",
+      "question_text": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0451\u043d \u0437\u0430\u043f\u0443\u0441\u043a?",
+      "schema_version": "embedding-input-v1"
+    },
+    "output": {
+      "dimension": 1024,
+      "schema_version": "embedding-output-v1",
+      "vector_sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  },
+  "mr_generation_1": {
+    "input": {
+      "context": [
+        {
+          "evidence_fragment_id": "ev_release_date",
+          "exact_context_hash": "sha256:0db852eaf182494bb39dd092ab7908e6499fef8baefae9277c0f53c12db483e2",
+          "exact_context_text": "\u041f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430\n\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.\n\u041f\u0440\u0438\u0447\u0438\u043d\u0430: \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u0439 API.\n",
+          "ordinal": 1
+        },
+        {
+          "evidence_fragment_id": "ev_qa_status",
+          "exact_context_hash": "sha256:ca74ac9f9cfe6ce73000ab0d3f712eb0246283d43a88fa4caed04cac082775a6",
+          "exact_context_text": "\u0421\u0442\u0430\u0442\u0443\u0441 QA\n\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0440\u0438\u0441\u043a — \u043d\u0435\u0445\u0432\u0430\u0442\u043a\u0430 \u0432\u0440\u0435\u043c\u0435\u043d\u0438 \u043d\u0430 QA.\n",
+          "ordinal": 2
+        },
+        {
+          "evidence_fragment_id": "ev_api_reason",
+          "exact_context_hash": "sha256:0db852eaf182494bb39dd092ab7908e6499fef8baefae9277c0f53c12db483e2",
+          "exact_context_text": "\u041f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430\n\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.\n\u041f\u0440\u0438\u0447\u0438\u043d\u0430: \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u0439 API.\n",
+          "ordinal": 3
+        }
+      ],
+      "context_pack_hash": "sha256:8e2787548f038272d6e33f35c4b355cfb39f6c573ec5cb3a769e72e47bb48a7d",
+      "corpus_status": "COMPLETE",
+      "profile_hash": "sha256:db355b3c67a67c89f98c5368f03087ee284fa54c204857d22282c16f763113ce",
+      "profile_revision": "generation-profile-v1",
+      "prompt_version": "answer-plan-v1",
+      "question_hash": "sha256:b3d7896b5f40286b77da6eb12cc5ef66ced60a39d3d4f764481e1cbd4123296d",
+      "question_text": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0451\u043d \u0437\u0430\u043f\u0443\u0441\u043a?",
+      "schema_version": "generation-input-v1"
+    },
+    "output": {
+      "claims": [
+        {
+          "claim_id": "C1",
+          "evidence_ids": [
+            "ev_release_date"
+          ],
+          "kind": "FACT",
+          "supporting_claim_ids": [],
+          "text": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.",
+          "unknown_reason": null
+        },
+        {
+          "claim_id": "C2",
+          "evidence_ids": [],
+          "kind": "INFERENCE",
+          "supporting_claim_ids": [
+            "C1"
+          ],
+          "text": "\u041f\u0435\u0440\u0432\u043e\u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u0440\u043e\u043a \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u043c.",
+          "unknown_reason": null
+        },
+        {
+          "claim_id": "C4",
+          "evidence_ids": [
+            "ev_release_date",
+            "ev_qa_status",
+            "ev_api_reason"
+          ],
+          "kind": "FACT",
+          "supporting_claim_ids": [],
+          "text": "\u0417\u0430\u043f\u0443\u0441\u043a \u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f \u043f\u043e\u0434 \u0440\u0438\u0441\u043a\u043e\u043c.",
+          "unknown_reason": null
+        }
+      ],
+      "schema_version": "1.4",
+      "sections": [
+        {
+          "ordered_claim_ids": [
+            "C1",
+            "C2"
+          ],
+          "section_id": "S1",
+          "title": null
+        },
+        {
+          "ordered_claim_ids": [
+            "C4"
+          ],
+          "section_id": "S2",
+          "title": null
+        }
+      ]
+    }
+  },
+  "mr_reranking_1": {
+    "input": {
+      "authorized_candidate_set_hash": "sha256:b752bb4dd5190ed5116f596ca1079df4f46238262bef5234331f401ca4f2ffb1",
+      "candidates": [
+        {
+          "evidence_fragment_id": "ev_release_date",
+          "exact_context_hash": "sha256:0db852eaf182494bb39dd092ab7908e6499fef8baefae9277c0f53c12db483e2",
+          "exact_context_text": "\u041f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430\n\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.\n\u041f\u0440\u0438\u0447\u0438\u043d\u0430: \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u0439 API.\n",
+          "ordinal": 1
+        },
+        {
+          "evidence_fragment_id": "ev_qa_status",
+          "exact_context_hash": "sha256:ca74ac9f9cfe6ce73000ab0d3f712eb0246283d43a88fa4caed04cac082775a6",
+          "exact_context_text": "\u0421\u0442\u0430\u0442\u0443\u0441 QA\n\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0440\u0438\u0441\u043a — \u043d\u0435\u0445\u0432\u0430\u0442\u043a\u0430 \u0432\u0440\u0435\u043c\u0435\u043d\u0438 \u043d\u0430 QA.\n",
+          "ordinal": 2
+        },
+        {
+          "evidence_fragment_id": "ev_api_reason",
+          "exact_context_hash": "sha256:0db852eaf182494bb39dd092ab7908e6499fef8baefae9277c0f53c12db483e2",
+          "exact_context_text": "\u041f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430\n\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.\n\u041f\u0440\u0438\u0447\u0438\u043d\u0430: \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u0439 API.\n",
+          "ordinal": 3
+        },
+        {
+          "evidence_fragment_id": "ev_candidate_4",
+          "exact_context_hash": "sha256:0db852eaf182494bb39dd092ab7908e6499fef8baefae9277c0f53c12db483e2",
+          "exact_context_text": "\u041f\u043b\u0430\u043d \u0437\u0430\u043f\u0443\u0441\u043a\u0430\n\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.\n\u041f\u0440\u0438\u0447\u0438\u043d\u0430: \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u0439 API.\n",
+          "ordinal": 4
+        },
+        {
+          "evidence_fragment_id": "ev_candidate_5",
+          "exact_context_hash": "sha256:ca74ac9f9cfe6ce73000ab0d3f712eb0246283d43a88fa4caed04cac082775a6",
+          "exact_context_text": "\u0421\u0442\u0430\u0442\u0443\u0441 QA\n\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0440\u0438\u0441\u043a — \u043d\u0435\u0445\u0432\u0430\u0442\u043a\u0430 \u0432\u0440\u0435\u043c\u0435\u043d\u0438 \u043d\u0430 QA.\n",
+          "ordinal": 5
+        }
+      ],
+      "profile_hash": "sha256:26103fea4beae08adf6710d33c305751bdfefc96ab3832f6119fdcdb67a0ba6d",
+      "profile_revision": "reranking-profile-v1",
+      "question_hash": "sha256:b3d7896b5f40286b77da6eb12cc5ef66ced60a39d3d4f764481e1cbd4123296d",
+      "question_text": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0451\u043d \u0437\u0430\u043f\u0443\u0441\u043a?",
+      "schema_version": "reranking-input-v1"
+    },
+    "output": {
+      "ordered_evidence_fragment_ids": [
+        "ev_release_date",
+        "ev_qa_status",
+        "ev_api_reason",
+        "ev_candidate_4",
+        "ev_candidate_5"
+      ],
+      "schema_version": "reranking-output-v1"
+    }
+  },
+  "mr_verification_1": {
+    "input": {
+      "claims": [
+        {
+          "claim_id": "C1",
+          "verification_input_hash": "sha256:6b397a686d0a7c475b3144897c9c61ca8ef85392119e459fea0744e848ae929f"
+        },
+        {
+          "claim_id": "C2",
+          "verification_input_hash": "sha256:23c3ddbdbb3d786c2c79aeaab3a03f305430a83bba35f320d2d3abb1c05da0eb"
+        },
+        {
+          "claim_id": "C4",
+          "verification_input_hash": "sha256:32ead5040b21f51a9eb328f7d97a06604d4716052c5e7f0004d307705e05922d"
+        }
+      ],
+      "profile_revision": "verification-profile-v1",
+      "prompt_version": "claim-verify-v1",
+      "question_hash": "sha256:b3d7896b5f40286b77da6eb12cc5ef66ced60a39d3d4f764481e1cbd4123296d"
+    },
+    "output": {
+      "results": [
+        {
+          "claim_id": "C1",
+          "outcome": "SUPPORTED",
+          "verification_input_hash": "sha256:6b397a686d0a7c475b3144897c9c61ca8ef85392119e459fea0744e848ae929f"
+        },
+        {
+          "claim_id": "C2",
+          "outcome": "SUPPORTED",
+          "verification_input_hash": "sha256:23c3ddbdbb3d786c2c79aeaab3a03f305430a83bba35f320d2d3abb1c05da0eb"
+        },
+        {
+          "claim_id": "C4",
+          "outcome": "SUPPORTED",
+          "verification_input_hash": "sha256:32ead5040b21f51a9eb328f7d97a06604d4716052c5e7f0004d307705e05922d"
+        }
+      ],
+      "schema_version": "1.0"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "result_version": "document-parser-result-v1",
+  "observed_format": "XLSX",
+  "parser": { "name": "w", "version": "1.0", "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "observation_profile_revision": "xlsx-obs-v1" },
+  "text_units": [],
+  "warnings": []
+}

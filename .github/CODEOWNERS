@@ -1,0 +1,42 @@
+# The repository owner is the current architecture and security maintainer.
+# Keep explicit ownership of every protected path; review rules are configured on GitHub.
+* @avangerus
+
+/.gitattributes @avangerus
+/.dockerignore @avangerus
+/.gitignore @avangerus
+/go.mod @avangerus
+/go.sum @avangerus
+/db/** @avangerus
+/internal/platform/database/** @avangerus
+/internal/audit/** @avangerus
+/internal/identity/** @avangerus
+/internal/policy/** @avangerus
+/internal/source/scopeglob/** @avangerus
+/internal/platform/oidc/** @avangerus
+/tests/integration/postgres/** @avangerus
+/tests/e2e/** @avangerus
+/web/package.json @avangerus
+/web/pnpm-lock.yaml @avangerus
+/deploy/images/Dockerfile.* @avangerus
+/deploy/compose/compose.yaml @avangerus
+/PRODUCT_CONSTITUTION.md @avangerus
+/ARCHITECTURE.md @avangerus
+/POKA_YOKE.md @avangerus
+/architecture/** @avangerus
+/docs/adr/*-accepted.md @avangerus
+/docs/CANONICALIZATION.md @avangerus
+/docs/CONTRACT_VALIDATION.md @avangerus
+/docs/ENCRYPTION.md @avangerus
+/docs/NUMERIC_VALIDATION.md @avangerus
+/docs/PARSER_CONTRACTS.md @avangerus
+/docs/SOURCE_CONTRACTS.md @avangerus
+/docs/DATA_MODEL.md @avangerus
+/docs/MODEL-PROFILES.md @avangerus
+/docs/NATIVE-INGEST.md @avangerus
+/docs/PILOT-ACCEPTANCE.md @avangerus
+/docs/TRUST_BOUNDARY.md @avangerus
+/scripts/check-architecture.* @avangerus
+/tests/contracts/** @avangerus
+/.github/CODEOWNERS @avangerus
+/.github/workflows/architecture.yml @avangerus

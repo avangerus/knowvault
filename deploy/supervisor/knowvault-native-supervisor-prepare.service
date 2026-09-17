@@ -1,0 +1,28 @@
+[Unit]
+Description=Prepare KnowVault native parser dispatcher socket directories
+DefaultDependencies=no
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+Before=knowvault-native-supervisor.service knowvault-dispatcher.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+ExecStart=/usr/bin/python3 -B /opt/knowvault/supervisor/native_ingest_supervisor.py --prepare-only
+TimeoutStartSec=15
+RemainAfterExit=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ReadOnlyPaths=/opt/knowvault /etc/knowvault
+
+[Install]
+WantedBy=sysinit.target

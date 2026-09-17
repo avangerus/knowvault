@@ -1,0 +1,25 @@
+{
+  "schema_version": "audit-event-v1",
+  "event_id": "audit_answer_amend_1",
+  "organization_id": "org_alpha",
+  "sequence": 3,
+  "workspace_id": "ws_alpha",
+  "actor_type": "HUMAN",
+  "actor_principal_id": "usr_alice",
+  "on_behalf_of_principal_id": null,
+  "action": "answer.document.amended",
+  "resource_type": "ANSWER_DOCUMENT",
+  "resource_id": "ansdoc_alpha",
+  "request_id": "req_answer_002",
+  "policy_decision_id": null,
+  "outcome": "SUCCESS",
+  "error_code": null,
+  "referenced_evidence_ids": [],
+  "metadata": {
+    "answer_document_version": 2,
+    "amendment_class": "SUPERSEDE"
+  },
+  "previous_event_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "event_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "occurred_at": "2026-08-14T11:00:00Z"
+}

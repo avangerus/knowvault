@@ -1,0 +1,22 @@
+{
+  "schema_version": "audit-event-v1",
+  "event_id": "audit_answer_amend_failed_1",
+  "organization_id": "org_alpha",
+  "sequence": 4,
+  "workspace_id": null,
+  "actor_type": "SYSTEM",
+  "actor_principal_id": null,
+  "on_behalf_of_principal_id": null,
+  "action": "answer.document.amended",
+  "resource_type": "ANSWER_DOCUMENT",
+  "resource_id": "req_answer_failed_001",
+  "request_id": "req_answer_failed_001",
+  "policy_decision_id": null,
+  "outcome": "FAILED",
+  "error_code": "ANSWER_DOCUMENT_AMENDMENT_FAILED",
+  "referenced_evidence_ids": [],
+  "metadata": {},
+  "previous_event_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "event_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "occurred_at": "2026-08-14T11:05:00Z"
+}

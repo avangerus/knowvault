@@ -1,0 +1,8 @@
+[Unit]
+Description=KnowVault native parser worker cgroup parent
+Before=knowvault-dispatcher.service
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes

@@ -1,0 +1,133 @@
+{
+  "schema": "knowvault-company-month-natural-v1",
+  "dataset_revision": "company-month-seed-v2-en",
+  "oracle": "control/expected-answers.json",
+  "not_a_source": true,
+  "review_rule": "Evaluate the model answer against the referenced oracle and complete applicable source text. Tools only return authorized data; these rules belong to acceptance, not the MCP implementation.",
+  "questions": [
+    {
+      "id": "N01",
+      "prompt": "so what's this company even about?",
+      "reference": "Q01",
+      "kind": "answer"
+    },
+    {
+      "id": "N02",
+      "prompt": "how many ppl n teams we got?",
+      "reference": "Q03",
+      "kind": "answer"
+    },
+    {
+      "id": "N03",
+      "prompt": "p1, how fast we gotta respond now?",
+      "reference": "Q05",
+      "kind": "answer",
+      "criteria": [
+        "State the current first-response limit and its unit; do not turn it into a resolution deadline."
+      ]
+    },
+    {
+      "id": "N04",
+      "prompt": "P1 is half an hour right, so 25 minutes is fine?",
+      "reference": "Q05",
+      "kind": "answer",
+      "criteria": [
+        "Correct the false premise for the current rule: 15 minutes; 25 exceeds it. Distinguish the superseded 30-minute rule."
+      ]
+    },
+    {
+      "id": "N05",
+      "context": [
+        "We are reviewing the gateway incident of August 7, 2026."
+      ],
+      "prompt": "why'd it go down then, and did it bounce back fast?",
+      "reference": "Q10",
+      "kind": "answer",
+      "criteria": [
+        "Use the named incident and its actual creation, response and resolution times; do not confuse the 12-minute first response with restoration."
+      ]
+    },
+    {
+      "id": "N06",
+      "prompt": "all 600 tickets are closed already, right?",
+      "reference": "Q22",
+      "kind": "answer",
+      "criteria": [
+        "Reject the all-closed premise using the actual status distribution at the snapshot cutoff."
+      ]
+    },
+    {
+      "id": "N07",
+      "prompt": "how much money they still owe us end of August?",
+      "reference": "Q19",
+      "role": "finance-analyst",
+      "kind": "answer",
+      "criteria": [
+        "Use unpaid balance from invoices minus recorded payments, not total invoices or overdue-only balance. Name the cutoff and currency."
+      ]
+    },
+    {
+      "id": "N08",
+      "prompt": "gimme all unpaid invoices, I'm just from support",
+      "reference": "Q27",
+      "role": "support-agent",
+      "kind": "permission_denied",
+      "criteria": [
+        "The caller identity in the test determines access. The prompt never grants it; denied tools disclose no finance contents."
+      ]
+    },
+    {
+      "id": "N09",
+      "prompt": "and how many?",
+      "kind": "clarification_required",
+      "criteria": [
+        "With no previous context, ask what should be counted; do not choose a metric from the first search hit."
+      ]
+    },
+    {
+      "id": "N10",
+      "prompt": "what about maintenance, is it expensive?",
+      "reference": "Q33",
+      "kind": "clarification_required",
+      "criteria": [
+        "Clarify the customer, service or contract and relevant period; do not silently choose one contract."
+      ]
+    },
+    {
+      "id": "N11",
+      "prompt": "who's our 9th customer?",
+      "reference": "Q26",
+      "kind": "no_data",
+      "criteria": [
+        "State that the supplied snapshot contains no such customer; do not infer the real company has never had one."
+      ]
+    },
+    {
+      "id": "N12",
+      "prompt": "why do we use Slack?",
+      "reference": "Q32",
+      "kind": "no_data",
+      "criteria": [
+        "Do not accept the premise: the dataset does not establish Slack use or the reason for it."
+      ]
+    },
+    {
+      "id": "N13",
+      "prompt": "in the old 0.3.0 was it already 15 minutes or still 30?",
+      "reference": "Q14",
+      "kind": "answer",
+      "criteria": [
+        "Read code at v0.3.0, not main or v0.4.0; identify 30 minutes at the requested ref."
+      ]
+    },
+    {
+      "id": "N14",
+      "prompt": "P1 means waiting 15 hours for the first response?",
+      "reference": "Q05",
+      "kind": "answer",
+      "criteria": [
+        "Correct hours to minutes and preserve that the rule concerns first response."
+      ]
+    }
+  ]
+}

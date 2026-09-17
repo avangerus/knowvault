@@ -1,0 +1,603 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/answer-manifest.schema.json",
+  "title": "Question Run Answer Manifest 2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "canonicalization",
+    "answer_mode",
+    "verification_method",
+    "question_run_id",
+    "organization_id",
+    "workspace_id",
+    "workspace_revision",
+    "workspace_scope_hash",
+    "policy_revision",
+    "access_context_hash",
+    "question_text",
+    "question_hash",
+    "created_by",
+    "started_at",
+    "completed_at",
+    "supersedes_question_run_id",
+    "corpus_snapshot",
+    "extractions",
+    "retrieval",
+    "configured_profiles",
+    "model_runs",
+    "claim_verifications",
+    "deterministic_validations",
+    "claims",
+    "sections",
+    "citations",
+    "status",
+    "answer_hash",
+    "manifest_hash",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "canonicalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["json", "text", "answer_renderer", "renderer_locale"],
+      "properties": {
+        "json": { "const": "json-v1" },
+        "text": { "const": "text-v1" },
+        "answer_renderer": { "const": "answer-renderer-v1" },
+        "renderer_locale": { "const": "ru-RU" }
+      }
+    },
+    "answer_mode": { "enum": ["EXTRACTIVE", "GENERATIVE"] },
+    "verification_method": { "enum": ["BYTE_EXACT_CITATION", "SEMANTIC_VERIFIER"] },
+    "question_run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "organization_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "workspace_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "workspace_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "workspace_scope_hash": { "$ref": "#/$defs/sha256" },
+    "policy_revision": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "access_context_hash": { "$ref": "#/$defs/sha256" },
+    "question_text": { "type": "string", "minLength": 1, "maxLength": 32000 },
+    "question_hash": { "$ref": "#/$defs/sha256" },
+    "created_by": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "supersedes_question_run_id": { "type": ["string", "null"], "maxLength": 128 },
+    "corpus_snapshot": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/corpusSource" }
+    },
+    "extractions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/extraction" }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pipeline_version", "pipeline_profile_hash", "model_execution_plan_hash", "authorization_snapshot_hash", "authorized_candidate_set_hash", "context_pack_hash", "authorized_candidate_count", "context_count", "truncated", "truncation_reason", "error_codes"],
+      "properties": {
+        "pipeline_version": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "pipeline_profile_hash": { "$ref": "#/$defs/sha256" },
+        "model_execution_plan_hash": { "$ref": "#/$defs/sha256" },
+        "authorization_snapshot_hash": { "$ref": "#/$defs/sha256" },
+        "authorized_candidate_set_hash": { "$ref": "#/$defs/sha256" },
+        "context_pack_hash": { "$ref": "#/$defs/sha256" },
+        "authorized_candidate_count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "context_count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "truncated": { "type": "boolean" },
+        "truncation_reason": { "type": ["string", "null"], "enum": [null, "CANDIDATE_LIMIT", "TOKEN_BUDGET", "TIME_BUDGET", "SOURCE_LIMIT"] },
+        "error_codes": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,127}$" }
+        }
+      }
+    },
+    "configured_profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["embedding", "reranking"],
+      "properties": {
+        "embedding": {
+          "allOf": [
+            { "$ref": "#/$defs/model" },
+            { "type": "object", "properties": { "purpose": { "const": "EMBEDDING" }, "prompt_version": { "type": "null" }, "embedding_dimension": { "const": 1024 } } }
+          ]
+        },
+        "reranking": {
+          "allOf": [
+            { "$ref": "#/$defs/model" },
+            { "type": "object", "properties": { "purpose": { "const": "RERANKING" }, "prompt_version": { "type": "null" }, "embedding_dimension": { "type": "null" } } }
+          ]
+        },
+        "generation": {
+          "allOf": [
+            { "$ref": "#/$defs/model" },
+            { "type": "object", "properties": { "purpose": { "const": "GENERATION" }, "prompt_version": { "type": "string", "minLength": 1 }, "embedding_dimension": { "type": "null" } } }
+          ]
+        },
+        "verification": {
+          "allOf": [
+            { "$ref": "#/$defs/model" },
+            { "type": "object", "properties": { "purpose": { "const": "VERIFICATION" }, "prompt_version": { "type": "string", "minLength": 1 }, "embedding_dimension": { "type": "null" } } }
+          ]
+        }
+      }
+    },
+    "model_runs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/modelRun" }
+    },
+    "claim_verifications": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/claimVerification" }
+    },
+    "deterministic_validations": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/deterministicValidation" }
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/claim" }
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "citations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/citation" }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "corpus"],
+      "properties": {
+        "result": { "enum": ["COMPLETED", "INSUFFICIENT_EVIDENCE"] },
+        "corpus": { "enum": ["COMPLETE", "PARTIAL"] }
+      }
+    },
+    "answer_hash": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 of answer-renderer-v1 canonical Markdown UTF-8 bytes."
+    },
+    "manifest_hash": { "$ref": "#/$defs/sha256" },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "answer_mode": { "const": "EXTRACTIVE" } },
+        "required": ["answer_mode"]
+      },
+      "then": {
+        "properties": {
+          "verification_method": { "const": "BYTE_EXACT_CITATION" },
+          "claim_verifications": { "type": "array", "maxItems": 0 }
+        },
+        "not": {
+          "anyOf": [
+            { "properties": { "configured_profiles": { "type": "object", "properties": { "generation": {} }, "required": ["generation"] } } },
+            { "properties": { "configured_profiles": { "type": "object", "properties": { "verification": {} }, "required": ["verification"] } } },
+            { "properties": { "model_runs": { "type": "array", "contains": {
+              "type": "object",
+              "properties": { "purpose": { "enum": ["GENERATION", "VERIFICATION"] } },
+              "required": ["purpose"]
+            } } } }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "answer_mode": { "const": "GENERATIVE" } },
+        "required": ["answer_mode"]
+      },
+      "then": {
+        "properties": {
+          "verification_method": { "const": "SEMANTIC_VERIFIER" },
+          "configured_profiles": {
+            "type": "object",
+            "properties": { "generation": {}, "verification": {} },
+            "required": ["generation", "verification"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "keyed_anchor_sha256": {
+      "type": "string",
+      "pattern": "^hmac-sha256:k[1-9][0-9]{0,8}:[0-9a-f]{64}$"
+    },
+    "corpusSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_scope_id",
+        "source_scope_revision",
+        "access_mode",
+        "scope_config_hash",
+        "connector_type",
+        "connector_version",
+        "health",
+        "content_watermark",
+        "last_successful_sync",
+        "acl_fresh_at"
+      ],
+      "properties": {
+        "source_scope_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source_scope_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "access_mode": { "enum": ["WORKSPACE_MANAGED", "SOURCE_ENFORCED"] },
+        "scope_config_hash": { "$ref": "#/$defs/sha256" },
+        "connector_type": { "enum": ["FOLDER", "GIT", "MAIL", "SITE"] },
+        "connector_version": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "health": { "enum": ["READY", "DEGRADED", "ACL_STALE", "UNAVAILABLE"] },
+        "content_watermark": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "last_successful_sync": { "type": ["string", "null"], "format": "date-time" },
+        "acl_fresh_at": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "health": { "const": "READY" } }, "required": ["health"] },
+          "then": { "type": "object", "properties": { "last_successful_sync": { "type": "string", "format": "date-time" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "access_mode": { "const": "SOURCE_ENFORCED" } }, "required": ["access_mode"] },
+          "then": { "type": "object", "properties": { "acl_fresh_at": { "type": "string", "format": "date-time" } } }
+        }
+      ]
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extraction_id", "source_version_id", "profile", "profile_hash", "evidence_set_hash"],
+      "properties": {
+        "extraction_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source_version_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profile": { "$ref": "#/$defs/extractionProfile" },
+        "profile_hash": { "$ref": "#/$defs/sha256" },
+        "evidence_set_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "extractionProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_format", "extractor", "normalization_version", "ocr"],
+      "properties": {
+        "canonical_format": { "enum": ["TEXT", "PDF", "DOCX", "PPTX", "XLSX", "EMAIL", "HTML", "OCR"] },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "artifact_hash", "parser_profile_revision"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "artifact_hash": { "$ref": "#/$defs/sha256" },
+            "parser_profile_revision": { "type": "string", "minLength": 1, "maxLength": 256 }
+          }
+        },
+        "normalization_version": { "const": "text-v1" },
+        "ocr": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/ocrProfile" }
+          ]
+        }
+      }
+    },
+    "ocrProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "model_revision", "artifact_hash", "profile_revision"],
+      "properties": {
+        "model_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "model_revision": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "artifact_hash": { "$ref": "#/$defs/sha256" },
+        "profile_revision": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "model_id", "model_revision", "artifact_hash", "profile_revision", "profile_hash", "prompt_version", "embedding_dimension"],
+      "properties": {
+        "purpose": { "enum": ["EMBEDDING", "RERANKING", "GENERATION", "VERIFICATION"] },
+        "model_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "model_revision": { "type": "string", "pattern": "^(?!latest$)(?!main$)[A-Za-z0-9._-]{7,128}$" },
+        "artifact_hash": { "$ref": "#/$defs/sha256" },
+        "profile_revision": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "profile_hash": { "$ref": "#/$defs/sha256" },
+        "prompt_version": { "type": ["string", "null"], "maxLength": 256 },
+        "embedding_dimension": { "type": ["integer", "null"], "enum": [null, 1024], "maximum": 9007199254740991 }
+      }
+    },
+    "modelRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_run_id",
+        "attempt",
+        "selected_for_result",
+        "purpose",
+        "model_id",
+        "model_revision",
+        "artifact_hash",
+        "profile_revision",
+        "profile_hash",
+        "prompt_version",
+        "input_hash",
+        "output_hash",
+        "started_at",
+        "completed_at",
+        "outcome"
+      ],
+      "properties": {
+        "model_run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "selected_for_result": { "type": "boolean" },
+        "purpose": { "enum": ["EMBEDDING", "RERANKING", "GENERATION", "VERIFICATION"] },
+        "model_id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "model_revision": { "type": "string", "pattern": "^(?!latest$)(?!main$)[A-Za-z0-9._-]{7,128}$" },
+        "artifact_hash": { "$ref": "#/$defs/sha256" },
+        "profile_revision": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "profile_hash": { "$ref": "#/$defs/sha256" },
+        "prompt_version": { "type": ["string", "null"], "maxLength": 256 },
+        "input_hash": { "$ref": "#/$defs/sha256" },
+        "output_hash": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "outcome": { "enum": ["SUCCEEDED", "REJECTED_SCHEMA", "FAILED", "TIMED_OUT"] }
+      }
+    },
+    "claimVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "kind",
+        "claim_text_hash",
+        "verification_input_hash",
+        "verifier_model_run_id",
+        "outcome",
+        "evidence",
+        "supporting_claims"
+      ],
+      "properties": {
+        "claim_id": { "type": "string", "pattern": "^C[1-9][0-9]*$" },
+        "kind": { "enum": ["FACT", "INFERENCE"] },
+        "claim_text_hash": { "$ref": "#/$defs/sha256" },
+        "verification_input_hash": { "$ref": "#/$defs/sha256" },
+        "verifier_model_run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "outcome": { "const": "SUPPORTED" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "$ref": "#/$defs/verificationEvidence" }
+        },
+        "supporting_claims": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "$ref": "#/$defs/verificationSupportingClaim" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "FACT" } }, "required": ["kind"] },
+          "then": { "type": "object", "properties": { "supporting_claims": { "type": "array", "maxItems": 0 } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "INFERENCE" } }, "required": ["kind"] },
+          "then": { "type": "object", "properties": { "supporting_claims": { "type": "array", "minItems": 1 } } }
+        }
+      ]
+    },
+    "verificationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "citation_number",
+        "source_version_id",
+        "extraction_id",
+        "evidence_fragment_id",
+        "evidence_text_hash",
+        "cited_excerpt_hash",
+        "anchor_hash"
+      ],
+      "properties": {
+        "citation_number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "source_version_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "extraction_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "evidence_fragment_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "evidence_text_hash": { "$ref": "#/$defs/sha256" },
+        "cited_excerpt_hash": { "$ref": "#/$defs/sha256" },
+        "anchor_hash": { "$ref": "#/$defs/keyed_anchor_sha256" }
+      }
+    },
+    "verificationSupportingClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "claim_text_hash"],
+      "properties": {
+        "claim_id": { "type": "string", "pattern": "^C[1-9][0-9]*$" },
+        "claim_text_hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "deterministicValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "validator_version", "validation_input_hash", "output_hash", "outcome"],
+      "properties": {
+        "claim_id": { "type": "string", "pattern": "^C[1-9][0-9]*$" },
+        "validator_version": { "const": "numeric-validator-v1" },
+        "validation_input_hash": { "$ref": "#/$defs/sha256" },
+        "output_hash": { "$ref": "#/$defs/sha256" },
+        "outcome": { "const": "PASSED" }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "text", "kind", "unknown_reason", "support_status", "citation_numbers", "supporting_claim_ids", "answer_span"],
+      "properties": {
+        "claim_id": { "type": "string", "pattern": "^C[1-9][0-9]*$" },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]).+$"
+        },
+        "kind": { "enum": ["FACT", "INFERENCE", "UNKNOWN"] },
+        "unknown_reason": { "enum": [null, "NO_RELEVANT_EVIDENCE", "INSUFFICIENT_SUPPORT", "CONFLICTING_EVIDENCE"] },
+        "support_status": { "enum": ["SUPPORTED", "NOT_APPLICABLE"] },
+        "citation_numbers": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 12,
+          "items": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        },
+        "supporting_claim_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 12,
+          "items": { "type": "string", "pattern": "^C[1-9][0-9]*$" }
+        },
+        "answer_span": { "$ref": "#/$defs/answerSpan" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "FACT" } }, "required": ["kind"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "support_status": { "const": "SUPPORTED" },
+              "unknown_reason": { "type": "null" },
+              "citation_numbers": { "type": "array", "minItems": 1 },
+              "supporting_claim_ids": { "type": "array", "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "INFERENCE" } }, "required": ["kind"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "support_status": { "const": "SUPPORTED" },
+              "unknown_reason": { "type": "null" },
+              "citation_numbers": { "type": "array", "maxItems": 0 },
+              "supporting_claim_ids": { "type": "array", "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "UNKNOWN" } }, "required": ["kind"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "support_status": { "const": "NOT_APPLICABLE" },
+              "unknown_reason": { "enum": ["NO_RELEVANT_EVIDENCE", "INSUFFICIENT_SUPPORT", "CONFLICTING_EVIDENCE"] },
+              "citation_numbers": { "type": "array", "maxItems": 0 },
+              "supporting_claim_ids": { "type": "array", "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    },
+    "answerSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "offset_unit", "range_semantics", "normalization_version"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "end": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "offset_unit": { "const": "UTF8_BYTE" },
+        "range_semantics": { "const": "START_INCLUSIVE_END_EXCLUSIVE" },
+        "normalization_version": { "const": "text-v1" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section_id", "title", "ordered_claim_ids"],
+      "properties": {
+        "section_id": { "type": "string", "pattern": "^S[1-9][0-9]*$" },
+        "title": { "type": "null" },
+        "ordered_claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 40,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^C[1-9][0-9]*$" }
+        }
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "citation_number",
+        "claim_ids",
+        "source_object_id",
+        "source_version_id",
+        "extraction_id",
+        "evidence_fragment_id",
+        "source_version_content_hash",
+        "evidence_text_hash",
+        "cited_excerpt",
+        "cited_excerpt_hash",
+        "anchor",
+        "anchor_hash",
+        "state_at_generation"
+      ],
+      "properties": {
+        "citation_number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^C[1-9][0-9]*$" }
+        },
+        "source_object_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source_version_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "extraction_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "evidence_fragment_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source_version_content_hash": { "$ref": "#/$defs/sha256" },
+        "evidence_text_hash": { "$ref": "#/$defs/sha256" },
+        "cited_excerpt": { "type": "string", "minLength": 1, "maxLength": 32000 },
+        "cited_excerpt_hash": { "$ref": "#/$defs/sha256" },
+        "anchor": { "$ref": "source-anchor.schema.json" },
+        "anchor_hash": { "$ref": "#/$defs/keyed_anchor_sha256" },
+        "state_at_generation": { "const": "CURRENT" }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signed_at", "value_base64"],
+      "properties": {
+        "algorithm": { "const": "ED25519" },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "value_base64": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-grep-ref-scoped-no-cross-ref-leak",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.grep.ref-scoped-no-cross-ref-leak",
+  "control_id": "acceptance.r3a1.grep.ref-scoped-no-cross-ref-leak",
+  "description": "R3a-1 Outcome 4 code sources: a ref-scoped knowvault_grep call must resolve the named ref from object-inventory metadata and read only the code-source version whose immutable identity matches that ref, so a hit at ref A is never reported for ref B once the file differs there. internal/platform/workspaceapi/mcp_grep.go GrepFragmentsAtRef keeps only matching items with `if mcpGrepCodeRefMatches(item, ref) {`. Weakening that scoping guard to a constant true makes the resolver collect the document and every ref, so the ref-B call reads and matches ref A's content. TestMCPGrepRefDoesNotReportAnotherRef requires zero matches and exactly one object read for ref B, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPGrepRefDoesNotReportAnotherRef",
+  "mutations": [
+    {
+      "id": "r3a1-grep-ref-scoping-guard-weakened-to-unscoped",
+      "target": "internal/platform/workspaceapi/mcp_grep.go",
+      "kind": "GO_GREP_REF_SCOPING_WEAKENING",
+      "expected": "RED",
+      "old": "\t\t\tif mcpGrepCodeRefMatches(item, ref) {",
+      "new": "\t\t\tif true {"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree GrepFragmentsAtRef resolves ref bbbb from metadata to only the coding version whose external identity carries commit bbbb, reads exactly that one object, and reports zero matches because the needle lives only at ref aaaa; the address version and canonical address both carry bbbb.",
+  "mutant_meaning": "With the metadata scoping guard weakened to `if true` the resolver collects the document object and both code versions, so the ref-B call reads three objects and matches the needle in the document and at ref A. TestMCPGrepRefDoesNotReportAnotherRef fails on the non-empty matches and on the object-read set, which is exactly the declared RED negative control (ref B must not report ref A's hit), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.grep.ref-scoped-no-cross-ref-leak`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

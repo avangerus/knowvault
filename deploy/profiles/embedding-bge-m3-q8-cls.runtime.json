@@ -1,0 +1,7 @@
+{
+  "image": "ghcr.io/ggml-org/llama.cpp@sha256:7f87a3bbe3143cdb857f5c84f82d2c15528be70ca0e7c5ade9a47d56b791f93f",
+  "arguments": ["-m", "/models/bge-m3-Q8_0.gguf", "--embedding", "--pooling", "cls", "-ngl", "99", "-c", "8192", "-b", "8192", "-ub", "8192", "--host", "0.0.0.0", "--port", "8080", "--no-webui"],
+  "artifact_mount": "/opt/models/bge-m3-GGUF/bge-m3-Q8_0.gguf:/models/bge-m3-Q8_0.gguf:ro",
+  "network_alias": "knowvault-bge-qualified",
+  "published_ports": []
+}

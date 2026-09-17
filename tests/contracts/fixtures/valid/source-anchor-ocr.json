@@ -1,0 +1,13 @@
+{
+  "kind": "OCR",
+  "page": 1,
+  "token_start_ordinal": 0,
+  "token_end_ordinal": 2,
+  "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+  "coordinate_unit": "NORMALIZED_0_1",
+  "coordinate_origin": "TOP_LEFT",
+  "bounding_boxes": [
+    {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1},
+    {"x": 0.32, "y": 0.1, "width": 0.25, "height": 0.1}
+  ]
+}

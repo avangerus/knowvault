@@ -1,0 +1,18 @@
+{
+  "trusted_kernel_observation": {
+    "schema_version": "sandbox-kernel-observation-v1",
+    "lease_id": "lease-001",
+    "job_id": "job-001",
+    "worker_id": "worker-001",
+    "observed_at": "2026-08-06T10:00:02Z",
+    "observation_method": "KERNEL_CGROUP_NAMESPACE",
+    "extraction_identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "limits": {
+      "cpu_millis": 1000,
+      "memory_bytes": 268435456,
+      "pids_max": 64,
+      "wall_clock_ms": 30000
+    },
+    "limits_hash": "sha256:d24603d4e4be27b06bc78968e40cc3f55aa46735f04e6895b6f4b3efa0885e87"
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "source_version": {
+    "source_version_id": "sv_alpha_1",
+    "version_state": "CURRENT",
+    "active_extraction_id": "ext_alpha_v2",
+    "active_extraction_revision": 2
+  },
+  "source_object": {
+    "source_object_id": "so_alpha",
+    "current_version_id": "sv_alpha_1",
+    "lifecycle_state": "ACTIVE",
+    "queryable": true
+  },
+  "extractions": [
+    {
+      "extraction_id": "ext_alpha_v1",
+      "source_version_id": "sv_alpha_1",
+      "status": "SUCCEEDED",
+      "retention_state": "ACTIVE",
+      "queryable": true,
+      "activation_revision": 1,
+      "profile_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "evidence_set_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "extraction_id": "ext_alpha_v2",
+      "source_version_id": "sv_alpha_1",
+      "status": "SUCCEEDED",
+      "retention_state": "ACTIVE",
+      "queryable": true,
+      "activation_revision": 2,
+      "profile_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "evidence_set_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ],
+  "current_retrieval": {
+    "extraction_id": "ext_alpha_v2",
+    "index_extraction_id": "ext_alpha_v2"
+  },
+  "historical_citation": {
+    "extraction_id": "ext_alpha_v1",
+    "expected_freshness": "EXTRACTION_SUPERSEDED",
+    "include_body": true,
+    "include_excerpt": true
+  },
+  "question_run_purge": {
+    "question_run_id": "qr_old",
+    "shared_extraction_count_before": 2,
+    "shared_extraction_count_after": 2,
+    "shared_extraction_hash_before": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "shared_extraction_hash_after": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "source_derived_purge": {
+    "source_object_id": "so_alpha",
+    "target_source_version_id": "sv_alpha_historical",
+    "expected_extraction_ids": ["ext_hist_v1", "ext_hist_v2"],
+    "fail_close_commit": {
+      "source_version_retention_state": "PURGING",
+      "active_extraction_id": null,
+      "source_object_current_version_id": "sv_alpha_1",
+      "source_object_queryable": true,
+      "extractions": [
+        {
+          "extraction_id": "ext_hist_v1",
+          "retention_state": "PURGING",
+          "queryable": false,
+          "normalized_text_present": true,
+          "evidence_present": true,
+          "vectors_present": true,
+          "lexical_index_present": true
+        },
+        {
+          "extraction_id": "ext_hist_v2",
+          "retention_state": "PURGING",
+          "queryable": false,
+          "normalized_text_present": true,
+          "evidence_present": true,
+          "vectors_present": true,
+          "lexical_index_present": true
+        }
+      ]
+    },
+    "completed": {
+      "source_version_retention_state": "PURGED",
+      "active_extraction_id": null,
+      "source_object_current_version_id": "sv_alpha_1",
+      "source_object_queryable": true,
+      "extractions": [
+        {
+          "extraction_id": "ext_hist_v1",
+          "retention_state": "PURGED",
+          "queryable": false,
+          "normalized_text_present": false,
+          "evidence_present": false,
+          "vectors_present": false,
+          "lexical_index_present": false
+        },
+        {
+          "extraction_id": "ext_hist_v2",
+          "retention_state": "PURGED",
+          "queryable": false,
+          "normalized_text_present": false,
+          "evidence_present": false,
+          "vectors_present": false,
+          "lexical_index_present": false
+        }
+      ]
+    }
+  },
+  "late_running_extraction_commit": {
+    "extraction_id": "ext_hist_running",
+    "status": "RUNNING",
+    "captured_retention_fence_revision": 7,
+    "current_retention_fence_revision": 8,
+    "terminal_commit_allowed": false,
+    "derived_write_allowed": false,
+    "stale_index_add_allowed": false
+  },
+  "current_version_purge_behavior": {
+    "target_source_version_id": "sv_alpha_1",
+    "source_object_current_version_id_after_fail_close": null,
+    "source_object_queryable_after_fail_close": false
+  }
+}

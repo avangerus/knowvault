@@ -1,0 +1,3721 @@
+{
+  "registry_version": "1.0",
+  "entries": [
+    {
+      "invariant_id": "acceptance.ten.missing-organization-column",
+      "critical_invariant_ids": ["TEN-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestTenantOwnedTablesRequireOrganizationColumn",
+      "mutations": [
+        {
+          "id": "tenant-table-without-organization-column",
+          "target": "db/migrations/000001_stage1_tenancy.sql",
+          "kind": "SQL_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "COMMIT;\n",
+          "new": "CREATE TABLE public.mutation_tenant_without_organization (id text PRIMARY KEY);\nALTER TABLE public.mutation_tenant_without_organization ENABLE ROW LEVEL SECURITY;\nALTER TABLE public.mutation_tenant_without_organization FORCE ROW LEVEL SECURITY;\nCREATE POLICY mutation_tenant_without_organization_policy ON public.mutation_tenant_without_organization USING (true);\n\nCOMMIT;\n"
+        },
+        {
+          "id": "tenant-schema-equivalent-not-null",
+          "target": "db/migrations/000001_stage1_tenancy.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    id text PRIMARY KEY CHECK (char_length(id) BETWEEN 3 AND 128),\n    name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 256),\n",
+          "new": "    id text NOT NULL PRIMARY KEY CHECK (char_length(id) BETWEEN 3 AND 128),\n    name text NOT NULL CHECK (char_length(name) BETWEEN 1 AND 256),\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.ten.missing-organization-context",
+      "critical_invariant_ids": ["TEN-002"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRLSFailsClosedAcrossOrganizations",
+      "mutations": [
+        {
+          "id": "workspace-rls-allows-every-tenant",
+          "target": "db/migrations/000001_stage1_tenancy.sql",
+          "kind": "SQL_POLICY_WEAKENING",
+          "expected": "RED",
+          "old": "CREATE POLICY workspace_tenant_isolation ON public.workspace\n    USING (organization_id = app.current_organization_id())\n    WITH CHECK (organization_id = app.current_organization_id());",
+          "new": "CREATE POLICY workspace_tenant_isolation ON public.workspace\n    USING (true)\n    WITH CHECK (true);"
+        },
+        {
+          "id": "rls-policy-redundant-not-null-predicate",
+          "target": "db/migrations/000001_stage1_tenancy.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "CREATE POLICY workspace_tenant_isolation ON public.workspace\n    USING (organization_id = app.current_organization_id())\n    WITH CHECK (organization_id = app.current_organization_id());",
+          "new": "CREATE POLICY workspace_tenant_isolation ON public.workspace\n    USING (organization_id = app.current_organization_id() AND organization_id IS NOT NULL)\n    WITH CHECK (organization_id = app.current_organization_id() AND organization_id IS NOT NULL);"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.ingest.unresolved-access-not-indexed",
+      "critical_invariant_ids": ["ING-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS1dUnresolvedAccessDoesNotIndex",
+      "mutations": [
+        {
+          "id": "unresolved-mount-accepted",
+          "target": "internal/ingestion/handler.go",
+          "kind": "GO_ACCESS_GATE_WEAKENING",
+          "expected": "RED",
+          "old": "if !ok || scopeConfig.RootAlias != trust.RootAlias {",
+          "new": "if scopeConfig.RootAlias != trust.RootAlias {"
+        },
+        {
+          "id": "access-gate-condition-order",
+          "target": "internal/ingestion/handler.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if !ok || scopeConfig.RootAlias != trust.RootAlias {",
+          "new": "if scopeConfig.RootAlias != trust.RootAlias || !ok {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.ingest.access-reduction-race",
+      "critical_invariant_ids": ["ING-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestP2CutoverNarrowsScopeAndClosesRemovedObject",
+      "mutations": [
+        {
+          "id": "cutover-deletes-live-revision-object",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_CUTOVER_WEAKENING",
+          "expected": "RED",
+          "old": "       AND NOT EXISTS (SELECT 1 FROM public.source_object_scope AS m\n                       WHERE m.organization_id = o.organization_id AND m.source_object_id = o.id\n                         AND m.membership_state = 'ACTIVE')",
+          "new": "       AND TRUE"
+        },
+        {
+          "id": "cutover-membership-equivalent-set",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "                         AND m.membership_state = 'ACTIVE')",
+          "new": "                         AND m.membership_state IN ('ACTIVE'))"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.audit.update-delete-or-content",
+      "critical_invariant_ids": ["AUD-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestAuditAppendIsTenantScopedAppendOnlyAndRetriesAChainRace",
+      "mutations": [
+        {
+          "id": "audit-runtime-mutation-grant",
+          "target": "db/migrations/000002_stage1_audit.sql",
+          "kind": "SQL_PRIVILEGE_WEAKENING",
+          "expected": "RED",
+          "old": "GRANT SELECT, INSERT ON TABLE public.audit_event TO knowvault_app;",
+          "new": "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.audit_event TO knowvault_app;"
+        },
+        {
+          "id": "audit-schema-equivalent-grants",
+          "target": "db/migrations/000002_stage1_audit.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "GRANT SELECT, INSERT ON TABLE public.audit_event TO knowvault_app;",
+          "new": "GRANT SELECT ON TABLE public.audit_event TO knowvault_app;\nGRANT INSERT ON TABLE public.audit_event TO knowvault_app;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.active-content-execution",
+      "critical_invariant_ids": ["SRC-011"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS2bOfficeSandboxFailureAtomicity",
+      "mutations": [
+        {
+          "id": "office-without-sandbox-continues",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SANDBOX_BOUNDARY_WEAKENING",
+          "expected": "RED",
+          "old": "if h.office == nil {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}",
+          "new": "if h.office == nil {\n\t\t\treturn \"\", nil, nil, true, false\n\t\t}"
+        },
+        {
+          "id": "office-boundary-local-capture",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if h.office == nil {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}",
+          "new": "if office := h.office; office == nil {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.parser.file-level-citation-fallback",
+      "critical_invariant_ids": ["PAR-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS2aEMLExtraction",
+      "mutations": [
+        {
+          "id": "email-downgraded-to-file-text",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_CITATION_WEAKENING",
+          "expected": "RED",
+          "old": "return \"EMAIL\", planned, nil, true, false",
+          "new": "return \"TEXT\", planned, nil, true, false"
+        },
+        {
+          "id": "email-empty-plan-boundary",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if len(planned) == 0 {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}\n\t\treturn \"EMAIL\", planned, nil, true, false",
+          "new": "if len(planned) < 1 {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}\n\t\treturn \"EMAIL\", planned, nil, true, false"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.parser.ooxml-active-relationship",
+      "critical_invariant_ids": ["PAR-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestPlanOfficeNilResultQuarantines",
+      "test_package": "./internal/ingestion",
+      "mutations": [
+        {
+          "id": "empty-office-observation-published",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_PARSER_RESULT_WEAKENING",
+          "expected": "RED",
+          "old": "if err != nil || result == nil || len(result.Fragments) == 0 {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}",
+          "new": "if err != nil {\n\t\t\treturn officeFormat, nil, nil, true, false\n\t\t}\n\t\tif len(result.Fragments) == 0 {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}"
+        },
+        {
+          "id": "office-result-empty-boundary",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if err != nil || result == nil || len(result.Fragments) == 0 {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}",
+          "new": "if err != nil || result == nil || len(result.Fragments) < 1 {\n\t\t\treturn \"\", nil, nil, false, false\n\t\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.idn.invalid-owner-transfer",
+      "critical_invariant_ids": ["IDN-002"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestOwnerConstraintsRequireExactlyTheDeclaredActiveOwner",
+      "mutations": [
+        {
+          "id": "owner-constraint-trigger-removed",
+          "target": "db/migrations/000001_stage1_tenancy.sql",
+          "kind": "SQL_OWNER_INVARIANT_WEAKENING",
+          "expected": "RED",
+          "old": "CREATE CONSTRAINT TRIGGER organization_owner_matches_active_role\nAFTER INSERT OR UPDATE OR DELETE ON public.organization\nDEFERRABLE INITIALLY DEFERRED\nFOR EACH ROW EXECUTE FUNCTION app.enforce_organization_owner();\n",
+          "new": ""
+        },
+        {
+          "id": "owner-constraint-event-order",
+          "target": "db/migrations/000001_stage1_tenancy.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "CREATE CONSTRAINT TRIGGER organization_owner_matches_active_role\nAFTER INSERT OR UPDATE OR DELETE ON public.organization\n",
+          "new": "CREATE CONSTRAINT TRIGGER organization_owner_matches_active_role\nAFTER DELETE OR INSERT OR UPDATE ON public.organization\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.idn.org-admin-without-workspace-data",
+      "critical_invariant_ids": ["IDN-002"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestOrganizationAdminWithoutWorkspaceData",
+      "mutations": [
+        {
+          "id": "organization-admin-gains-workspace-read",
+          "target": "internal/policy/decision.go",
+          "kind": "GO_AUTHORIZATION_WEAKENING",
+          "expected": "RED",
+          "old": "if !request.Membership.Present {\n\t\treturn deny(ReasonWorkspaceMembershipAbsent)\n\t}",
+          "new": "if !request.Membership.Present {\n\t\treturn allow()\n\t}"
+        },
+        {
+          "id": "workspace-policy-explicit-boolean",
+          "target": "internal/policy/decision.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if !request.Membership.Present {\n\t\treturn deny(ReasonWorkspaceMembershipAbsent)\n\t}",
+          "new": "if request.Membership.Present == false {\n\t\treturn deny(ReasonWorkspaceMembershipAbsent)\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.extractive-generator-present",
+      "critical_invariant_ids": ["EXA-004"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "extractive-generator-schema-forbidden",
+          "schema_case_id": "contract.manifest.extractive-generator-present",
+          "target": "architecture/contracts/answer-manifest.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "      \"then\": {\n        \"properties\": {\n          \"verification_method\": { \"const\": \"BYTE_EXACT_CITATION\" },\n          \"claim_verifications\": { \"type\": \"array\", \"maxItems\": 0 }\n        },\n        \"not\": {\n          \"anyOf\": [\n            { \"properties\": { \"configured_profiles\": { \"type\": \"object\", \"properties\": { \"generation\": {} }, \"required\": [\"generation\"] } } },\n            { \"properties\": { \"configured_profiles\": { \"type\": \"object\", \"properties\": { \"verification\": {} }, \"required\": [\"verification\"] } } },\n            { \"properties\": { \"model_runs\": { \"type\": \"array\", \"contains\": {\n              \"type\": \"object\",\n              \"properties\": { \"purpose\": { \"enum\": [\"GENERATION\", \"VERIFICATION\"] } },\n              \"required\": [\"purpose\"]\n            } } } }\n          ]\n        }\n      }",
+          "new": "      \"then\": { \"properties\": { \"verification_method\": { \"const\": \"BYTE_EXACT_CITATION\" }, \"claim_verifications\": { \"type\": \"array\" } } },"
+        },
+        {
+          "id": "extractive-generator-schema-title-preserving",
+          "schema_case_id": "contract.manifest.extractive-generator-present",
+          "target": "architecture/contracts/answer-manifest.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Question Run Answer Manifest 2.0\",",
+          "new": "\"title\": \"Question Run Answer Manifest 2.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.extractive-mode-method-mismatch",
+      "critical_invariant_ids": ["EXA-001"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "extractive-mode-method-binding",
+          "schema_case_id": "contract.manifest.extractive-mode-method-mismatch",
+          "target": "architecture/contracts/answer-manifest.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "      \"then\": {\n        \"properties\": {\n          \"verification_method\": { \"const\": \"BYTE_EXACT_CITATION\" },\n          \"claim_verifications\": { \"type\": \"array\", \"maxItems\": 0 }\n        },\n        \"not\": {\n          \"anyOf\": [\n            { \"properties\": { \"configured_profiles\": { \"type\": \"object\", \"properties\": { \"generation\": {} }, \"required\": [\"generation\"] } } },\n            { \"properties\": { \"configured_profiles\": { \"type\": \"object\", \"properties\": { \"verification\": {} }, \"required\": [\"verification\"] } } },\n            { \"properties\": { \"model_runs\": { \"type\": \"array\", \"contains\": {\n              \"type\": \"object\",\n              \"properties\": { \"purpose\": { \"enum\": [\"GENERATION\", \"VERIFICATION\"] } },\n              \"required\": [\"purpose\"]\n            } } } }\n          ]\n        }\n      }",
+          "new": "      \"then\": { \"properties\": { \"verification_method\": { \"enum\": [\"BYTE_EXACT_CITATION\", \"SEMANTIC_VERIFIER\"] }, \"claim_verifications\": { \"type\": \"array\" } } },"
+        },
+        {
+          "id": "extractive-mode-schema-title-preserving",
+          "schema_case_id": "contract.manifest.extractive-mode-method-mismatch",
+          "target": "architecture/contracts/answer-manifest.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Question Run Answer Manifest 2.0\",",
+          "new": "\"title\": \"Question Run Answer Manifest 2.0 (mode contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.extractive-multiple-citations",
+      "critical_invariant_ids": ["EXA-003"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "extractive-single-citation-cardinality",
+          "schema_case_id": "contract.manifest.extractive-multiple-citations",
+          "target": "architecture/contracts/extractive-answer-plan.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"citation_numbers\": { \"type\": \"array\", \"minItems\": 1, \"maxItems\": 1, \"items\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 9007199254740991 } }",
+          "new": "\"citation_numbers\": { \"type\": \"array\", \"minItems\": 1, \"maxItems\": 2, \"items\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 9007199254740991 } }"
+        },
+        {
+          "id": "extractive-plan-schema-title-preserving",
+          "schema_case_id": "contract.manifest.extractive-multiple-citations",
+          "target": "architecture/contracts/extractive-answer-plan.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Extractive Answer Claim Plan 1.0\",",
+          "new": "\"title\": \"Extractive Answer Claim Plan 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "sandbox.job.container-creation-forbidden",
+      "critical_invariant_ids": ["SAN-001"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "sandbox-container-capability-deny",
+          "schema_case_id": "sandbox.job.container-creation-forbidden",
+          "target": "architecture/contracts/sandbox-job.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"container_creation_capability\": { \"const\": \"FORBIDDEN\" },",
+          "new": "\"container_creation_capability\": { \"enum\": [\"FORBIDDEN\", \"ALLOWED\"] },"
+        },
+        {
+          "id": "sandbox-job-schema-title-preserving",
+          "schema_case_id": "sandbox.job.container-creation-forbidden",
+          "target": "architecture/contracts/sandbox-job.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Sandbox Job Protocol 1.0\",",
+          "new": "\"title\": \"Sandbox Job Protocol 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "sandbox.lease.parser-type-mismatch",
+      "critical_invariant_ids": ["SAN-002"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "sandbox-lease-parser-binding",
+          "schema_case_id": "sandbox.lease.parser-type-mismatch",
+          "target": "architecture/contracts/sandbox-lease.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "{ \"if\": { \"properties\": { \"parser_type\": { \"const\": \"TEXT\" } }, \"required\": [\"parser_type\"] }, \"then\": { \"properties\": { \"registration\": { \"type\": \"object\", \"properties\": { \"parser_type\": { \"const\": \"TEXT\" } } } } } },",
+          "new": "{ \"if\": { \"properties\": { \"parser_type\": { \"const\": \"TEXT\" } }, \"required\": [\"parser_type\"] }, \"then\": { \"properties\": { \"registration\": { \"type\": \"object\", \"properties\": { \"parser_type\": { \"enum\": [\"TEXT\", \"HTML\"] } } } } } },"
+        },
+        {
+          "id": "sandbox-lease-schema-title-preserving",
+          "schema_case_id": "sandbox.lease.parser-type-mismatch",
+          "target": "architecture/contracts/sandbox-lease.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Sandbox Lease and Registration 1.0\",",
+          "new": "\"title\": \"Sandbox Lease and Registration 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "sandbox.outcome.identity-invalid",
+      "critical_invariant_ids": ["SAN-003"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "sandbox-confirmed-success-binding",
+          "schema_case_id": "sandbox.outcome.identity-invalid",
+          "target": "architecture/contracts/sandbox-outcome.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"status\": { \"const\": \"SUCCEEDED\" },",
+          "new": "\"status\": { \"enum\": [\"SUCCEEDED\", \"FAILED\"] },"
+        },
+        {
+          "id": "sandbox-outcome-schema-title-preserving",
+          "schema_case_id": "sandbox.outcome.identity-invalid",
+          "target": "architecture/contracts/sandbox-outcome.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Sandbox Outcome Protocol 1.0\",",
+          "new": "\"title\": \"Sandbox Outcome Protocol 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "sandbox.limit.kernel-observation-required",
+      "critical_invariant_ids": ["SAN-004"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "sandbox-kernel-observation-required",
+          "schema_case_id": "sandbox.limit.kernel-observation-required",
+          "target": "architecture/contracts/sandbox-limit-confirmation.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"observation_method\": { \"const\": \"KERNEL_CGROUP_NAMESPACE\" },",
+          "new": "\"observation_method\": { \"enum\": [\"KERNEL_CGROUP_NAMESPACE\", \"WORKER_SELF_REPORT\"] },"
+        },
+        {
+          "id": "sandbox-limit-schema-title-preserving",
+          "schema_case_id": "sandbox.limit.kernel-observation-required",
+          "target": "architecture/contracts/sandbox-limit-confirmation.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Sandbox Kernel Limit Confirmation 1.0\",",
+          "new": "\"title\": \"Sandbox Kernel Limit Confirmation 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.failure.no-silent-fallback",
+      "critical_invariant_ids": ["OPS-010"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "operator-fallback-deny",
+          "schema_case_id": "operator.failure.no-silent-fallback",
+          "target": "architecture/contracts/operator-failure.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"fallback_allowed\": { \"const\": false }",
+          "new": "\"fallback_allowed\": { \"enum\": [false, true] }"
+        },
+        {
+          "id": "operator-failure-schema-title-preserving",
+          "schema_case_id": "operator.failure.no-silent-fallback",
+          "target": "architecture/contracts/operator-failure.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Operator Failure Contract 1.0\",",
+          "new": "\"title\": \"Operator Failure Contract 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.failure.action-mapping",
+      "critical_invariant_ids": ["OPS-010"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "operator-action-code-binding",
+          "schema_case_id": "operator.failure.action-mapping",
+          "target": "architecture/contracts/operator-failure.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"action\": { \"const\": \"RETRY_AFTER_DEPENDENCY_RECOVERY\" }, \"metric_name\": { \"const\": \"operator_dependency_failures_total\" }",
+          "new": "\"action\": { \"enum\": [\"RETRY_AFTER_DEPENDENCY_RECOVERY\", \"FIX_MOUNT_AND_RESTART\"] }, \"metric_name\": { \"const\": \"operator_dependency_failures_total\" }"
+        },
+        {
+          "id": "operator-action-schema-title-preserving",
+          "schema_case_id": "operator.failure.action-mapping",
+          "target": "architecture/contracts/operator-failure.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Operator Failure Contract 1.0\",",
+          "new": "\"title\": \"Operator Failure Contract 1.0 (action metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.readiness.unavailable-is-red",
+      "critical_invariant_ids": ["OPS-011"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "operator-readiness-dependency-deny",
+          "schema_case_id": "operator.readiness.unavailable-is-red",
+          "target": "architecture/contracts/operator-readiness.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "\"not\": { \"type\": \"array\", \"contains\": { \"type\": \"object\", \"properties\": { \"status\": { \"enum\": [\"UNAVAILABLE\", \"INCOMPATIBLE\"] } }, \"required\": [\"status\"] } }",
+          "new": "\"type\": \"array\""
+        },
+        {
+          "id": "operator-readiness-schema-title-preserving",
+          "schema_case_id": "operator.readiness.unavailable-is-red",
+          "target": "architecture/contracts/operator-readiness.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\"title\": \"Operator Readiness Contract 1.0\",",
+          "new": "\"title\": \"Operator Readiness Contract 1.0 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.bootstrap.runtime-password-reconciliation",
+      "critical_invariant_ids": ["OPS-011"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestOperatorBootstrapReconcilesRuntimeCredentials",
+      "mutations": [
+        {
+          "id": "operator-bootstrap-existing-password-reconcile-removed",
+          "target": "internal/operator/bootstrap.go",
+          "kind": "OPERATOR_RUNTIME_CREDENTIAL_WEAKENING",
+          "expected": "RED",
+          "old": "if err := setRuntimeRolePassword(ctx, pool, role, passwords[role]); err != nil {",
+          "new": "if false {"
+        },
+        {
+          "id": "operator-bootstrap-password-bound-equivalent",
+          "target": "internal/operator/bootstrap.go",
+          "kind": "OPERATOR_RUNTIME_CREDENTIAL_PRESERVING",
+          "expected": "GREEN",
+          "old": "maximumPasswordLen = 128",
+          "new": "maximumPasswordLen = 128 + 0"
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.readiness.runtime-probes-distinct",
+      "critical_invariant_ids": ["OPS-011"],
+      "harness": "GO_UNIT",
+      "test_name": "TestReadinessRuntimeProbeSpecsAreDistinct",
+      "test_package": "./internal/operator",
+      "mutations": [
+        {
+          "id": "operator-readiness-worker-reuses-server-mount",
+          "target": "internal/operator/readiness.go",
+          "kind": "OPERATOR_RUNTIME_PROBE_WEAKENING",
+          "expected": "RED",
+          "old": "{rootPath: config.WorkerMountRoot, dependencyName: DependencyWorkerSecretMount, expectedRole: RoleWorker}",
+          "new": "{rootPath: config.ServerMountRoot, dependencyName: DependencyWorkerSecretMount, expectedRole: RoleWorker}"
+        },
+        {
+          "id": "operator-readiness-worker-reuses-app-role",
+          "target": "internal/operator/readiness.go",
+          "kind": "OPERATOR_RUNTIME_PROBE_WEAKENING",
+          "expected": "RED",
+          "old": "{rootPath: config.WorkerMountRoot, dependencyName: DependencyWorkerSecretMount, expectedRole: RoleWorker}",
+          "new": "{rootPath: config.WorkerMountRoot, dependencyName: DependencyWorkerSecretMount, expectedRole: RoleApplication}"
+        },
+        {
+          "id": "operator-readiness-worker-root-copy-equivalent",
+          "target": "internal/operator/readiness.go",
+          "kind": "OPERATOR_RUNTIME_PROBE_PRESERVING",
+          "expected": "GREEN",
+          "old": "{rootPath: config.WorkerMountRoot, dependencyName: DependencyWorkerSecretMount, expectedRole: RoleWorker}",
+          "new": "{rootPath: string([]byte(config.WorkerMountRoot)), dependencyName: DependencyWorkerSecretMount, expectedRole: RoleWorker}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.secrets.external-client-secret",
+      "critical_invariant_ids": ["OPS-010"],
+      "harness": "GO_UNIT",
+      "test_name": "TestGenerateSecretsKeysFromRejectsImportedClientSecretMismatch",
+      "test_package": "./internal/operator",
+      "mutations": [
+        {
+          "id": "operator-keys-from-client-secret-match-bypassed",
+          "target": "internal/operator/secrets.go",
+          "kind": "OPERATOR_EXTERNAL_SECRET_WEAKENING",
+          "expected": "RED",
+          "old": "if !bytes.Equal([]byte(secret), config.ClientSecret) {",
+          "new": "if !bytes.Equal(config.ClientSecret, config.ClientSecret) {"
+        },
+        {
+          "id": "operator-keys-from-client-secret-comparison-symmetric",
+          "target": "internal/operator/secrets.go",
+          "kind": "OPERATOR_EXTERNAL_SECRET_PRESERVING",
+          "expected": "GREEN",
+          "old": "if !bytes.Equal([]byte(secret), config.ClientSecret) {",
+          "new": "if !bytes.Equal(config.ClientSecret, []byte(secret)) {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.tenant.initial-owner-transaction",
+      "critical_invariant_ids": ["IDN-002"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestOperatorTenantProvisionRejectsPartialState",
+      "mutations": [
+        {
+          "id": "operator-tenant-partial-state-silently-accepted",
+          "target": "internal/operator/tenant.go",
+          "kind": "OPERATOR_TENANT_ATOMICITY_WEAKENING",
+          "expected": "RED",
+          "old": "if state.anyPresent() {\n\t\treturn false, MigrationIncompatible(\"tenant provisioning found an incomplete or conflicting owner state\")\n\t}",
+          "new": "if state.anyPresent() {\n\t\treturn false, nil\n\t}"
+        },
+        {
+          "id": "operator-tenant-partial-state-condition-equivalent",
+          "target": "internal/operator/tenant.go",
+          "kind": "OPERATOR_TENANT_ATOMICITY_PRESERVING",
+          "expected": "GREEN",
+          "old": "if state.anyPresent() {",
+          "new": "if state.anyPresent() == true {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "operator.tenant.genesis-audit",
+      "critical_invariant_ids": ["IDN-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestTenantAuditExactReplayRequiresGenesis",
+      "test_package": "./internal/operator",
+      "mutations": [
+        {
+          "id": "operator-tenant-non-genesis-audit-accepted",
+          "target": "internal/operator/tenant.go",
+          "kind": "OPERATOR_TENANT_AUDIT_WEAKENING",
+          "expected": "RED",
+          "old": "return event.sequence == 1 && event.previousEventHash == \"sha256:\"+strings.Repeat(\"0\", 64)",
+          "new": "return event.sequence >= 1 && event.previousEventHash != \"\""
+        },
+        {
+          "id": "operator-tenant-genesis-comparison-reordered",
+          "target": "internal/operator/tenant.go",
+          "kind": "OPERATOR_TENANT_AUDIT_PRESERVING",
+          "expected": "GREEN",
+          "old": "return event.sequence == 1 && event.previousEventHash == \"sha256:\"+strings.Repeat(\"0\", 64)",
+          "new": "return 1 == event.sequence && event.previousEventHash == \"sha256:\"+strings.Repeat(\"0\", 64)"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.operator.offline-artifact",
+      "critical_invariant_ids": ["LIC-008"],
+      "harness": "GO_UNIT",
+      "test_name": "TestOperatorArtifactSupplyContract",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "operator-artifact-migration-closure-widened",
+          "target": "deploy/images/Dockerfile.operator",
+          "kind": "OPERATOR_ARTIFACT_INPUT_WEAKENING",
+          "expected": "RED",
+          "old": "COPY db/migrations ./db/migrations",
+          "new": "COPY db/ ./db/"
+        },
+        {
+          "id": "operator-artifact-runtime-user-cannot-produce-mount",
+          "target": "deploy/images/Dockerfile.operator",
+          "kind": "OPERATOR_ARTIFACT_RUNTIME_WEAKENING",
+          "expected": "RED",
+          "old": "USER 0:0",
+          "new": "USER 65532:65532"
+        },
+        {
+          "id": "operator-artifact-toolchain-env-repeated",
+          "target": "deploy/images/Dockerfile.operator",
+          "kind": "OPERATOR_ARTIFACT_RUNTIME_PRESERVING",
+          "expected": "GREEN",
+          "old": "ENV GOTOOLCHAIN=local",
+          "new": "ENV GOTOOLCHAIN=local\nENV GOTOOLCHAIN=local"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.job.crash-recovery-reclaim",
+      "critical_invariant_ids": ["JOB-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestDurableJobCrashRecoveryReclaimsExpiredLease",
+      "mutations": [
+        {
+          "id": "job-reclaim-allows-budget-overrun",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_RETRY_BUDGET_WEAKENING",
+          "expected": "RED",
+          "old": "        IF expired.attempt_count < expired.max_attempts THEN\n            UPDATE public.job\n            SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n                available_at = transaction_timestamp(), last_error_code = 'LEASE_EXPIRED'",
+          "new": "        IF expired.attempt_count <= expired.max_attempts THEN\n            UPDATE public.job\n            SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n                available_at = transaction_timestamp(), last_error_code = 'LEASE_EXPIRED'"
+        },
+        {
+          "id": "job-reclaim-budget-additive-zero",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "        IF expired.attempt_count < expired.max_attempts THEN\n            UPDATE public.job\n            SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n                available_at = transaction_timestamp(), last_error_code = 'LEASE_EXPIRED'",
+          "new": "        IF expired.attempt_count + 0 < expired.max_attempts THEN\n            UPDATE public.job\n            SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n                available_at = transaction_timestamp(), last_error_code = 'LEASE_EXPIRED'"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.job.completion-requires-live-lease",
+      "critical_invariant_ids": ["JOB-002"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestDurableJobCompletionRequiresLiveLeaseAndCommit",
+      "mutations": [
+        {
+          "id": "job-complete-ignores-fencing-epoch",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_LEASE_FENCING_WEAKENING",
+          "expected": "RED",
+          "old": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;",
+          "new": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch IS NOT NULL\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;"
+        },
+        {
+          "id": "job-complete-epoch-additive-zero",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;",
+          "new": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value + 0\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.job.retry-budget-dead-letter",
+      "critical_invariant_ids": ["JOB-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestDurableJobRetryBudgetDeadLetters",
+      "mutations": [
+        {
+          "id": "job-failure-budget-overrun",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_RETRY_BUDGET_WEAKENING",
+          "expected": "RED",
+          "old": "    IF current_attempt < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value",
+          "new": "    IF current_attempt <= attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value"
+        },
+        {
+          "id": "job-failure-budget-additive-zero",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF current_attempt < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value",
+          "new": "    IF current_attempt + 0 < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.job.enqueue-idempotent",
+      "critical_invariant_ids": ["JOB-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestDurableJobEnqueueIsIdempotent",
+      "mutations": [
+        {
+          "id": "job-enqueue-conflict-rewrites-identity",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_IDEMPOTENCY_WEAKENING",
+          "expected": "RED",
+          "old": "    ON CONFLICT (organization_id, idempotency_key) DO NOTHING\n    RETURNING id INTO existing_id;",
+          "new": "    ON CONFLICT (organization_id, idempotency_key) DO UPDATE SET id = EXCLUDED.id\n    RETURNING id INTO existing_id;"
+        },
+        {
+          "id": "job-enqueue-conflict-noop-update",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    ON CONFLICT (organization_id, idempotency_key) DO NOTHING\n    RETURNING id INTO existing_id;",
+          "new": "    ON CONFLICT (organization_id, idempotency_key) DO UPDATE SET id = EXCLUDED.id WHERE false\n    RETURNING id INTO existing_id;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.job.lease-fencing-single-claim",
+      "critical_invariant_ids": ["JOB-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestDurableJobLeaseFencingAndSingleClaim",
+      "mutations": [
+        {
+          "id": "job-heartbeat-ignores-fencing-epoch",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_LEASE_FENCING_WEAKENING",
+          "expected": "RED",
+          "old": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp();",
+          "new": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch IS NOT NULL\n      AND lease_deadline > transaction_timestamp();"
+        },
+        {
+          "id": "job-heartbeat-epoch-additive-zero",
+          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp();",
+          "new": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value + 0\n      AND lease_deadline > transaction_timestamp();"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.outbox.rollback-gap",
+      "critical_invariant_ids": ["JOB-005"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestOutboxRollbackGaplessAndConcurrentSequence",
+      "mutations": [
+        {
+          "id": "outbox-sequence-skips-value",
+          "target": "db/migrations/000005_stage2_encrypted_artifact_outbox.sql",
+          "kind": "SQL_SEQUENCE_WEAKENING",
+          "expected": "RED",
+          "old": "    SET last_assigned_sequence = last_assigned_sequence + 1,\n        updated_at = transaction_timestamp()",
+          "new": "    SET last_assigned_sequence = last_assigned_sequence + 2,\n        updated_at = transaction_timestamp()"
+        },
+        {
+          "id": "outbox-sequence-additive-zero",
+          "target": "db/migrations/000005_stage2_encrypted_artifact_outbox.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    SET last_assigned_sequence = last_assigned_sequence + 1,\n        updated_at = transaction_timestamp()",
+          "new": "    SET last_assigned_sequence = last_assigned_sequence + 1 + 0,\n        updated_at = transaction_timestamp()"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.draft-not-active",
+      "critical_invariant_ids": ["SRC-015"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestSourceConnectionDraftChainIsFailClosedAndTenantReadable",
+      "mutations": [
+        {
+          "id": "source-connection-draft-runtime-insert-grant",
+          "target": "db/migrations/000006_stage2_source_connection_draft.sql",
+          "kind": "SQL_AUTHORITY_WEAKENING",
+          "expected": "RED",
+          "old": "GRANT SELECT ON TABLE\n    public.connector_capability_profile,\n    public.source_connection,\n    public.source_connection_revision,\n    public.source_connection_trust_record,\n    public.source_connection_trust_projection\nTO knowvault_app;",
+          "new": "GRANT SELECT, INSERT ON TABLE\n    public.connector_capability_profile,\n    public.source_connection,\n    public.source_connection_revision,\n    public.source_connection_trust_record,\n    public.source_connection_trust_projection\nTO knowvault_app;"
+        },
+        {
+          "id": "source-connection-tenant-policy-not-null",
+          "target": "db/migrations/000006_stage2_source_connection_draft.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "CREATE POLICY source_connection_tenant_isolation ON public.source_connection\n    USING (organization_id = app.current_organization_id());",
+          "new": "CREATE POLICY source_connection_tenant_isolation ON public.source_connection\n    USING (organization_id = app.current_organization_id() AND organization_id IS NOT NULL);"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.scope-draft-not-active",
+      "critical_invariant_ids": ["SRC-015"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestSourceScopeDraftChainIsTenantIsolatedAndFailClosed",
+      "mutations": [
+        {
+          "id": "source-scope-draft-runtime-insert-grant",
+          "target": "db/migrations/000007_stage2_source_scope_draft.sql",
+          "kind": "SQL_AUTHORITY_WEAKENING",
+          "expected": "RED",
+          "old": "GRANT SELECT ON TABLE\n    public.source_discovered_scope,\n    public.source_scope,\n    public.source_scope_revision,\n    public.source_scope_activation\nTO knowvault_app;",
+          "new": "GRANT SELECT, INSERT ON TABLE\n    public.source_discovered_scope,\n    public.source_scope,\n    public.source_scope_revision,\n    public.source_scope_activation\nTO knowvault_app;"
+        },
+        {
+          "id": "source-scope-tenant-policy-not-null",
+          "target": "db/migrations/000007_stage2_source_scope_draft.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "CREATE POLICY source_scope_tenant_isolation ON public.source_scope\n    USING (organization_id = app.current_organization_id());",
+          "new": "CREATE POLICY source_scope_tenant_isolation ON public.source_scope\n    USING (organization_id = app.current_organization_id() AND organization_id IS NOT NULL);"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.workspace-binding-missing-row",
+      "critical_invariant_ids": ["SRC-016"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestWorkspaceSourceSnapshotRejectsTupleAndCanonicalSetForgery",
+      "mutations": [
+        {
+          "id": "workspace-snapshot-set-validator-bypassed",
+          "target": "db/migrations/000008_stage2_workspace_source_snapshot.sql",
+          "kind": "SQL_CANONICAL_SET_WEAKENING",
+          "expected": "RED",
+          "old": "    IF expected_bindings <> actual_bindings THEN",
+          "new": "    IF false THEN"
+        },
+        {
+          "id": "workspace-snapshot-set-validator-distinct-equivalent",
+          "target": "db/migrations/000008_stage2_workspace_source_snapshot.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF expected_bindings <> actual_bindings THEN",
+          "new": "    IF NOT (expected_bindings = actual_bindings) THEN"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.workspace-binding-not-authority",
+      "critical_invariant_ids": ["SRC-016"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestWorkspaceSourceSnapshotIsTenantIsolatedReadOnlyAndInert",
+      "mutations": [
+        {
+          "id": "workspace-snapshot-runtime-update-grant",
+          "target": "db/migrations/000009_stage2_workspace_source_command_gate.sql",
+          "kind": "SQL_AUTHORITY_WEAKENING",
+          "expected": "RED",
+          "old": "GRANT SELECT, INSERT ON TABLE public.workspace_source, public.workspace_revision_source TO knowvault_app;",
+          "new": "GRANT SELECT, INSERT, UPDATE ON TABLE public.workspace_source, public.workspace_revision_source TO knowvault_app;"
+        },
+        {
+          "id": "workspace-snapshot-read-policy-not-null",
+          "target": "db/migrations/000009_stage2_workspace_source_command_gate.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "CREATE POLICY workspace_source_tenant_read ON public.workspace_source\n    FOR SELECT USING (\n        organization_id = app.current_organization_id()",
+          "new": "CREATE POLICY workspace_source_tenant_read ON public.workspace_source\n    FOR SELECT USING (\n        organization_id = app.current_organization_id()\n        AND organization_id IS NOT NULL"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.workspace-command-one-binding",
+      "critical_invariant_ids": ["SRC-017"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestWorkspaceSourceRemoveAndReAddReuseStableLineage",
+      "mutations": [
+        {
+          "id": "workspace-command-always-enables-target",
+          "target": "db/migrations/000009_stage2_workspace_source_command_gate.sql",
+          "kind": "SQL_COMMAND_TRANSITION_WEAKENING",
+          "expected": "RED",
+          "old": "    expected_enabled := NEW.operation = 'WORKSPACE_SOURCE_ADD';",
+          "new": "    expected_enabled := true;"
+        },
+        {
+          "id": "workspace-command-enabled-expression-equivalent",
+          "target": "db/migrations/000009_stage2_workspace_source_command_gate.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    expected_enabled := NEW.operation = 'WORKSPACE_SOURCE_ADD';",
+          "new": "    expected_enabled := (NEW.operation = 'WORKSPACE_SOURCE_ADD') OR false;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.workspace-repository-exact-v2",
+      "critical_invariant_ids": ["SRC-018"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestWorkspaceSourceRepositoryAddRemoveAndReenableStableLineage",
+      "mutations": [
+        {
+          "id": "workspace-repository-reenable-duplicates-lineage",
+          "target": "internal/workspace/repository/source_commands.go",
+          "kind": "GO_LINEAGE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif found < 0 {\n\t\t\tnextSources = append(nextSources, revisionSourceProjection{",
+          "new": "\t\tif found <= 0 {\n\t\t\tnextSources = append(nextSources, revisionSourceProjection{"
+        },
+        {
+          "id": "workspace-repository-lineage-index-equivalent",
+          "target": "internal/workspace/repository/source_commands.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tif found < 0 {\n\t\t\tnextSources = append(nextSources, revisionSourceProjection{",
+          "new": "\t\tif found == -1 {\n\t\t\tnextSources = append(nextSources, revisionSourceProjection{"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.scope-cutover-supersession",
+      "critical_invariant_ids": ["SRC-019"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestP2CutoverNarrowsScopeAndClosesRemovedObject",
+      "mutations": [
+        {
+          "id": "scope-cutover-revokes-candidate",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_CUTOVER_WEAKENING",
+          "expected": "RED",
+          "old": "    UPDATE public.source_scope_activation\n       SET status = 'REVOKED', changed_at = now(), activated_at = now()\n     WHERE organization_id = org AND source_scope_id = p_scope_id\n       AND source_scope_revision < p_new_revision AND revision = 1\n       AND status IN ('READY', 'SYNCING');",
+          "new": "    UPDATE public.source_scope_activation\n       SET status = 'REVOKED', changed_at = now(), activated_at = now()\n     WHERE organization_id = org AND source_scope_id = p_scope_id\n       AND source_scope_revision <= p_new_revision AND revision = 1\n       AND status IN ('READY', 'SYNCING');"
+        },
+        {
+          "id": "scope-cutover-revocation-predicate-equivalent",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    UPDATE public.source_scope_activation\n       SET status = 'REVOKED', changed_at = now(), activated_at = now()\n     WHERE organization_id = org AND source_scope_id = p_scope_id\n       AND source_scope_revision < p_new_revision AND revision = 1\n       AND status IN ('READY', 'SYNCING');",
+          "new": "    UPDATE public.source_scope_activation\n       SET status = 'REVOKED', changed_at = now(), activated_at = now()\n     WHERE organization_id = org AND source_scope_id = p_scope_id\n       AND source_scope_revision < p_new_revision\n       AND p_new_revision > source_scope_revision AND revision = 1\n       AND status IN ('READY', 'SYNCING');"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.scope-cutover-scan-safety",
+      "critical_invariant_ids": ["SRC-019"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestP2CutoverDBContainmentRefusesIncompleteCoverage",
+      "mutations": [
+        {
+          "id": "scope-cutover-ignores-complete-coverage",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_COVERAGE_GATE_WEAKENING",
+          "expected": "RED",
+          "old": "    PERFORM 1 FROM public.sync_run\n     WHERE organization_id = org AND id = p_coverage_run_id\n       AND source_scope_id = p_scope_id AND source_scope_revision = p_new_revision\n       AND mode = 'FULL' AND status = 'SUCCEEDED' AND coverage_complete;",
+          "new": "    PERFORM 1 FROM public.sync_run\n     WHERE organization_id = org AND id = p_coverage_run_id\n       AND source_scope_id = p_scope_id AND source_scope_revision = p_new_revision\n       AND mode = 'FULL' AND status = 'SUCCEEDED';"
+        },
+        {
+          "id": "scope-cutover-complete-coverage-equals-true",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    PERFORM 1 FROM public.sync_run\n     WHERE organization_id = org AND id = p_coverage_run_id\n       AND source_scope_id = p_scope_id AND source_scope_revision = p_new_revision\n       AND mode = 'FULL' AND status = 'SUCCEEDED' AND coverage_complete;",
+          "new": "    PERFORM 1 FROM public.sync_run\n     WHERE organization_id = org AND id = p_coverage_run_id\n       AND source_scope_id = p_scope_id AND source_scope_revision = p_new_revision\n       AND mode = 'FULL' AND status = 'SUCCEEDED' AND coverage_complete = true;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.scope-cutover-fencing",
+      "critical_invariant_ids": ["SRC-019"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestP2CutoverBeginSyncRefusesStaleRevision",
+      "mutations": [
+        {
+          "id": "scope-cutover-begin-sync-allows-stale",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_WORKER_FENCE_WEAKENING",
+          "expected": "RED",
+          "old": "    IF current_active IS NOT NULL AND current_active > p_revision THEN",
+          "new": "    IF current_active IS NOT NULL AND current_active < p_revision THEN"
+        },
+        {
+          "id": "scope-cutover-begin-sync-equality-fence-equivalent",
+          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF current_active IS NOT NULL AND current_active > p_revision THEN",
+          "new": "    IF current_active IS NOT NULL AND (current_active > p_revision OR (current_active = p_revision AND false)) THEN"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.folder-runtime-torn-read",
+      "critical_invariant_ids": ["SRC-012"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestFolderConnectorTornReadFailsClosed",
+      "mutations": [
+        {
+          "id": "folder-second-read-bypassed",
+          "target": "internal/connector/folder/folder.go",
+          "kind": "GO_STABLE_READ_WEAKENING",
+          "expected": "RED",
+          "old": "\tif notice, verifyErr := verifyStableSecondRead(root, canonical, before, digest, scope.maxFileBytes); verifyErr != nil || notice != nil {",
+          "new": "\tif false {"
+        },
+        {
+          "id": "folder-second-read-condition-equivalent",
+          "target": "internal/connector/folder/folder.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif notice, verifyErr := verifyStableSecondRead(root, canonical, before, digest, scope.maxFileBytes); verifyErr != nil || notice != nil {",
+          "new": "\tif notice, verifyErr := verifyStableSecondRead(root, canonical, before, digest, scope.maxFileBytes); verifyErr != nil || notice != nil || false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.source.folder-runtime-glob-parity",
+      "critical_invariant_ids": ["SRC-013"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestFolderConnectorGlobParityAndIsolation",
+      "mutations": [
+        {
+          "id": "folder-glob-exclude-precedence-removed",
+          "target": "internal/source/scopeglob/scopeglob.go",
+          "kind": "GO_SCOPE_BOUNDARY_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif matched {\n\t\t\treturn false, nil\n\t\t}",
+          "new": "\t\tif matched && false {\n\t\t\treturn false, nil\n\t\t}"
+        },
+        {
+          "id": "folder-glob-exclude-precedence-or-false",
+          "target": "internal/source/scopeglob/scopeglob.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tif matched {\n\t\t\treturn false, nil\n\t\t}",
+          "new": "\t\tif matched || false {\n\t\t\treturn false, nil\n\t\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.parser.worker-swap-mints-extraction",
+      "critical_invariant_ids": ["PAR-004"],
+      "harness": "GO_UNIT",
+      "test_name": "TestObserverIdentityChangesTheProfileHash",
+      "test_package": "./internal/source/canon",
+      "mutations": [
+        {
+          "id": "parser-profile-drops-observer-identity",
+          "target": "internal/source/canon/hash.go",
+          "kind": "GO_EXTRACTION_IDENTITY_WEAKENING",
+          "expected": "RED",
+          "old": "\tif p.Observer != nil {\n\t\tcomposite, err := CompositeArtifactHash(p.ArtifactHash, *p.Observer)",
+          "new": "\tif false {\n\t\tcomposite, err := CompositeArtifactHash(p.ArtifactHash, *p.Observer)"
+        },
+        {
+          "id": "parser-profile-observer-condition-equivalent",
+          "target": "internal/source/canon/hash.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif p.Observer != nil {\n\t\tcomposite, err := CompositeArtifactHash(p.ArtifactHash, *p.Observer)",
+          "new": "\tif p.Observer != nil && true {\n\t\tcomposite, err := CompositeArtifactHash(p.ArtifactHash, *p.Observer)"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.anchor.reversed-range",
+      "critical_invariant_ids": ["CAN-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestLineRangeBytesRejectsOutOfRange",
+      "test_package": "./internal/source/canon",
+      "mutations": [
+        {
+          "id": "canon-line-range-end-bound-removed",
+          "target": "internal/source/canon/text.go",
+          "kind": "GO_CANONICAL_RANGE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif lineStart < 1 || lineEnd < lineStart || lineEnd > len(lines) {",
+          "new": "\tif lineStart < 1 || lineEnd < lineStart {"
+        },
+        {
+          "id": "canon-line-range-bound-or-false",
+          "target": "internal/source/canon/text.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif lineStart < 1 || lineEnd < lineStart || lineEnd > len(lines) {",
+          "new": "\tif lineStart < 1 || lineEnd < lineStart || lineEnd > len(lines) || false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.runtime.listener-before-preflight",
+      "critical_invariant_ids": ["ARC-014"],
+      "harness": "GO_UNIT",
+      "test_name": "TestRuntimeClosedStateNeverEntersListener",
+      "test_package": "./internal/platform/composition",
+      "mutations": [
+        {
+          "id": "runtime-closed-state-listener-admitted",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_RUNTIME_LIFECYCLE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif state.phase != runtimeReady || state.runner == nil {",
+          "new": "\tif state.phase != runtimeReady && state.runner == nil {"
+        },
+        {
+          "id": "runtime-ready-state-guard-equivalent",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif state.phase != runtimeReady || state.runner == nil {",
+          "new": "\tif state.phase != runtimeReady || state.runner == nil || false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.runtime.startup-stage-diagnostic",
+      "critical_invariant_ids": ["ARC-014"],
+      "harness": "GO_UNIT",
+      "test_name": "TestStartupErrorLogArgsAlwaysEmitSafeCodeAndStage",
+      "test_package": "./cmd/server",
+      "mutations": [
+        {
+          "id": "startup-stage-log-key-removed",
+          "target": "cmd/server/main.go",
+          "kind": "GO_RUNTIME_DIAGNOSTIC_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\"startup_stage\", string(composition.StartupStageOf(err)),",
+          "new": "\t\t\"startup_phase\", string(composition.StartupStageOf(err)),"
+        },
+        {
+          "id": "startup-stage-value-collapsed-to-unknown",
+          "target": "cmd/server/main.go",
+          "kind": "GO_RUNTIME_DIAGNOSTIC_WEAKENING",
+          "expected": "RED",
+          "old": "string(composition.StartupStageOf(err))",
+          "new": "string(composition.StartupStageUnknown)"
+        },
+        {
+          "id": "startup-stage-value-leaks-error",
+          "target": "cmd/server/main.go",
+          "kind": "GO_RUNTIME_DIAGNOSTIC_WEAKENING",
+          "expected": "RED",
+          "old": "string(composition.StartupStageOf(err))",
+          "new": "err.Error()"
+        },
+        {
+          "id": "startup-stage-log-fields-reordered",
+          "target": "cmd/server/main.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\t\"error_code\", composition.CodeOf(err),\n\t\t\"startup_stage\", string(composition.StartupStageOf(err)),",
+          "new": "\t\t\"startup_stage\", string(composition.StartupStageOf(err)),\n\t\t\"error_code\", composition.CodeOf(err),"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.runtime.cleanup-before-drain",
+      "critical_invariant_ids": ["ARC-015"],
+      "harness": "GO_UNIT",
+      "test_name": "TestRuntimeCleanupStartsOnlyAfterRunnerReturns",
+      "test_package": "./internal/platform/composition",
+      "mutations": [
+        {
+          "id": "runtime-cleanup-before-runner-return",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_RUNTIME_DRAIN_ORDER_WEAKENING",
+          "expected": "RED",
+          "old": "\trunErr := runner.ListenAndServe(runContext)",
+          "new": "\t_ = closeReverse(state.cleanup)\n\trunErr := runner.ListenAndServe(runContext)"
+        },
+        {
+          "id": "runtime-runner-call-preserving",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\trunErr := runner.ListenAndServe(runContext)",
+          "new": "\trunErr := runner.ListenAndServe(runContext)\n\t_ = runErr"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.runtime.double-cleanup",
+      "critical_invariant_ids": ["ARC-015"],
+      "harness": "GO_UNIT",
+      "test_name": "TestCleanupContinuesAfterFailureAndReturnsContentFreeCode",
+      "test_package": "./internal/platform/composition",
+      "mutations": [
+        {
+          "id": "runtime-cleanup-index-underflow",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_RUNTIME_CLEANUP_WEAKENING",
+          "expected": "RED",
+          "old": "\tfor index := len(steps) - 1; index >= 0; index-- {",
+          "new": "\tfor index := len(steps) - 1; index >= -1; index-- {"
+        },
+        {
+          "id": "runtime-cleanup-index-step-equivalent",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tfor index := len(steps) - 1; index >= 0; index-- {",
+          "new": "\tfor index := len(steps) - 1; index >= 0; index -= 1 {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.canonicalization.wrong-hash",
+      "critical_invariant_ids": ["CAN-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestCanonicalJSONUsesExactJCSAndHash",
+      "test_package": "./internal/source/canon",
+      "mutations": [
+        {
+          "id": "canon-jcs-normalization-removed",
+          "target": "internal/source/canon/hash.go",
+          "kind": "GO_CANONICAL_HASH_WEAKENING",
+          "expected": "RED",
+          "old": "\treturn []byte(canonical), nil",
+          "new": "\treturn append([]byte{' '}, []byte(canonical)...), nil"
+        },
+        {
+          "id": "canon-jcs-copy-preserving",
+          "target": "internal/source/canon/hash.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\treturn []byte(canonical), nil",
+          "new": "\treturn append([]byte(nil), []byte(canonical)...), nil"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.crypto.aad-type-or-field-swap",
+      "critical_invariant_ids": ["CRY-005"],
+      "harness": "GO_UNIT",
+      "test_name": "TestArtifactAADBindsResourceType",
+      "test_package": "./internal/platform/artifactcrypto",
+      "mutations": [
+        {
+          "id": "artifact-aad-resource-type-omitted",
+          "target": "internal/platform/artifactcrypto/aad.go",
+          "kind": "GO_AAD_BINDING_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tResourceType:   owner.resourceType,\n\t\tSchemaVersion:  AADSchemaVersion,",
+          "new": "\t\tResourceType:   \"\",\n\t\tSchemaVersion:  AADSchemaVersion,"
+        },
+        {
+          "id": "artifact-aad-resource-type-copy-preserving",
+          "target": "internal/platform/artifactcrypto/aad.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tResourceType:   owner.resourceType,\n\t\tSchemaVersion:  AADSchemaVersion,",
+          "new": "\t\tResourceType:   owner.resourceType + \"\",\n\t\tSchemaVersion:  AADSchemaVersion,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.question.idempotency-body-conflict",
+      "critical_invariant_ids": ["PROD-008"],
+      "harness": "GO_UNIT",
+      "test_name": "TestWorkspaceCommandHashesAreTypedCanonicalAndUnicodeNormalized",
+      "test_package": "./internal/workspace/repository",
+      "mutations": [
+        {
+          "id": "workspace-command-body-deduplication",
+          "target": "internal/workspace/repository/idempotency.go",
+          "kind": "GO_IDEMPOTENCY_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tName: norm.NFC.String(request.Name), Description: norm.NFC.String(request.Description),\n\t\tRetentionPolicyID: request.RetentionPolicyID,",
+          "new": "\t\tName: norm.NFC.String(request.Name), Description: \"\",\n\t\tRetentionPolicyID: request.RetentionPolicyID,"
+        },
+        {
+          "id": "workspace-command-body-hash-copy-preserving",
+          "target": "internal/workspace/repository/idempotency.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tName: norm.NFC.String(request.Name), Description: norm.NFC.String(request.Description),\n\t\tRetentionPolicyID: request.RetentionPolicyID,",
+          "new": "\t\tName: norm.NFC.String(request.Name), Description: norm.NFC.String(request.Description) + \"\",\n\t\tRetentionPolicyID: request.RetentionPolicyID,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.source.folder-path-escape",
+      "critical_invariant_ids": ["SRC-007"],
+      "harness": "GO_UNIT",
+      "test_name": "TestPathParityVectors",
+      "test_package": "./internal/source/pathcanon",
+      "mutations": [
+        {
+          "id": "path-root-escape-accepted",
+          "target": "internal/source/pathcanon/pathcanon.go",
+          "kind": "GO_PATH_CONTAINMENT_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif segment == \"\" || segment == \".\" || segment == \"..\" {",
+          "new": "\t\tif segment == \".\" || segment == \"..\" {"
+        },
+        {
+          "id": "path-root-escape-guard-equivalent",
+          "target": "internal/source/pathcanon/pathcanon.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tif segment == \"\" || segment == \".\" || segment == \"..\" {",
+          "new": "\t\tif segment == \"\" || segment == \".\" || segment == \"..\" || false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.extraction-format-mismatch",
+      "critical_invariant_ids": ["PAR-003"],
+      "harness": "GO_UNIT",
+      "test_name": "TestParseRejectsDispatchMismatch",
+      "test_package": "./internal/source/docparser",
+      "mutations": [
+        {
+          "id": "parser-observed-format-dispatch-check-removed",
+          "target": "internal/source/docparser/docparser.go",
+          "kind": "GO_PARSER_FORMAT_WEAKENING",
+          "expected": "RED",
+          "old": "\tif wire.ResultVersion != ResultVersion || wire.ObservedFormat != dispatched {",
+          "new": "\tif wire.ResultVersion != ResultVersion {"
+        },
+        {
+          "id": "parser-observed-format-dispatch-check-equivalent",
+          "target": "internal/source/docparser/docparser.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif wire.ResultVersion != ResultVersion || wire.ObservedFormat != dispatched {",
+          "new": "\tif wire.ResultVersion != ResultVersion || (wire.ObservedFormat != dispatched && true) {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.anchor.missing-or-invalid-exact-anchor",
+      "critical_invariant_ids": ["EVD-001"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "anchor-offset-unit-codepoint-accepted",
+          "schema_case_id": "anchor.offset-unit.wrong",
+          "target": "architecture/contracts/source-anchor.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "        \"kind\": { \"const\": \"PDF\" },\n        \"page\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 9007199254740991 },\n        \"text_start\": { \"type\": \"integer\", \"minimum\": 0, \"maximum\": 9007199254740991 },\n        \"text_end\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 9007199254740991 },\n        \"offset_unit\": { \"const\": \"UTF8_BYTE\" },",
+          "new": "        \"kind\": { \"const\": \"PDF\" },\n        \"page\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 9007199254740991 },\n        \"text_start\": { \"type\": \"integer\", \"minimum\": 0, \"maximum\": 9007199254740991 },\n        \"text_end\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 9007199254740991 },\n        \"offset_unit\": { \"const\": \"UNICODE_CODE_POINT\" },"
+        },
+        {
+          "id": "anchor-schema-title-preserving",
+          "schema_case_id": "anchor.offset-unit.wrong",
+          "target": "architecture/contracts/source-anchor.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "  \"title\": \"Source Anchor 1.3\",",
+          "new": "  \"title\": \"Source Anchor 1.3 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.source.scope-unknown-field",
+      "critical_invariant_ids": ["SRC-004"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "source-scope-top-level-unknown-field-accepted",
+          "schema_case_id": "contract.source.scope-unknown-field",
+          "target": "architecture/contracts/source-scope.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "  \"additionalProperties\": false,\n  \"required\": [\n    \"schema_version\",",
+          "new": "  \"additionalProperties\": true,\n  \"required\": [\n    \"schema_version\","
+        },
+        {
+          "id": "source-scope-schema-title-preserving",
+          "schema_case_id": "contract.source.scope-unknown-field",
+          "target": "architecture/contracts/source-scope.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "  \"title\": \"Immutable Source Scope Revision 1.2\",",
+          "new": "  \"title\": \"Immutable Source Scope Revision 1.2 (contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.source.git-ref-expression",
+      "critical_invariant_ids": ["SRC-008"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "source-scope-git-ref-expression-accepted",
+          "schema_case_id": "contract.source.git-ref-expression",
+          "target": "architecture/contracts/source-scope.schema.json",
+          "kind": "JSON_SCHEMA_WEAKENING",
+          "expected": "RED",
+          "old": "          \"pattern\": \"^(?!-)(?!HEAD$)(?!.*(?:\\\\.\\\\.|@\\\\{|[~^:*?\\\\[\\\\]\\\\\\\\\\\\s]))(?!.*(?:^|/)\\\\.)(?!.*\\\\.lock(?:/|$))(?!.*//)(?!.*[./]$)[A-Za-z0-9._/-]+$\"",
+          "new": "          \"pattern\": \".*\""
+        },
+        {
+          "id": "source-scope-git-schema-title-preserving",
+          "schema_case_id": "contract.source.git-ref-expression",
+          "target": "architecture/contracts/source-scope.schema.json",
+          "kind": "JSON_SCHEMA_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "  \"title\": \"Immutable Source Scope Revision 1.2\",",
+          "new": "  \"title\": \"Immutable Source Scope Revision 1.2 (git contract metadata)\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.audit.event-body-tamper",
+      "critical_invariant_ids": ["AUD-004"],
+      "harness": "GO_UNIT",
+      "test_name": "TestBuildMatchesIndependentAuditGolden",
+      "test_package": "./internal/audit",
+      "mutations": [
+        {
+          "id": "audit-event-hash-not-derived-from-body",
+          "target": "internal/audit/audit.go",
+          "kind": "GO_AUDIT_INTEGRITY_WEAKENING",
+          "expected": "RED",
+          "old": "\tevent.EventHash = hash(canonical)",
+          "new": "\tevent.EventHash = hash(nil)"
+        },
+        {
+          "id": "audit-event-hash-copy-preserving",
+          "target": "internal/audit/audit.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tevent.EventHash = hash(canonical)",
+          "new": "\tevent.EventHash = hash(append([]byte(nil), canonical...))"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.extraction.active-pointer-reextraction",
+      "critical_invariant_ids": ["VER-007"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS2bOfficeFolderExtraction",
+      "mutations": [
+        {
+          "id": "extraction-publication-keeps-historical-active-pointer",
+          "target": "db/migrations/000014_stage2_catalog_extraction_evidence.sql",
+          "kind": "SQL_EXTRACTION_LIFECYCLE_WEAKENING",
+          "expected": "RED",
+          "old": "    ON CONFLICT (organization_id, source_version_id) DO UPDATE\n        SET extraction_id = EXCLUDED.extraction_id,\n            activation_revision = public.source_version_active_extraction.activation_revision + 1,\n            activated_at = now();",
+          "new": "    ON CONFLICT (organization_id, source_version_id) DO NOTHING;"
+        },
+        {
+          "id": "extraction-publication-activation-revision-additive-zero",
+          "target": "db/migrations/000014_stage2_catalog_extraction_evidence.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    ON CONFLICT (organization_id, source_version_id) DO UPDATE\n        SET extraction_id = EXCLUDED.extraction_id,\n            activation_revision = public.source_version_active_extraction.activation_revision + 1,\n            activated_at = now();",
+          "new": "    ON CONFLICT (organization_id, source_version_id) DO UPDATE\n        SET extraction_id = EXCLUDED.extraction_id,\n            activation_revision = public.source_version_active_extraction.activation_revision + 1 + 0,\n            activated_at = now();"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.extraction.purged-disclosure",
+      "critical_invariant_ids": ["FRESH-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS1ePurgeFailCloseAndDisclosureGate",
+      "mutations": [
+        {
+          "id": "purge-fail-close-keeps-active-pointer",
+          "target": "db/migrations/000015_stage2_source_version_purge.sql",
+          "kind": "SQL_PURGE_DISCLOSURE_WEAKENING",
+          "expected": "RED",
+          "old": "    DELETE FROM public.source_version_active_extraction\n     WHERE organization_id = p_organization_id AND source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.source_version_active_extraction\n     WHERE false;"
+        },
+        {
+          "id": "purge-fail-close-pointer-predicate-equivalent",
+          "target": "db/migrations/000015_stage2_source_version_purge.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    DELETE FROM public.source_version_active_extraction\n     WHERE organization_id = p_organization_id AND source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.source_version_active_extraction\n     WHERE organization_id = p_organization_id AND source_version_id = p_version_id AND true;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.extraction.purge-race-fenced",
+      "critical_invariant_ids": ["VER-008"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS1ePurgeStaleWorkContainment",
+      "mutations": [
+        {
+          "id": "purge-race-keeps-active-pointer",
+          "target": "db/migrations/000015_stage2_source_version_purge.sql",
+          "kind": "SQL_PURGE_FENCE_WEAKENING",
+          "expected": "RED",
+          "old": "    DELETE FROM public.source_version_active_extraction\n     WHERE organization_id = p_organization_id AND source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.source_version_active_extraction\n     WHERE false;"
+        },
+        {
+          "id": "purge-race-pointer-predicate-equivalent",
+          "target": "db/migrations/000015_stage2_source_version_purge.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    DELETE FROM public.source_version_active_extraction\n     WHERE organization_id = p_organization_id AND source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.source_version_active_extraction\n     WHERE organization_id = p_organization_id AND source_version_id = p_version_id AND true;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.scope.overlap-duplicate-object",
+      "critical_invariant_ids": ["VER-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS1dOverlappingScopes",
+      "mutations": [
+        {
+          "id": "overlap-object-identity-digest-mismatch",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SCOPE_IDENTITY_WEAKENING",
+          "expected": "RED",
+          "old": "err := tx.QueryRow(ctx, `SELECT id FROM public.source_object\n\t\tWHERE organization_id=$1 AND connection_id=$2 AND digest_key_version=$3 AND external_object_id_digest=$4`,",
+          "new": "err := tx.QueryRow(ctx, `SELECT id FROM public.source_object\n\t\tWHERE organization_id=$1 AND connection_id=$2 AND digest_key_version=$3 AND external_object_id_digest<>$4`,"
+        },
+        {
+          "id": "overlap-object-identity-digest-condition-equivalent",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "err := tx.QueryRow(ctx, `SELECT id FROM public.source_object\n\t\tWHERE organization_id=$1 AND connection_id=$2 AND digest_key_version=$3 AND external_object_id_digest=$4`,",
+          "new": "err := tx.QueryRow(ctx, `SELECT id FROM public.source_object\n\t\tWHERE organization_id=$1 AND connection_id=$2 AND digest_key_version=$3 AND external_object_id_digest=$4 AND true`,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.runtime.handler-close-capability",
+      "critical_invariant_ids": ["ARC-016"],
+      "harness": "GO_UNIT",
+      "test_name": "TestRuntimeConcurrentCloseCancelsRunAndCleansExactlyOnce",
+      "test_package": "./internal/platform/composition",
+      "mutations": [
+        {
+          "id": "runtime-close-cleans-twice",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_RUNTIME_CLOSE_WEAKENING",
+          "expected": "RED",
+          "old": "\tcleanup := state.cleanup\n\tstate.cleanup = nil\n\tstate.mu.Unlock()\n\n\tcleanupErr := closeReverse(cleanup)\n",
+          "new": "\tcleanup := state.cleanup\n\tstate.cleanup = nil\n\tstate.mu.Unlock()\n\n\tcleanupErr := closeReverse(cleanup)\n\tcleanupErr = closeReverse(cleanup)\n"
+        },
+        {
+          "id": "runtime-cleanup-slice-copy-equivalent",
+          "target": "internal/platform/composition/runtime.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "cleanup: append([]cleanupFunc(nil), cleanup...)",
+          "new": "cleanup: append(make([]cleanupFunc, 0, len(cleanup)), cleanup...)"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.ci.required-command-echo-only",
+      "critical_invariant_ids": ["CI-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestRequiredCiWorkflowGuardRejectsCommandWeakenings",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "ci-checker-command-demoted-to-echo",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_COMMAND_WEAKENING",
+          "expected": "RED",
+          "old": "go run ./scripts/check-architecture.go -root /src\n",
+          "new": "echo 'go run ./scripts/check-architecture.go -root /src'\n"
+        },
+        {
+          "id": "ci-checker-command-preserving-suffix",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_COMMAND_PRESERVING",
+          "expected": "GREEN",
+          "old": "go run ./scripts/check-architecture.go -root /src\n",
+          "new": "go run ./scripts/check-architecture.go -root /src && echo architecture-verified\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.ci.r3-exact-execution",
+      "critical_invariant_ids": ["CI-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestR3E2EWorkflowRequiresExactExecutionProof",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "r3-e2e-test-renamed",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "-run=^TestE2ER3FullLoop$",
+          "new": "-run=^TestE2ER3FullLoopRenamed$"
+        },
+        {
+          "id": "r3-e2e-test-command-removed",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "go test -mod=readonly -json -tags e2e ./tests/e2e -run=^TestE2ER3FullLoop$ -count=1 -timeout 30m 2>&1 | tee /tmp/knowvault-r3-go-test.json",
+          "new": "echo r3-test-removed"
+        },
+        {
+          "id": "r3-e2e-test-selector-unanchored",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "-run=^TestE2ER3FullLoop$",
+          "new": "-run TestE2ER3FullLoop"
+        },
+        {
+          "id": "r3-e2e-json-verifier-removed",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_VERIFIER_WEAKENING",
+          "expected": "RED",
+          "old": "go run ./scripts/check-architecture.go -verify-e2e-json /tmp/knowvault-r3-go-test.json -verify-e2e-package knowvault.local/verified-workspace/tests/e2e -verify-e2e-test TestE2ER3FullLoop",
+          "new": "echo r3-verifier-removed"
+        },
+        {
+          "id": "r3-e2e-wrong-package-binding",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_VERIFIER_WEAKENING",
+          "expected": "RED",
+          "old": "-verify-e2e-package knowvault.local/verified-workspace/tests/e2e",
+          "new": "-verify-e2e-package wrong/package"
+        },
+        {
+          "id": "r3-e2e-json-output-removed",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_VERIFIER_WEAKENING",
+          "expected": "RED",
+          "old": " -json -tags e2e",
+          "new": " -tags e2e"
+        },
+        {
+          "id": "r3-e2e-producer-status-removed",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "test_status=${PIPESTATUS[0]}\n",
+          "new": "test_status=0\n"
+        },
+        {
+          "id": "r3-e2e-producer-status-capture-commented",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "test_status=${PIPESTATUS[0]}\n",
+          "new": "# test_status=${PIPESTATUS[0]}\n"
+        },
+        {
+          "id": "r3-e2e-producer-status-capture-echoed-forced",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "test_status=${PIPESTATUS[0]}\n",
+          "new": "echo test_status=${PIPESTATUS[0]}\ntest_status=0\n"
+        },
+        {
+          "id": "r3-e2e-producer-status-overwritten",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "test_status=${PIPESTATUS[0]}\n",
+          "new": "test_status=${PIPESTATUS[0]}\ntest_status=0\n"
+        },
+        {
+          "id": "r3-e2e-command-before-producer-status-capture",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "test_status=${PIPESTATUS[0]}\n",
+          "new": "true\ntest_status=${PIPESTATUS[0]}\n"
+        },
+        {
+          "id": "r3-e2e-status-assertion-removed",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_WEAKENING",
+          "expected": "RED",
+          "old": "test \"$test_status\" -eq 0\n",
+          "new": "true\n"
+        },
+        {
+          "id": "r3-e2e-producer-status-preserved",
+          "target": ".github/workflows/architecture.yml",
+          "kind": "CI_R3_EXECUTION_PRESERVING",
+          "expected": "GREEN",
+          "old": "set -o pipefail\n",
+          "new": "set -o pipefail && set -o pipefail\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.protection.governance-inventory",
+      "critical_invariant_ids": [
+        "ARC-006"
+      ],
+      "harness": "GO_UNIT",
+      "test_name": "TestProtectedGovernanceFilesAreCodeownedAndHashed",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "protected-e2e-codeowner-removed",
+          "target": ".github/CODEOWNERS",
+          "kind": "GOVERNANCE_PROTECTION_WEAKENING",
+          "expected": "RED",
+          "old": "/tests/e2e/** @avangerus\n",
+          "new": ""
+        },
+        {
+          "id": "protected-e2e-codeowner-commented",
+          "target": ".github/CODEOWNERS",
+          "kind": "GOVERNANCE_PROTECTION_WEAKENING",
+          "expected": "RED",
+          "old": "/tests/e2e/** @avangerus",
+          "new": "# /tests/e2e/** @avangerus"
+        },
+        {
+          "id": "protected-e2e-guardrail-removed",
+          "target": "architecture/guardrails.yaml",
+          "kind": "GOVERNANCE_PROTECTION_WEAKENING",
+          "expected": "RED",
+          "old": "  - tests/e2e/**\n",
+          "new": ""
+        },
+        {
+          "id": "protected-default-owner-preserved",
+          "target": ".github/CODEOWNERS",
+          "kind": "GOVERNANCE_PROTECTION_PRESERVING",
+          "expected": "GREEN",
+          "old": "\n* @avangerus\n",
+          "new": "\n* @avangerus @avangerus\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.command.closed-inventory",
+      "critical_invariant_ids": ["ARC-006"],
+      "harness": "GO_UNIT",
+      "test_name": "TestCommandSurfaceUsesClosedGuardrailInventory",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "command-operator-removed",
+          "target": "architecture/guardrails.yaml",
+          "kind": "COMMAND_INVENTORY_WEAKENING",
+          "expected": "RED",
+          "old": "  - knowvault-operator\n",
+          "new": ""
+        },
+        {
+          "id": "command-unknown-admitted",
+          "target": "architecture/guardrails.yaml",
+          "kind": "COMMAND_INVENTORY_WEAKENING",
+          "expected": "RED",
+          "old": "  - knowvault-operator\n",
+          "new": "  - knowvault-unknown\n"
+        },
+        {
+          "id": "command-inventory-reordered",
+          "target": "architecture/guardrails.yaml",
+          "kind": "COMMAND_INVENTORY_PRESERVING",
+          "expected": "GREEN",
+          "old": "  - knowvault-server\n  - knowvault-worker\n",
+          "new": "  - knowvault-worker\n  - knowvault-server\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.license.unknown-or-forbidden",
+      "critical_invariant_ids": ["LIC-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestLicensePolicyGuardRejectsReviewedEntryRemoval",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "license-reviewed-entry-removed",
+          "target": "architecture/licenses.yaml",
+          "kind": "LICENSE_POLICY_WEAKENING",
+          "expected": "RED",
+          "old": "  - name: fast-uri\n    status: ACTIVE\n    role: transitive contract-test URI implementation\n    license: BSD-3-Clause\n    source: https://github.com/fastify/fast-uri/blob/main/LICENSE\n",
+          "new": ""
+        },
+        {
+          "id": "license-adjacent-entries-equivalent",
+          "target": "architecture/licenses.yaml",
+          "kind": "LICENSE_POLICY_PRESERVING",
+          "expected": "GREEN",
+          "old": "  - name: fast-deep-equal\n    status: ACTIVE\n    role: transitive contract-test dependency of Ajv\n    license: MIT\n    source: https://github.com/epoberezkin/fast-deep-equal/blob/master/LICENSE\n  - name: fast-uri\n    status: ACTIVE\n    role: transitive contract-test URI implementation\n    license: BSD-3-Clause\n    source: https://github.com/fastify/fast-uri/blob/main/LICENSE\n",
+          "new": "  - name: fast-uri\n    status: ACTIVE\n    role: transitive contract-test URI implementation\n    license: BSD-3-Clause\n    source: https://github.com/fastify/fast-uri/blob/main/LICENSE\n  - name: fast-deep-equal\n    status: ACTIVE\n    role: transitive contract-test dependency of Ajv\n    license: MIT\n    source: https://github.com/epoberezkin/fast-deep-equal/blob/master/LICENSE\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.supply.non-exact-version",
+      "critical_invariant_ids": ["LIC-008"],
+      "harness": "GO_UNIT",
+      "test_name": "TestSupplyChainGuardRejectsNonExactGoModuleVersions",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "go-module-version-shortened",
+          "target": "go.mod",
+          "kind": "GO_SUPPLY_CHAIN_WEAKENING",
+          "expected": "RED",
+          "old": "golang.org/x/net v0.57.0\n",
+          "new": "golang.org/x/net v0.57\n"
+        },
+        {
+          "id": "go-module-require-order-equivalent",
+          "target": "go.mod",
+          "kind": "GO_SUPPLY_CHAIN_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tgithub.com/jackc/pgx/v5 v5.10.0\n\tgolang.org/x/net v0.57.0\n",
+          "new": "\tgolang.org/x/net v0.57.0\n\tgithub.com/jackc/pgx/v5 v5.10.0\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.extractive-claim-not-in-context",
+      "critical_invariant_ids": ["EXA-002"],
+      "harness": "SCHEMA_SUITE",
+      "test_name": "SchemaContractSuite",
+      "mutations": [
+        {
+          "id": "extractive-excerpt-length-tightened",
+          "target": "architecture/contracts/extractive-answer-plan.schema.json",
+          "kind": "JSON_SCHEMA_CONTRACT_WEAKENING",
+          "expected": "RED",
+          "old": "          \"cited_excerpt\": { \"type\": \"string\", \"minLength\": 1, \"maxLength\": 2000, \"pattern\": \"^[^\\\\r\\\\n]*$\" },",
+          "new": "          \"cited_excerpt\": { \"type\": \"string\", \"minLength\": 1, \"maxLength\": 32, \"pattern\": \"^[^\\\\r\\\\n]*$\" },",
+          "schema_case_id": "contract.manifest.extractive-claim-not-in-context"
+        },
+        {
+          "id": "extractive-schema-title-equivalent",
+          "target": "architecture/contracts/extractive-answer-plan.schema.json",
+          "kind": "JSON_SCHEMA_PRESERVING",
+          "expected": "GREEN",
+          "old": "  \"title\": \"Extractive Answer Claim Plan 1.0\",",
+          "new": "  \"title\": \"Extractive Answer Claim Plan 1.0 (extractive)\",",
+          "schema_case_id": "contract.manifest.extractive-claim-not-in-context"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.extraction-provenance-mismatch",
+      "critical_invariant_ids": ["CIT-005"],
+      "harness": "GO_UNIT",
+      "test_name": "TestProfileBytesGoldenWithoutObserver",
+      "test_package": "./internal/source/canon",
+      "mutations": [
+        {
+          "id": "CIT-005-extractor-version-dropped-from-profile-identity",
+          "target": "internal/source/canon/hash.go",
+          "kind": "WEAKENING_EXTRACTION_IDENTITY",
+          "expected": "RED",
+          "old": "\t\t\tVersion:               p.ExtractorVer,",
+          "new": "\t\t\tVersion:               \"\","
+        },
+        {
+          "id": "CIT-005-extractor-version-identity-string-noop",
+          "target": "internal/source/canon/hash.go",
+          "kind": "PRESERVING_EXTRACTION_IDENTITY",
+          "expected": "GREEN",
+          "old": "\t\t\tVersion:               p.ExtractorVer,",
+          "new": "\t\t\tVersion:               p.ExtractorVer + \"\","
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.nonactive-extraction-context",
+      "critical_invariant_ids": ["SRCH-007"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS1dAuthorizedEvidenceRead",
+      "mutations": [
+        {
+          "id": "SRCH-007-version-retention-queryability-fence-dropped",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_RETENTION_FENCE_WEAKENING",
+          "expected": "RED",
+          "old": "          AND vr.state = 'ACTIVE' AND vr.queryable",
+          "new": "          AND vr.state = 'ACTIVE'"
+        },
+        {
+          "id": "SRCH-007-version-retention-queryability-fence-reorder",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "          AND vr.state = 'ACTIVE' AND vr.queryable",
+          "new": "          AND vr.queryable AND vr.state = 'ACTIVE'"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.source.workspace-managed-connector-trust-mismatch",
+      "critical_invariant_ids": ["SRC-014"],
+      "harness": "GO_UNIT",
+      "test_name": "TestResolveActivationGateRefusesUntrustedOrNonSyncingScope",
+      "test_package": "./internal/ingestion",
+      "mutations": [
+        {
+          "id": "SRC-014-activation-trust-check-dropped",
+          "target": "internal/ingestion/handler.go",
+          "kind": "WEAKENING_ACTIVATION_TRUST",
+          "expected": "RED",
+          "old": "\tif activationStatus != \"SYNCING\" || !trustVerified {",
+          "new": "\tif activationStatus != \"SYNCING\" {"
+        },
+        {
+          "id": "SRC-014-activation-trust-condition-reordered",
+          "target": "internal/ingestion/handler.go",
+          "kind": "PRESERVING_ACTIVATION_TRUST",
+          "expected": "GREEN",
+          "old": "\tif activationStatus != \"SYNCING\" || !trustVerified {",
+          "new": "\tif !trustVerified || activationStatus != \"SYNCING\" {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.extraction.superseded-freshness",
+      "critical_invariant_ids": ["FRESH-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS1dSupersededVersionCannotResurrect",
+      "test_package": "./tests/integration/postgres",
+      "mutations": [
+        {
+          "id": "FRESH-003-superseded-version-resurrected",
+          "target": "db/migrations/000014_stage2_catalog_extraction_evidence.sql",
+          "kind": "SQL_LIFECYCLE_WEAKENING",
+          "expected": "RED",
+          "old": "        OR (OLD.state = 'SUPERSEDED' AND NEW.state IN ('DELETED', 'REDACTED'))",
+          "new": "        OR (OLD.state = 'SUPERSEDED' AND NEW.state IN ('DELETED', 'REDACTED', 'CURRENT'))"
+        },
+        {
+          "id": "FRESH-003-lifecycle-set-reordered",
+          "target": "db/migrations/000014_stage2_catalog_extraction_evidence.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "        OR (OLD.state = 'SUPERSEDED' AND NEW.state IN ('DELETED', 'REDACTED'))",
+          "new": "        OR (OLD.state = 'SUPERSEDED' AND NEW.state IN ('REDACTED', 'DELETED'))"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.connector.folder-database-capability",
+      "critical_invariant_ids": ["SRC-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestFolderConnectorBoundaryGuardRejectsCapabilityAndContainmentRegressions",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "SRC-002-connector-gains-database-capability",
+          "target": "internal/connector/folder/folder.go",
+          "kind": "WEAKENING_IMPORT_BOUNDARY",
+          "expected": "RED",
+          "old": "\t\"knowvault.local/verified-workspace/internal/source/scopeglob\"\n)",
+          "new": "\t\"knowvault.local/verified-workspace/internal/source/scopeglob\"\n\t_ \"knowvault.local/verified-workspace/internal/platform/database\"\n)"
+        },
+        {
+          "id": "SRC-002-connector-import-order-swapped",
+          "target": "internal/connector/folder/folder.go",
+          "kind": "PRESERVING_IMPORT_ORDER",
+          "expected": "GREEN",
+          "old": "\t\"knowvault.local/verified-workspace/internal/source/pathcanon\"\n\t\"knowvault.local/verified-workspace/internal/source/scopeglob\"",
+          "new": "\t\"knowvault.local/verified-workspace/internal/source/scopeglob\"\n\t\"knowvault.local/verified-workspace/internal/source/pathcanon\""
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.backup-restore-without-key",
+      "critical_invariant_ids": ["CRY-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRecoveryRestoreWithoutKey",
+      "mutations": [
+        {
+          "id": "restore-missing-key-fallback-allow",
+          "target": "internal/recovery/recovery.go",
+          "kind": "GO_RESTORE_FALLBACK_WEAKENING",
+          "expected": "RED",
+          "old": "if len(bundleBytes) == 0 || key == nil {\n\t\treturn nil, &Error{code: CodeInvalid}\n\t}",
+          "new": "if len(bundleBytes) == 0 || key == nil {\n\t\treturn nil, nil\n\t}"
+        },
+        {
+          "id": "restore-wrong-key-fallback-allow",
+          "target": "internal/recovery/recovery.go",
+          "kind": "GO_RESTORE_FALLBACK_WEAKENING",
+          "expected": "RED",
+          "old": "dek, err := openLayer(wrappedDEK, key.material[:], aad)\n\tif err != nil {\n\t\treturn nil, &Error{code: CodeFailed}\n\t}",
+          "new": "dek, err := openLayer(wrappedDEK, key.material[:], aad)\n\tif err != nil {\n\t\treturn nil, nil\n\t}"
+        },
+        {
+          "id": "restore-missing-key-guard-equivalent",
+          "target": "internal/recovery/recovery.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if len(bundleBytes) == 0 || key == nil {",
+          "new": "if len(bundleBytes) == 0 || key == nil || false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.backup-restore-wrong-tenant-key",
+      "critical_invariant_ids": ["CRY-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRecoveryRestoreWrongTenantKey",
+      "mutations": [
+        {
+          "id": "restore-tenant-binding-removed",
+          "target": "internal/recovery/recovery.go",
+          "kind": "GO_TENANT_BINDING_WEAKENING",
+          "expected": "RED",
+          "old": "if container.OrganizationID != key.org {",
+          "new": "if false {"
+        },
+        {
+          "id": "restore-tenant-binding-or-false",
+          "target": "internal/recovery/recovery.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "if container.OrganizationID != key.org {",
+          "new": "if container.OrganizationID != key.org || false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.kek-rotation-gap",
+      "critical_invariant_ids": ["CRY-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRotationKekZeroWrappersPrecondition",
+      "mutations": [
+        {
+          "id": "kek-complete-zero-wrappers-check-removed",
+          "target": "db/migrations/000019_stage2_secret_rotation.sql",
+          "kind": "SQL_ROTATION_PRECONDITION_WEAKENING",
+          "expected": "RED",
+          "old": "    IF remaining > 0 THEN\n        RAISE EXCEPTION 'zero-wrappers precondition: artifacts still wrapped under the previous key'",
+          "new": "    IF FALSE THEN\n        RAISE EXCEPTION 'zero-wrappers precondition: artifacts still wrapped under the previous key'"
+        },
+        {
+          "id": "kek-complete-zero-wrappers-greater-or-equal",
+          "target": "db/migrations/000019_stage2_secret_rotation.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF remaining > 0 THEN\n        RAISE EXCEPTION 'zero-wrappers precondition: artifacts still wrapped under the previous key'",
+          "new": "    IF remaining >= 1 THEN\n        RAISE EXCEPTION 'zero-wrappers precondition: artifacts still wrapped under the previous key'"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.kek-rotation-idempotent",
+      "critical_invariant_ids": ["CRY-001"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRotationBeginRepeatIdempotent",
+      "mutations": [
+        {
+          "id": "kek-begin-repeat-no-longer-idempotent",
+          "target": "db/migrations/000019_stage2_secret_rotation.sql",
+          "kind": "SQL_IDEMPOTENCY_WEAKENING",
+          "expected": "RED",
+          "old": "        IF NOT FOUND THEN\n            RAISE EXCEPTION 'rotation already in progress with different key pairs'",
+          "new": "        IF TRUE THEN\n            RAISE EXCEPTION 'rotation already in progress with different key pairs'"
+        },
+        {
+          "id": "kek-begin-rewrapping-branch-tautology",
+          "target": "db/migrations/000019_stage2_secret_rotation.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    ELSIF current_phase = 'REWRAPPING' THEN",
+          "new": "    ELSIF current_phase = 'REWRAPPING' AND current_phase = current_phase THEN"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.digest-key-rotation-gap",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRotationDigestFencingFailClosed",
+      "mutations": [
+        {
+          "id": "digest-complete-zero-remaining-check-removed",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_ROTATION_PRECONDITION_WEAKENING",
+          "expected": "RED",
+          "old": "    IF remaining > 0 THEN\n        RAISE EXCEPTION 'zero-remaining precondition: fragments still projected under the previous digest version'",
+          "new": "    IF FALSE THEN\n        RAISE EXCEPTION 'zero-remaining precondition: fragments still projected under the previous digest version'"
+        },
+        {
+          "id": "digest-complete-zero-remaining-greater-or-equal",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF remaining > 0 THEN\n        RAISE EXCEPTION 'zero-remaining precondition: fragments still projected under the previous digest version'",
+          "new": "    IF remaining >= 1 THEN\n        RAISE EXCEPTION 'zero-remaining precondition: fragments still projected under the previous digest version'"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.digest-rotation-idempotent",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRotationDigestFullCycle",
+      "mutations": [
+        {
+          "id": "digest-complete-repeat-no-longer-idempotent",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_IDEMPOTENCY_WEAKENING",
+          "expected": "RED",
+          "old": "        IF rotation_previous_version = p_previous_version THEN\n            RETURN; -- idempotent repeat\n        END IF;\n        RAISE EXCEPTION 'DIGEST rotation already completed with a different previous version'",
+          "new": "        IF rotation_previous_version = p_previous_version THEN\n            RAISE EXCEPTION 'forced non-idempotent repeat' USING ERRCODE = '55000';\n        END IF;\n        RAISE EXCEPTION 'DIGEST rotation already completed with a different previous version'"
+        },
+        {
+          "id": "digest-complete-completed-branch-tautology",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF rotation_phase = 'COMPLETE' THEN\n        IF rotation_previous_version = p_previous_version THEN",
+          "new": "    IF rotation_phase = 'COMPLETE' AND rotation_phase = rotation_phase THEN\n        IF rotation_previous_version = p_previous_version THEN"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.keyed-text-digest-pipeline",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestKeyedTextDigestSchema",
+      "mutations": [
+        {
+          "id": "pipeline-text-hash-plain-sha",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_DIGEST_WEAKENING",
+          "expected": "RED",
+          "old": "\ttextHash := canon.HMACDigest(h.digester.Key, h.digester.KeyVersion, unit.text)",
+          "new": "\ttextHash := canon.Hash(unit.text)"
+        },
+        {
+          "id": "pipeline-text-hash-copied-input",
+          "target": "internal/ingestion/pipeline.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\ttextHash := canon.HMACDigest(h.digester.Key, h.digester.KeyVersion, unit.text)",
+          "new": "\ttextHash := canon.HMACDigest(h.digester.Key, h.digester.KeyVersion, append([]byte(nil), unit.text...))"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.keyed-text-readable-fail-closed",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestKeyedTextDigestLegacyFailClosed",
+      "mutations": [
+        {
+          "id": "readable-gate-opens-for-legacy-text",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_FAIL_CLOSED_WEAKENING",
+          "expected": "RED",
+          "old": "        JOIN public.evidence_text_projection tp\n          ON tp.organization_id = f.organization_id AND tp.fragment_id = f.id\n         AND tp.text_hash = f.text_hash AND tp.digest_key_version = f.text_digest_key_version\n        JOIN public.source_version v\n          ON v.organization_id = f.organization_id AND v.id = f.source_version_id\n        JOIN public.source_object o\n          ON o.organization_id = v.organization_id AND o.id = v.source_object_id\n        JOIN public.source_version_retention vr\n          ON vr.organization_id = v.organization_id AND vr.source_version_id = v.id\n        JOIN public.source_extraction_retention er\n          ON er.organization_id = f.organization_id AND er.extraction_id = f.extraction_id\n        JOIN public.source_version_active_extraction ae\n          ON ae.organization_id = f.organization_id AND ae.source_version_id = f.source_version_id\n        JOIN public.source_object_scope os\n          ON os.organization_id = o.organization_id AND os.source_object_id = o.id\n        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id\n        JOIN public.workspace_member wm\n          ON wm.organization_id = w.organization_id AND wm.workspace_id = w.id\n         AND wm.principal_id = app.current_principal_id()\n         AND wm.valid_to_revision IS NULL AND wm.removed_at IS NULL\n        JOIN public.workspace_revision_source wrs\n          ON wrs.organization_id = w.organization_id AND wrs.workspace_id = w.id\n         AND wrs.workspace_revision = w.current_revision\n         AND wrs.source_scope_id = os.source_scope_id\n         AND wrs.source_scope_revision = os.source_scope_revision\n         AND wrs.enabled\n        JOIN public.workspace_managed_grant_confirmation c\n          ON c.organization_id = w.organization_id AND c.workspace_id = w.id\n         AND c.workspace_revision = w.current_revision\n         AND c.source_scope_id = os.source_scope_id\n         AND c.source_scope_revision = os.source_scope_revision\n         AND c.access_mode = 'WORKSPACE_MANAGED'\n        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id\n          AND f.anchor_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.anchor_hash, f.anchor_digest_key_version)\n          AND f.text_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)",
+          "new": "        LEFT JOIN public.evidence_text_projection tp\n          ON tp.organization_id = f.organization_id AND tp.fragment_id = f.id\n         AND tp.text_hash = f.text_hash AND tp.digest_key_version = f.text_digest_key_version\n        JOIN public.source_version v\n          ON v.organization_id = f.organization_id AND v.id = f.source_version_id\n        JOIN public.source_object o\n          ON o.organization_id = v.organization_id AND o.id = v.source_object_id\n        JOIN public.source_version_retention vr\n          ON vr.organization_id = v.organization_id AND vr.source_version_id = v.id\n        JOIN public.source_extraction_retention er\n          ON er.organization_id = f.organization_id AND er.extraction_id = f.extraction_id\n        JOIN public.source_version_active_extraction ae\n          ON ae.organization_id = f.organization_id AND ae.source_version_id = f.source_version_id\n        JOIN public.source_object_scope os\n          ON os.organization_id = o.organization_id AND os.source_object_id = o.id\n        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id\n        JOIN public.workspace_member wm\n          ON wm.organization_id = w.organization_id AND wm.workspace_id = w.id\n         AND wm.principal_id = app.current_principal_id()\n         AND wm.valid_to_revision IS NULL AND wm.removed_at IS NULL\n        JOIN public.workspace_revision_source wrs\n          ON wrs.organization_id = w.organization_id AND wrs.workspace_id = w.id\n         AND wrs.workspace_revision = w.current_revision\n         AND wrs.source_scope_id = os.source_scope_id\n         AND wrs.source_scope_revision = os.source_scope_revision\n         AND wrs.enabled\n        JOIN public.workspace_managed_grant_confirmation c\n          ON c.organization_id = w.organization_id AND c.workspace_id = w.id\n         AND c.workspace_revision = w.current_revision\n         AND c.source_scope_id = os.source_scope_id\n         AND c.source_scope_revision = os.source_scope_revision\n         AND c.access_mode = 'WORKSPACE_MANAGED'\n        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id\n          AND f.anchor_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.anchor_hash, f.anchor_digest_key_version)\n          AND TRUE\n          AND TRUE"
+        },
+        {
+          "id": "readable-gate-combined-conjunct",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "          AND f.text_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)",
+          "new": "          AND (f.text_digest_key_version IS NOT NULL AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version))"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.keyed-text-publication-fail-closed",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestKeyedTextDigestLegacyFailClosed",
+      "mutations": [
+        {
+          "id": "publication-gate-opens-for-legacy-text",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_FAIL_CLOSED_WEAKENING",
+          "expected": "RED",
+          "old": "              OR f.text_digest_key_version IS NULL\n              OR NOT app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)\n              OR pt.artifact_id IS NULL",
+          "new": "              OR FALSE\n              OR FALSE\n              OR FALSE"
+        },
+        {
+          "id": "publication-gate-negated-conjunct",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "              OR f.text_digest_key_version IS NULL\n              OR NOT app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)\n              OR pt.artifact_id IS NULL",
+          "new": "              OR NOT (f.text_digest_key_version IS NOT NULL AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version) AND pt.artifact_id IS NOT NULL)"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.keyed-text-purge-removes-projection",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestKeyedTextDigestPurgeAndRotation",
+      "mutations": [
+        {
+          "id": "purge-keeps-text-projection",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_FAIL_CLOSED_WEAKENING",
+          "expected": "RED",
+          "old": "    DELETE FROM public.evidence_text_projection pt\n     USING public.evidence_fragment f\n     WHERE pt.organization_id = f.organization_id AND pt.fragment_id = f.id\n       AND f.organization_id = p_organization_id AND f.source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.evidence_text_projection WHERE FALSE;"
+        },
+        {
+          "id": "purge-projection-predicate-reordered",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    DELETE FROM public.evidence_text_projection pt\n     USING public.evidence_fragment f\n     WHERE pt.organization_id = f.organization_id AND pt.fragment_id = f.id\n       AND f.organization_id = p_organization_id AND f.source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.evidence_text_projection pt\n     USING public.evidence_fragment f\n     WHERE f.organization_id = p_organization_id AND f.source_version_id = p_version_id\n       AND pt.organization_id = f.organization_id AND pt.fragment_id = f.id;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.keyed-text-remaining-purge-exclusion",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestKeyedTextDigestPurgeAndRotation",
+      "mutations": [
+        {
+          "id": "remaining-counts-purged-versions",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_ROTATION_PRECONDITION_WEAKENING",
+          "expected": "RED",
+          "old": "      AND r.state NOT IN ('PURGING', 'PURGED')\n      AND (",
+          "new": "      AND TRUE\n      AND ("
+        },
+        {
+          "id": "remaining-purge-exclusion-equivalent",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "      AND r.state NOT IN ('PURGING', 'PURGED')\n      AND (",
+          "new": "      AND NOT (r.state = 'PURGING' OR r.state = 'PURGED')\n      AND ("
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.crypto.keyed-text-worker-reproject-null-fence",
+      "critical_invariant_ids": ["CRY-004"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestWorkerReprojectNullFenceRejectsErasure",
+      "mutations": [
+        {
+          "id": "worker-reproject-null-fence-dropped",
+          "target": "db/migrations/000021_stage2_evidence_fragment_reproject_null_fence.sql",
+          "kind": "SQL_FAIL_CLOSED_WEAKENING",
+          "expected": "RED",
+          "old": "       AND NEW.anchor_hash IS NOT NULL\n       AND NEW.anchor_digest_key_version IS NOT NULL\n       AND NEW.text_hash IS NOT NULL\n       AND NEW.text_digest_key_version IS NOT NULL\n",
+          "new": ""
+        },
+        {
+          "id": "worker-reproject-null-fence-reordered",
+          "target": "db/migrations/000021_stage2_evidence_fragment_reproject_null_fence.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "       AND NEW.anchor_hash IS NOT NULL\n       AND NEW.anchor_digest_key_version IS NOT NULL\n       AND NEW.text_hash IS NOT NULL\n       AND NEW.text_digest_key_version IS NOT NULL\n",
+          "new": "       AND NEW.text_hash IS NOT NULL\n       AND NEW.text_digest_key_version IS NOT NULL\n       AND NEW.anchor_hash IS NOT NULL\n       AND NEW.anchor_digest_key_version IS NOT NULL\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.auth.logout-revokes-session",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "GO_UNIT",
+      "test_name": "TestLogoutRevokesExactSessionThenExpiresCookie",
+      "test_package": "./internal/platform/oidcweb",
+      "mutations": [
+        {
+          "id": "logout-revoke-call-removed",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_SESSION_REVOCATION_WEAKENING",
+          "expected": "RED",
+          "old": "\toutcome, err := handler.store.RevokeSession(request.Context(), identityrepository.RevokeSessionRequest{\n\t\tOrganizationID: security.OrganizationID(), SessionID: session.SessionID,\n\t\tPrincipalID: identity.PrincipalID(session.Access.PrincipalID), RequestID: requestID, AuditEventID: auditID,\n\t})",
+          "new": "\toutcome, err := identityrepository.RevocationOutcome{Revoked: true}, error(nil)"
+        },
+        {
+          "id": "logout-revoke-gate-reordered",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif err != nil || !outcome.Revoked {",
+          "new": "\tif !outcome.Revoked || err != nil {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.auth.logout-csrf-required",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "GO_UNIT",
+      "test_name": "TestLogoutCSRFRejectionIsClosedAndAudited",
+      "test_package": "./internal/platform/oidcweb",
+      "mutations": [
+        {
+          "id": "logout-csrf-verification-dropped",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_CSRF_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err := handler.authenticator.VerifyCSRF(request, authentication); err != nil {",
+          "new": "\tif false {"
+        },
+        {
+          "id": "logout-request-shape-gate-reordered",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif !emptyRequestBody(request) || request.URL.RawQuery != \"\" || request.URL.ForceQuery {\n\t\thandler.writeTerminationFailed(writer, requestID)\n\t\treturn\n\t}",
+          "new": "\tif request.URL.RawQuery != \"\" || !emptyRequestBody(request) || request.URL.ForceQuery {\n\t\thandler.writeTerminationFailed(writer, requestID)\n\t\treturn\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.auth.logout-method-closed",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "GO_UNIT",
+      "test_name": "TestLogoutMethodIsClosedToGET",
+      "test_package": "./internal/platform/oidcweb",
+      "mutations": [
+        {
+          "id": "logout-method-gate-dropped",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_METHOD_GATE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif request.Method != http.MethodPost {\n\t\t\twriteMethodNotAllowed(writer, http.MethodPost)\n\t\t\treturn\n\t\t}",
+          "new": "\t\tif false {\n\t\t\twriteMethodNotAllowed(writer, http.MethodPost)\n\t\t\treturn\n\t\t}"
+        },
+        {
+          "id": "logout-method-literal-constant",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\t\twriteMethodNotAllowed(writer, http.MethodPost)",
+          "new": "\t\t\twriteMethodNotAllowed(writer, \"POST\")"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.auth.logout-no-oracle",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "GO_UNIT",
+      "test_name": "TestLogoutUnknownSessionIsClosedAndAuditedWithoutIdentity",
+      "test_package": "./internal/platform/oidcweb",
+      "mutations": [
+        {
+          "id": "logout-unknown-session-code-oracle",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_ORACLE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil {\n\t\thandler.writeTerminationFailed(writer, requestID)\n\t\tif securityErr == nil {",
+          "new": "\tif err != nil {\n\t\twriteFailure(writer, requestID, http.StatusUnauthorized, \"SESSION_UNKNOWN\")\n\t\tif securityErr == nil {"
+        },
+        {
+          "id": "logout-closed-code-inlined",
+          "target": "internal/platform/oidcweb/handler.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\twriteFailure(writer, requestID, http.StatusUnauthorized, string(identityrepository.CodeSessionTerminationFailed))",
+          "new": "\twriteFailure(writer, requestID, http.StatusUnauthorized, \"SESSION_TERMINATION_FAILED\")"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.idn.deprovision-revokes-session",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestIdentitySessionsAreTenantBoundOneTimeAndRevocable",
+      "mutations": [
+        {
+          "id": "deprovision-revocation-condition-inverted",
+          "target": "db/migrations/000003_stage1_identity.sql",
+          "kind": "SQL_LIFECYCLE_WEAKENING",
+          "expected": "RED",
+          "old": "    IF NEW.status <> 'ACTIVE' OR NEW.session_revision <> OLD.session_revision THEN",
+          "new": "    IF NEW.status = 'ACTIVE' OR NEW.session_revision = OLD.session_revision THEN"
+        },
+        {
+          "id": "deprovision-revocation-where-order-equivalent",
+          "target": "db/migrations/000003_stage1_identity.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "        WHERE organization_id = NEW.organization_id\n          AND principal_id = NEW.id\n          AND revoked_at IS NULL;",
+          "new": "        WHERE revoked_at IS NULL\n          AND organization_id = NEW.organization_id\n          AND principal_id = NEW.id;"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.auth.logout-session-transition-audit",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRevokeSessionRevokesExactSessionWithSingleAuditEvent",
+      "mutations": [
+        {
+          "id": "revoke-session-audit-append-removed",
+          "target": "internal/identity/repository/repository.go",
+          "kind": "SQL_AUDIT_APPEND_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif _, err := store.audit.AppendInTransaction(transactionContext, access, transaction, audit.EventInput{\n\t\t\tEventID: request.AuditEventID, ActorType: audit.ActorHuman, ActorPrincipalID: pointer(string(request.PrincipalID)),\n\t\t\tAction:       audit.ActionSessionTerminated,\n\t\t\tResourceType: audit.ResourceIdentity, ResourceID: request.SessionID, RequestID: request.RequestID,\n\t\t\tOutcome: audit.OutcomeSuccess, OccurredAt: store.now().UTC(),\n\t\t}); err != nil {\n\t\t\treturn err\n\t\t}",
+          "new": "\t\t_ = request.AuditEventID"
+        },
+        {
+          "id": "revoke-session-predicate-reordered",
+          "target": "internal/identity/repository/repository.go",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\t\t\tWHERE organization_id = $1 AND id = $2 AND revoked_at IS NULL",
+          "new": "\t\t\t\tWHERE organization_id = $1 AND revoked_at IS NULL AND id = $2"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.auth.logout-revoked-fails-read-path",
+      "critical_invariant_ids": ["IDN-003"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestRevokeSessionRevokesExactSessionWithSingleAuditEvent",
+      "mutations": [
+        {
+          "id": "revoked-read-filter-dropped",
+          "target": "internal/identity/repository/repository.go",
+          "kind": "SQL_FAIL_CLOSED_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\t  AND session.session_token_digest = $2\n\t\t\t  AND session.revoked_at IS NULL",
+          "new": "\t\t\t  AND session.session_token_digest = $2\n\t\t\t  AND TRUE"
+        },
+        {
+          "id": "revoked-read-filter-reordered",
+          "target": "internal/identity/repository/repository.go",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\t\t  AND session.session_token_digest = $2\n\t\t\t  AND session.revoked_at IS NULL",
+          "new": "\t\t\t  AND session.revoked_at IS NULL\n\t\t\t  AND session.session_token_digest = $2"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.version-immutable",
+      "critical_invariant_ids": ["EXA-005"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestAnswerDocumentVersionImmutability",
+      "mutations": [
+        {
+          "id": "answer-version-update-branch-removed",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_IMMUTABILITY_WEAKENING",
+          "expected": "RED",
+          "old": "    IF TG_OP = 'UPDATE' THEN\n        RAISE EXCEPTION 'answer document versions are immutable'\n            USING ERRCODE = '55000';\n    END IF;\n",
+          "new": ""
+        },
+        {
+          "id": "answer-version-immutability-branches-swapped",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "    IF TG_OP = 'DELETE' THEN\n        RAISE EXCEPTION 'answer document versions are immutable'\n            USING ERRCODE = '55000';\n    END IF;\n    IF TG_OP = 'UPDATE' THEN\n",
+          "new": "    IF TG_OP = 'UPDATE' THEN\n        RAISE EXCEPTION 'answer document versions are immutable'\n            USING ERRCODE = '55000';\n    END IF;\n    IF TG_OP = 'DELETE' THEN\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.chain-exact-hash",
+      "critical_invariant_ids": ["EXA-005"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestAnswerDocumentAmendmentRejectsChainBreakAndSkip",
+      "mutations": [
+        {
+          "id": "answer-chain-previous-hash-check-removed",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_CHAIN_INTEGRITY_WEAKENING",
+          "expected": "RED",
+          "old": "             AND prev.manifest_hash = NEW.previous_version_hash\n",
+          "new": ""
+        },
+        {
+          "id": "answer-chain-conjuncts-swapped",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "             AND prev.version = NEW.version - 1\n             AND prev.manifest_hash = NEW.previous_version_hash\n",
+          "new": "             AND prev.manifest_hash = NEW.previous_version_hash\n             AND prev.version = NEW.version - 1\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.owner-path-only",
+      "critical_invariant_ids": ["EXA-005"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestAnswerDocumentAmendmentOwnerPathRequired",
+      "mutations": [
+        {
+          "id": "answer-owner-path-fence-removed",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_OWNER_PATH_WEAKENING",
+          "expected": "RED",
+          "old": "    IF session_user <> 'knowvault_app'\n       OR NOT EXISTS (SELECT 1 FROM public.workspace_member\n                      WHERE organization_id = NEW.organization_id\n                        AND workspace_id = NEW.workspace_id\n                        AND principal_id = NEW.actor_principal_id\n                        AND role = 'OWNER'\n                        AND valid_to_revision IS NULL) THEN\n        RAISE EXCEPTION 'answer document amendment requires the workspace owner path'\n            USING ERRCODE = '42501';\n    END IF;\n",
+          "new": ""
+        },
+        {
+          "id": "answer-owner-path-conjuncts-swapped",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "                        AND principal_id = NEW.actor_principal_id\n                        AND role = 'OWNER'\n",
+          "new": "                        AND role = 'OWNER'\n                        AND principal_id = NEW.actor_principal_id\n"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.open-access-recheck",
+      "critical_invariant_ids": ["EXA-005"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestAnswerDocumentOpenRechecksRetentionPurge",
+      "mutations": [
+        {
+          "id": "answer-open-retention-recheck-removed",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_OPEN_RECHECK_WEAKENING",
+          "expected": "RED",
+          "old": "                COALESCE(r.state, 'ACTIVE') IN ('PURGING', 'PURGED')",
+          "new": "                FALSE"
+        },
+        {
+          "id": "answer-open-retention-set-reordered",
+          "target": "db/migrations/000022_stage2_answer_document_amendment.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "                COALESCE(r.state, 'ACTIVE') IN ('PURGING', 'PURGED')",
+          "new": "                COALESCE(r.state, 'ACTIVE') IN ('PURGED', 'PURGING')"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.amendment-shape-contract",
+      "critical_invariant_ids": ["EXA-005"],
+      "harness": "GO_UNIT",
+      "test_name": "TestValidateAmendRejectsUnknownAmendmentClass",
+      "test_package": "./internal/answer/repository",
+      "mutations": [
+        {
+          "id": "answer-closed-class-check-removed",
+          "target": "internal/answer/repository/repository.go",
+          "kind": "GO_CLOSED_CLASS_WEAKENING",
+          "expected": "RED",
+          "old": "\tif request.AmendmentClass == nil || !AmendmentClass(*request.AmendmentClass).valid() {",
+          "new": "\tif request.AmendmentClass == nil {"
+        },
+        {
+          "id": "answer-shape-validations-swapped",
+          "target": "internal/answer/repository/repository.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif request.AmendmentClass == nil || !AmendmentClass(*request.AmendmentClass).valid() {\n\t\treturn &Error{code: CodeRequestInvalid}\n\t}\n\tif request.AmendmentReason == nil || len(*request.AmendmentReason) < 1 || len(*request.AmendmentReason) > 2000 {",
+          "new": "\tif request.AmendmentReason == nil || len(*request.AmendmentReason) < 1 || len(*request.AmendmentReason) > 2000 {\n\t\treturn &Error{code: CodeRequestInvalid}\n\t}\n\tif request.AmendmentClass == nil || !AmendmentClass(*request.AmendmentClass).valid() {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.handoff-retry-after-transfer",
+      "critical_invariant_ids": ["SAN-003"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackRetryAfterTransferQuarantined",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-handoff-retry-after-transfer-admitted",
+          "target": "internal/sandboxdispatch/lease.go",
+          "kind": "GO_SANDBOX_HANDOFF_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif l.transferSent {",
+          "new": "\t\tif false {"
+        },
+        {
+          "id": "sandbox-handoff-transfer-condition-equivalent",
+          "target": "internal/sandboxdispatch/lease.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tif l.transferSent {",
+          "new": "\t\tif l.transferSent == true {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.kernel-self-report-rejected",
+      "critical_invariant_ids": ["SAN-004"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackForgedIdentityQuarantined",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-extraction-identity-check-removed",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_IDENTITY_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\t*outcome.ExtractionIdentity != d.extractionIdentityLocked(active) {",
+          "new": "\t\t\tfalse {"
+        },
+        {
+          "id": "sandbox-job-capability-conjuncts-swapped",
+          "target": "internal/sandboxdispatch/wire.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif !j.WorkerPullOnly || j.ContainerCreationCap != \"FORBIDDEN\" || j.OutputContract != OutputContractV1 {",
+          "new": "\tif j.ContainerCreationCap != \"FORBIDDEN\" || !j.WorkerPullOnly || j.OutputContract != OutputContractV1 {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.second-registration-socket-rejected",
+      "critical_invariant_ids": ["SAN-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackSecondRegistrationSocketRejected",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-parser-socket-rebinding-admitted",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_REGISTRATION_WEAKENING",
+          "expected": "RED",
+          "old": "\tif taken {\n\t\t// Second registration socket for the same parser type.\n\t\treturn\n\t}",
+          "new": "\tif false {\n\t\t// Second registration socket for the same parser type.\n\t\treturn\n\t}"
+        },
+        {
+          "id": "sandbox-parser-socket-registry-conjuncts-swapped",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif taken {\n\t\t// Second registration socket for the same parser type.\n\t\treturn\n\t}",
+          "new": "\tif taken == true {\n\t\t// Second registration socket for the same parser type.\n\t\treturn\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.registration-readiness-gate",
+      "critical_invariant_ids": ["SAN-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestWorkerEligibleRequiresAcceptance",
+      "test_package": "./internal/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-worker-readiness-predicate-bypassed",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_REGISTRATION_WEAKENING",
+          "expected": "RED",
+          "old": "func workerEligible(worker *workerConn) bool {\n\treturn worker != nil && worker.ready\n}",
+          "new": "func workerEligible(worker *workerConn) bool {\n\treturn worker != nil\n}"
+        },
+        {
+          "id": "sandbox-worker-readiness-predicate-equivalent",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "func workerEligible(worker *workerConn) bool {\n\treturn worker != nil && worker.ready\n}",
+          "new": "func workerEligible(worker *workerConn) bool {\n\treturn worker != nil && (worker.ready == true)\n}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.registration-ack-failure-cleanup",
+      "critical_invariant_ids": ["SAN-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackAckFailureReleasesParserSlot",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-registration-ack-failure-cleanup-dropped",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_REGISTRATION_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t// An acknowledgment write failure means the peer did not complete the\n\t\t// registration protocol. Remove the just-published binding before the\n\t\t// socket is closed; an unacknowledged worker must never receive leases.\n\t\td.dropWorker(worker)",
+          "new": "\t\t// An acknowledgment write failure means the peer did not complete the\n\t\t// registration protocol. Remove the just-published binding before the\n\t\t// socket is closed; an unacknowledged worker must never receive leases.\n\t\t_ = worker"
+        },
+        {
+          "id": "sandbox-registration-ack-failure-cleanup-guarded",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\t// An acknowledgment write failure means the peer did not complete the\n\t\t// registration protocol. Remove the just-published binding before the\n\t\t// socket is closed; an unacknowledged worker must never receive leases.\n\t\td.dropWorker(worker)",
+          "new": "\t\t// An acknowledgment write failure means the peer did not complete the\n\t\t// registration protocol. Remove the just-published binding before the\n\t\t// socket is closed; an unacknowledged worker must never receive leases.\n\t\tif worker != nil {\n\t\t\td.dropWorker(worker)\n\t\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.registration-ack-body-exact",
+      "critical_invariant_ids": ["SAN-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestWorkerClientRegisterRejectsWrongOrOversizeAcceptance",
+      "test_package": "./internal/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-registration-ack-body-check-dropped",
+          "target": "internal/sandboxdispatch/client.go",
+          "kind": "GO_SANDBOX_REGISTRATION_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil || kind != kindRegisterAccepted || string(body) != registrationAcceptedBody {",
+          "new": "\tif err != nil || kind != kindRegisterAccepted {"
+        },
+        {
+          "id": "sandbox-registration-ack-body-check-equivalent",
+          "target": "internal/sandboxdispatch/client.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif err != nil || kind != kindRegisterAccepted || string(body) != registrationAcceptedBody {",
+          "new": "\tif err != nil || kind != kindRegisterAccepted || string(body) != string([]byte(registrationAcceptedBody)) {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.deadline-inversion-rejected",
+      "critical_invariant_ids": ["SAN-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackDeadlineInversionRejected",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-deadline-inversion-admitted",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_DEADLINE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif reportedAt.After(active.deadlineAt()) || reportedAt.Before(active.issuedAt()) {",
+          "new": "\tif false {"
+        },
+        {
+          "id": "sandbox-deadline-bounds-swapped",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif reportedAt.After(active.deadlineAt()) || reportedAt.Before(active.issuedAt()) {",
+          "new": "\tif reportedAt.Before(active.issuedAt()) || reportedAt.After(active.deadlineAt()) {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.deadline-kills-process",
+      "critical_invariant_ids": ["SAN-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackDeadlineKillsTheSandboxProcess",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-supervisor-kill-observation-removed",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_SUPERVISOR_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t_ = d.cfg.Killer.Kill(active.obs)",
+          "new": "\t\t_ = d.cfg.Killer.Kill(Observation{})"
+        },
+        {
+          "id": "sandbox-supervisor-pid-guard-equivalent",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif active.obs.PID > 0 && (deadlineFired || active.transferSent) {",
+          "new": "\tif (deadlineFired || active.transferSent) && active.obs.PID > 0 {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.sandbox.disconnect-after-transfer-kills-process",
+      "critical_invariant_ids": ["SAN-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestDispatcherLoopbackDisconnectAfterTransferKillsTheSandboxProcess",
+      "test_package": "./tests/integration/sandboxdispatch",
+      "mutations": [
+        {
+          "id": "sandbox-post-transfer-disconnect-kill-dropped",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SANDBOX_SUPERVISOR_WEAKENING",
+          "expected": "RED",
+          "old": "\tif active.obs.PID > 0 && (deadlineFired || active.transferSent) {",
+          "new": "\tif active.obs.PID > 0 && deadlineFired {"
+        },
+        {
+          "id": "sandbox-post-transfer-disconnect-condition-equivalent",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\tif active.obs.PID > 0 && (deadlineFired || active.transferSent) {\n\t\t_ = d.cfg.Killer.Kill(active.obs)\n\t}",
+          "new": "\tif active.obs.PID > 0 && (active.transferSent || deadlineFired) {\n\t\t_ = d.cfg.Killer.Kill(active.obs)\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "architecture.sandbox.dispatcher-capability-boundary",
+      "critical_invariant_ids": ["SAN-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestSandboxDispatcherGuardRejectsCapabilityAndProtocolRegressions",
+      "test_package": "./scripts",
+      "mutations": [
+        {
+          "id": "SAN-001-dispatcher-gains-process-execution",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "WEAKENING_IMPORT_BOUNDARY",
+          "expected": "RED",
+          "old": "\t\"os\"\n\t\"path/filepath\"",
+          "new": "\t\"os\"\n\t\"os/exec\"\n\t\"path/filepath\""
+        },
+        {
+          "id": "SAN-001-dispatcher-import-order-swapped",
+          "target": "internal/sandboxdispatch/dispatch.go",
+          "kind": "PRESERVING_IMPORT_ORDER",
+          "expected": "GREEN",
+          "old": "\t\"encoding/hex\"\n\t\"encoding/json\"",
+          "new": "\t\"encoding/json\"\n\t\"encoding/hex\""
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.anchor-invalid",
+      "critical_invariant_ids": ["EVD-001"],
+      "harness": "GO_UNIT",
+      "test_name": "TestEvidenceGetReturnsFragmentTextAnchorAndProvenance",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "evidence-surface-text-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\"text\":               string(fragment.Text),",
+          "new": "\t\t\"text\":               \"redacted\","
+        },
+        {
+          "id": "evidence-surface-anchor-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\"anchor\":             base64.StdEncoding.EncodeToString(fragment.Anchor),",
+          "new": "\t\t\"anchor\":             \"cmVkYWN0ZWQ=\","
+        },
+        {
+          "id": "evidence-surface-fields-reordered",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\t\"fragment_id\":        fragment.FragmentID,\n\t\t\"text\":               string(fragment.Text),",
+          "new": "\t\t\"text\":               string(fragment.Text),\n\t\t\"fragment_id\":        fragment.FragmentID,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.audit.checkpoint-chain-mismatch",
+      "critical_invariant_ids": ["AUD-002"],
+      "harness": "GO_UNIT",
+      "test_name": "TestAuditJournalReturnsPersistedEvents",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "audit-surface-head-sequence-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tHeadSequence: journal.HeadSequence,",
+          "new": "\t\tHeadSequence: 1,"
+        },
+        {
+          "id": "audit-surface-head-hash-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tHeadHash:     journal.HeadHash,",
+          "new": "\t\tHeadHash:     \"sha256:constant\","
+        },
+        {
+          "id": "audit-surface-truncation-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tTruncated:    journal.Truncated,",
+          "new": "\t\tTruncated:    false,"
+        },
+        {
+          "id": "audit-surface-fields-reordered",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tWorkspaceID:  journal.WorkspaceID,\n\t\tHeadSequence: journal.HeadSequence,",
+          "new": "\t\tHeadSequence: journal.HeadSequence,\n\t\tWorkspaceID:  journal.WorkspaceID,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.authorization-live-projection-mismatch",
+      "critical_invariant_ids": ["ACL-010"],
+      "harness": "GO_UNIT",
+      "test_name": "TestWorkspaceListAndSnapshotProjectionIsLive",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "workspace-list-revision-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "Revision: summary.Revision",
+          "new": "Revision: 99"
+        },
+        {
+          "id": "workspace-snapshot-hash-drifted",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "\thash, err := workspace.ConfigurationHash(snapshot)",
+          "new": "\thash, err := workspace.ConfigurationHash(workspace.Snapshot{})"
+        },
+        {
+          "id": "workspace-snapshot-revision-constant",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "Revision: snapshot.Revision,",
+          "new": "Revision: 98,"
+        },
+        {
+          "id": "workspace-summary-fields-reordered",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "ID: summary.ID, Name: summary.Name,",
+          "new": "Name: summary.Name, ID: summary.ID,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.manifest.retrieval-provenance",
+      "critical_invariant_ids": ["QRY-007"],
+      "harness": "GO_UNIT",
+      "test_name": "TestListSourcesProjectsEveryStatusField",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "source-status-counter-dropped",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SURFACE_WEAKENING",
+          "expected": "RED",
+          "old": "ObjectsSeen: status.ObjectsSeen, ObjectsIngested: status.ObjectsIngested,",
+          "new": "ObjectsSeen: nil, ObjectsIngested: status.ObjectsIngested,"
+        },
+        {
+          "id": "source-status-counter-pairs-reordered",
+          "target": "internal/platform/workspaceapi/workspaceapi.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "ObjectsSeen: status.ObjectsSeen, ObjectsIngested: status.ObjectsIngested,",
+          "new": "ObjectsIngested: status.ObjectsIngested, ObjectsSeen: status.ObjectsSeen,"
+        }
+      ]
+    },
+    {
+      "invariant_id": "contract.connector.source-enforced-acl-invalid",
+      "critical_invariant_ids": ["ACL-002"],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestEvidenceReadableGateRejectsForeignWorkspaceAndSourceEnforced",
+      "mutations": [
+        {
+          "id": "evidence-gate-workspace-scope-dropped",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_GATE_WEAKENING",
+          "expected": "RED",
+          "old": "        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id",
+          "new": "        JOIN public.workspace w\n          ON w.organization_id = f.organization_id"
+        },
+        {
+          "id": "evidence-gate-tenant-scope-dropped",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_GATE_WEAKENING",
+          "expected": "RED",
+          "old": "        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id",
+          "new": "        WHERE true\n          AND f.id = p_fragment_id"
+        },
+        {
+          "id": "evidence-gate-tenant-scope-reordered",
+          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id",
+          "new": "        WHERE app.current_organization_id() = f.organization_id\n          AND f.id = p_fragment_id"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.grounding.span-hash-checked",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestSpanHashMismatchIsUnbound",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "grounding-span-hash-check-dropped",
+          "target": "internal/question/grounding.go",
+          "kind": "GO_GROUNDING_SPAN_HASH_WEAKENING",
+          "expected": "RED",
+          "old": "\tif canon.Hash([]byte(span)) != quote.TextHash {",
+          "new": "\tif canon.Hash([]byte(span)) == quote.TextHash {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.grounding.similarity-not-proof",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestHighSimilarityParaphraseWithoutASpanIsUnconfirmed",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "grounding-similarity-promoted-to-proof",
+          "target": "internal/question/grounding.go",
+          "kind": "GO_GROUNDING_SIMILARITY_WEAKENING",
+          "expected": "RED",
+          "old": "\tbyteStart := strings.Index(value, excerpt)\n\tif byteStart < 0 {\n\t\treturn nil, GroundingUnconfirmed\n\t}",
+          "new": "\tbyteStart := strings.Index(value, excerpt)\n\tif byteStart < 0 {\n\t\treturn &SourceQuote{SourceVersionID: sourceVersionID, ExtractionID: extractionID, Anchor: anchor, Start: 0, End: int64(utf8.RuneCountInString(value)), TextHash: canon.Hash(text)}, GroundingConfirmedByFragment\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.audit.admission-before-data",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestGetAdmissionFailureFailsClosedBeforeAnyRead",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "admission-skipped-before-governed-read",
+          "target": "internal/question/service.go",
+          "kind": "GO_AUDIT_ADMISSION_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err := service.emitAdmission(ctx, access, workspaceID, runID); err != nil {\n\t\treturn Run{}, &Error{code: CodeUnavailable, cause: err}\n\t}\n\tread := service.storedRunReadFn",
+          "new": "\t_ = service.emitAdmission\n\tread := service.storedRunReadFn"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.audit.revoke-recheck",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestGetRevokedAfterAdmissionReturnsNoData",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "revoke-recheck-dropped",
+          "target": "internal/question/service.go",
+          "kind": "GO_AUDIT_REVOKE_RECHECK_WEAKENING",
+          "expected": "RED",
+          "old": "\tresult, err := read(ctx, access, workspaceID, runID)\n\tif err != nil {\n\t\t// A governed read that fails after admission leaves the admission event\n\t\t// plus its matching failure outcome, never the admission alone.\n\t\tservice.recordStoredRunReadFailure(ctx, access, workspaceID, runID, err)\n\t\treturn Run{}, err\n\t}\n\treturn result, nil",
+          "new": "\tresult, _ := read(ctx, access, workspaceID, runID)\n\treturn result, nil"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.audit.rowset-admission-before-data",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestStructuredRowsetAdmissionFailureFailsClosedBeforeAnyRead",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "rowset-admission-skipped-before-governed-read",
+          "target": "internal/question/snapshot_aggregate.go",
+          "kind": "GO_AUDIT_ADMISSION_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err := service.emitRowsetAdmission(ctx, access, workspaceID, fragmentID); err != nil {\n\t\treturn nil, &Error{code: CodeUnavailable, cause: err}\n\t}\n\tread := service.structuredRowsetReadFn",
+          "new": "\t_ = service.emitRowsetAdmission\n\tread := service.structuredRowsetReadFn"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.audit.rowset-read-failure-outcome",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestReadStructuredRowsetDistinguishesReadFailureFromMissingCell",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "rowset-read-failure-outcome-dropped",
+          "target": "internal/question/snapshot_aggregate.go",
+          "kind": "GO_AUDIT_ADMISSION_WEAKENING",
+          "expected": "RED",
+          "old": "\trowset, err := read(ctx, access, workspaceID, fragmentID, scope)\n\tif err != nil {\n\t\t// A governed read that fails after admission leaves the admission event\n\t\t// plus its matching failure outcome, never the admission alone.\n\t\tservice.recordRowsetReadFailure(ctx, access, workspaceID, fragmentID, err)\n\t\treturn nil, err\n\t}",
+          "new": "\trowset, err := read(ctx, access, workspaceID, fragmentID, scope)\n\tif err != nil {\n\t\treturn nil, err\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.queryintent.retired-version-refused",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestOutcome3RetiredVersionRefusedNeverExecuted",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "queryintent-retired-version-not-refused",
+          "target": "internal/queryintent/intent.go",
+          "kind": "GO_QUERYINTENT_RETIRED_VERSION_WEAKENING",
+          "expected": "RED",
+          "old": "\tswitch definition.Status() {\n\tcase metricdef.StatusRetired:\n\t\treturn Intent{}, newRefusal(CodeRetiredVersion)\n\tcase metricdef.StatusApproved:\n\t\t// Continue: only an APPROVED version may be executed.\n\tdefault:\n\t\treturn Intent{}, newRefusal(CodeNotApproved)\n\t}",
+          "new": "\tswitch definition.Status() {\n\tcase metricdef.StatusApproved:\n\t\t// Continue: only an APPROVED version may be executed.\n\tdefault:\n\t\treturn Intent{}, newRefusal(CodeNotApproved)\n\t}"
+        },
+        {
+          "id": "queryintent-refused-intent-falls-through-to-free-text",
+          "target": "internal/question/intent_gate.go",
+          "kind": "GO_QUERYINTENT_EXECUTION_GATE_WEAKENING",
+          "expected": "RED",
+          "old": "\tintent, err := validator.Validate(proposal)\n\tif err != nil {\n\t\treturn queryintent.Intent{}, false, refusalAsError(err)\n\t}",
+          "new": "\tintent, err := validator.Validate(proposal)\n\tif err != nil {\n\t\treturn queryintent.Intent{}, false, nil\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.queryintent.disallowed-filter-refused",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestOutcome3DisallowedFilterRefusedNeverExecuted",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "queryintent-disallowed-filter-accepted",
+          "target": "internal/queryintent/intent.go",
+          "kind": "GO_QUERYINTENT_ALLOWED_FILTER_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif !validLabel(name, maxFilterLength) || !definition.AllowsFilter(name) {\n\t\t\treturn nil, newRefusal(CodeFilterNotAllowed)\n\t\t}",
+          "new": "\t\tif !validLabel(name, maxFilterLength) {\n\t\t\treturn nil, newRefusal(CodeFilterNotAllowed)\n\t\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.queryintent.unknown-metric-refused",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestOutcome3UnknownMetricRefusedNeverExecuted",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "queryintent-unknown-metric-not-refused",
+          "target": "internal/queryintent/intent.go",
+          "kind": "GO_QUERYINTENT_UNKNOWN_METRIC_WEAKENING",
+          "expected": "RED",
+          "old": "\tif !ok || len(versions) == 0 {\n\t\treturn Intent{}, newRefusal(CodeUnknownMetric)\n\t}",
+          "new": "\tif !ok || len(versions) == 0 {\n\t\tversions = nil\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.queryintent.malformed-period-refused",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestOutcome3MalformedPeriodRefusedNeverExecuted",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "queryintent-malformed-period-not-refused",
+          "target": "internal/queryintent/intent.go",
+          "kind": "GO_QUERYINTENT_MALFORMED_PERIOD_WEAKENING",
+          "expected": "RED",
+          "old": "\tif !validPeriod(proposal.Period, definition.Grain()) {\n\t\treturn Intent{}, newRefusal(CodeMalformedPeriod)\n\t}",
+          "new": "\t_ = validPeriod(proposal.Period, definition.Grain())"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.result-digest-deterministic",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestOutcome3DigestTieOutForValidatedIntent",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "answer-digest-ignores-completeness",
+          "target": "internal/question/structured_result.go",
+          "kind": "GO_ANSWER_RESULT_DIGEST_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tPeriod: answer.Period, Completeness: answer.Completeness, Keys: answer.Keys,",
+          "new": "\t\tPeriod: answer.Period, Keys: answer.Keys,"
+        },
+        {
+          "id": "answer-intent-binding-dropped",
+          "target": "internal/question/intent_gate.go",
+          "kind": "GO_ANSWER_RESULT_INTENT_BINDING_WEAKENING",
+          "expected": "RED",
+          "old": "\treturn answerResultIdentity{\n\t\tIntent: &AnswerIntent{\n\t\t\tMetricID: intent.MetricID(),\n\t\t\tVersion:  intent.Version(),\n\t\t\tPeriod: &AnswerPeriod{\n\t\t\t\tFrom: period.Start.Format(\"2006-01-02\"),\n\t\t\t\tTo:   period.End.AddDate(0, 0, -1).Format(\"2006-01-02\"),\n\t\t\t},\n\t\t\tFilters: filters,\n\t\t\tOutput:  string(intent.Output()),\n\t\t\tAsOf:    intent.AsOf().Format(time.RFC3339Nano),\n\t\t},\n\t\tMetricVersion: strconv.FormatInt(definition.Version(), 10),\n\t}",
+          "new": "\t_ = period\n\t_ = filters\n\treturn answerResultIdentity{\n\t\tMetricVersion: strconv.FormatInt(definition.Version(), 10),\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.answer.partial-completeness-preserved",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestOutcome3PartialCompletenessSurvivesTheWire",
+      "test_package": "./internal/question",
+      "mutations": [
+        {
+          "id": "answer-partial-completeness-dropped-on-wire",
+          "target": "internal/question/structured_result.go",
+          "kind": "GO_ANSWER_RESULT_COMPLETENESS_WEAKENING",
+          "expected": "RED",
+          "old": "\tCompleteness string         `json:\"completeness\"`",
+          "new": "\tCompleteness string         `json:\"-\"`"
+        },
+        {
+          "id": "answer-completeness-derivation-hardcoded-complete",
+          "target": "internal/question/snapshot_aggregate.go",
+          "kind": "GO_ANSWER_RESULT_COMPLETENESS_WEAKENING",
+          "expected": "RED",
+          "old": "\tswitch corpusStatus {\n\tcase \"COMPLETE\", \"PARTIAL\":\n\t\treturn corpusStatus\n\tdefault:\n\t\treturn \"\"\n\t}",
+          "new": "\treturn \"COMPLETE\""
+        },
+        {
+          "id": "answer-completeness-corpus-status-carry-dropped",
+          "target": "internal/question/snapshot_aggregate.go",
+          "kind": "GO_ANSWER_RESULT_COMPLETENESS_WEAKENING",
+          "expected": "RED",
+          "old": "\tif carried.CorpusStatus != \"\" {\n\t\t// The producing run's persisted corpus_status wins over any value the\n\t\t// base identity carried, and is never rewritten by the merge.\n\t\tbase.CorpusStatus = carried.CorpusStatus\n\t}",
+          "new": ""
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.address.span-hash-verification",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestVerifySpanRefusesTamperedIndexEntry",
+      "test_package": "./internal/address",
+      "mutations": [
+        {
+          "id": "r3a1-address-span-hash-comparison-inverted",
+          "target": "internal/address/address.go",
+          "kind": "GO_ADDRESS_SPAN_HASH_WEAKENING",
+          "expected": "RED",
+          "old": "\tif actual != a.SpanHash {",
+          "new": "\tif actual == a.SpanHash {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.address.whole-object-no-silent-truncation",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestReadPageCutBeforeEndOffersNextCursor",
+      "test_package": "./internal/address",
+      "mutations": [
+        {
+          "id": "r3a1-address-cut-page-reports-completion",
+          "target": "internal/address/address.go",
+          "kind": "GO_ADDRESS_PAGE_CUT_COMPLETION_WEAKENING",
+          "expected": "RED",
+          "old": "\tif end < total {",
+          "new": "\tif false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.address.whole-object-hash-integrity",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestReadReassemblesPagesToWholeOriginalHash",
+      "test_package": "./internal/address",
+      "mutations": [
+        {
+          "id": "r3a1-address-whole-object-hash-replaced-by-page-hash",
+          "target": "internal/address/address.go",
+          "kind": "GO_ADDRESS_WHOLE_OBJECT_HASH_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tWholeHash:  canon.Hash(original),",
+          "new": "\t\tWholeHash:  WholeHash(page.Data),"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.grep.ref-scoped-no-cross-ref-leak",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPGrepRefHitCarriesFileLinesAddress",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-grep-ref-scoping-guard-weakened-to-unscoped",
+          "target": "internal/platform/workspaceapi/mcp_grep.go",
+          "kind": "GO_GREP_REF_SCOPING_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\tif mcpGrepCodeRefMatches(item, ref) {",
+          "new": "\t\t\tif true {"
+        },
+        {
+          "id": "r3a1-grep-code-source-file-lines-address-dropped",
+          "target": "internal/platform/workspaceapi/mcp_grep.go",
+          "kind": "GO_GREP_FILE_LINES_ADDRESS_WEAKENING",
+          "expected": "RED",
+          "old": "\tif hit.Path != \"\" && hit.Fragment.ObjectType == mcpGrepCodeObjectType {",
+          "new": "\tif false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.inventory.code-source-mirror-age",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPWorkspaceListCodeSourceCarriesMirrorAge",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-list-code-mirror-age-dropped",
+          "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+          "kind": "GO_LIST_CODE_MIRROR_AGE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif item.ObjectType == mcpGrepCodeObjectType {",
+          "new": "\tif false {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.authorization.denial-content-free-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPSearchDeniesContentFreeWithoutWorkspaceEcho",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-authorization-denial-mapping-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_search.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}",
+          "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.authorization.expired-and-foreign-token-refused",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPExternalAuthorizationRejectsExpiredAndForeignTokens",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-authorization-session-tenant-match-weakened",
+          "target": "internal/platform/httpauth/auth.go",
+          "kind": "GO_MCP_AUTHORIZATION_SESSION_MATCH_WEAKENING",
+          "expected": "RED",
+          "old": "\treturn session.SessionID != \"\" && session.Access.OrganizationID == string(tenantID) && session.Access.PrincipalID != \"\" && session.Access.RequestID == requestID &&\n\t\tsession.Claims.OrganizationID() == tenantID && session.Claims.PrincipalID() == identity.PrincipalID(session.Access.PrincipalID) && session.Access.Validate() == nil",
+          "new": "\treturn true"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.inventory.typed-skip-ledger",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPWorkspaceListSkipLedgerCarriesTypedReasonAndCount",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-list-typed-skip-reason-dropped",
+          "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+          "kind": "GO_LIST_TYPED_SKIP_REASON_WEAKENING",
+          "expected": "RED",
+          "old": "\t\t\"reason_code\": skip.ReasonCode,",
+          "new": ""
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.authorization.read-address-foreign-workspace-denial-content-free",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPEvidenceReadDeniesForeignWorkspaceAddressContentFree",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-read-address-foreign-workspace-denial-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_adapter.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}",
+          "new": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.read.whole-object-real-viewer-assembly",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestKVA01WholeObjectReadOutcomeOne",
+      "test_package": "./tests/integration/postgres",
+      "mutations": [
+        {
+          "id": "r3a1-whole-object-viewer-assembly-anchor-only",
+          "target": "internal/source/evidence/viewer_layout.go",
+          "kind": "GO_EVIDENCE_WHOLE_OBJECT_ASSEMBLY_WEAKENING",
+          "expected": "RED",
+          "old": "\tresult.Text, result.Fragments, result.Representation = text, spans, representation",
+          "new": "\tresult.Text, result.Fragments, result.Representation = text, spans, representation\n\tresult.Text = result.Fragment.Text"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.related.cross-source-both-directions",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPRelatedReturnsBothDirectionsWithAddressVersion",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-related-references-direction-dropped",
+          "target": "internal/platform/workspaceapi/mcp_related.go",
+          "kind": "GO_MCP_RELATED_DIRECTION_WEAKENING",
+          "expected": "RED",
+          "old": "\tcase mcpRelatedDirectionReferencing, mcpRelatedDirectionReferences, mcpRelatedDirectionBoth:",
+          "new": "\tcase mcpRelatedDirectionReferencing, mcpRelatedDirectionBoth:"
+        },
+        {
+          "id": "r3a1-related-referencing-direction-dropped",
+          "target": "internal/platform/workspaceapi/mcp_related.go",
+          "kind": "GO_MCP_RELATED_DIRECTION_WEAKENING",
+          "expected": "RED",
+          "old": "\tcase mcpRelatedDirectionReferencing, mcpRelatedDirectionReferences, mcpRelatedDirectionBoth:",
+          "new": "\tcase mcpRelatedDirectionReferences, mcpRelatedDirectionBoth:"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.authorization.refresh-denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestWorkspaceSourceToolsMCPDenialMapsWorkspacerepositoryCodes",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-refresh-denial-mapping-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_adapter.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tpage, available, err := handler.workspaceToolRefreshPage(request, access, arguments.WorkspaceID, arguments.SourceScopeID, arguments.Offset, arguments.Limit)\n\tif !available {\n\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\treturn\n\t}\n\tif err != nil {\n\t\tcode, message := mcpWorkspaceSourceToolError(err)\n\t\twriteMCPError(writer, envelope.ID, code, message)\n\t\treturn\n\t}",
+          "new": "\tpage, available, err := handler.workspaceToolRefreshPage(request, access, arguments.WorkspaceID, arguments.SourceScopeID, arguments.Offset, arguments.Limit)\n\tif !available {\n\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\treturn\n\t}\n\tif err == nil {\n\t\tcode, message := mcpWorkspaceSourceToolError(err)\n\t\twriteMCPError(writer, envelope.ID, code, message)\n\t\treturn\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.sources.denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPKnowvaultSourcesDenialAdmittedAndAudited",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-sources-denial-mapping-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_adapter.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tstatuses, err := handler.sources.ListSources(request.Context(), access, arguments.WorkspaceID)\n\tif err != nil {",
+          "new": "\tstatuses, err := handler.sources.ListSources(request.Context(), access, arguments.WorkspaceID)\n\tif err == nil {"
+        },
+        {
+          "id": "r3a1-sources-typed-denial-recognition-dropped",
+          "target": "internal/platform/workspaceapi/mcp_adapter.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif workspaceSourceToolErrorIsDenial(err) {\n\t\treturn -32004, \"source scope not found\"\n\t}",
+          "new": "\tif false {\n\t\treturn -32004, \"source scope not found\"\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.search.denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPKnowvaultSearchDenialAdmittedAndAudited",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-search-denial-guard-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_search.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}",
+          "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}"
+        },
+        {
+          "id": "r3a1-search-denial-mapping-weakened-to-service-unavailable",
+          "target": "internal/platform/workspaceapi/mcp_search.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")",
+          "new": "\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.related.denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPRelatedAdmissionBeforeData",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-related-denial-guard-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_related.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace relations not found\")\n\t\treturn\n\t}",
+          "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace relations not found\")\n\t\treturn\n\t}"
+        },
+        {
+          "id": "r3a1-related-denial-mapping-weakened-to-service-unavailable",
+          "target": "internal/platform/workspaceapi/mcp_related.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace relations not found\")",
+          "new": "\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.grep.denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPKnowvaultGrepDenialAdmittedAndAudited",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-grep-denial-guard-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_grep.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil {\n\t\tswitch {\n\t\tcase errors.Is(err, errMCPGrepInvalidAddress):\n\t\t\twriteMCPError(writer, envelope.ID, -32602, \"invalid grep arguments\")\n\t\t\treturn\n\t\tcase errors.Is(err, address.ErrSpanMismatch):\n\t\t\twriteMCPError(writer, envelope.ID, -32005, \"evidence span hash mismatch\")\n\t\t\treturn\n\t\tcase errors.Is(err, errMCPGrepWholeObjectUnavailable):\n\t\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\t\treturn\n\t\tcase errors.Is(err, errMCPGrepReadFragmentsInvalid):\n\t\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\t\treturn\n\t\t}\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}",
+          "new": "\tif err == nil {\n\t\tswitch {\n\t\tcase errors.Is(err, errMCPGrepInvalidAddress):\n\t\t\twriteMCPError(writer, envelope.ID, -32602, \"invalid grep arguments\")\n\t\t\treturn\n\t\tcase errors.Is(err, address.ErrSpanMismatch):\n\t\t\twriteMCPError(writer, envelope.ID, -32005, \"evidence span hash mismatch\")\n\t\t\treturn\n\t\tcase errors.Is(err, errMCPGrepWholeObjectUnavailable):\n\t\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\t\treturn\n\t\tcase errors.Is(err, errMCPGrepReadFragmentsInvalid):\n\t\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\t\treturn\n\t\t}\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}"
+        },
+        {
+          "id": "r3a1-grep-denial-mapping-weakened-to-service-unavailable",
+          "target": "internal/platform/workspaceapi/mcp_grep.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")",
+          "new": "\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.list-objects.denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPKnowvaultListObjectsDenialAdmittedAndAudited",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-list-objects-denial-guard-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace objects not found\")\n\t\treturn\n\t}",
+          "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace objects not found\")\n\t\treturn\n\t}"
+        },
+        {
+          "id": "r3a1-list-objects-denial-mapping-weakened-to-service-unavailable",
+          "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace objects not found\")",
+          "new": "\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.read.denial-admitted-and-audited",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPKnowvaultReadDenialAdmittedAndAudited",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-read-denial-guard-weakened-to-fall-through",
+          "target": "internal/platform/workspaceapi/mcp_adapter.go",
+          "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+          "expected": "RED",
+          "old": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}",
+          "new": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.workspace.degraded-configuration-hash-read-and-repair",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestConfigurationHashStaleMutationUsesLivePreconditionAndRepairs",
+      "test_package": "./internal/workspace/repository",
+      "mutations": [
+        {
+          "id": "r3a1-workspace-degraded-configuration-hash-repair-precondition-stays-stale",
+          "target": "internal/workspace/repository/repository.go",
+          "kind": "GO_WORKSPACE_CONFIGURATION_HASH_REPAIR_PRECONDITION_WEAKENING",
+          "expected": "RED",
+          "old": "\treturn configurationHashChange{Stale: true, EffectiveHash: computedHash}",
+          "new": "\treturn configurationHashChange{Stale: true, EffectiveHash: storedHash}"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.tools.canonical-names-no-wiki-rag-alias",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestWorkspaceToolRESTUnregisteredSegmentIsNotFoundWithoutCapability",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-tools-wiki-rag-name-registered-as-rest-dispatch-segment",
+          "target": "internal/workspacetools/registry.go",
+          "kind": "GO_TOOLS_WIKI_RAG_NAME_DISPATCH_WEAKENING",
+          "expected": "RED",
+          "old": "RESTPath: \"search\"",
+          "new": "RESTPath: \"wiki_search\""
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.r3a1.mcp.text-channel-carries-addresses",
+      "critical_invariant_ids": [],
+      "harness": "GO_UNIT",
+      "test_name": "TestMCPContentTextCarriesSearchHitsAndCursor",
+      "test_package": "./internal/platform/workspaceapi",
+      "mutations": [
+        {
+          "id": "r3a1-mcp-text-channel-addresses-dropped",
+          "target": "internal/platform/workspaceapi/mcp_search.go",
+          "kind": "GO_MCP_CONTENT_TEXT_CHANNEL_WEAKENING",
+          "expected": "RED",
+          "old": "\tencoded, err := json.Marshal(address)",
+          "new": "\tencoded, err := json.Marshal(nil)"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.search.client-supplied-scope-filter",
+      "critical_invariant_ids": [
+        "SRCH-001"
+      ],
+      "harness": "GO_UNIT",
+      "test_name": "TestVectorSearchAppliesScopeAndVersionStateBeforeRanking",
+      "test_package": "./internal/search",
+      "mutations": [
+        {
+          "id": "s3-knn-scope-prefilter-dropped",
+          "target": "internal/search/client.go",
+          "kind": "GO_SEARCH_SCOPE_PREFILTER_WEAKENING",
+          "expected": "RED",
+          "old": "\t// not k tenant-wide neighbours of which most are then discarded.\n\tif len(query.SourceScopeIDs) > 0 {",
+          "new": "\t// not k tenant-wide neighbours of which most are then discarded.\n\tif false {"
+        },
+        {
+          "id": "s3-knn-scope-prefilter-boundary",
+          "target": "internal/search/client.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t// not k tenant-wide neighbours of which most are then discarded.\n\tif len(query.SourceScopeIDs) > 0 {",
+          "new": "\t// not k tenant-wide neighbours of which most are then discarded.\n\tif len(query.SourceScopeIDs) >= 1 {"
+        }
+      ]
+    },
+    {
+      "invariant_id": "acceptance.search.stale-index-postauthorization",
+      "critical_invariant_ids": [
+        "SRCH-002"
+      ],
+      "harness": "POSTGRES_INTEGRATION",
+      "test_name": "TestS3HybridWorkspaceSearchNegativeControls",
+      "test_package": "./tests/integration/postgres",
+      "mutations": [
+        {
+          "id": "s3-fused-hit-trusts-the-index",
+          "target": "internal/retrieval/workspacesearch.go",
+          "kind": "GO_RETRIEVAL_POSTAUTHORIZATION_WEAKENING",
+          "expected": "RED",
+          "old": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; !authorizedNow {",
+          "new": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; false && !authorizedNow {"
+        },
+        {
+          "id": "s3-fused-hit-postauthorization-boundary",
+          "target": "internal/retrieval/workspacesearch.go",
+          "kind": "GO_SEMANTIC_PRESERVING",
+          "expected": "GREEN",
+          "old": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; !authorizedNow {",
+          "new": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; authorizedNow != true {"
+        }
+      ]
+    }
+  ]
+}

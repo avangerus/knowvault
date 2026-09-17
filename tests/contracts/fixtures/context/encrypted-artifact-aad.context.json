@@ -1,0 +1,15 @@
+{
+  "expected_aad": {
+    "schema_version": "encrypted-artifact-aad-v1",
+    "organization_id": "org1",
+    "owner_table": "question_model_execution_plan",
+    "owner_column": "canonical_artifact_id",
+    "resource_type": "MODEL_EXECUTION_PLAN",
+    "resource_id": "qr_0001",
+    "field": "CANONICAL_BYTES"
+  },
+  "owner_mapping_title": "question_model_execution_plan.canonical_artifact_id",
+  "owner_key": {"question_run_id": "qr_0001"},
+  "owner_key_inventory_fixture": "fixtures/context/encrypted-artifact-owner-keys.json",
+  "expected_aad_hash": "sha256:72c107e0f950f27d52481574b7f05b3cbf82e00a743a982ad208478085eb8aeb"
+}

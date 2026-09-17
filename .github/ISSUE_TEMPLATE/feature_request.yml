@@ -1,0 +1,40 @@
+name: Feature request
+description: Describe a user problem and the smallest useful improvement.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the business task you want to complete. Please use examples without customer data.
+        The current pilot focuses on documents, PostgreSQL snapshots, MCP, evidence, and access controls.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What task is difficult today?
+      description: Who needs it, what are they trying to achieve, and what prevents them?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a successful result look like?
+      description: Give one concrete example of the desired behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested approach or smaller alternative
+      description: An implementation proposal is optional. Existing components or a narrower solution may be sufficient.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Frequency and impact
+      description: How often does this occur, and what workaround do you use?
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before submitting
+      options:
+        - label: The examples contain no credentials or customer data.
+          required: true

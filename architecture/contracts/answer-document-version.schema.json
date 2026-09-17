@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/answer-document-version.schema.json",
+  "title": "Answer Document Version Record 1.0",
+  "description": "Immutable version record of a published answer document (ADR-0076): superseding versions carry a hash chain and a closed amendment class; the initial version carries none.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "organization_id", "workspace_id", "answer_document_id",
+    "version", "previous_version_hash", "amendment_class", "amendment_reason",
+    "amended_at", "manifest_hash", "actor_principal_id", "request_id", "signature"
+  ],
+  "properties": {
+    "schema_version": { "const": "answer-document-version-v1" },
+    "organization_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "workspace_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "answer_document_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "previous_version_hash": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/sha256" }
+      ]
+    },
+    "amendment_class": {
+      "oneOf": [
+        { "type": "null" },
+        { "enum": ["SUPERSEDE", "RETRACT", "REDACT"] }
+      ]
+    },
+    "amendment_reason": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1, "maxLength": 2000 }
+      ]
+    },
+    "amended_at": { "type": "string", "format": "date-time" },
+    "manifest_hash": { "$ref": "#/$defs/sha256" },
+    "actor_principal_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "version": { "const": 1 } },
+        "required": ["version"]
+      },
+      "then": {
+        "properties": {
+          "previous_version_hash": { "type": "null" },
+          "amendment_class": { "type": "null" },
+          "amendment_reason": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "version": { "type": "integer", "minimum": 2, "maximum": 9007199254740991 } },
+        "required": ["version"]
+      },
+      "then": {
+        "properties": {
+          "previous_version_hash": { "$ref": "#/$defs/sha256" },
+          "amendment_class": { "enum": ["SUPERSEDE", "RETRACT", "REDACT"] },
+          "amendment_reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signed_at", "value_base64"],
+      "properties": {
+        "algorithm": { "const": "ED25519" },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "value_base64": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" }
+      }
+    }
+  }
+}

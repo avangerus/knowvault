@@ -1,0 +1,210 @@
+{
+  "access_context_hash": "sha256:abd0ef86010d5d566c21eb34a68276eafd799ec7a04c2fb057164baf72dc11b3",
+  "answer_hash": "sha256:7a7550e8aa8e3ae27f0fca731ecc23981ea8d2d86665cee5203dcc56ded48d69",
+  "answer_mode": "EXTRACTIVE",
+  "canonicalization": {
+    "answer_renderer": "answer-renderer-v1",
+    "json": "json-v1",
+    "renderer_locale": "ru-RU",
+    "text": "text-v1"
+  },
+  "citations": [
+    {
+      "anchor": {
+        "kind": "PDF",
+        "normalization_version": "text-v1",
+        "offset_unit": "UTF8_BYTE",
+        "page": 4,
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "text_end": 95,
+        "text_start": 24
+      },
+      "anchor_hash": "hmac-sha256:k1:30b243e196b3ed331d0278ff457e3b831e3e5637c514a7da96418b3f57ad5817",
+      "citation_number": 1,
+      "cited_excerpt": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.",
+      "cited_excerpt_hash": "sha256:42abe131919eafb797fcf55da978c3cddf720a1b8ce17ef58d5b4c1ee9e7ae0b",
+      "claim_ids": [
+        "C1"
+      ],
+      "evidence_fragment_id": "ev_release_date",
+      "evidence_text_hash": "sha256:42abe131919eafb797fcf55da978c3cddf720a1b8ce17ef58d5b4c1ee9e7ae0b",
+      "extraction_id": "extraction_pdf_1",
+      "source_object_id": "source_object_1",
+      "source_version_content_hash": "sha256:73582134a2b5fbb6154925791da338dbe06b0708ca22ccae9649ab4b9403f2ef",
+      "source_version_id": "source_version_1",
+      "state_at_generation": "CURRENT"
+    }
+  ],
+  "claim_verifications": [],
+  "claims": [
+    {
+      "answer_span": {
+        "end": 72,
+        "normalization_version": "text-v1",
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "start": 0
+      },
+      "citation_numbers": [
+        1
+      ],
+      "claim_id": "C1",
+      "kind": "FACT",
+      "support_status": "SUPPORTED",
+      "supporting_claim_ids": [],
+      "text": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.",
+      "unknown_reason": null
+    }
+  ],
+  "completed_at": "2026-07-14T12:00:15Z",
+  "configured_profiles": {
+    "embedding": {
+      "artifact_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "embedding_dimension": 1024,
+      "model_id": "Qwen/Qwen3-Embedding-0.6B",
+      "model_revision": "rev00001",
+      "profile_hash": "sha256:bf9298c5b4d89dea9c825ecd5b09e863e22a08b3d07bfd2bbfec74462e0a43c7",
+      "profile_revision": "embedding-profile-v1",
+      "prompt_version": null,
+      "purpose": "EMBEDDING"
+    },
+    "reranking": {
+      "artifact_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "embedding_dimension": null,
+      "model_id": "Qwen/Qwen3-Reranker-0.6B",
+      "model_revision": "rev00002",
+      "profile_hash": "sha256:26103fea4beae08adf6710d33c305751bdfefc96ab3832f6119fdcdb67a0ba6d",
+      "profile_revision": "reranking-profile-v1",
+      "prompt_version": null,
+      "purpose": "RERANKING"
+    }
+  },
+  "corpus_snapshot": [
+    {
+      "access_mode": "WORKSPACE_MANAGED",
+      "acl_fresh_at": null,
+      "connector_type": "FOLDER",
+      "connector_version": "connector-folder-1.0.0",
+      "content_watermark": "scan:0000042",
+      "health": "READY",
+      "last_successful_sync": "2026-07-14T11:58:00Z",
+      "scope_config_hash": "sha256:c2f04f0025efc3d6a652e2e75b74539d3f33b90e3f5ffea7aff3be97d1a99570",
+      "source_scope_id": "scope_projects",
+      "source_scope_revision": 3
+    },
+    {
+      "access_mode": "WORKSPACE_MANAGED",
+      "acl_fresh_at": null,
+      "connector_type": "SITE",
+      "connector_version": "connector-site-1.0.0",
+      "content_watermark": "crawl:0000017",
+      "health": "READY",
+      "last_successful_sync": "2026-07-14T11:57:00Z",
+      "scope_config_hash": "sha256:4def49ad35a7ddc0521fd3d32c991856b5649ead84cd78c7e45f02c648a58fa0",
+      "source_scope_id": "scope_site",
+      "source_scope_revision": 5
+    }
+  ],
+  "created_by": "user_anna",
+  "deterministic_validations": [],
+  "extractions": [
+    {
+      "evidence_set_hash": "sha256:db3c780624706fddd4b60b396e3921011e7ef7256190209df13c998d86737e31",
+      "extraction_id": "extraction_pdf_1",
+      "profile": {
+        "canonical_format": "PDF",
+        "extractor": {
+          "artifact_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "pdf-text",
+          "parser_profile_revision": "pdf-default-v1",
+          "version": "1.0.0"
+        },
+        "normalization_version": "text-v1",
+        "ocr": null
+      },
+      "profile_hash": "sha256:1d928469a464202015164f23c07b49889be1805df99faf5a647ee56fcccf7d16",
+      "source_version_id": "source_version_1"
+    }
+  ],
+  "manifest_hash": "sha256:84a1db277f64eefb8cb765a99a4c6895fc4dcfc5b161bba8a39a2ddedfe11ae5",
+  "model_runs": [
+    {
+      "artifact_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "attempt": 1,
+      "completed_at": "2026-07-14T12:00:02Z",
+      "input_hash": "sha256:de7e1cf2d8202d6e829b2b6675957a6e1402907bc72faf8f5e287a923bcb37ce",
+      "model_id": "Qwen/Qwen3-Embedding-0.6B",
+      "model_revision": "rev00001",
+      "model_run_id": "mr_embedding_1",
+      "outcome": "SUCCEEDED",
+      "output_hash": "sha256:4b40cb94cfbe788c98e91ab00fe58afd9a9dc8a04faf5fd0ca3d7a30dd663967",
+      "profile_hash": "sha256:bf9298c5b4d89dea9c825ecd5b09e863e22a08b3d07bfd2bbfec74462e0a43c7",
+      "profile_revision": "embedding-profile-v1",
+      "prompt_version": null,
+      "purpose": "EMBEDDING",
+      "selected_for_result": true,
+      "started_at": "2026-07-14T12:00:01Z"
+    },
+    {
+      "artifact_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "attempt": 1,
+      "completed_at": "2026-07-14T12:00:04Z",
+      "input_hash": "sha256:dbde2a0415440b7af536a657c382984b12f093c238dafca732b0056db8fd102f",
+      "model_id": "Qwen/Qwen3-Reranker-0.6B",
+      "model_revision": "rev00002",
+      "model_run_id": "mr_reranking_1",
+      "outcome": "SUCCEEDED",
+      "output_hash": "sha256:aa7a8de5c8356e8b1e49963c14554c9e30e2836f61679e84038fac503e77dbd1",
+      "profile_hash": "sha256:26103fea4beae08adf6710d33c305751bdfefc96ab3832f6119fdcdb67a0ba6d",
+      "profile_revision": "reranking-profile-v1",
+      "prompt_version": null,
+      "purpose": "RERANKING",
+      "selected_for_result": true,
+      "started_at": "2026-07-14T12:00:03Z"
+    }
+  ],
+  "organization_id": "org_alpha",
+  "policy_revision": "policy-0007",
+  "question_hash": "sha256:b3d7896b5f40286b77da6eb12cc5ef66ced60a39d3d4f764481e1cbd4123296d",
+  "question_run_id": "qr_0001",
+  "question_text": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0451\u043d \u0437\u0430\u043f\u0443\u0441\u043a?",
+  "retrieval": {
+    "authorization_snapshot_hash": "sha256:3c564518a349c4391bd841276aea705e145a59f8a1c4f66e42be1e7c626f279c",
+    "authorized_candidate_count": 5,
+    "authorized_candidate_set_hash": "sha256:b752bb4dd5190ed5116f596ca1079df4f46238262bef5234331f401ca4f2ffb1",
+    "context_count": 3,
+    "context_pack_hash": "sha256:8e2787548f038272d6e33f35c4b355cfb39f6c573ec5cb3a769e72e47bb48a7d",
+    "error_codes": [],
+    "model_execution_plan_hash": "sha256:fcf345f4e4ef42b525a58cee876ba6cb79f8fdedcd9309fddbff0295bbfea4ff",
+    "pipeline_profile_hash": "sha256:9e39a40315912d7f70deb1d4a394a9116abf407f0780d3d624ff923b2e44706a",
+    "pipeline_version": "hybrid-r1",
+    "truncated": false,
+    "truncation_reason": null
+  },
+  "schema_version": "2.0",
+  "sections": [
+    {
+      "ordered_claim_ids": [
+        "C1"
+      ],
+      "section_id": "S1",
+      "title": null
+    }
+  ],
+  "signature": {
+    "algorithm": "ED25519",
+    "key_id": "contract-test-ed25519-01",
+    "signed_at": "2026-07-14T12:00:15Z",
+    "value_base64": "LxPqC/RiTAzqPgZISjU9aO0xTVz9aUnTmvVA/f29M58/2/n7GLsruyLA6Hpdffmk2XePH5L9GgMMm3VLPl5bCA=="
+  },
+  "started_at": "2026-07-14T12:00:00Z",
+  "status": {
+    "corpus": "COMPLETE",
+    "result": "COMPLETED"
+  },
+  "supersedes_question_run_id": null,
+  "verification_method": "BYTE_EXACT_CITATION",
+  "workspace_id": "ws_alpha",
+  "workspace_revision": 7,
+  "workspace_scope_hash": "sha256:2ce52c12e6c9170a908c302368df8abdf6f9c03cab1ac06f69b8e911667ef74c"
+}

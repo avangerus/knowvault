@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-address-whole-object-no-silent-truncation",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.address.whole-object-no-silent-truncation",
+  "control_id": "acceptance.r3a1.address.whole-object-no-silent-truncation",
+  "description": "R3a-1 Outcome 1 whole-object read: a document longer than one response page must never be silently truncated. internal/address/address.go Read must flag a page that stops before the end with HasMore and a stable NextCursor, and may only set Complete when the page reaches the last byte. Weakening the cut-page guard `if end < total {` to a constant false makes every cut page report completion while data remains, so a client reassembling by pages would stop early. The existing evidence-backed tests kill that mutant: TestReadPageCutBeforeEndOffersNextCursor requires HasMore plus a cursor on a cut page, and TestReadReassemblesPagesToWholeOriginalHash requires the concatenation of all pages to equal the stored original.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/address",
+  "test_name": "TestReadPageCutBeforeEndOffersNextCursor",
+  "mutations": [
+    {
+      "id": "r3a1-address-cut-page-reports-completion",
+      "target": "internal/address/address.go",
+      "kind": "GO_ADDRESS_PAGE_CUT_COMPLETION_WEAKENING",
+      "expected": "RED",
+      "old": "\tif end < total {",
+      "new": "\tif false {"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree Read reports HasMore and a non-empty NextCursor for a page cut before the end, sets Complete only on the final page, and the concatenation of all pages equals the stored original with a matching whole hash.",
+  "mutant_meaning": "With the cut-page guard weakened to `if false` the branch that sets HasMore and NextCursor is never taken; every page, including one that stops before the end, reports Complete with no cursor. TestReadPageCutBeforeEndOffersNextCursor fails on the missing HasMore/cursor and TestReadReassemblesPagesToWholeOriginalHash stops after the first page and fails the reassembly/hash comparison (RED). The mutant is therefore killed by the registered probe, not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.address.whole-object-no-silent-truncation`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

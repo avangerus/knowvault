@@ -1,0 +1,102 @@
+{
+  "vector_version": "1.0",
+  "vectors": [
+    {
+      "id": "file-application-json",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/json",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "Mail body",
+      "excerpt": "Mail body"
+    },
+    {
+      "id": "file-vendor-json",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/ld+json",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "Mail body",
+      "excerpt": "Mail body"
+    },
+    {
+      "id": "file-application-xml",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/xml",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "Mail body",
+      "excerpt": "Mail body"
+    },
+    {
+      "id": "file-vendor-xml",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/atom+xml",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "Mail body",
+      "excerpt": "Mail body"
+    },
+    {
+      "id": "file-eml",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "message/rfc822",
+        "profile": {"canonical_format": "EMAIL", "ocr": null}
+      },
+      "anchor": {
+        "kind": "EMAIL",
+        "message_id": "source-object:source_object_eml_1",
+        "mime_part": "text/plain",
+        "text_start": 0,
+        "text_end": 9,
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "normalization_version": "text-v1"
+      },
+      "canonical_text": "Mail body",
+      "excerpt": "Mail body"
+    },
+    {
+      "id": "file-javascript-source",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/javascript",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "const value = 1;",
+      "excerpt": "const value = 1;"
+    },
+    {
+      "id": "file-typescript-source",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/typescript",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "const value: number = 1;",
+      "excerpt": "const value: number = 1;"
+    },
+    {
+      "id": "file-x-source-code",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/x-rust",
+        "profile": {"canonical_format": "TEXT", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "fn main() {}",
+      "excerpt": "fn main() {}"
+    }
+  ]
+}

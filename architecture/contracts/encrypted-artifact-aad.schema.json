@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/encrypted-artifact-aad.schema.json",
+  "title": "Encrypted Artifact AAD v1",
+  "description": "Closed owner-column AAD contract. Each encrypted-artifact FK in DATA_MODEL has exactly one allowed owner/type/field/resource-id mapping.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "organization_id",
+    "owner_table",
+    "owner_column",
+    "resource_type",
+    "resource_id",
+    "field"
+  ],
+  "properties": {
+    "schema_version": { "const": "encrypted-artifact-aad-v1" },
+    "organization_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F]).+$"
+    },
+    "owner_table": {
+      "enum": [
+        "external_identity",
+        "source_connection_revision",
+        "source_discovery_result",
+        "source_discovered_scope",
+        "source_scope_revision",
+        "source_object",
+        "acl_snapshot",
+        "evidence_fragment",
+        "search_chunk",
+        "question_run",
+        "question_authorized_candidate_set",
+        "question_model_execution_plan",
+        "question_claim",
+        "claim_deterministic_validation_artifact",
+        "question_citation",
+        "model_run_artifact"
+      ]
+    },
+    "owner_column": {
+      "enum": [
+        "external_subject_artifact_id",
+        "trust_profile_artifact_id",
+        "identity_artifact_id",
+        "display_metadata_artifact_id",
+        "scope_config_artifact_id",
+        "external_object_id_artifact_id",
+        "canonical_locator_artifact_id",
+        "title_artifact_id",
+        "principal_tokens_artifact_id",
+        "normalized_text_artifact_id",
+        "anchor_artifact_id",
+        "metadata_artifact_id",
+        "search_text_artifact_id",
+        "question_text_artifact_id",
+        "answer_markdown_artifact_id",
+        "answer_structured_artifact_id",
+        "manifest_content_artifact_id",
+        "canonical_artifact_id",
+        "text_artifact_id",
+        "output_artifact_id",
+        "cited_excerpt_artifact_id",
+        "deep_link_artifact_id",
+        "input_artifact_id"
+      ]
+    },
+    "resource_type": {
+      "enum": [
+        "EXTERNAL_IDENTITY",
+        "SOURCE_TRUST_CONFIG",
+        "SOURCE_SCOPE_IDENTITY",
+        "SOURCE_SCOPE_METADATA",
+        "SOURCE_SCOPE_CONFIG",
+        "SOURCE_OBJECT_ID",
+        "SOURCE_LOCATOR",
+        "SOURCE_TITLE",
+        "ACL_PRINCIPAL_SET",
+        "EVIDENCE_TEXT",
+        "EVIDENCE_ANCHOR",
+        "EVIDENCE_METADATA",
+        "SEARCH_CHUNK_TEXT",
+        "QUESTION_RUN",
+        "MANIFEST_CONTENT",
+        "AUTHORIZED_CANDIDATE_SET",
+        "MODEL_EXECUTION_PLAN",
+        "CLAIM_TEXT",
+        "DETERMINISTIC_VALIDATION",
+        "CITED_EXCERPT",
+        "CITATION_ANCHOR",
+        "SOURCE_DEEPLINK",
+        "MODEL_ARTIFACT",
+        "SOURCE_DISCOVERY_RESULT"
+      ]
+    },
+    "resource_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F]).+$"
+    },
+    "field": {
+      "enum": [
+        "SUBJECT",
+        "TRUST_CONFIG",
+        "EXTERNAL_SCOPE_IDENTITY",
+        "DISPLAY_METADATA",
+        "SCOPE_CONFIG",
+        "EXTERNAL_OBJECT_ID",
+        "CANONICAL_LOCATOR",
+        "DISPLAY_TITLE",
+        "PRINCIPAL_TOKENS",
+        "NORMALIZED_TEXT",
+        "CANONICAL_ANCHOR",
+        "METADATA",
+        "QUESTION_TEXT",
+        "ANSWER_MARKDOWN",
+        "ANSWER_STRUCTURED",
+        "CANONICAL_BYTES",
+        "CLAIM_TEXT",
+        "VALIDATION_OUTPUT",
+        "EXACT_TEXT",
+        "DEEPLINK",
+        "CANONICAL_INPUT",
+        "CANONICAL_OUTPUT",
+        "DISCOVERY_METADATA"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "title": "external_identity.external_subject_artifact_id",
+          "$comment": "external_identity.id",
+          "properties": {
+            "owner_table": { "const": "external_identity" },
+            "owner_column": { "const": "external_subject_artifact_id" },
+            "resource_type": { "const": "EXTERNAL_IDENTITY" },
+            "field": { "const": "SUBJECT" }
+          }
+        },
+        {
+          "title": "source_connection_revision.trust_profile_artifact_id",
+          "$comment": "source_connection_revision(organization_id,connection_id,revision)",
+          "properties": {
+            "owner_table": { "const": "source_connection_revision" },
+            "owner_column": { "const": "trust_profile_artifact_id" },
+            "resource_type": { "const": "SOURCE_TRUST_CONFIG" },
+            "field": { "const": "TRUST_CONFIG" }
+          }
+        },
+        {
+          "title": "source_discovery_result.metadata_artifact_id",
+          "$comment": "source_discovery_result.id",
+          "properties": {
+            "owner_table": { "const": "source_discovery_result" },
+            "owner_column": { "const": "metadata_artifact_id" },
+            "resource_type": { "const": "SOURCE_DISCOVERY_RESULT" },
+            "field": { "const": "DISCOVERY_METADATA" }
+          }
+        },
+        {
+          "title": "source_discovered_scope.identity_artifact_id",
+          "$comment": "source_discovered_scope.id",
+          "properties": {
+            "owner_table": { "const": "source_discovered_scope" },
+            "owner_column": { "const": "identity_artifact_id" },
+            "resource_type": { "const": "SOURCE_SCOPE_IDENTITY" },
+            "field": { "const": "EXTERNAL_SCOPE_IDENTITY" }
+          }
+        },
+        {
+          "title": "source_discovered_scope.display_metadata_artifact_id",
+          "$comment": "source_discovered_scope.id",
+          "properties": {
+            "owner_table": { "const": "source_discovered_scope" },
+            "owner_column": { "const": "display_metadata_artifact_id" },
+            "resource_type": { "const": "SOURCE_SCOPE_METADATA" },
+            "field": { "const": "DISPLAY_METADATA" }
+          }
+        },
+        {
+          "title": "source_scope_revision.scope_config_artifact_id",
+          "$comment": "source_scope_revision(organization_id,source_scope_id,revision)",
+          "properties": {
+            "owner_table": { "const": "source_scope_revision" },
+            "owner_column": { "const": "scope_config_artifact_id" },
+            "resource_type": { "const": "SOURCE_SCOPE_CONFIG" },
+            "field": { "const": "SCOPE_CONFIG" }
+          }
+        },
+        {
+          "title": "source_object.external_object_id_artifact_id",
+          "$comment": "source_object.id",
+          "properties": {
+            "owner_table": { "const": "source_object" },
+            "owner_column": { "const": "external_object_id_artifact_id" },
+            "resource_type": { "const": "SOURCE_OBJECT_ID" },
+            "field": { "const": "EXTERNAL_OBJECT_ID" }
+          }
+        },
+        {
+          "title": "source_object.canonical_locator_artifact_id",
+          "$comment": "source_object.id",
+          "properties": {
+            "owner_table": { "const": "source_object" },
+            "owner_column": { "const": "canonical_locator_artifact_id" },
+            "resource_type": { "const": "SOURCE_LOCATOR" },
+            "field": { "const": "CANONICAL_LOCATOR" }
+          }
+        },
+        {
+          "title": "source_object.title_artifact_id",
+          "$comment": "source_object.id",
+          "properties": {
+            "owner_table": { "const": "source_object" },
+            "owner_column": { "const": "title_artifact_id" },
+            "resource_type": { "const": "SOURCE_TITLE" },
+            "field": { "const": "DISPLAY_TITLE" }
+          }
+        },
+        {
+          "title": "acl_snapshot.principal_tokens_artifact_id",
+          "$comment": "acl_snapshot.id",
+          "properties": {
+            "owner_table": { "const": "acl_snapshot" },
+            "owner_column": { "const": "principal_tokens_artifact_id" },
+            "resource_type": { "const": "ACL_PRINCIPAL_SET" },
+            "field": { "const": "PRINCIPAL_TOKENS" }
+          }
+        },
+        {
+          "title": "evidence_fragment.normalized_text_artifact_id",
+          "$comment": "evidence_fragment.id",
+          "properties": {
+            "owner_table": { "const": "evidence_fragment" },
+            "owner_column": { "const": "normalized_text_artifact_id" },
+            "resource_type": { "const": "EVIDENCE_TEXT" },
+            "field": { "const": "NORMALIZED_TEXT" }
+          }
+        },
+        {
+          "title": "evidence_fragment.anchor_artifact_id",
+          "$comment": "evidence_fragment.id",
+          "properties": {
+            "owner_table": { "const": "evidence_fragment" },
+            "owner_column": { "const": "anchor_artifact_id" },
+            "resource_type": { "const": "EVIDENCE_ANCHOR" },
+            "field": { "const": "CANONICAL_ANCHOR" }
+          }
+        },
+        {
+          "title": "evidence_fragment.metadata_artifact_id",
+          "$comment": "evidence_fragment.id",
+          "properties": {
+            "owner_table": { "const": "evidence_fragment" },
+            "owner_column": { "const": "metadata_artifact_id" },
+            "resource_type": { "const": "EVIDENCE_METADATA" },
+            "field": { "const": "METADATA" }
+          }
+        },
+        {
+          "title": "search_chunk.search_text_artifact_id",
+          "$comment": "search_chunk.id",
+          "properties": {
+            "owner_table": { "const": "search_chunk" },
+            "owner_column": { "const": "search_text_artifact_id" },
+            "resource_type": { "const": "SEARCH_CHUNK_TEXT" },
+            "field": { "const": "NORMALIZED_TEXT" }
+          }
+        },
+        {
+          "title": "question_run.question_text_artifact_id",
+          "$comment": "question_run.id",
+          "properties": {
+            "owner_table": { "const": "question_run" },
+            "owner_column": { "const": "question_text_artifact_id" },
+            "resource_type": { "const": "QUESTION_RUN" },
+            "field": { "const": "QUESTION_TEXT" }
+          }
+        },
+        {
+          "title": "question_run.answer_markdown_artifact_id",
+          "$comment": "question_run.id",
+          "properties": {
+            "owner_table": { "const": "question_run" },
+            "owner_column": { "const": "answer_markdown_artifact_id" },
+            "resource_type": { "const": "QUESTION_RUN" },
+            "field": { "const": "ANSWER_MARKDOWN" }
+          }
+        },
+        {
+          "title": "question_run.answer_structured_artifact_id",
+          "$comment": "question_run.id",
+          "properties": {
+            "owner_table": { "const": "question_run" },
+            "owner_column": { "const": "answer_structured_artifact_id" },
+            "resource_type": { "const": "QUESTION_RUN" },
+            "field": { "const": "ANSWER_STRUCTURED" }
+          }
+        },
+        {
+          "title": "question_run.manifest_content_artifact_id",
+          "$comment": "question_run.id",
+          "properties": {
+            "owner_table": { "const": "question_run" },
+            "owner_column": { "const": "manifest_content_artifact_id" },
+            "resource_type": { "const": "MANIFEST_CONTENT" },
+            "field": { "const": "CANONICAL_BYTES" }
+          }
+        },
+        {
+          "title": "question_authorized_candidate_set.canonical_artifact_id",
+          "$comment": "question_authorized_candidate_set.question_run_id",
+          "properties": {
+            "owner_table": { "const": "question_authorized_candidate_set" },
+            "owner_column": { "const": "canonical_artifact_id" },
+            "resource_type": { "const": "AUTHORIZED_CANDIDATE_SET" },
+            "field": { "const": "CANONICAL_BYTES" }
+          }
+        },
+        {
+          "title": "question_model_execution_plan.canonical_artifact_id",
+          "$comment": "question_model_execution_plan.question_run_id",
+          "properties": {
+            "owner_table": { "const": "question_model_execution_plan" },
+            "owner_column": { "const": "canonical_artifact_id" },
+            "resource_type": { "const": "MODEL_EXECUTION_PLAN" },
+            "field": { "const": "CANONICAL_BYTES" }
+          }
+        },
+        {
+          "title": "question_claim.text_artifact_id",
+          "$comment": "question_claim.id",
+          "properties": {
+            "owner_table": { "const": "question_claim" },
+            "owner_column": { "const": "text_artifact_id" },
+            "resource_type": { "const": "CLAIM_TEXT" },
+            "field": { "const": "CLAIM_TEXT" }
+          }
+        },
+        {
+          "title": "claim_deterministic_validation_artifact.output_artifact_id",
+          "$comment": "claim_deterministic_validation_artifact(organization_id,question_run_id,claim_id)",
+          "properties": {
+            "owner_table": { "const": "claim_deterministic_validation_artifact" },
+            "owner_column": { "const": "output_artifact_id" },
+            "resource_type": { "const": "DETERMINISTIC_VALIDATION" },
+            "field": { "const": "VALIDATION_OUTPUT" }
+          }
+        },
+        {
+          "title": "question_citation.cited_excerpt_artifact_id",
+          "$comment": "question_citation.id",
+          "properties": {
+            "owner_table": { "const": "question_citation" },
+            "owner_column": { "const": "cited_excerpt_artifact_id" },
+            "resource_type": { "const": "CITED_EXCERPT" },
+            "field": { "const": "EXACT_TEXT" }
+          }
+        },
+        {
+          "title": "question_citation.anchor_artifact_id",
+          "$comment": "question_citation.id",
+          "properties": {
+            "owner_table": { "const": "question_citation" },
+            "owner_column": { "const": "anchor_artifact_id" },
+            "resource_type": { "const": "CITATION_ANCHOR" },
+            "field": { "const": "CANONICAL_ANCHOR" }
+          }
+        },
+        {
+          "title": "question_citation.deep_link_artifact_id",
+          "$comment": "question_citation.id",
+          "properties": {
+            "owner_table": { "const": "question_citation" },
+            "owner_column": { "const": "deep_link_artifact_id" },
+            "resource_type": { "const": "SOURCE_DEEPLINK" },
+            "field": { "const": "DEEPLINK" }
+          }
+        },
+        {
+          "title": "model_run_artifact.input_artifact_id",
+          "$comment": "model_run_artifact.model_run_id",
+          "properties": {
+            "owner_table": { "const": "model_run_artifact" },
+            "owner_column": { "const": "input_artifact_id" },
+            "resource_type": { "const": "MODEL_ARTIFACT" },
+            "field": { "const": "CANONICAL_INPUT" }
+          }
+        },
+        {
+          "title": "model_run_artifact.output_artifact_id",
+          "$comment": "model_run_artifact.model_run_id",
+          "properties": {
+            "owner_table": { "const": "model_run_artifact" },
+            "owner_column": { "const": "output_artifact_id" },
+            "resource_type": { "const": "MODEL_ARTIFACT" },
+            "field": { "const": "CANONICAL_OUTPUT" }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "realm": "knowvault",
+  "enabled": true,
+  "displayName": "KnowVault",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "clients": [{
+    "clientId": "knowvault-server",
+    "name": "KnowVault server",
+    "enabled": true,
+    "protocol": "openid-connect",
+    "publicClient": false,
+    "secret": "__KNOWVAULT_OIDC_CLIENT_SECRET__",
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": true,
+    "serviceAccountsEnabled": false,
+    "redirectUris": ["https://knowvault.local:8480/auth/callback"],
+    "webOrigins": ["https://knowvault.local:8480"],
+    "attributes": {"pkce.code.challenge.method": "S256"}
+  }],
+  "users": [{
+    "username": "__KNOWVAULT_OWNER_USERNAME__",
+    "enabled": true,
+    "email": "__KNOWVAULT_OWNER_EMAIL__",
+    "emailVerified": true,
+    "firstName": "__KNOWVAULT_OWNER_FIRST_NAME__",
+    "lastName": "__KNOWVAULT_OWNER_LAST_NAME__",
+    "requiredActions": [],
+    "attributes": {"knowvault_principal_id": ["__KNOWVAULT_OWNER_PRINCIPAL_ID__"]},
+    "credentials": [{"type": "password", "value": "__KNOWVAULT_OWNER_PASSWORD__", "temporary": false}]
+  }]
+}

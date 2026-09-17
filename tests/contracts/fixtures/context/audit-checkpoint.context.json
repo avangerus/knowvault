@@ -1,0 +1,71 @@
+{
+  "key": {
+    "key_id": "audit-key-01",
+    "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key_base64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+  },
+  "keys": [
+    {
+      "organization_id": "org1",
+      "purpose": "AUDIT_CHECKPOINT",
+      "key_id": "audit-key-01",
+      "status": "ACTIVE",
+      "not_before": "2026-07-14T00:00:00Z",
+      "sign_until": "2026-07-15T00:00:00Z"
+    }
+  ],
+  "previous_checkpoint": null,
+  "audit_events": [
+    {
+      "schema_version": "audit-event-v1",
+      "event_id": "audit_event_1",
+      "organization_id": "org1",
+      "sequence": 1,
+      "workspace_id": "ws_alpha",
+      "actor_type": "HUMAN",
+      "actor_principal_id": "user_anna",
+      "on_behalf_of_principal_id": null,
+      "action": "question.created",
+      "resource_type": "QUESTION_RUN",
+      "resource_id": "qr_0001",
+      "request_id": "req_qr_0001",
+      "policy_decision_id": "pd_question_create",
+      "outcome": "SUCCESS",
+      "error_code": null,
+      "referenced_evidence_ids": [],
+      "metadata": {
+        "question_run_id": "qr_0001",
+        "policy_revision": "policy-42"
+      },
+      "previous_event_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "event_hash": "sha256:a8c1497752544d5e1439e8cd8e8a3d0869b5065063c924eec9882323b8ae9a52",
+      "occurred_at": "2026-07-14T12:00:00Z"
+    },
+    {
+      "schema_version": "audit-event-v1",
+      "event_id": "audit_event_2",
+      "organization_id": "org1",
+      "sequence": 2,
+      "workspace_id": "ws_alpha",
+      "actor_type": "SERVICE",
+      "actor_principal_id": "answer_service",
+      "on_behalf_of_principal_id": "user_anna",
+      "action": "question.completed",
+      "resource_type": "QUESTION_RUN",
+      "resource_id": "qr_0001",
+      "request_id": "req_qr_0001",
+      "policy_decision_id": "pd_question_create",
+      "outcome": "SUCCESS",
+      "error_code": null,
+      "referenced_evidence_ids": ["ev_api_reason", "ev_qa_status", "ev_release_date"],
+      "metadata": {
+        "question_run_id": "qr_0001",
+        "manifest_hash": "sha256:844e4b2f2ee6a523dbceac5fffda138766dc319ed8e53c253ed3feeecec5b7ef",
+        "policy_revision": "policy-42"
+      },
+      "previous_event_hash": "sha256:a8c1497752544d5e1439e8cd8e8a3d0869b5065063c924eec9882323b8ae9a52",
+      "event_hash": "sha256:c95dc88725c8bc5f0f6c89b6e6686895ca58e4cd51d00ba1dd2ada68eaa97aaa",
+      "occurred_at": "2026-07-14T12:00:15Z"
+    }
+  ]
+}

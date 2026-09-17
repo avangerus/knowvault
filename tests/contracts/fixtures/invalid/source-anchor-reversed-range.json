@@ -1,0 +1,10 @@
+{
+  "kind": "PDF",
+  "page": 1,
+  "text_start": 22,
+  "text_end": 18,
+  "offset_unit": "UTF8_BYTE",
+  "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+  "normalization_version": "text-v1"
+}
+

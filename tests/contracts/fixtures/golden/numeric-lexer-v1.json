@@ -1,0 +1,30 @@
+{
+  "vector_version": "numeric-validator-v1",
+  "vectors": [
+    {
+      "id": "russian-date",
+      "text": "15 \u0438\u044e\u043b\u044f 2026",
+      "expected": [
+        {"claim_start": 0, "claim_end": 16, "text": "15 \u0438\u044e\u043b\u044f 2026", "class": "DATE_TIME"}
+      ]
+    },
+    {"id": "english-date", "text": "July 15, 2026", "expected": [{"claim_start": 0, "claim_end": 13, "text": "July 15, 2026", "class": "DATE_TIME"}]},
+    {"id": "unicode-minus-percent", "text": "−12,5%", "expected": [{"claim_start": 0, "claim_end": 8, "text": "−12,5%", "class": "PERCENT"}]},
+    {"id": "currency-symbol", "text": "$1,000", "expected": [{"claim_start": 0, "claim_end": 6, "text": "$1,000", "class": "CURRENCY"}]},
+    {"id": "currency-code", "text": "1000 USD", "expected": [{"claim_start": 0, "claim_end": 8, "text": "1000 USD", "class": "CURRENCY"}]},
+    {"id": "iso-time", "text": "2026-07-14T10:42", "expected": [{"claim_start": 0, "claim_end": 16, "text": "2026-07-14T10:42", "class": "DATE_TIME"}]},
+    {"id": "version", "text": "v2.3", "expected": [{"claim_start": 0, "claim_end": 4, "text": "v2.3", "class": "NUMBER"}]},
+    {"id": "ticket", "text": "ALPHA-291", "expected": [{"claim_start": 0, "claim_end": 9, "text": "ALPHA-291", "class": "NUMBER"}]},
+    {"id": "hex-like", "text": "0xFF", "expected": [{"claim_start": 0, "claim_end": 4, "text": "0xFF", "class": "NUMBER"}]},
+    {"id": "nbsp", "text": "1000 USD", "expected": [{"claim_start": 0, "claim_end": 9, "text": "1000 USD", "class": "CURRENCY"}]},
+    {"id": "nnbsp", "text": "1000 USD", "expected": [{"claim_start": 0, "claim_end": 10, "text": "1000 USD", "class": "CURRENCY"}]},
+    {
+      "id": "repeated",
+      "text": "7 7",
+      "expected": [
+        {"claim_start": 0, "claim_end": 1, "text": "7", "class": "NUMBER"},
+        {"claim_start": 2, "claim_end": 3, "text": "7", "class": "NUMBER"}
+      ]
+    }
+  ]
+}

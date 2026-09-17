@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.4",
+  "claims": [
+    {
+      "claim_id": "C1",
+      "text": "\u0417\u0430\u043f\u0443\u0441\u043a \u043e\u0441\u0442\u0430\u0451\u0442\u0441\u044f \u043f\u043e\u0434 \u0440\u0438\u0441\u043a\u043e\u043c.",
+      "kind": "FACT",
+      "unknown_reason": null,
+      "evidence_ids": ["ev_release_plan", "ev_qa_status"],
+      "supporting_claim_ids": []
+    },
+    {
+      "claim_id": "C2",
+      "text": "\u0421\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u043d\u043e, \u043f\u0435\u0440\u0432\u043e\u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u0440\u043e\u043a \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u043c.",
+      "kind": "INFERENCE",
+      "unknown_reason": null,
+      "evidence_ids": [],
+      "supporting_claim_ids": ["C1"]
+    },
+    {
+      "claim_id": "C3",
+      "text": null,
+      "kind": "UNKNOWN",
+      "unknown_reason": "INSUFFICIENT_SUPPORT",
+      "evidence_ids": [],
+      "supporting_claim_ids": []
+    }
+  ],
+  "sections": [
+    {
+      "section_id": "S1",
+      "title": null,
+      "ordered_claim_ids": ["C1", "C2", "C3"]
+    }
+  ]
+}

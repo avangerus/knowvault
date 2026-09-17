@@ -1,0 +1,123 @@
+package governedask
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
+)
+
+func TestGovernedAskRequiresSchemaQualifiedRelations(t *testing.T) {
+	for _, required := range []string{"schema_name.table_name", "unqualified object names"} {
+		if !strings.Contains(askSystemInstructions, required) {
+			t.Fatalf("governed query instructions do not require %q", required)
+		}
+	}
+}
+
+func TestCandidateSQLAcceptsSingleFactClaim(t *testing.T) {
+	sql := "SELECT count(*) FROM fleet_trips"
+	plan := modelgateway.ClaimPlan{
+		SchemaVersion: "1.4",
+		Claims:        []modelgateway.Claim{{ID: "C1", Text: &sql, Kind: "FACT", EvidenceIDs: []string{"E1"}}},
+		Sections:      []modelgateway.Section{{ID: "S1", OrderedClaimIDs: []string{"C1"}}},
+	}
+	got, ok := candidateSQL(plan)
+	if !ok || got != sql {
+		t.Fatalf("expected sql=%q ok=true, got sql=%q ok=%v", sql, got, ok)
+	}
+}
+
+func TestCandidateSQLRejectsUnknownClaim(t *testing.T) {
+	reason := "NO_RELEVANT_EVIDENCE"
+	plan := modelgateway.ClaimPlan{
+		SchemaVersion: "1.4",
+		Claims:        []modelgateway.Claim{{ID: "C1", Kind: "UNKNOWN", UnknownReason: &reason}},
+		Sections:      []modelgateway.Section{{ID: "S1", OrderedClaimIDs: []string{"C1"}}},
+	}
+	if _, ok := candidateSQL(plan); ok {
+		t.Fatalf("expected an UNKNOWN claim to be rejected as a SQL candidate")
+	}
+}
+
+func TestCandidateSQLRejectsMultipleClaims(t *testing.T) {
+	sql := "SELECT 1"
+	plan := modelgateway.ClaimPlan{
+		SchemaVersion: "1.4",
+		Claims: []modelgateway.Claim{
+			{ID: "C1", Text: &sql, Kind: "FACT", EvidenceIDs: []string{"E1"}},
+			{ID: "C2", Text: &sql, Kind: "FACT", EvidenceIDs: []string{"E1"}},
+		},
+		Sections: []modelgateway.Section{{ID: "S1", OrderedClaimIDs: []string{"C1", "C2"}}},
+	}
+	if _, ok := candidateSQL(plan); ok {
+		t.Fatalf("expected more than one claim to be rejected as ambiguous")
+	}
+}
+
+func TestSchemaEvidenceOneItemPerObject(t *testing.T) {
+	schema := governedquery.ExposedSchema{
+		Revision: 1,
+		Objects: []governedquery.ExposedObject{
+			{SchemaName: "public", TableName: "fleet_trips", Description: "Trips.", Columns: []governedquery.ExposedColumn{{Name: "driver", DataType: "text", Description: "Driver."}}},
+		},
+	}
+	evidence, err := schemaEvidence(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(evidence) != 1 {
+		t.Fatalf("expected one evidence item per exposed object, got %d", len(evidence))
+	}
+	if err := evidence[0].Validate(); err != nil {
+		t.Fatalf("expected a well-formed synthetic evidence item, got %v", err)
+	}
+}
+
+// TestDiscloseExecutedAttemptFailsClosedOnAuditError is INT-2 #4's guard for
+// FIX-1 #1: Ask() must never disclose a successfully executed query's rows
+// when its own mandatory audit append failed. discloseExecutedAttempt is the
+// exact code Ask() calls for that decision (service.go), so this exercises
+// the real production path without needing a live database, Model Gateway or
+// governed-execution role -- the audit-failure branch returns before any of
+// those would be touched. It is also the targeted test for the
+// governedask-audit-ignored mutant: reverting the "if auditErr != nil"
+// refusal here makes the mutated build fall through to
+// recordExecutedAttempt, which needs a real *database.Store this test never
+// constructs, so the mutant reliably goes RED.
+func TestDiscloseExecutedAttemptFailsClosedOnAuditError(t *testing.T) {
+	service := &Service{}
+	auditErr := errors.New("audit append failed")
+	value := "3"
+	result := governedquery.QueryResult{Columns: []string{"count"}, Rows: [][]*string{{&value}}, RowCount: 1}
+	attempt := governedquery.Attempt{SQLHash: "deadbeef", Outcome: governedquery.OutcomeSucceeded}
+
+	got, err := service.discloseExecutedAttempt(context.Background(), database.AccessContext{}, "ws_demo", 1,
+		"SELECT count(*) FROM fleet_trips", attempt, result, auditErr)
+
+	if got.AttemptID != "" || got.SQL != "" || got.RowCount != 0 || got.Columns != nil || got.Rows != nil || got.Answer != "" {
+		t.Fatalf("expected a zeroed AskResult (0 rows disclosed) when the audit append failed, got %+v", got)
+	}
+	var typed *Error
+	if !errors.As(err, &typed) || typed.code != CodeUnavailable {
+		t.Fatalf("expected a CodeUnavailable *Error, got %v", err)
+	}
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected the disclosure error to wrap the audit append error, got %v", err)
+	}
+}
+
+func TestValidOpaque(t *testing.T) {
+	if !validOpaque("ws_alpha-01") {
+		t.Fatalf("expected a valid opaque id to pass")
+	}
+	for _, value := range []string{"", "has space", "semi;colon"} {
+		if validOpaque(value) {
+			t.Fatalf("expected %q to be rejected", value)
+		}
+	}
+}

@@ -1,0 +1,35 @@
+{
+  "result_version": "pdf-parser-result-v1",
+  "observed_format": "PDF",
+  "parser": {
+    "name": "knowvault-pdf-observer",
+    "version": "2.0.0",
+    "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "observation_profile_revision": "pdf-obs-v1"
+  },
+  "source_version_id": "sv-forbidden",
+  "text_units": [
+    {
+      "ordinal": 1,
+      "locator": {
+        "kind": "PDF",
+        "page": 1,
+        "page_width": 612,
+        "page_height": 792,
+        "rotation": 0,
+        "bounding_boxes": [
+          {
+            "x": 72,
+            "y": 144,
+            "width": 24,
+            "height": 12,
+            "coordinate_unit": "PDF_POINT",
+            "coordinate_origin": "TOP_LEFT"
+          }
+        ]
+      },
+      "raw_text": "Hello"
+    }
+  ],
+  "warnings": []
+}

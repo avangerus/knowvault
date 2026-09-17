@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "queryintent-validated-only-executed",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.queryintent.retired-version-refused",
+  "control_id": "acceptance.queryintent.validated-only-executed",
+  "description": "R2 Outcome 2 execution gating: for a workspace that holds at least one APPROVED MetricDefinition the server must execute only a server-validated QueryIntent. A proposal the validator refuses (here: the RETIRED version of a previously APPROVED definition) must produce the typed queryintent refusal and its clarification, must never consult the sealed-intent executor, and must never fall through to the legacy free-text planner / idempotency path. internal/question/intent_gate.go is the guard: validateStructuredIntent returns the typed refusal instead of signalling 'no structured path'. Weakening that return lets a refused intent fall through to free text, which the arming seam turns into a test failure.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/question",
+  "test_name": "TestOutcome3RetiredVersionRefusedNeverExecuted",
+  "mutations": [
+    {
+      "id": "queryintent-refused-intent-falls-through-to-free-text",
+      "target": "internal/question/intent_gate.go",
+      "kind": "GO_QUERYINTENT_EXECUTION_GATE_WEAKENING",
+      "expected": "RED",
+      "old": "\tintent, err := validator.Validate(proposal)\n\tif err != nil {\n\t\treturn queryintent.Intent{}, false, refusalAsError(err)\n\t}",
+      "new": "\tintent, err := validator.Validate(proposal)\n\tif err != nil {\n\t\treturn queryintent.Intent{}, false, nil\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree the refusal is honoured: executor calls stay 0, no run is returned, and the free-text/idempotency seam is never reached.",
+  "mutant_meaning": "With the refusal return weakened to (zero, false, nil) the gate reports 'no structured path', Create proceeds to the free-text planner and the armed idempotency seam fails the test (RED). The mutant is therefore killed by the registered probe, not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry named above; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

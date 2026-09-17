@@ -1,0 +1,5 @@
+{
+  "organization_id": "org1",
+  "expected_sequence": 1,
+  "previous_event_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

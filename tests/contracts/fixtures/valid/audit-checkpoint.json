@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "organization_id": "org1",
+  "checkpoint_sequence": 1,
+  "event_first_sequence": 1,
+  "event_last_sequence": 2,
+  "first_event_hash": "sha256:a8c1497752544d5e1439e8cd8e8a3d0869b5065063c924eec9882323b8ae9a52",
+  "last_event_hash": "sha256:c95dc88725c8bc5f0f6c89b6e6686895ca58e4cd51d00ba1dd2ada68eaa97aaa",
+  "previous_checkpoint_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": "2026-07-14T12:30:00Z",
+  "checkpoint_hash": "sha256:b742c1b66a09bf0ac39152875a5e7430e9fb0e92c678d770a542201b702e3695",
+  "signature": {
+    "algorithm": "ED25519",
+    "key_id": "audit-key-01",
+    "signed_at": "2026-07-14T12:30:00Z",
+    "value_base64": "HDtzmtzMFQPMY3Qc+5pV52U324X0SJVVwb1mtb/dmiFOqMz7apKir8eX4STxf3/x+HTftdCP+lMnbQFk3AFkAw=="
+  }
+}

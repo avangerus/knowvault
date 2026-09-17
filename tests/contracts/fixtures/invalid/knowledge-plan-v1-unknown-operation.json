@@ -1,0 +1,8 @@
+{
+  "schema_version": "knowledge-plan-v1",
+  "status": "READY",
+  "operation": "CREW_BRANCH",
+  "confidence": "HIGH",
+  "question_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "plan_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+}

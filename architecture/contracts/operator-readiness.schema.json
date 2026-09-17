@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/operator-readiness.schema.json",
+  "title": "Operator Readiness Contract 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "liveness", "readiness", "readiness_source", "dependencies"],
+  "properties": {
+    "schema_version": { "const": "operator-readiness-v1" },
+    "liveness": { "type": "boolean" },
+    "readiness": { "type": "boolean" },
+    "readiness_source": { "const": "DEPENDENCY_CHECK" },
+    "dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "enum": ["POSTGRESQL", "OPENSEARCH", "KEY_PROVIDER", "SERVER_SECRET_MOUNT", "WORKER_SECRET_MOUNT", "TRUST_BUNDLE", "MIGRATION_STATE", "SANDBOX_DISPATCHER"] },
+          "status": { "enum": ["READY", "UNAVAILABLE", "INCOMPATIBLE"] }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "readiness": { "const": true } }, "required": ["readiness"] },
+      "then": {
+        "properties": {
+          "dependencies": {
+            "not": { "type": "array", "contains": { "type": "object", "properties": { "status": { "enum": ["UNAVAILABLE", "INCOMPATIBLE"] } }, "required": ["status"] } }
+          }
+        }
+      }
+    }
+  ]
+}

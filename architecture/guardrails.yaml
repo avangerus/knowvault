@@ -1,0 +1,585 @@
+version: 1
+status: accepted
+default_behavior: deny
+authority:
+  owner: product-architect
+  executor: contributor
+  executor_may_change_architecture: false
+
+protected_files:
+  - .gitattributes
+  - .dockerignore
+  - .gitignore
+  - go.mod
+  - web/package.json
+  - web/pnpm-lock.yaml
+  - web/dist/**
+  - deploy/images/Dockerfile.*
+  - deploy/images/README.md
+  - deploy/compose/compose.yaml
+  - deploy/manifests/sandbox-dispatcher.yaml
+  - .github/CODEOWNERS
+  - .github/workflows/architecture.yml
+  - PRODUCT_CONSTITUTION.md
+  - ARCHITECTURE.md
+  - POKA_YOKE.md
+  - architecture/guardrails.yaml
+  - architecture/licenses.yaml
+  - architecture/versions.json
+  - architecture/contracts/*.schema.json
+  - tests/contracts/**
+  - docs/CANONICALIZATION.md
+  - docs/CONTRACT_VALIDATION.md
+  - docs/ENCRYPTION.md
+  - docs/NUMERIC_VALIDATION.md
+  - docs/PARSER_CONTRACTS.md
+  - docs/SOURCE_CONTRACTS.md
+  - docs/HLD.md
+  - docs/MODEL-PROFILES.md
+  - docs/NATIVE-INGEST.md
+  - docs/PILOT-ACCEPTANCE.md
+  - docs/TRUST_BOUNDARY.md
+  - docs/DATA_MODEL.md
+  - docs/OPERATOR_ARTIFACT.md
+  - docs/qualification-s2b-document-parser.md
+  - docs/adr/README.md
+  - scripts/check-architecture.go
+  - scripts/check_architecture_test.go
+  - scripts/check-architecture.ps1
+  - docs/adr/*-accepted.md
+  - tests/e2e/**
+  - internal/ingestion/**
+  - internal/sandboxdispatch/**
+  - internal/source/canon/**
+  - internal/source/dispatchparser/**
+  - internal/source/docparser/**
+  - internal/source/pdfparser/**
+  - internal/source/ocrparser/**
+  - internal/source/ocrworker/**
+  - internal/source/pdfrenderparser/**
+  - internal/source/pdfrenderworker/**
+  - tests/integration/parserv2harness/**
+  - tests/integration/sandboxdispatch/**
+  - workers/document-parser/**
+  - workers/tesseract-ocr/**
+
+allowed_application_languages:
+  - go
+  - typescript
+  - sql
+  - css
+  - html
+
+allowed_binaries:
+# This is a closed permission/inventory list only. An entry does not compose or
+# activate a production runtime; those remain separate release-gated decisions.
+  - knowvault-server
+  - knowvault-worker
+  - knowvault-connector
+  - knowvault-purger
+  - knowvault-sandbox-dispatcher
+  - knowvault-operator
+
+forbidden_product_modules:
+  - chat
+  - conversations
+  - agents
+  - reports
+  - timeline
+  - commitments
+  - notifications
+  - write-actions
+
+forbidden_api_path_fragments:
+  - /chat
+  - /conversations
+  - /agents
+  - /actions
+  - /execute-sql
+  - /global-search
+
+runtime_components:
+  required:
+    - knowvault-server
+    - knowvault-worker
+    - knowvault-purger
+    - postgresql
+    - opensearch
+    - tika
+    - paddleocr
+    - model-runtime-embedding
+    - model-runtime-reranker
+    - model-runtime-generation
+  forbidden_without_adr:
+    - redis
+    - valkey
+    - temporal
+    - kafka
+    - rabbitmq
+    - nats
+    - minio
+    - vault
+    - grafana
+    - qdrant
+    - milvus
+    - weaviate
+
+package_boundaries:
+  opensearch_client:
+    allowed_prefixes:
+      - internal/search
+  model_endpoint_client:
+    allowed_prefixes:
+      - internal/modelgateway
+  secret_provider:
+    allowed_prefixes:
+      - internal/platform/secrets
+      - internal/source
+      - internal/connector
+  audit_writer:
+    allowed_prefixes:
+      - internal/audit
+
+critical_invariants:
+  - id: ARC-014
+    statement: production listener exists only after a complete transactional composition preflight and only Runtime.Run can consume it
+    enforcement: [opaque-production-runtime, immediate-reverse-rollback, one-shot-run-state-machine, architecture-ast-boundary]
+    negative_tests: [architecture.runtime.listener-before-preflight, architecture.runtime.second-run, architecture.runtime.partial-startup-leak, architecture.runtime.startup-stage-diagnostic]
+  - id: ARC-015
+    statement: runtime cleanup begins only after listener drain, runs once in exact reverse order, and continues after individual failure
+    enforcement: [cancel-and-wait-lifecycle, shared-close-result, reverse-cleanup-stack, race-test]
+    negative_tests: [architecture.runtime.cleanup-before-drain, architecture.runtime.double-cleanup, architecture.runtime.early-cleanup-return]
+  - id: ARC-016
+    statement: request handlers and executable entry points cannot obtain runtime close, secret, trust, database, or listener capabilities
+    enforcement: [opaque-runtime, import-boundary, exact-constructor-ownership, architecture-ast-boundary]
+    negative_tests: [architecture.runtime.handler-close-capability, architecture.runtime.entrypoint-bypass]
+  - id: TEN-001
+    statement: organization_id is mandatory in every tenant-owned row
+    enforcement: [migration-lint, database-not-null, rls, acceptance-test]
+    negative_tests: [acceptance.ten.missing-organization-column]
+  - id: TEN-002
+    statement: missing organization context fails closed
+    enforcement: [rls, repository-contract-test]
+    negative_tests: [acceptance.ten.missing-organization-context]
+  - id: IDN-002
+    statement: organization management roles never imply workspace data access and exactly one active organization owner is maintained by an audited transfer
+    enforcement: [separate-management-data-permissions, organization-role-revision, owner-transfer-transaction, answer-read-gate]
+    negative_tests: [acceptance.idn.org-admin-without-workspace-data, acceptance.idn.invalid-owner-transfer, operator.tenant.initial-owner-transaction, operator.tenant.genesis-audit]
+  - id: IDN-003
+    statement: session termination revokes the exact session in one transaction with its success audit event and every failed termination attempt answers one closed code that reveals nothing about the presented session
+    enforcement: [session-revocation-transaction, revocation-code-check, revoked-read-filter, csrf-method-gate, shared-closed-failure-code, no-oracle-failure-audit]
+    negative_tests: [acceptance.auth.logout-revokes-session, acceptance.auth.logout-csrf-required, acceptance.auth.logout-method-closed, acceptance.auth.logout-no-oracle, acceptance.auth.logout-session-transition-audit, acceptance.auth.logout-revoked-fails-read-path, acceptance.idn.deprovision-revokes-session]
+  - id: ACL-001
+    statement: source-enforced workspace never expands native source access
+    enforcement: [policy-intersection, post-authorization, acceptance-test]
+    negative_tests: [acceptance.acl.source-intersection]
+  - id: ACL-002
+    statement: stale or unknown source ACL fails closed
+    enforcement: [policy-gate, source-health-reducer, acceptance-test]
+    negative_tests: [acceptance.acl.stale-source-denied, contract.connector.source-enforced-acl-invalid]
+  - id: ACL-003
+    statement: workspace-managed access is an explicit immutable confirmed data grant rather than an ACL fallback
+    enforcement: [grant-confirmation-record, scope-hash-binding, activation-gate, audit-event]
+    negative_tests: [contract.source.workspace-managed-without-confirmation, acceptance.acl.workspace-managed-confirmation-revoked]
+  - id: ACL-007
+    statement: a saved answer is hidden unless the reader can access every material citation
+    enforcement: [answer-read-gate, no-partial-rendering, acceptance-test]
+    negative_tests: [acceptance.answer.current-scope-citation-denied]
+  - id: ING-001
+    statement: evidence cannot be indexed before access is resolved
+    enforcement: [state-machine, database-check, integration-test]
+    negative_tests: [acceptance.ingest.unresolved-access-not-indexed]
+  - id: ING-004
+    statement: access reduction closes queryability before index cleanup
+    enforcement: [database-transaction, post-authorization, race-test]
+    negative_tests: [acceptance.ingest.access-reduction-race]
+  - id: ING-006
+    statement: source binaries are never persisted
+    enforcement: [ephemeral-storage, backup-scan, retention-test, transient-content-boundary]
+    negative_tests: [acceptance.storage.source-binary-persistence]
+  - id: CRY-001
+    statement: sensitive nonsearchable payloads use tenant-bound envelope encryption and cannot be swapped across resources
+    enforcement: [aes-256-gcm-envelope, trusted-jcs-aad, external-kms, historical-nonce-uniqueness-fence, ciphertext-swap-test]
+    negative_tests: [acceptance.crypto.cross-tenant-ciphertext-swap, acceptance.crypto.kek-rotation-gap, acceptance.crypto.kek-rotation-idempotent]
+  - id: CRY-002
+    statement: searchable shared index is protected by customer encrypted storage and is never described as per-tenant cryptographic isolation
+    enforcement: [deployment-readiness-gate, encrypted-volume-snapshot-attestation, separate-data-plane-cmk-mode]
+    negative_tests: [acceptance.crypto.opensearch-unencrypted-volume]
+  - id: CRY-003
+    statement: backup contains no clear keys secrets or source binaries and restore fails closed with missing or wrong key
+    enforcement: [backup-content-scan, external-key-reference, restore-key-tests]
+    negative_tests: [acceptance.crypto.backup-restore-without-key, acceptance.crypto.backup-restore-wrong-tenant-key]
+  - id: CRY-004
+    statement: source identities locators display metadata anchors deeplinks and raw principal tokens are encrypted while lookup and search use tenant keyed versioned digests
+    enforcement: [encrypted-artifact-columns, hmac-sha256-token-digest, digest-key-version, staged-digest-rotation, index-field-allowlist]
+    negative_tests: [acceptance.crypto.raw-identity-in-database, acceptance.crypto.raw-principal-in-opensearch, acceptance.crypto.digest-key-rotation-gap, acceptance.crypto.digest-rotation-idempotent, acceptance.crypto.keyed-text-digest-pipeline, acceptance.crypto.keyed-text-readable-fail-closed, acceptance.crypto.keyed-text-publication-fail-closed, acceptance.crypto.keyed-text-purge-removes-projection, acceptance.crypto.keyed-text-remaining-purge-exclusion, acceptance.crypto.keyed-text-worker-reproject-null-fence]
+  - id: CRY-005
+    statement: every encrypted artifact uses an exhaustive resource and field specific AAD type so ciphertext cannot be swapped across tenants resources types or fields
+    enforcement: [encrypted-artifact-aad-schema, exact-aad-column-map, aes-gcm-authentication, ciphertext-swap-suite]
+    negative_tests: [contract.crypto.aad-type-or-field-swap, contract.crypto.generic-aad-resource]
+  - id: JOB-001
+    statement: a durable job is never lost on worker crash because an expired lease is reclaimed against the retry budget
+    enforcement: [monotonic-lease-epoch, lease-deadline-reclamation, expired-attempt-charged, poison-dead-letter]
+    negative_tests: [acceptance.job.crash-recovery-reclaim]
+  - id: JOB-002
+    statement: a durable job is acknowledged only inside the worker result transaction with a live matching lease so it is never marked done before its result commits
+    enforcement: [security-definer-lease-check, transactional-acknowledgement, terminal-immutability, no-ack-without-live-lease]
+    negative_tests: [acceptance.job.completion-requires-live-lease, acceptance.job.tenant-isolation-terminal-immutable]
+  - id: JOB-003
+    statement: durable job retries are bounded and observable and an exhausted budget dead-letters the job with a content-free operator code
+    enforcement: [max-attempts-budget, bounded-backoff, dead-letter-terminal-state, content-free-error-code-and-metric, idempotent-enqueue]
+    negative_tests: [acceptance.job.retry-budget-dead-letter, acceptance.job.enqueue-idempotent]
+  - id: JOB-004
+    statement: two workers never execute one lease because claim is skip-locked and every lease operation compares owner and fencing epoch
+    enforcement: [for-update-skip-locked-claim, owner-and-epoch-compare-and-set, dedicated-worker-role, no-runtime-execution-grant]
+    negative_tests: [acceptance.job.lease-fencing-single-claim, acceptance.job.runtime-worker-grant-separation]
+  - id: JOB-005
+    statement: tenant outbox allocation is transactional gapless and ordered while Web API runtime cannot acknowledge or delete delivery state
+    enforcement: [tenant-row-locked-sequence-head, append-only-event, exact-runtime-grants, no-production-applier-before-worker-lease-cas-adr]
+    negative_tests: [acceptance.outbox.rollback-gap, acceptance.outbox.out-of-order-publish, acceptance.outbox.delete-transition-race, architecture.outbox.runtime-write-grant, architecture.outbox.trigger-depth-capability]
+  - id: SRC-004
+    statement: immutable source scope uses a strict tagged schema and trusted external identity capabilities and limits
+    enforcement: [source-scope-revision, signed-connector-gate, source-scope-schema, trusted-connection-capability-gate, external-scope-identity-check, limit-coupling-validator]
+    negative_tests: [contract.scope.stale-revision-event, contract.source.scope-unknown-field, contract.source.scope-capability-mismatch, contract.source.scope-connection-revision-mismatch, contract.source.scope-limit-mismatch, contract.source.discovery-drift]
+  - id: SRC-002
+    statement: the folder connector is a read-only capability-free component that holds no catalog evidence search database jobs or model capability and never persists source bytes
+    enforcement: [typed-connector-owner, connector-import-boundary, transient-content-boundary, content-free-diagnostics]
+    negative_tests: [architecture.connector.folder-database-capability, acceptance.storage.source-binary-persistence]
+  - id: SRC-007
+    statement: folder paths cannot escape the admin root or use platform special namespaces
+    enforcement: [root-handle-resolution, traversal-validator, windows-special-path-validator, pinned-os-root, symlink-reparse-refusal]
+    negative_tests: [contract.source.folder-path-escape, contract.source.folder-windows-special-path, architecture.connector.folder-root-handle, acceptance.source.folder-runtime-containment]
+  - id: SRC-008
+    statement: git scope is an exact discovered branch and repository content cannot execute
+    enforcement: [trusted-ref-discovery, exact-head-ref-compiler, hook-filter-submodule-deny]
+    negative_tests: [contract.source.git-ref-expression, acceptance.source.git-active-content-execution]
+  - id: SRC-009
+    statement: mail connector cannot mutate mailbox state and uses provider-stable identity
+    enforcement: [read-only-provider-scope, imap-body-peek, provider-identity-contract]
+    negative_tests: [acceptance.source.mail-readonly]
+  - id: SRC-010
+    statement: site crawler is bounded html-only and every URL redirect and parser fetch passes the SSRF gate
+    enforcement: [source-scope-schema, canonical-url-segment-prefix, per-hop-dns-ip-gate, xxe-disabled-parser, decoded-size-ratio-limit]
+    negative_tests: [contract.source.site-prefix-boundary, acceptance.source.site-ssrf]
+  - id: SRC-011
+    statement: parser never trusts extension or executes active content
+    enforcement: [media-signature-check, parser-sandbox, archive-macro-formula-external-fetch-deny]
+    negative_tests: [acceptance.source.active-content-execution]
+  - id: SRC-012
+    statement: source identity version metadata and bytes come from one stable read snapshot
+    enforcement: [before-after-native-version-check, conditional-object-read, torn-read-quarantine, descriptor-restat-compare]
+    negative_tests: [contract.source.torn-read-version, architecture.connector.folder-stable-read, acceptance.source.folder-runtime-torn-read, acceptance.source.folder-runtime-quarantine]
+  - id: SRC-013
+    statement: server and connector use one versioned bounded glob grammar with exclude precedence
+    enforcement: [shared-go-scopeglob-package, matcher-version-in-scope-hash, zero-value-seal, total-match-budget, alternate-glob-ast-ban, cross-binary-golden-vectors]
+    negative_tests: [contract.source.glob-grammar-mismatch, contract.source.glob-exclude-precedence, acceptance.source.folder-runtime-glob-parity]
+  - id: SRC-014
+    statement: every scope activation and connector event in both access modes comes from the exact approved connector build and capability contract suite
+    enforcement: [scope-activation-trust-gate, connector-event-trust-gate, immutable-build-profile-artifact-suite-hashes, verified-at-and-trust-status-check]
+    negative_tests: [contract.source.workspace-managed-connector-trust-mismatch, contract.connector.untrusted-build-workspace-managed, contract.connector.trust-record-mismatch]
+  - id: SRC-015
+    statement: source connection and scope revisions remain immutable drafts with separate latest lineage and nullable active authority until scan binding confirmation and signed event gates exist
+    enforcement: [immutable-config-revision, separate-monotonic-projection, latest-vs-active-pointer, draft-only-000006-000007, no-ready-query-or-job-mutator]
+    negative_tests: [acceptance.source.draft-not-active, acceptance.source.scope-draft-not-active]
+  - id: SRC-016
+    statement: every workspace revision source snapshot exactly equals its canonical source bindings and remains inert until a separate audited access-mode authority exists
+    enforcement: [exact-workspace-snapshot-foreign-key, exact-scope-revision-tuple, deferred-bidirectional-set-equality, immutable-binding-snapshot, runtime-select-only, no-confirmation-or-activation]
+    negative_tests: [acceptance.source.workspace-binding-missing-row, acceptance.source.workspace-binding-extra-row, acceptance.source.workspace-binding-tuple-swap, acceptance.source.workspace-binding-not-authority]
+  - id: SRC-017
+    statement: a workspace source configuration command extends the single primary workspace receipt changes exactly one declared stable binding carries every other binding exactly and grants no source authority
+    enforcement: [single-primary-workspace-command-receipt, exact-base-revision-and-hash, exact-one-binding-transition, ordinary-command-full-projection-carry, owner-manager-insert-policy, self-removal-transition-only, exact-content-free-terminal-audit, no-confirmation-activation-grant-job-or-query]
+    negative_tests: [acceptance.source.workspace-command-one-binding, acceptance.source.workspace-command-smuggle, acceptance.source.workspace-command-ordinary-carry, acceptance.source.workspace-command-lineage-receipt, acceptance.source.workspace-command-terminal-failure, acceptance.source.workspace-command-member-denied, acceptance.source.workspace-command-self-removal, acceptance.source.workspace-command-not-authority]
+  - id: SRC-018
+    statement: public AddSource and RemoveSource commands bind one exact workspace-command-v2 source tuple behind a fresh row lock and source-specific policy while preserving stable lineage and granting no source data authority
+    enforcement: [workspace-command-v2-canonical-hash, deterministic-organization-workspace-scope-crockford-id, row-lock-before-fresh-snapshot-decision, post-lock-current-membership-policy, owner-manager-source-specific-operation, exact-draft-scope-tuple, stable-disable-reenable-lineage, actor-scoped-terminal-replay, serialized-source-transition, no-confirmation-activation-grant-job-ingestion-or-query]
+    negative_tests: [acceptance.source.workspace-repository-exact-v2, acceptance.source.workspace-repository-policy-anti-enumeration, acceptance.source.workspace-repository-stable-lineage, acceptance.source.workspace-repository-terminal-replay, acceptance.source.workspace-repository-serialization, acceptance.source.workspace-repository-not-authority]
+  - id: SRC-019
+    statement: a scope revision cutover transitions authority atomically supersedes the prior revision's memberships and objects fences superseded workers and never mass deletes before the new revision proves complete coverage
+    enforcement: [atomic-audited-activation, prior-revision-membership-supersession, zero-active-object-closure, superseded-worker-syncing-fence, complete-coverage-containment, worker-only-cutover-primitives]
+    negative_tests: [acceptance.source.scope-cutover-supersession, acceptance.source.scope-cutover-scan-safety, acceptance.source.scope-cutover-fencing]
+  - id: EVD-001
+    statement: citation requires a format-specific exact anchor
+    enforcement: [json-schema, citation-validator, acceptance-test]
+    negative_tests: [contract.anchor.missing-or-invalid-exact-anchor, contract.manifest.anchor-invalid]
+  - id: PAR-001
+    statement: every production parser owns a format specific terminal resolver and never falls back to file level citation
+    enforcement: [parser-ownership-matrix, exact-profile-lock, terminal-anchor-resolver, quarantine-state]
+    negative_tests: [acceptance.parser.file-level-citation-fallback, acceptance.parser.html-safe-extraction]
+  - id: PAR-002
+    statement: ooxml pdf html xml eml and ocr active or external content cannot execute or bypass resource limits
+    enforcement: [bounded-parser-profile, active-content-deny, xxe-deny, ocr-token-box-binding]
+    negative_tests: [acceptance.parser.ooxml-active-relationship, acceptance.parser.ocr-box-token-mismatch, acceptance.parser.html-safe-extraction, architecture.parser.html-active-content-drop, architecture.parser.html-resource-bound, architecture.parser.html-capability-import, architecture.parser.html-module-scope]
+  - id: PAR-003
+    statement: terminal anchor resolver is selected by immutable trusted extraction canonical format rather than mutable mime metadata
+    enforcement: [canonical-format-in-profile-hash, media-signature-gate, parser-kind-resolver]
+    negative_tests: [contract.manifest.extraction-format-mismatch, contract.anchor.source-code-application-mime]
+  - id: PAR-004
+    statement: the isolated parser or ocr runtime that observed a document is part of the immutable extraction identity and every isolated parser runs behind one shared hardened process boundary, so replacing a runtime mints a new extraction rather than reinterpreting an existing one
+    enforcement: [composite-extractor-artifact-hash, single-sandbox-core, closed-facade-import-allowlist, pinned-artifact-recheck, mutation-self-tests]
+    negative_tests: [architecture.parser.observer-identity-outside-profile-hash, architecture.parser.sandbox-core-hardening, acceptance.parser.worker-swap-mints-extraction]
+  - id: SRCH-001
+    statement: organization and workspace filters are server-built
+    enforcement: [typed-authorized-scope, api-schema, security-test]
+    negative_tests: [acceptance.search.client-supplied-scope-filter]
+  - id: SRCH-002
+    statement: every retrieval hit is post-authorized
+    enforcement: [application-gate, mandatory-metric, integration-test]
+    negative_tests: [acceptance.search.stale-index-postauthorization]
+  - id: SRCH-007
+    statement: every final context evidence exact-matches a current version active extraction retention fence and valid grant path
+    enforcement: [retrieval-authorization-snapshot, terminal-postauthorization-transaction, manifest-validator]
+    negative_tests: [contract.manifest.nonactive-extraction-context]
+  - id: ACL-008
+    statement: stale source-enforced ACL cannot authorize context or citation even when corpus coverage is partial
+    enforcement: [grant-path-fail-closed, acl-freshness-gate, retrieval-authorization-snapshot]
+    negative_tests: [contract.manifest.stale-acl-partial-citation]
+  - id: ACL-009
+    statement: stale external identity or group expansion cannot authorize workspace context or source-enforced evidence
+    enforcement: [principal-set-snapshot, provider-revision, identity-freshness-gate, session-and-cache-invalidation]
+    negative_tests: [contract.manifest.stale-principal-set, acceptance.acl.source-group-revocation]
+  - id: ACL-010
+    statement: every retrieval grant exact-matches live workspace revision membership binding policy decision and the applicable access-mode authority using one deterministic minimal grant path
+    enforcement: [terminal-live-projection-transaction, exact-policy-decision-match, workspace-managed-confirmation-or-acl-intersection, canonical-minimal-grant-selector]
+    negative_tests: [contract.manifest.authorization-live-projection-mismatch, contract.manifest.nondeterministic-grant-path]
+  - id: ACL-011
+    statement: principal identity freshness is validated even when retrieval returns no context
+    enforcement: [pre-retrieval-principal-set-snapshot, identity-freshness-gate, zero-context-terminal-validator]
+    negative_tests: [contract.manifest.zero-context-stale-principal-set]
+  - id: SRCH-009
+    statement: answer manifest audit view and user metadata never expose preauthorization hit counts
+    enforcement: [postauthorized-count-only-schema, metadata-allowlist, restricted-aggregate-telemetry]
+    negative_tests: [contract.manifest.unauthorized-candidate-count-leak]
+  - id: SRCH-010
+    statement: query and corpus vectors use one exact active embedding profile and model artifact without mixed vector spaces
+    enforcement: [embedding-profile-hash-index-field, active-search-profile-pointer, catalog-outbox-watermark, gapless-replay, generation-fence, atomic-index-alias]
+    negative_tests: [acceptance.search.embedding-profile-mismatch, acceptance.search.partial-reembedding-activation, acceptance.search.reembedding-concurrent-ingest-gap]
+  - id: SRCH-011
+    statement: retrieval profile hash binds implementation analyzer models limits fusion expansion budget diversity and tie breakers
+    enforcement: [immutable-retrieval-profile, canonical-profile-hash, index-mapping-hash, retrieval-snapshot-binding]
+    negative_tests: [contract.manifest.retrieval-profile-mismatch, acceptance.search.analyzer-profile-drift]
+  - id: MOD-001
+    statement: models receive no tools or source credentials
+    enforcement: [gateway-contract, egress-policy, prompt-snapshot-test]
+    negative_tests: [acceptance.model.tool-or-secret-exposure]
+  - id: MOD-008
+    mode_scope: [GENERATIVE]
+    statement: in GENERATIVE mode every selected model run is cryptographically bound to this question and the exact retrieval stage input while the final plan exact-matches selected generation output
+    enforcement: [purpose-specific-canonical-input, model-artifact-hash-recompute, retrieval-snapshot-run-binding, generation-plan-projection, terminal-validator]
+    negative_tests: [contract.model.unrelated-embedding-run, contract.model.unrelated-reranking-run, contract.model.unrelated-generation-run, contract.model.generation-plan-drift]
+  - id: MOD-009
+    statement: model profile hash binds exact weights runtime tokenizer chat template prompt output schema and decoding configuration
+    enforcement: [immutable-model-profile, canonical-profile-hash, version-lock-aibom, model-gateway-only]
+    negative_tests: [contract.model.profile-hash-mismatch, contract.model.prompt-template-drift]
+  - id: MOD-010
+    statement: unknown output uses only a typed reason and server-owned fixed text
+    enforcement: [model-answer-schema, fixed-unknown-renderer, terminal-plan-projection]
+    negative_tests: [contract.model.unknown-factual-payload]
+  - id: MOD-011
+    statement: reranking consumes the complete persisted authorized candidate set while the manifest separately reports candidate and final context counts
+    enforcement: [authorized-candidate-set-v1, exact-reranker-input-hash, candidate-context-count-validator]
+    negative_tests: [contract.model.reranker-incomplete-candidate-set, contract.manifest.candidate-context-count-collapsed]
+  - id: MOD-012
+    statement: a server-created append-only execution plan precedes model work includes every attempt and exact-binds snapshot model profiles inputs and outputs
+    enforcement: [model-execution-plan-v1, manifest-plan-hash, ordered-attempt-intervals, exact-snapshot-model-projection, terminal-plan-reconciliation]
+    negative_tests: [contract.model.execution-plan-self-declared, contract.model.unplanned-attempt, contract.model.snapshot-profile-binding-mismatch]
+  - id: CIT-001
+    statement: every factual answer span maps to a validated citation
+    enforcement: [claim-span-validator, completion-gate, benchmark]
+    negative_tests: [contract.manifest.unsupported-fact]
+  - id: CIT-003
+    statement: every material number date currency and unit in a fact exact-matches cited evidence and model arithmetic is never trusted
+    enforcement: [numeric-validator-v1, immutable-deterministic-validation, terminal-completion-gate]
+    negative_tests: [contract.numeric.literal-mismatch, contract.numeric.uncited-literal, contract.numeric.derived-arithmetic, contract.numeric.validation-toctou]
+  - id: EVD-005
+    statement: every citation independently resolves to its own exact source, version, evidence, excerpt, and anchor chain
+    enforcement: [keyed-citation-chain-resolver, manifest-validator, multi-source-fixtures]
+    negative_tests: [contract.manifest.citation-chain-mismatch]
+  - id: CIT-005
+    statement: every citation is bound to an immutable trusted extraction and cannot self-declare parser or OCR provenance
+    enforcement: [extraction-snapshot, composite-foreign-key, manifest-validator]
+    negative_tests: [contract.manifest.extraction-provenance-mismatch]
+  - id: CIT-006
+    mode_scope: [GENERATIVE]
+    statement: in GENERATIVE mode every published fact or inference exact-matches an immutable verifier record and strict canonical verifier output
+    enforcement: [claim-verification-record, verifier-output-schema, canonical-verification-input-hash, canonical-verifier-output-hash, selected-verifier-run, terminal-manifest-validator]
+    negative_tests: [contract.manifest.verifier-toctou, contract.verifier.output-set-mismatch, contract.verifier.output-hash-mismatch]
+  - id: CIT-007
+    statement: model-controlled headings or renderer prose cannot bypass claim verification
+    enforcement: [section-title-null-schema, fixed-server-prefixes, deterministic-renderer]
+    negative_tests: [contract.model.factual-section-title]
+  - id: CIT-008
+    statement: compound numeric date and unit expressions in Russian and English are validated as one semantic span rather than independent matched tokens
+    enforcement: [numeric-lexer-v1-compound-spans, locale-aware-deterministic-validator, per-claim-citation-closure]
+    negative_tests: [contract.numeric.compound-span-split-citations, contract.numeric.compound-locale-mismatch]
+  - id: CIT-009
+    statement: a numeric inference uses only direct supported fact claims whose own numeric validation passed and cannot borrow global answer citations
+    enforcement: [direct-supporting-fact-graph, supported-status-gate, passed-numeric-gate, per-claim-citation-closure]
+    negative_tests: [contract.numeric.inference-global-citation-leak, contract.numeric.inference-unvalidated-support, contract.numeric.inference-citation-only-literal]
+  - id: QRY-003
+    statement: corpus snapshot exactly covers every enabled workspace binding and cannot hide a failed source by omission
+    enforcement: [workspace-snapshot-set-comparison, composite-unique-key, manifest-validator]
+    negative_tests: [contract.manifest.corpus-snapshot-set-mismatch]
+  - id: QRY-005
+    statement: completed requires a supported fact and no unknown while insufficient evidence requires an unknown even when context is non-empty
+    enforcement: [terminal-status-coupling, manifest-validator, signed-empty-path-fixture]
+    negative_tests: [contract.manifest.empty-context-completed, contract.manifest.nonempty-context-unknown-completed]
+  - id: QRY-006
+    statement: corpus health and freshness are exact trusted snapshots and complete status is reduced against source SLAs at question start
+    enforcement: [source-health-snapshot, deterministic-sla-reducer, manifest-validator]
+    negative_tests: [contract.manifest.corpus-health-provenance]
+  - id: QRY-007
+    statement: retrieval pipeline counts truncation errors and context are exact trusted persisted telemetry
+    enforcement: [canonical-retrieval-authorization-snapshot, exact-manifest-comparison]
+    negative_tests: [contract.manifest.retrieval-provenance]
+  - id: QRY-008
+    statement: manifest identity question actor workspace and timestamps exact-match the persisted question run aggregate
+    enforcement: [locked-question-run-context, composite-foreign-keys, terminal-manifest-validator]
+    negative_tests: [contract.manifest.question-run-provenance]
+  - id: QRY-009
+    statement: corpus authorization model validation completion and signing timestamps form one trusted bounded QuestionRun execution interval
+    enforcement: [trusted-clock, temporal-order-validator, terminal-transaction]
+    negative_tests: [contract.manifest.out-of-interval-model-run, contract.manifest.out-of-interval-authorization, contract.manifest.out-of-interval-signature]
+  - id: IMM-001
+    statement: completed question runs and citations are immutable
+    enforcement: [database-trigger, repository-api, acceptance-test]
+    negative_tests: [acceptance.question.terminal-content-mutation]
+  - id: FRESH-002
+    statement: deleted or access-revoked evidence cannot be disclosed from a saved answer
+    enforcement: [answer-read-gate, excerpt-deny, deletion-test]
+    negative_tests: [acceptance.answer.deleted-evidence-disclosure]
+  - id: VER-004
+    statement: overlapping scope revisions reuse one source object, version, evidence set, and vector set without widening a newer revision
+    enforcement: [revision-aware-source-object-scope-membership, composite-unique-keys, exact-revision-search-filter, overlap-test]
+    negative_tests: [contract.scope.overlap-duplicate-object, contract.scope.membership-delete-widens-access]
+  - id: VER-007
+    statement: re-extraction never replaces historical evidence and new retrieval uses only the atomically selected successful extraction
+    enforcement: [immutable-extraction, staged-evidence-set, active-extraction-pointer, post-authorization]
+    negative_tests: [contract.extraction.active-pointer-reextraction]
+  - id: VER-008
+    statement: source-derived purge is lease and index fenced per version so a late worker cannot resurrect data or disable a newer current version
+    enforcement: [source-version-retention-aggregate, monotonic-retention-fence, lease-cas, ordered-outbox-index-fence, version-queryability-gate, conditional-source-object-gate, privileged-purge]
+    negative_tests: [contract.extraction.purge-race-fenced, contract.extraction.purge-isolation]
+  - id: PROD-008
+    statement: idempotency key reuse is body-sensitive and question text is never a deduplication key
+    enforcement: [canonical-request-hash, unique-key, conflict-test]
+    negative_tests: [contract.question.idempotency-body-conflict]
+  - id: IMM-004
+    statement: question retention denies disclosure from purging onward and purged state is allowed only after content deletion
+    enforcement: [question-run-retention-aggregate, disclosure-gate, separate-database-role, purge-completion-validator, audit]
+    negative_tests: [contract.retention.purging-content-disclosure, contract.retention.purged-content-disclosure]
+  - id: SIG-001
+    statement: signing keys are purpose scoped with one active signer retired verify only history and revoked fail closed
+    enforcement: [signing-key-record, one-active-partial-unique, kms-secret-reference, signature-validator]
+    negative_tests: [contract.signature.multiple-active-key, contract.signature.revoked-key-denied, contract.signature.retired-key-verifies, contract.signature.wrong-organization-purpose-scope, contract.signature.outside-validity]
+  - id: AUD-002
+    statement: audit hash chain is periodically signed and anchored in an external append-only sink
+    enforcement: [audit-checkpoint-schema, contiguous-checkpoint-validator, external-sink-receipt, release-gate]
+    negative_tests: [contract.audit.checkpoint-chain-mismatch, acceptance.audit.checkpoint-sink-missing]
+  - id: AUD-004
+    statement: checkpoint verification recanonicalizes the complete strict audit event body and verifies every event hash and previous hash rather than trusting stored hashes
+    enforcement: [audit-event-schema, rfc8785-jcs-body-rehash, contiguous-sequence-and-previous-hash-validator]
+    negative_tests: [contract.audit.event-body-tamper]
+  - id: FRESH-003
+    statement: switching the active extraction preserves the answer and reports extraction-superseded instead of current
+    enforcement: [citation-state-resolver, immutable-answer, rerun-only]
+    negative_tests: [contract.extraction.superseded-freshness]
+  - id: FRESH-004
+    statement: purging or purged extraction content is never disclosed as merely superseded evidence
+    enforcement: [citation-state-resolver, answer-read-gate, excerpt-deny]
+    negative_tests: [contract.extraction.purged-disclosure]
+  - id: CAN-001
+    statement: all textual offsets use canonical UTF-8 byte half-open ranges
+    enforcement: [canonicalization-package, schema, unicode-golden-tests]
+    negative_tests: [contract.anchor.mid-codepoint, contract.anchor.reversed-range]
+  - id: CAN-002
+    statement: JSON, answer, connector event, and manifest hashes use the accepted canonical forms
+    enforcement: [rfc8785-jcs, canonicalization-package, golden-vectors]
+    negative_tests: [contract.canonicalization.wrong-hash]
+  - id: CAN-003
+    statement: signatures authenticate timestamp, key id, and payload hash; connector signatures additionally authenticate a replay nonce
+    enforcement: [canonical-envelope, signature-validator, replay-test]
+    negative_tests: [contract.connector.tampered-signature-or-replay]
+  - id: AUD-001
+    statement: audit is append-only and content-minimized
+    enforcement: [database-role, trigger, schema-allowlist, tamper-test]
+    negative_tests: [acceptance.audit.update-delete-or-content]
+  - id: LIC-001
+    statement: unknown or forbidden licenses fail the build
+    enforcement: [sbom, license-policy, release-gate]
+    negative_tests: [architecture.license.unknown-or-forbidden]
+  - id: LIC-008
+    statement: the version and license locks are closed ACTIVE or DEFERRED inventories and every actual module package lock entry image and CI action must reconcile to an exact ACTIVE entry
+    enforcement: [strict-version-inventory, exact-license-cross-check, exact-deferred-inventory, actual-manifest-reconciliation, integrity-by-component-class, mutation-self-tests]
+    negative_tests: [architecture.supply.unknown-component, architecture.supply.missing-integrity, architecture.supply.extra-license-component, architecture.supply.unknown-deferred-component, architecture.supply.unknown-deferred-gate, architecture.supply.unknown-go-module, architecture.supply.unknown-node-package, architecture.supply.pnpm-integrity-mismatch, architecture.supply.unknown-oci-image, architecture.supply.unknown-ci-action, architecture.supply.go-replace-or-workspace, architecture.supply.short-integrity, architecture.supply.non-exact-version, architecture.supply.node-unbound-manifest, architecture.supply.docker-remote-dependency, architecture.supply.local-action-dependency, architecture.supply.license-missing-source, architecture.supply.duplicate-license-section, architecture.supply.parser-runtime-compliance, architecture.operator.offline-artifact]
+  - id: CI-001
+    statement: a required CI check counts only as an executable exact command and never as a comment echo or similar text
+    enforcement: [run-block-parser, exact-command-contract, unconditional-step-policy, reachability-and-heredoc-rejection, mutation-self-tests]
+    negative_tests: [architecture.ci.required-command-comment-only, architecture.ci.required-command-echo-only, architecture.ci.required-command-disabled-step, architecture.ci.required-command-unreachable, architecture.ci.required-command-heredoc]
+  - id: CI-002
+    statement: the R3 end-to-end proof executes exactly the anchored TestE2ER3FullLoop in its exact package, verifies one machine-readable Action=pass event, and preserves the producer exit status
+    enforcement: [anchored-go-test-selector, go-test-json-event-verifier, pipe-status-preservation, exact-test-package-binding, mutation-self-tests]
+    negative_tests: [architecture.ci.r3-exact-execution]
+  - id: ARC-006
+    statement: the R3 end-to-end proof tree is CODEOWNER-gated and included in the protected-hash inventory, while the command permission inventory remains a closed five-entry guardrail set
+    enforcement: [protected-path-collector, active-codeowner-rule, protected-hash-reconciliation, closed-allowed-binary-inventory, mutation-self-tests]
+    negative_tests: [architecture.protection.governance-inventory, architecture.command.closed-inventory]
+  - id: EXA-001
+    statement: extractive mode and BYTE_EXACT_CITATION are signed top-level manifest properties and cannot be mismatched
+    enforcement: [manifest-schema-v2, signed-mode-method-binding, terminal-manifest-validator]
+    negative_tests: [contract.manifest.extractive-mode-method-mismatch]
+  - id: EXA-002
+    statement: every published extractive claim is a deterministic projection of exactly one authorized context sentence
+    enforcement: [authorized-context-projection, trusted-context-reconciliation, extractive-claim-plan, immutable-context-snapshot]
+    negative_tests: [contract.manifest.extractive-claim-not-in-context, contract.manifest.extractive-trusted-catalog-tamper, contract.manifest.extractive-snapshot-signature-tamper]
+  - id: EXA-003
+    statement: an extractive claim is byte-equal to exactly one citation with no line break and at most 2000 UTF-8 bytes
+    enforcement: [byte-exact-citation-validator, sentence-boundary-validator, citation-cardinality-gate]
+    negative_tests: [contract.manifest.extractive-byte-mismatch, contract.manifest.extractive-multiple-citations]
+  - id: EXA-004
+    statement: extractive mode cannot contain generator or verifier profiles, runs, or claim-verification records
+    enforcement: [conditional-manifest-schema, mode-scoped-model-plan, no-generator-verifier-boundary]
+    negative_tests: [contract.manifest.extractive-generator-present, contract.manifest.extractive-generator-semantic-present]
+  - id: EXA-005
+    statement: published answer manifests are immutable and every amendment is a separate owner-signed superseding version with an exact hash chain, a closed amendment class, and an audited open path that re-checks access
+    enforcement: [immutable-version-chain, closed-amendment-class, owner-amendment-path, open-access-recheck, amendment-audit]
+    negative_tests: [acceptance.answer.version-immutable, acceptance.answer.chain-exact-hash, acceptance.answer.owner-path-only, acceptance.answer.open-access-recheck, acceptance.answer.amendment-shape-contract]
+  - id: SAN-001
+    statement: no application component has container-creation or container-runtime capability
+    enforcement: [sandbox-job-schema, protected-deployment-manifest, capability-deny]
+    negative_tests: [sandbox.job.container-creation-forbidden, sandbox.job.deadline-order, architecture.sandbox.dispatcher-capability-boundary, acceptance.sandbox.deadline-inversion-rejected, acceptance.sandbox.deadline-kills-process, acceptance.sandbox.disconnect-after-transfer-kills-process]
+  - id: SAN-002
+    statement: a worker registration reserves exactly one socket per parser type, remains lease-ineligible until the dispatcher has completely written the exact versioned content-free acceptance frame and the client has validated that frame before returning a session, releases the parser reservation on every acceptance failure, and only receives jobs whose parser type matches the registered parser type
+    enforcement: [sandbox-lease-schema, socket-registration-gate, exact-registration-acceptance-frame, pre-acceptance-lease-eligibility-gate, failed-registration-reservation-cleanup]
+    negative_tests: [sandbox.lease.parser-type-mismatch, acceptance.sandbox.second-registration-socket-rejected, acceptance.sandbox.registration-readiness-gate, acceptance.sandbox.registration-ack-failure-cleanup, acceptance.sandbox.registration-ack-body-exact]
+  - id: SAN-003
+    statement: handoff state determines retry before transfer and quarantine after transfer, with explicit confirmation for success
+    enforcement: [sandbox-outcome-schema, handoff-state-machine]
+    negative_tests: [sandbox.outcome.identity-invalid, acceptance.sandbox.handoff-retry-after-transfer]
+  - id: SAN-004
+    statement: extraction identity includes kernel-observed resource limits and cannot be based on worker self-report
+    enforcement: [sandbox-limit-confirmation-schema, kernel-observation-gate]
+    negative_tests: [sandbox.limit.kernel-observation-required, acceptance.sandbox.kernel-self-report-rejected]
+  - id: OPS-010
+    statement: operator failures expose a typed code, action, metric, and no silent fallback
+    enforcement: [operator-failure-schema, typed-failure-registry, operator-runbook]
+    negative_tests: [operator.failure.no-silent-fallback, operator.failure.action-mapping, operator.secrets.external-client-secret]
+  - id: OPS-011
+    statement: readiness is dependency-aware and cannot be green while a required dependency is unavailable
+    enforcement: [operator-readiness-schema, dependency-readiness-gate]
+    negative_tests: [operator.readiness.unavailable-is-red, operator.readiness.unknown-dependency, operator.bootstrap.runtime-password-reconciliation, operator.readiness.runtime-probes-distinct]
+
+release_requirements:
+  protected_remote_branch: true
+  codeowner_approval: true
+  protected_ci_definition: true
+  architecture_check: true
+  unit_tests: true
+  integration_tests: true
+  acceptance_tests: true
+  security_tests: true
+  sbom_per_image: true
+  aibom: true
+  third_party_notices: true
+  pinned_container_digests: true
+  pinned_model_revisions: true
+  offline_startup_test: true

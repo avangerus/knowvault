@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.2",
+  "source_scope_id": "scope_git_alpha",
+  "revision": 1,
+  "connection_id": "conn_git",
+  "connection_revision": 1,
+  "source_type": "GIT",
+  "discovered_scope_id": "discovered_git_alpha_main_r1",
+  "discovered_identity_digest": "hmac-sha256:k1:82586576f5185be49bcd6c4021f6c0e7cf796dae4b4bfca78d3cadd125368444",
+  "access_mode": "SOURCE_ENFORCED",
+  "scope_config": {
+    "repository_id": "repo-alpha",
+    "branch_name": "main",
+    "path_matcher_version": "scope-glob-v1",
+    "include_paths": ["src/**", "docs/**"],
+    "exclude_paths": ["vendor/**"],
+    "max_blob_bytes": 10485760,
+    "text_media_types": ["text/plain", "application/json", "application/xml"],
+    "submodules": false,
+    "lfs_content": false
+  },
+  "sync_interval_seconds": 300,
+  "content_freshness_sla_seconds": 600,
+  "acl_freshness_sla_seconds": 900,
+  "object_limit": 100000,
+  "byte_limit": 10737418240,
+  "created_by": "user_admin",
+  "created_at": "2026-07-14T10:00:00Z"
+}

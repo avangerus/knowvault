@@ -1,0 +1,9 @@
+{
+  "schema_version": "operator-readiness-v1",
+  "liveness": true,
+  "readiness": true,
+  "readiness_source": "DEPENDENCY_CHECK",
+  "dependencies": [
+    { "name": "UNREGISTERED_DEPENDENCY", "status": "READY" }
+  ]
+}

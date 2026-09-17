@@ -1,0 +1,50 @@
+[Unit]
+Description=KnowVault native parser host supervisor (inactive candidate)
+Documentation=file:/opt/knowvault/supervisor/README.md
+Requires=knowvault_native.slice
+Requires=knowvault-native-supervisor-prepare.service
+After=knowvault_native.slice knowvault-native-supervisor-prepare.service
+Before=knowvault-dispatcher.service
+Wants=knowvault-dispatcher.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+Slice=knowvault_native.slice
+Delegate=cpu memory pids
+DelegateSubgroup=supervisor
+UMask=0022
+ExecStart=/usr/bin/python3 -B /opt/knowvault/supervisor/native_ingest_supervisor.py
+Restart=no
+# Normal stop drains through the dispatcher. If the manager dies or exhausts
+# its bounded drain, systemd must also kill every remaining parser descendant.
+# This emergency fence never authorizes a result or runtime-state cleanup.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=150
+SendSIGKILL=yes
+LimitNOFILE=1024
+CPUQuota=100%
+MemoryMax=256M
+TasksMax=64
+RuntimeDirectory=knowvault-native-ingest-supervisor
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+# systemd's root-user exec transition otherwise drops effective CAP_SETUID
+# under NoNewPrivileges on the qualified 255 host. runc needs it only to set
+# the pinned non-root parser identity; OCI drops every parser capability.
+AmbientCapabilities=CAP_SETUID
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=no
+ReadWritePaths=/run/knowvault-native-ingest-supervisor
+
+[Install]
+WantedBy=multi-user.target

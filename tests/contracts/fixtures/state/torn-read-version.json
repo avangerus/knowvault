@@ -1,0 +1,17 @@
+{
+  "before_read": {
+    "source_object_identity": "file-id-42",
+    "external_version_key": "native:version-7",
+    "size_bytes": 4096
+  },
+  "after_read": {
+    "source_object_identity": "file-id-42",
+    "external_version_key": "native:version-8",
+    "size_bytes": 6144
+  },
+  "commit_attempt": {
+    "source_version_created": false,
+    "evidence_indexed": false,
+    "outcome": "QUARANTINED_TORN_READ"
+  }
+}

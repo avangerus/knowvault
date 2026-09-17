@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.3",
+  "event_id": "44444444-4444-4444-8444-444444444444",
+  "claimed_organization_id": "org_alpha",
+  "connection_id": "conn_git",
+  "source_scope_id": "scope_repo",
+  "scope_revision": 2,
+  "connector_job_id": "job_sync_scope_repo_0001",
+  "operation": "UPSERT",
+  "delete_semantics": null,
+  "external_object_id": "repo:alpha:path:README.md",
+  "external_version_key": "native:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "object_type": "FILE",
+  "object_metadata": {
+    "kind": "GIT_FILE",
+    "title": "README.md",
+    "mime_type": "text/markdown",
+    "source_updated_at": "2026-07-14T12:00:00Z",
+    "size_bytes": 1200,
+    "provider": "GITHUB",
+    "repository": "alpha/api",
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "branch": "main",
+    "path": "README.md",
+    "canonical_locator_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "content_reference": {
+    "reference_id": "cr_abcdef0123456789",
+    "expires_at": "2026-07-14T12:10:00Z",
+    "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "size_bytes": 1200,
+    "media_type": "text/markdown"
+  },
+  "acl_snapshot": null,
+  "event_time": "2026-07-14T12:00:00Z",
+  "observed_at": "2026-07-14T12:00:01Z",
+  "idempotency_key": "connector-wrong-discriminator",
+  "integrity": {
+    "algorithm": "ED25519",
+    "key_id": "connector-key-2026-01",
+    "signed_at": "2026-07-14T12:00:01Z",
+    "nonce": "DDDDDDDDDDDDDDDDDDDDDD",
+    "payload_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "value_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}

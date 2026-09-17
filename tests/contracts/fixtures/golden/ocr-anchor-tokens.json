@@ -1,0 +1,44 @@
+{
+  "vector_version": "ocr-token-anchor-v1",
+  "anchor": {
+    "kind": "OCR",
+    "page": 1,
+    "token_start_ordinal": 0,
+    "token_end_ordinal": 3,
+    "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+    "coordinate_unit": "NORMALIZED_0_1",
+    "coordinate_origin": "TOP_LEFT",
+    "bounding_boxes": [
+      {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1},
+      {"x": 0.32, "y": 0.1, "width": 0.25, "height": 0.1},
+      {"x": 0.1, "y": 0.25, "width": 0.2, "height": 0.1}
+    ]
+  },
+  "tokens": [
+    {
+      "page": 1,
+      "ordinal": 0,
+      "token_id": "ocr-token-0",
+      "canonical_token_text": "Alpha",
+      "join_after": "SPACE",
+      "bounding_box": {"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1}
+    },
+    {
+      "page": 1,
+      "ordinal": 1,
+      "token_id": "ocr-token-1",
+      "canonical_token_text": "\u0437\u0430\u043f\u0443\u0441\u043a",
+      "join_after": "LINE_BREAK",
+      "bounding_box": {"x": 0.32, "y": 0.1, "width": 0.25, "height": 0.1}
+    },
+    {
+      "page": 1,
+      "ordinal": 2,
+      "token_id": "ocr-token-2",
+      "canonical_token_text": "\u0433\u043e\u0442\u043e\u0432",
+      "join_after": "NONE",
+      "bounding_box": {"x": 0.1, "y": 0.25, "width": 0.2, "height": 0.1}
+    }
+  ],
+  "expected_text": "Alpha \u0437\u0430\u043f\u0443\u0441\u043a\n\u0433\u043e\u0442\u043e\u0432"
+}

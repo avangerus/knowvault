@@ -1,0 +1,16 @@
+{
+  "schema_version": "model-execution-plan-v1",
+  "question_run_id": "qr_insufficient_1",
+  "created_at": "2026-07-14T13:00:00Z",
+  "configured_profile_hashes": {
+    "EMBEDDING": "sha256:bf9298c5b4d89dea9c825ecd5b09e863e22a08b3d07bfd2bbfec74462e0a43c7",
+    "RERANKING": "sha256:26103fea4beae08adf6710d33c305751bdfefc96ab3832f6119fdcdb67a0ba6d",
+    "GENERATION": "sha256:db355b3c67a67c89f98c5368f03087ee284fa54c204857d22282c16f763113ce",
+    "VERIFICATION": "sha256:9def8fc617fe0fe0fff6ae74ffeedcdf9bb6c2153977311939c7113792602eb9"
+  },
+  "planned_purposes": ["EMBEDDING"],
+  "selected_run_ids": {"EMBEDDING": "mr_embedding_zero_1"},
+  "attempts": [
+    {"model_run_id": "mr_embedding_zero_1", "purpose": "EMBEDDING", "attempt": 1, "selected_for_result": true}
+  ]
+}

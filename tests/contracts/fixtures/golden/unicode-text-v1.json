@@ -1,0 +1,40 @@
+{
+  "vector_version": "1.0",
+  "normalization_version": "text-v1",
+  "source_text_escaped": "\uFEFF  \u041f\u0440\u043e\u0435\u043a\u0442 e\u0301\r\n🚀 \u0433\u043e\u0442\u043e\u0432\r",
+  "canonical_text_escaped": "  \u041f\u0440\u043e\u0435\u043a\u0442 é\n🚀 \u0433\u043e\u0442\u043e\u0432\n",
+  "canonical_utf8_hex": "2020d09fd180d0bed0b5d0bad18220c3a90af09f9a8020d0b3d0bed182d0bed0b20a",
+  "canonical_utf8_length": 34,
+  "canonical_text_hash": "sha256:fb2be865887d8ce375dcc4ff8123cf581fb6bb40fa27a808836f03737bc43dbe",
+  "byte_ranges": [
+    {
+      "label": "cyrillic-word",
+      "text": "\u041f\u0440\u043e\u0435\u043a\u0442",
+      "start": 2,
+      "end": 14
+    },
+    {
+      "label": "nfc-accent",
+      "text": "é",
+      "start": 15,
+      "end": 17
+    },
+    {
+      "label": "emoji",
+      "text": "🚀",
+      "start": 18,
+      "end": 22
+    },
+    {
+      "label": "cyrillic-ready",
+      "text": "\u0433\u043e\u0442\u043e\u0432",
+      "start": 23,
+      "end": 33
+    }
+  ],
+  "question_trimmed_text_escaped": "\u041f\u0440\u043e\u0435\u043a\u0442 é\n🚀 \u0433\u043e\u0442\u043e\u0432",
+  "question_trimmed_utf8_hex": "d09fd180d0bed0b5d0bad18220c3a90af09f9a8020d0b3d0bed182d0bed0b2",
+  "question_trimmed_utf8_length": 31,
+  "question_trimmed_text_hash": "sha256:f102991b6b1e10502f9adf1abd146e30d07e5469a93fdb5ec6a8c23347f8ed43"
+}
+

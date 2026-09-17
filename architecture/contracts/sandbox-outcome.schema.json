@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-outcome.schema.json",
+  "title": "Sandbox Outcome Protocol 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "lease_id", "job_id", "worker_id", "parser_type",
+    "handoff", "status", "reported_at", "extraction_identity"
+  ],
+  "properties": {
+    "schema_version": { "const": "sandbox-outcome-v1" },
+    "lease_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "worker_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "parser_type": { "enum": ["TEXT", "STRUCTURED", "HTML", "EML", "OFFICE", "PDF", "OCR"] },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transfer_state", "confirmation_id"],
+      "properties": {
+        "transfer_state": { "enum": ["CONFIRMED", "RETRY", "QUARANTINED"] },
+        "confirmation_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "status": { "enum": ["SUCCEEDED", "FAILED", "QUARANTINED"] },
+    "reported_at": { "type": "string", "format": "date-time" },
+    "extraction_identity": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "handoff": { "type": "object", "properties": { "transfer_state": { "const": "CONFIRMED" } }, "required": ["transfer_state"] } }, "required": ["handoff"] },
+      "then": {
+        "properties": {
+          "status": { "const": "SUCCEEDED" },
+          "extraction_identity": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "handoff": { "type": "object", "properties": { "transfer_state": { "const": "RETRY" } }, "required": ["transfer_state"] } }, "required": ["handoff"] },
+      "then": {
+        "properties": {
+          "status": { "const": "FAILED" },
+          "extraction_identity": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "handoff": { "type": "object", "properties": { "transfer_state": { "const": "QUARANTINED" } }, "required": ["transfer_state"] } }, "required": ["handoff"] },
+      "then": {
+        "properties": {
+          "status": { "const": "QUARANTINED" },
+          "extraction_identity": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

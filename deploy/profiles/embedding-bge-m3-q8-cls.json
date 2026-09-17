@@ -1,0 +1,15 @@
+{
+  "schema_version": "embedding-profile-v1",
+  "id": "bge-m3-q8-cls-llamacpp-v1",
+  "model_id": "/models/bge-m3-Q8_0.gguf",
+  "artifact_hash": "sha256:950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167",
+  "tokenizer_hash": "sha256:14e012b2975e3ad9bbc31cbbd88cc07f68a8ec6079d7f95778981939e5dec406",
+  "runtime_hash": "sha256:7f87a3bbe3143cdb857f5c84f82d2c15528be70ca0e7c5ade9a47d56b791f93f",
+  "configuration_hash": "sha256:360826e1ce3ce18b86316c5f11f0669fcdaca1f69cba2902ebd42e7a4e4b2798",
+  "endpoint": "https://knowvault-embedding:443",
+  "server_name": "knowvault-embedding",
+  "dimension": 1024,
+  "max_input_bytes": 8192,
+  "revision": 1,
+  "profile_hash": "sha256:d8cd28ca6a9d8280094e7b8b833ab74f677eefc234b71cfc887368947621256e"
+}

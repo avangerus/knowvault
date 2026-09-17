@@ -1,0 +1,17 @@
+{
+  "scenario_version": "1.0",
+  "base_manifest_fixture": "valid/answer-manifest-completed.json",
+  "mutations": [
+    {
+      "operation": "REPLACE",
+      "json_pointer": "/citations/0/claim_ids/0",
+      "value": "C2"
+    }
+  ],
+  "preprocessor": "REHASH_AND_RESIGN_WITH_TEST_TENANT_KEY",
+  "expected": {
+    "schema_valid": true,
+    "terminal_commit_allowed": false
+  }
+}
+

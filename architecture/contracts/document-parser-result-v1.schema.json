@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/document-parser-result-v1.schema.json",
+  "title": "Document Parser Result v1",
+  "description": "Closed, versioned wire result of the isolated document-parser worker (ADR-0062). The worker is a hostile data-plane component and a PARSER OBSERVER ONLY: it reports the source document's observable structure (structural locators) and the bounded RAW Unicode text it read out of each structural node. It owns no canonicalization authority — it cannot normalize, hash, offset, range or anchor. internal/source/canon is the single owner of text-v1 normalization, canonical bytes, text hashes, fragment hashes, byte ranges, derived paragraph ids and source-anchor bytes; internal/source/docparser recomputes all of them from raw_text and is the primary defense. Correctness therefore does not depend on the worker's Unicode tables matching Go's. The worker also cannot emit a database id, lifecycle state, queryability, tenant/workspace scope or a current-version pointer: additionalProperties is false at every object level, so any smuggled key is rejected here and (structurally, again) by the Go strict decode.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result_version", "observed_format", "parser", "text_units", "warnings"],
+  "properties": {
+    "result_version": { "const": "document-parser-result-v1" },
+    "observed_format": {
+      "description": "The source format the worker observed. It is an observation, not the authoritative canonical_format: the Go runtime binds the immutable SourceExtraction's canonical_format and parser_profile_revision itself and quarantines a mismatch with the dispatched format.",
+      "enum": ["DOCX", "PPTX", "XLSX"]
+    },
+    "parser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "artifact_hash", "observation_profile_revision"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "artifact_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "observation_profile_revision": {
+          "description": "Version of the worker's parser OBSERVATION semantics (which parts are opened, how a node's text is read out, ordering). It never denotes a canonicalization authority; the text-v1 normalization version lives in canon and in the anchor the Go runtime builds.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+-obs-v[1-9][0-9]*$"
+        }
+      }
+    },
+    "text_units": {
+      "description": "Ordered structural text units. One unit is one structural node (DOCX paragraph, PPTX shape, XLSX cell) with the raw text the worker read from it. The Go runtime canonicalizes each unit, derives its byte range within its own canonical text, builds the source anchor and computes every hash.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ordinal", "locator", "raw_text"],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 1, "maximum": 100000 },
+          "locator": {
+            "oneOf": [
+              { "$ref": "#/$defs/docxLocator" },
+              { "$ref": "#/$defs/pptxLocator" },
+              { "$ref": "#/$defs/xlsxLocator" }
+            ]
+          },
+          "raw_text": {
+            "description": "Raw, NOT canonicalized Unicode text of this structural node, exactly as read. The worker must not normalize, fold newlines, strip a BOM or otherwise canonicalize: that is canon's authority and doing it in the worker would create a second canonicalization owner.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 262144
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "docxLocator": {
+      "description": "DOCX structural position. Carries no text offsets: the Evidence range is [0, len(canonical text)) of this paragraph and is computed in Go. paragraph_native_id is optional; when it is absent the Go runtime derives the paragraph id per CANONICALIZATION.md s3 from section_path + paragraph_ordinal + the text hash IT computed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "section_path", "paragraph_ordinal"],
+      "properties": {
+        "kind": { "const": "DOCX" },
+        "section_path": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\r\\n]+$" }
+        },
+        "paragraph_ordinal": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "paragraph_native_id": { "type": "string", "pattern": "^native:[A-Za-z0-9._~:-]{1,240}$", "maxLength": 256 }
+      }
+    },
+    "pptxLocator": {
+      "description": "PPTX structural position: 1-based slide and the shape id from the exact slide shape tree (never visual order). No text offsets — the Evidence range is computed in Go.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "slide", "shape_id"],
+      "properties": {
+        "kind": { "const": "PPTX" },
+        "slide": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "shape_id": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$" }
+      }
+    },
+    "xlsxLocator": {
+      "description": "XLSX structural position: sheet name plus a single A1 cell. The worker cannot declare a multi-cell A1 range; the Go runtime builds the anchor range from the exact cell it validated.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sheet", "cell"],
+      "properties": {
+        "kind": { "const": "XLSX" },
+        "sheet": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "cell": { "type": "string", "pattern": "^[A-Z]+[1-9][0-9]*$" }
+      }
+    }
+  }
+}

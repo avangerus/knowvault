@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-registration-v2.schema.json",
+  "title": "Sandbox registration v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "worker_id",
+    "supervisor_handoff_id",
+    "parser_type",
+    "artifact_hash",
+    "sandbox_profile_revision",
+    "observation_profile_revision",
+    "one_shot",
+    "max_leases",
+    "capabilities"
+  ],
+  "properties": {
+    "schema_version": { "const": "sandbox-registration-v2" },
+    "worker_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "supervisor_handoff_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{31,127}$" },
+    "parser_type": { "enum": ["OFFICE", "PDF", "OCR"] },
+    "artifact_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sandbox_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "observation_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "one_shot": { "const": true },
+    "max_leases": { "const": 1 },
+    "capabilities": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "PULL_JOB" },
+        { "const": "PUSH_OUTCOME" }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}

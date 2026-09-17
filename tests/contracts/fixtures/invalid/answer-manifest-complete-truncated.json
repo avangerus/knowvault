@@ -1,0 +1,22 @@
+{
+  "scenario_version": "1.0",
+  "base_manifest_fixture": "valid/answer-manifest-completed.json",
+  "mutations": [
+    {
+      "operation": "REPLACE",
+      "json_pointer": "/retrieval/truncated",
+      "value": true
+    },
+    {
+      "operation": "REPLACE",
+      "json_pointer": "/retrieval/truncation_reason",
+      "value": "TOKEN_BUDGET"
+    }
+  ],
+  "preprocessor": "REHASH_AND_RESIGN_WITH_TEST_TENANT_KEY",
+  "expected": {
+    "schema_valid": true,
+    "terminal_commit_allowed": false
+  }
+}
+

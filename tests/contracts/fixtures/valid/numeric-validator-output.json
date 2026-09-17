@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "claim_id": "C1",
+  "validation_input_hash": "sha256:6859cfb9388f56d9c7a802535d78a70a73426177a5f2614fcdaada084982f314",
+  "material_literals": [
+    {"claim_start": 7, "claim_end": 15, "text": "1200 USD", "class": "CURRENCY", "citation_numbers": [1]},
+    {"claim_start": 27, "claim_end": 30, "text": "75%", "class": "PERCENT", "citation_numbers": [1]},
+    {"claim_start": 34, "claim_end": 44, "text": "2026-07-25", "class": "DATE_TIME", "citation_numbers": [1]}
+  ],
+  "unsupported_literals": [],
+  "outcome": "PASSED"
+}

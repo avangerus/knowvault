@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-inventory-typed-skip-ledger",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.inventory.typed-skip-ledger",
+  "control_id": "acceptance.r3a1.inventory.typed-skip-ledger",
+  "description": "R3a-1 Outcome 2 (KV-A02) inventory: the workspace object list must expose the typed, content-free skip ledger so an agent learns which objects a bound scope skipped and why. internal/platform/workspaceapi/mcp_workspace_list.go mcpWorkspaceSkipProjection renders each row with `external_id`, `reason_code` and `moment`, and the shared mcpWorkspaceListPage / workspaceToolListObjects cores report `skipped_count` as the row count. Dropping the `reason_code` member (the weakening) removes the only closed skip classification while leaving the row and count, so the ledger degrades to an untyped silence. TestMCPWorkspaceListSkipLedgerCarriesTypedReasonAndCount asserts external_id, reason_code, moment and skipped_count for both the MCP knowvault_list_objects tool and the REST parity GET /api/v1/workspaces/{workspace_id}/tools/list-objects, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPWorkspaceListSkipLedgerCarriesTypedReasonAndCount",
+  "mutations": [
+    {
+      "id": "r3a1-list-typed-skip-reason-dropped",
+      "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+      "kind": "GO_LIST_TYPED_SKIP_REASON_WEAKENING",
+      "expected": "RED",
+      "old": "\t\t\"reason_code\": skip.ReasonCode,",
+      "new": ""
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree mcpWorkspaceSkipProjection renders every skip row with its stable external_id, closed reason_code and RFC3339 moment, and both transports report skipped_count equal to the number of skip rows, so TestMCPWorkspaceListSkipLedgerCarriesTypedReasonAndCount passes over the MCP tools/call path and the REST list-objects route.",
+  "mutant_meaning": "With the `reason_code` projection line removed each skip row still carries external_id, moment and a matching skipped_count but no closed reason code, so TestMCPWorkspaceListSkipLedgerCarriesTypedReasonAndCount fails on the missing skip reason in both the MCP and REST projections — exactly the declared RED negative control (the typed skip ledger must not silently degrade to untyped counts), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.inventory.typed-skip-ledger`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

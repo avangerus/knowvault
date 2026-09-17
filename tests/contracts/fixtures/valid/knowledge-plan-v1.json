@@ -1,0 +1,13 @@
+{
+  "schema_version": "knowledge-plan-v1",
+  "status": "READY",
+  "operation": "AGGREGATE",
+  "subject_terms": ["department", "kilograms"],
+  "entity_hints": ["department", "kilograms"],
+  "filters": [{"name": "time_period", "value": "month"}],
+  "aggregate": {"function": "SUM", "metric": "kilograms", "group_by": ["department"], "order": "DESC", "limit": 1},
+  "confidence": "HIGH",
+  "reasons": ["generic_aggregate_vocabulary"],
+  "question_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "plan_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+}

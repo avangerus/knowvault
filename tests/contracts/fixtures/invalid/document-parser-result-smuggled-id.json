@@ -1,0 +1,10 @@
+{
+  "result_version": "document-parser-result-v1",
+  "observed_format": "DOCX",
+  "source_version_id": "ver-123",
+  "parser": { "name": "w", "version": "1.0", "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "observation_profile_revision": "docx-obs-v1" },
+  "text_units": [
+    { "ordinal": 1, "locator": { "kind": "DOCX", "section_path": ["body"], "paragraph_ordinal": 1 }, "raw_text": "Hello world" }
+  ],
+  "warnings": []
+}

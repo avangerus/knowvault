@@ -1,0 +1,21 @@
+{
+  "scenario_version": "1.0",
+  "question_run_id": "qr_0001",
+  "retention_state": "PURGING",
+  "stored": {
+    "question_text": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0451\u043d \u0437\u0430\u043f\u0443\u0441\u043a?",
+    "answer_markdown": "\u041e\u0442\u0432\u0435\u0442 \u0435\u0449\u0451 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u0438 \u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f \u0434\u043e \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f purge.",
+    "answer_structured_json": {"claims": []},
+    "cited_excerpts": ["\u0426\u0438\u0442\u0430\u0442\u0430 \u0435\u0449\u0451 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u0438 \u0445\u0440\u0430\u043d\u0438\u0442\u0441\u044f."],
+    "manifest_canonical_bytes": "ZXhhbXBsZQ=="
+  },
+  "read_request": {
+    "include_answer_body": true,
+    "include_cited_excerpts": true,
+    "include_manifest": true
+  },
+  "expected": {
+    "disclosure_allowed": false,
+    "error_code": "ANSWER_CONTENT_PURGING"
+  }
+}

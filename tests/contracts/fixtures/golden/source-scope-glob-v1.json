@@ -1,0 +1,19 @@
+{
+  "vector_version": "scope-glob-v1",
+  "vectors": [
+    {"id": "literal", "pattern": "docs/readme.md", "path": "docs/readme.md", "platform": "POSIX", "expected_match": true},
+    {"id": "star-one-segment", "pattern": "docs/*.md", "path": "docs/readme.md", "platform": "POSIX", "expected_match": true},
+    {"id": "star-does-not-cross-segment", "pattern": "docs/*.md", "path": "docs/api/readme.md", "platform": "POSIX", "expected_match": false},
+    {"id": "double-star-zero-segments", "pattern": "**/*.go", "path": "main.go", "platform": "POSIX", "expected_match": true},
+    {"id": "double-star-many-segments", "pattern": "**/*.go", "path": "src/server/main.go", "platform": "POSIX", "expected_match": true},
+    {"id": "question-is-one-codepoint", "pattern": "file?.txt", "path": "file\u042f.txt", "platform": "POSIX", "expected_match": true},
+    {"id": "windows-simple-fold", "pattern": "Docs/*.MD", "path": "docs/readme.md", "platform": "WINDOWS", "expected_match": true},
+    {"id": "posix-case-sensitive", "pattern": "Docs/*.MD", "path": "docs/readme.md", "platform": "POSIX", "expected_match": false}
+  ],
+  "allow_vectors": [
+    {"id": "exclude-wins", "includes": ["docs/**"], "excludes": ["docs/private/**"], "path": "docs/private/secret.md", "platform": "POSIX", "expected_allowed": false},
+    {"id": "empty-include-means-all", "includes": [], "excludes": ["tmp/**"], "path": "docs/readme.md", "platform": "POSIX", "expected_allowed": true},
+    {"id": "exclude-with-empty-include", "includes": [], "excludes": ["tmp/**"], "path": "tmp/cache.bin", "platform": "POSIX", "expected_allowed": false},
+    {"id": "missing-include-denies", "includes": ["docs/**"], "excludes": [], "path": "src/main.go", "platform": "POSIX", "expected_allowed": false}
+  ]
+}

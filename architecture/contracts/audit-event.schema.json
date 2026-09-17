@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/audit-event.schema.json",
+  "title": "Audit Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "organization_id",
+    "sequence",
+    "workspace_id",
+    "actor_type",
+    "actor_principal_id",
+    "on_behalf_of_principal_id",
+    "action",
+    "resource_type",
+    "resource_id",
+    "request_id",
+    "policy_decision_id",
+    "outcome",
+    "error_code",
+    "referenced_evidence_ids",
+    "metadata",
+    "previous_event_hash",
+    "event_hash",
+    "occurred_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "audit-event-v1" },
+    "event_id": { "$ref": "#/$defs/opaqueId" },
+    "organization_id": { "$ref": "#/$defs/opaqueId" },
+    "sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "workspace_id": { "oneOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] },
+    "actor_type": { "enum": ["HUMAN", "SERVICE", "CONNECTOR", "SYSTEM"] },
+    "actor_principal_id": { "oneOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] },
+    "on_behalf_of_principal_id": { "oneOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] },
+    "action": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$"
+    },
+    "resource_type": {
+      "enum": [
+        "ORGANIZATION",
+        "IDENTITY",
+        "WORKSPACE",
+        "WORKSPACE_MEMBER",
+        "WORKSPACE_SOURCE",
+        "SOURCE_CONNECTION",
+        "SOURCE_SCOPE",
+        "SOURCE_OBJECT",
+        "QUESTION_RUN",
+        "ANSWER_DOCUMENT",
+        "CITATION",
+        "MODEL_RUN",
+        "POLICY",
+        "SIGNING_KEY",
+        "AUDIT_CHECKPOINT"
+      ]
+    },
+    "resource_id": { "$ref": "#/$defs/opaqueId" },
+    "request_id": { "$ref": "#/$defs/opaqueId" },
+    "policy_decision_id": { "oneOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] },
+    "outcome": { "enum": ["SUCCESS", "DENIED", "FAILED"] },
+    "error_code": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+    },
+    "referenced_evidence_ids": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/opaqueId" }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "workspace_source_id": { "$ref": "#/$defs/opaqueId" },
+        "source_scope_id": { "$ref": "#/$defs/opaqueId" },
+        "source_scope_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "scope_config_hash": { "$ref": "#/$defs/sha256" },
+        "access_mode": { "enum": ["WORKSPACE_MANAGED", "SOURCE_ENFORCED"] },
+        "enabled": { "type": "boolean" },
+        "source_connection_id": { "$ref": "#/$defs/opaqueId" },
+        "connector_job_id": { "$ref": "#/$defs/opaqueId" },
+        "sync_run_id": { "$ref": "#/$defs/opaqueId" },
+        "question_run_id": { "$ref": "#/$defs/opaqueId" },
+        "model_run_id": { "$ref": "#/$defs/opaqueId" },
+        "citation_number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "manifest_hash": { "$ref": "#/$defs/sha256" },
+        "policy_revision": { "$ref": "#/$defs/opaqueId" },
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,127}$" }
+        },
+        "remote_address_digest": { "$ref": "#/$defs/sha256" },
+        "user_agent_family": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F]).+$"
+        },
+        "answer_document_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "amendment_class": {
+          "oneOf": [
+            { "type": "null" },
+            { "enum": ["SUPERSEDE", "RETRACT", "REDACT"] }
+          ]
+        }
+      }
+    },
+    "previous_event_hash": { "$ref": "#/$defs/sha256" },
+    "event_hash": { "$ref": "#/$defs/sha256" },
+    "occurred_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "actor_type": { "const": "SYSTEM" } }, "required": ["actor_type"] },
+      "then": { "properties": { "actor_principal_id": { "type": "null" } } },
+      "else": { "properties": { "actor_principal_id": { "$ref": "#/$defs/opaqueId" } } }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "SUCCESS" } }, "required": ["outcome"] },
+      "then": { "properties": { "error_code": { "type": "null" } } },
+      "else": { "properties": { "error_code": { "type": "string" } } }
+    }
+  ],
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F]).+$"
+    },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}

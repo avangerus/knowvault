@@ -1,0 +1,130 @@
+{
+  "lock_version": 1,
+  "status": "NOT_RELEASE_QUALIFIED",
+  "reason": [
+    "The gauntlet-20260829-v3 candidate includes the apt/ldconfig cache cleanup and is bound to the fresh image/SBOM/Grype evidence below; it remains unqualified until the offline repository and vulnerability gates pass.",
+    "The Grype scan contains unfixed Critical and High findings; this is recorded verbatim in grype.json.",
+    "The Dockerfile uses live Debian mirrors rather than an offline snapshot repository."
+  ],
+  "candidate": {
+    "image": "knowvault-tesseract-ocr:gauntlet-20260829-v3",
+    "platform": "linux/amd64",
+    "oci_index_digest": "sha256:6e44a8a198f737574e3721bf1735bef197e861a2e9380ea0bfb540cdd623bf6d",
+    "oci_child_manifest_digest": "sha256:6e44a8a198f737574e3721bf1735bef197e861a2e9380ea0bfb540cdd623bf6d",
+    "config_digest": "sha256:ac84448a0eb88af61edc2d56c9c11ee3222813159f645fe83839a80f420f03ea",
+    "size_bytes": 83231598,
+    "layers": [
+      "sha256:1d69a5fd31932841d7825ef4780c06f008eea65aaa9f3110fe09d5832ed5c7d8",
+      "sha256:23a322e58bac2c848cf3accce5a2ae02847433e8f014f731c82cb7d0b1fe84bf",
+      "sha256:835f4630cfa74f4bd2c6abd748da53d5b1319009947839b5c78fe198075bb7eb",
+      "sha256:98bdd8b9915aeab4c23a1110f1ed14b3d9bb2869800e8af8ef238d7b9ebbf55e",
+      "sha256:ceca82a2ad16e85c584fd485572978f5cb723d4deeba0218b523bebde55f13e8",
+      "sha256:8187ddff734fbe023048e3d1aee5888ed2f88574ef535a06d9f9083a9d78c9c1",
+      "sha256:ebdbdd65bd92ff57d1660be33d61250d74d789d4f88c265fde04e99f8b109e7a",
+      "sha256:5b8b3d581cf8087ac47c726c760105d8248cb39f5cba35e29bbcee92144f402e",
+      "sha256:cc9505d4a4d1df7a60f5d6ca8a1175a704c42f0d43032a67ac31fe8eeac03453",
+      "sha256:4e03221d72f8a1bafead0516fe57372a542ae2e8a0ad025cf9d572664b424b1f1",
+      "sha256:0a07128c3e857fb650853202304da73c89761522b5ee2ab5b71b610484072489"
+    ]
+  },
+  "base_image": "python:3.12.14-slim-bookworm@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579",
+  "source_and_model_identity": {
+    "worker_sha256": "sha256:669281adf0c513c65b525742ed289e73a044c27018f7d833a4769901b8640f82",
+    "tesseract_binary_sha256": "sha256:1e8c7ce7f27d2d1c902fb648efed443483f2a8fc7b60c48a5d3b61d647a2649e",
+    "eng_traineddata_sha256": "sha256:7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+    "model_id": "eng",
+    "model_revision": "tessdata-v1",
+    "observation_profile_revision": "ocr-observation-v1",
+    "ocr_profile_revision": "tessdata-v1"
+  },
+  "package_lock": {
+    "path": "../debian-packages.lock.json",
+    "sha256": "sha256:8c09e5cff867a8103a142327e4acf7d6b0a7da0b43fe34ae4439f3ef0e8b03a5",
+    "distribution": "Debian GNU/Linux bookworm",
+    "architecture": "amd64",
+    "package_count": 56
+  },
+  "build_evidence": {
+    "dockerfile_sha256": "sha256:f9e79a570be29d8b25ebcad1b9d6b8f2c646dc1db0b7c8f6db065b37c85bdc62",
+    "test_file_sha256": "sha256:45104ec195e71d99aa298725ac697ee1bdfa3b5cf6760c2b501b89400653f496",
+    "tests": "9 passed during the gauntlet-20260829-v3 Docker build; Linux DispatcherV2 live qualification passed separately",
+    "reproducibility": {
+      "status": "PASS",
+      "method": "Two independent no-cache BuildKit OCI exports with SOURCE_DATE_EPOCH=1704067200, provenance disabled, and rewrite-timestamp=true; both archives were byte-identical.",
+      "dockerfile_sha256": "sha256:f9e79a570be29d8b25ebcad1b9d6b8f2c646dc1db0b7c8f6db065b37c85bdc62",
+      "same_worker_source_sha256": "sha256:669281adf0c513c65b525742ed289e73a044c27018f7d833a4769901b8640f82",
+      "build_a": {
+        "artifact": "OCI export A (local verification archive)",
+        "oci_archive_sha256": "sha256:d0c4245bd48f855ee54f0c9fc53debf91e7392a2638b8d8c486b8a52a75b60ba",
+        "oci_index_digest": "sha256:17142f02596205b98c75ecab9d2c8c9c8ddb7d37e99d788c6cb4daf2f682785a",
+        "config_digest": "sha256:03da196e9de516d361fa1a751c26cee6a415b9508918902e0cdf1e0749a07f0c",
+        "layers": [
+          "sha256:1d69a5fd31932841d7825ef4780c06f008eea65aaa9f3110fe09d5832ed5c7d8",
+          "sha256:23a322e58bac2c848cf3accce5a2ae02847433e8f014f731c82cb7d0b1fe84bf",
+          "sha256:835f4630cfa74f4bd2c6abd748da53d5b1319009947839b5c78fe198075bb7eb",
+          "sha256:98bdd8b9915aeab4c23a1110f1ed14b3d9bb2869800e8af8ef238d7b9ebbf55e",
+          "sha256:0f816c1286491795d44dcddb61d3192543ba9b2327d785bcbd3a10587b1dbbfb",
+          "sha256:cfac96945550899a62aab1949e0f5187ae683ade0f69596d78d85b6c5894cce5",
+          "sha256:962102fad08a84a924df1b1e2ba98125137f636d651a5b8b11e7d94c54512c00",
+          "sha256:4af3cb8dcc2803dc27e0c5c443cc09de5ec416d8ba9eb035a4429fc34fb2acd3",
+          "sha256:c930d90e995d3b5c5f9780f68679508357170bae3e810687b22600cc73def4de",
+          "sha256:300bc8c814517339ab25faae4113f3ffae8abd5ea797649a92716943f2bf3172",
+          "sha256:c7511a378594b1cabaec109e3d67d567e61aa257520f5a1360e987b52a473822"
+        ]
+      },
+      "build_b": {
+        "artifact": "OCI export B (local verification archive)",
+        "oci_archive_sha256": "sha256:d0c4245bd48f855ee54f0c9fc53debf91e7392a2638b8d8c486b8a52a75b60ba",
+        "oci_index_digest": "sha256:17142f02596205b98c75ecab9d2c8c9c8ddb7d37e99d788c6cb4daf2f682785a",
+        "config_digest": "sha256:03da196e9de516d361fa1a751c26cee6a415b9508918902e0cdf1e0749a07f0c",
+        "layers": [
+          "sha256:1d69a5fd31932841d7825ef4780c06f008eea65aaa9f3110fe09d5832ed5c7d8",
+          "sha256:23a322e58bac2c848cf3accce5a2ae02847433e8f014f731c82cb7d0b1fe84bf",
+          "sha256:835f4630cfa74f4bd2c6abd748da53d5b1319009947839b5c78fe198075bb7eb",
+          "sha256:98bdd8b9915aeab4c23a1110f1ed14b3d9bb2869800e8af8ef238d7b9ebbf55e",
+          "sha256:0f816c1286491795d44dcddb61d3192543ba9b2327d785bcbd3a10587b1dbbfb",
+          "sha256:cfac96945550899a62aab1949e0f5187ae683ade0f69596d78d85b6c5894cce5",
+          "sha256:962102fad08a84a924df1b1e2ba98125137f636d651a5b8b11e7d94c54512c00",
+          "sha256:4af3cb8dcc2803dc27e0c5c443cc09de5ec416d8ba9eb035a4429fc34fb2acd3",
+          "sha256:c930d90e995d3b5c5f9780f68679508357170bae3e810687b22600cc73def4de",
+          "sha256:300bc8c814517339ab25faae4113f3ffae8abd5ea797649a92716943f2bf3172",
+          "sha256:c7511a378594b1cabaec109e3d67d567e61aa257520f5a1360e987b52a473822"
+        ]
+      }
+    }
+  },
+  "security_evidence": {
+    "sbom_path": "sbom.spdx.json",
+    "sbom_sha256": "sha256:7f89852c77a2ed404e96b972d849453b363d07a031d5fb18a79b12d0b0dc6e19",
+    "sbom_tool": "anchore/syft:v1.48.0@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c",
+    "sbom_spdx_version": "SPDX-2.3",
+    "sbom_package_count": 170,
+    "grype_path": "grype.json",
+    "grype_sha256": "sha256:61d7ed2e2c207dc6ebf7dece6fa9a9e228ef11519bd7aabeb621fb23d78c14c0",
+    "grype_tool": "anchore/grype:v0.116.0@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
+    "grype_db_schema": "v6.1.9",
+    "grype_db_built": "2026-08-29T06:26:37Z",
+    "grype_db_source": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-08-29T00:29:37Z_1787984797.tar.zst?checksum=sha256%3A4642c2baaef4b11ac2eaf2929d8a2740dd449a47ff892a22dbfce1e4a49fb1f1",
+    "match_count": 385,
+    "severity_counts": {
+      "Critical": 16,
+      "High": 54,
+      "Medium": 124,
+      "Low": 21,
+      "Negligible": 142,
+      "Unknown": 28
+    },
+    "status": "FAIL_CRITICAL_AND_HIGH_FINDINGS"
+  },
+  "wire_evidence": {
+    "fixture_path": "ocr-result-fixture.json",
+    "fixture_sha256": "sha256:59228c68970fd605e0820b2dc172f474be5b8b34017ef644da5693a39b0687ad",
+    "fixture_generated_by": "knowvault-tesseract-ocr:det-g",
+    "fixture_observed_format": "PNG",
+    "fixture_token_count": 2,
+    "fixture_confidence_range": "[0,1]",
+    "fixture_top_level_warnings": 0,
+    "fixture_page_warnings": 0,
+    "go_parser_integration": "GOEXPERIMENT=jsonv2 go test ./internal/source/ocrparser -count=1 PASSED"
+  }
+}

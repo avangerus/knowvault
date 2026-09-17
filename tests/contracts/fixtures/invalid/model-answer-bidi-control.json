@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.3",
+  "claims": [
+    {
+      "claim_id": "C1",
+      "text": "\u0424\u0430\u0439\u043b \u043e\u0442\u0447\u0451\u0442\u0430: \u202Ecod.exe",
+      "kind": "FACT",
+      "evidence_ids": ["ev_safe"],
+      "supporting_claim_ids": []
+    }
+  ],
+  "sections": [
+    {
+      "section_id": "S1",
+      "title": null,
+      "ordered_claim_ids": ["C1"]
+    }
+  ]
+}

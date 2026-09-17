@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-read-address-foreign-workspace-denial-content-free",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.authorization.read-address-foreign-workspace-denial-content-free",
+  "control_id": "acceptance.r3a1.authorization.read-address-foreign-workspace-denial-content-free",
+  "description": "R3a-1 Outcome 1 negative control: knowvault_read with an address resolved in a workspace the caller is not a member of must be the authorized evidence viewer's single content-free denial (-32004) with no content and no address. internal/platform/workspaceapi/mcp_adapter.go mcpEvidenceReadPage reads the address's fragment through the same authorized viewer as REST and denies with `if err != nil { writeMCPError(writer, envelope.ID, -32004, \"evidence not found\"); return }`. Weakening that guard's condition to `err == nil` (keeping the same `writeMCPError` call and `return` verbatim, so the mutated file still reads `err` and keeps its brace balance) lets a foreign-workspace/denied read fall through to the selector identity and span checks and then to the success projection, so a denial no longer returns the existing -32004. TestMCPEvidenceReadDeniesForeignWorkspaceAddressContentFree requires that -32004 refusal with no structured or content leak and no workspace/fragment echo, so it kills the mutant. The anchor includes the dispatch line above the denial block because the bare four-line denial block `if err != nil { writeMCPError(writer, envelope.ID, -32004, \"evidence not found\"); return }` is byte-identical in the sibling singular-read handler at mcp_adapter.go lines 911-914 and so occurs twice in the file; prefixing the assignment at line 1058 makes the anchor occur exactly once in mcp_adapter.go, satisfying the mutation runner's single-occurrence rule without touching product code.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPEvidenceReadDeniesForeignWorkspaceAddressContentFree",
+  "mutations": [
+    {
+      "id": "r3a1-read-address-foreign-workspace-denial-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_adapter.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}",
+      "new": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a knowvault_read whose address is resolved in a workspace the caller is not a member of is denied by the authorized Evidence viewer's single ErrNotFound, so mcpEvidenceReadPage emits the existing content-free -32004 `evidence not found` with no page text, no structured address and no echo of the requested workspace or fragment, and the denial is journaled under the existing R1 audit mechanism.",
+  "mutant_meaning": "With the denial mapping weakened to `if err == nil` a denied/foreign read skips the refusal and falls through the selector and span checks to the success projection or a different typed refusal, so the call no longer returns the existing content-free -32004. The mutated condition still reads `err`, so internal/platform/workspaceapi compiles and the failure is the behavioural TestMCPEvidenceReadDeniesForeignWorkspaceAddressContentFree assertion (a foreign address must be the existing content-free denial with no content), not a build failure; the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.authorization.read-address-foreign-workspace-denial-content-free`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

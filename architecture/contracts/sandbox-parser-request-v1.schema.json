@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-parser-request-v1.schema.json",
+  "title": "Sandbox Parser Request 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "parser_type", "operation", "media_family", "sandbox_profile_revision", "observation_profile_revision", "max_input_bytes", "max_output_bytes", "max_units", "max_pages", "max_decoded_pixels", "output_contract"],
+  "properties": {
+    "schema_version": { "const": "sandbox-parser-request-v1" },
+    "parser_type": { "enum": ["OFFICE", "PDF", "OCR"] },
+    "operation": { "enum": ["OBSERVE_STRUCTURE", "OBSERVE_PDF_TEXT", "RENDER_PDF_PAGES", "OBSERVE_OCR_TOKENS"] },
+    "media_family": { "enum": ["DOCX", "PPTX", "XLSX", "PDF", "PNG", "JPEG"] },
+    "sandbox_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "observation_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "renderer_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "ocr_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "max_input_bytes": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "max_units": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "max_pages": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "max_decoded_pixels": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "output_contract": { "enum": ["document-parser-result-v1", "pdf-parser-result-v1", "pdf-render-result-v1", "ocr-result-v1"] }
+  },
+  "oneOf": [
+    { "not": { "anyOf": [{ "required": ["renderer_profile_revision"], "properties": { "renderer_profile_revision": {} } }, { "required": ["ocr_profile_revision"], "properties": { "ocr_profile_revision": {} } }] }, "properties": { "parser_type": { "const": "OFFICE" }, "operation": { "const": "OBSERVE_STRUCTURE" }, "media_family": { "enum": ["DOCX", "PPTX", "XLSX"] }, "output_contract": { "const": "document-parser-result-v1" } } },
+    { "not": { "anyOf": [{ "required": ["renderer_profile_revision"], "properties": { "renderer_profile_revision": {} } }, { "required": ["ocr_profile_revision"], "properties": { "ocr_profile_revision": {} } }] }, "properties": { "parser_type": { "const": "PDF" }, "operation": { "const": "OBSERVE_PDF_TEXT" }, "media_family": { "const": "PDF" }, "output_contract": { "const": "pdf-parser-result-v1" } } },
+    { "required": ["renderer_profile_revision"], "not": { "required": ["ocr_profile_revision"], "properties": { "ocr_profile_revision": {} } }, "properties": { "parser_type": { "const": "PDF" }, "operation": { "const": "RENDER_PDF_PAGES" }, "media_family": { "const": "PDF" }, "renderer_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }, "output_contract": { "const": "pdf-render-result-v1" } } },
+    { "required": ["ocr_profile_revision"], "not": { "required": ["renderer_profile_revision"], "properties": { "renderer_profile_revision": {} } }, "properties": { "parser_type": { "const": "OCR" }, "operation": { "const": "OBSERVE_OCR_TOKENS" }, "media_family": { "enum": ["PNG", "JPEG"] }, "ocr_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }, "output_contract": { "const": "ocr-result-v1" } } }
+  ]
+}

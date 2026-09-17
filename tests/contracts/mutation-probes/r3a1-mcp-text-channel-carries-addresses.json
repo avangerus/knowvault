@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-mcp-text-channel-carries-addresses",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.mcp.text-channel-carries-addresses",
+  "control_id": "acceptance.r3a1.mcp.text-channel-carries-addresses",
+  "description": "R3a-1 Outcome 2 (KV-A02a/02b) MCP content channel: the text channel of knowvault_search and knowvault_list_objects must carry the same hits, addresses and page cursor the structuredContent channel carries, so a client that reads only content[].text sees the data instead of a content-free banner. internal/platform/workspaceapi/mcp_search.go mcpContentAddress renders each structured address as compact JSON inside the text line, and internal/platform/workspaceapi/mcp_workspace_list.go reuses it. Replacing the marshalled address with nil (the weakening) leaves the header, the per-hit fields and the page cursor intact while every address in the text channel degrades to null, so the text-channel-only client again cannot locate the hit. TestMCPContentTextCarriesSearchHitsAndCursor asserts, per hit, that the text channel contains every address the structuredContent channel contains, and asserts the excerpt, score, version id and the offset/limit/has_more/next_offset cursor, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPContentTextCarriesSearchHitsAndCursor",
+  "mutations": [
+    {
+      "id": "r3a1-mcp-text-channel-addresses-dropped",
+      "target": "internal/platform/workspaceapi/mcp_search.go",
+      "kind": "GO_MCP_CONTENT_TEXT_CHANNEL_WEAKENING",
+      "expected": "RED",
+      "old": "\tencoded, err := json.Marshal(address)",
+      "new": "\tencoded, err := json.Marshal(nil)"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree mcpSearchText and mcpWorkspaceListText render every structured hit/object address verbatim into content[].text, together with the excerpt/score/version or version keys, the skipped ledger rows and the offset/limit/has_more/next_offset cursor, so TestMCPContentTextCarriesSearchHitsAndCursor and its inventory sibling pass over the MCP tools/call path.",
+  "mutant_meaning": "With the address marshalled as nil the header, per-hit fields and cursor still render, but every `address=` member is null, so the text channel no longer contains the addresses the structuredContent channel contains and TestMCPContentTextCarriesSearchHitsAndCursor fails on the missing address — exactly the declared RED negative control (the text channel must not silently drop the addresses the model needs to locate and read a hit), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.mcp.text-channel-carries-addresses`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/source-connection-trust-verify.schema.json",
+  "title": "Source Connection Trust Verify Canonical Document 1.0",
+  "description": "ADR-0087 §2 canonical attestation document. Its RFC 8785 JCS hash becomes the SUCCESS result_hash (source-connection-trust-verify-result.schema.json); the document itself is persisted next to the actor-scoped receipt (public.source_connection_trust_verification.canonical_hash, migration 000057) but never placed in an audit event body — only trust_verification_id/trust_verification_hash (audit metadata keys, migration 000057 §3) reference it. Closed object: no free-form metadata, credential or connector content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "verification_id",
+    "organization_id",
+    "connection_id",
+    "attested_connector_identity",
+    "attested_by",
+    "attested_at",
+    "verified_by",
+    "verified_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "source-connection-trust-verify-v1" },
+    "verification_id": { "$ref": "#/$defs/id" },
+    "organization_id": { "$ref": "#/$defs/id" },
+    "connection_id": { "$ref": "#/$defs/id" },
+    "attested_connector_identity": { "$ref": "#/$defs/attestationText512" },
+    "attested_by": { "$ref": "#/$defs/attestationText256" },
+    "attested_at": { "type": "string", "format": "date-time" },
+    "verified_by": { "$ref": "#/$defs/id" },
+    "verified_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "attestationText512": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "attestationText256": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "scenario_version": "1.0",
+  "base_event_fixture": "valid/connector-upsert-file.json",
+  "attempts": [
+    { "mode": "ORIGINAL" },
+    { "mode": "EXACT_BYTE_REPLAY" }
+  ],
+  "expected": {
+    "catalog_mutation_count": 1,
+    "second_result": "RETURN_ORIGINAL_INGEST_RESULT",
+    "security_conflict": false
+  }
+}
+

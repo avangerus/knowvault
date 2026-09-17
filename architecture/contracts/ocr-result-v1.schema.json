@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/ocr-result-v1.schema.json",
+  "title": "OCR Result v1",
+  "description": "Closed, versioned wire result of the isolated OCR observer. The worker reports normalized token geometry, reading order and confidence for one PNG/JPEG image. It owns no canonical text hash, byte offset, tenant, database or citation authority; internal/source/ocrparser revalidates the stream and builds canonical OCR anchors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result_version", "observed_format", "parser", "ocr", "pages", "warnings"],
+  "properties": {
+    "result_version": { "const": "ocr-result-v1" },
+    "observed_format": { "enum": ["PNG", "JPEG"] },
+    "parser": { "$ref": "#/$defs/parserIdentity" },
+    "ocr": { "$ref": "#/$defs/ocrIdentity" },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/warning" }
+    }
+  },
+  "$defs": {
+    "parserIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "artifact_hash", "observation_profile_revision"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "artifact_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "observation_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }
+      }
+    },
+    "ocrIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "model_revision", "artifact_hash", "profile_revision"],
+      "properties": {
+        "model_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "model_revision": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "artifact_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "tokens", "warnings"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "tokens": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100000,
+          "items": { "$ref": "#/$defs/token" }
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "$ref": "#/$defs/warning" }
+        }
+      }
+    },
+    "token": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "token_id", "canonical_token_text", "ordinal", "join_after", "bounding_box", "confidence"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "token_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "canonical_token_text": { "type": "string", "minLength": 1, "maxLength": 8192, "pattern": "^[^\\u0000-\\u0020\\u007f-\\u009f\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]+$" },
+        "ordinal": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "join_after": { "enum": ["NONE", "SPACE", "LINE_BREAK"] },
+        "bounding_box": { "$ref": "#/$defs/boundingBox" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "boundingBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }
+      }
+    }
+  }
+}

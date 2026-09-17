@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.2",
+  "source_scope_id": "scope_folder_alpha",
+  "revision": 1,
+  "connection_id": "conn_folder",
+  "connection_revision": 1,
+  "source_type": "FOLDER",
+  "discovered_scope_id": "discovered_folder_alpha_r1",
+  "discovered_identity_digest": "hmac-sha256:k1:c243b078e668d591e82a0498a037e5720b12e4515259a59abcaabf5afeef5ac4",
+  "access_mode": "WORKSPACE_MANAGED",
+  "scope_config": {
+    "root_alias": "docs-root",
+    "relative_root": "projects/alpha",
+    "path_matcher_version": "scope-glob-v1",
+    "recursive": true,
+    "include_globs": ["**/*"],
+    "exclude_globs": ["tmp/**"],
+    "max_file_bytes": 104857600,
+    "ocr_mode": "AUTO",
+    "follow_symlinks": false,
+    "formats": ["PDF", "DOCX", "PPTX", "XLSX", "CSV", "TXT", "MARKDOWN", "HTML", "JSON", "XML", "EML", "SOURCE_CODE", "PNG", "JPEG"]
+  },
+  "sync_interval_seconds": 300,
+  "content_freshness_sla_seconds": 600,
+  "acl_freshness_sla_seconds": null,
+  "object_limit": 100000,
+  "byte_limit": 10737418240,
+  "created_by": "user_admin",
+  "created_at": "2026-07-14T10:00:00Z"
+}

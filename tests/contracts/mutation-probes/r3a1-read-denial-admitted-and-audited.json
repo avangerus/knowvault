@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-read-denial-admitted-and-audited",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.read.denial-admitted-and-audited",
+  "control_id": "acceptance.r3a1.read.denial-admitted-and-audited",
+  "description": "R3a-1 Outcome 2 negative control for the canonical `knowvault_read` workspace object-read tool and its REST parity route GET/POST /api/v1/workspaces/{workspace_id}/tools/read: a call by a principal without the workspace right must answer the existing content-free denial (no page text, no address, no structuredContent, no workspace-id echo; MCP -32004 `evidence not found`, REST 404 NOT_FOUND) and must record admission before data and its classed denial outcome through the same authorized EvidenceService boundary the production Evidence viewer composes. internal/platform/workspaceapi/mcp_adapter.go's mcpEvidenceRead dispatches the authorized evidence read and then maps its error to the content-free -32004. Weakening the denial guard `if err != nil` to `if err == nil` (keeping the same `writeMCPError`/`return` block verbatim so the mutated file still reads `err` and keeps its brace balance) makes a denied/foreign call fall through to the success projection instead of the existing -32004 refusal, while a served call (whose error is nil) is refused with -32004. The mutant compiles and is killed behaviourally by internal/platform/workspaceapi/mcp_read_denial_audit_test.go TestMCPKnowvaultReadDenialAdmittedAndAudited, which requires the -32004 refusal with no leaked page/address/workspace id over both the MCP transport and the REST parity route and the `admission,denied:WORKSPACE_DENIED` read-source order.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPKnowvaultReadDenialAdmittedAndAudited",
+  "mutations": [
+    {
+      "id": "r3a1-read-denial-guard-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_adapter.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}",
+      "new": "\tfragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)\n\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"evidence not found\")\n\t\treturn\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a `knowvault_read` call by a principal without the workspace right resolves the requested workspace through the injected EvidenceService capability (in production the authorized *evidence.Viewer read, which returns one content-free typed denial for a non-member, unknown or foreign workspace), so the tool emits the existing content-free -32004 `evidence not found` with no page text, no address, no structuredContent and no echo of the requested workspace id or fragment id; the REST parity route answers the twin 404 NOT_FOUND over the identical evidence.Read core. The denied membership read is journalled through the shared R1 admission-before-data mechanism with the closed denial outcome class (TestMCPKnowvaultReadDenialAdmittedAndAudited asserts the `admission,denied:WORKSPACE_DENIED` read-source order on both the MCP transport and the GET/POST REST parity route).",
+  "mutant_meaning": "With the denial guard weakened to `if err == nil` a denied/foreign call skips the refusal and falls through to the success projection, discarding the content-free -32004 denial; the same weakening also refuses served calls (whose error is nil) with -32004. The mutated file still reads `err` and keeps the -32004 branch referenced, so internal/platform/workspaceapi compiles and the failure is the behavioural TestMCPKnowvaultReadDenialAdmittedAndAudited assertion (a denied `knowvault_read` call must return the existing content-free denial and no content), not a build failure; the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes these cases from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.read.denial-admitted-and-audited`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

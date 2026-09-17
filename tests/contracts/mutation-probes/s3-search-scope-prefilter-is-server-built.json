@@ -1,0 +1,33 @@
+{
+  "probe_version": "1.0",
+  "name": "s3-search-scope-prefilter-is-server-built",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.search.client-supplied-scope-filter",
+  "control_id": "acceptance.search.client-supplied-scope-filter",
+  "description": "S3 Outcome 2 (SRCH-001): the k-NN query must narrow candidates to the asking workspace's live authorized source scopes BEFORE ranking them. internal/search/client.go VectorSearch appends the server-built source_scope_ids predicate to the same bool filter the lucene engine applies during the graph walk. Dropping that append (the weakening) leaves a query that still filters by tenant and embedding profile and still returns well-formed hits, so nothing looks broken -- it simply ranks the whole tenant corpus and lets post-authorization discard the foreign part afterwards, which on a large tenant crowds a workspace's own best passages out of its k nearest neighbours and turns a wrong answer into an empty one. TestVectorSearchAppliesScopeAndVersionStateBeforeRanking asserts the built query carries exactly the authorized scope set, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/search",
+  "test_name": "TestVectorSearchAppliesScopeAndVersionStateBeforeRanking",
+  "mutations": [
+    {
+      "id": "s3-knn-scope-prefilter-dropped",
+      "target": "internal/search/client.go",
+      "kind": "GO_SEARCH_SCOPE_PREFILTER_WEAKENING",
+      "expected": "RED",
+      "old": "\tif len(query.SourceScopeIDs) > 0 {\n\t\tbody.Query.Bool.Filter = append(body.Query.Bool.Filter, anyFieldFilter(\"source_scope_ids\", query.SourceScopeIDs))\n\t}",
+      "new": "\tif false {\n\t\tbody.Query.Bool.Filter = append(body.Query.Bool.Filter, anyFieldFilter(\"source_scope_ids\", query.SourceScopeIDs))\n\t}"
+    },
+    {
+      "id": "s3-knn-scope-prefilter-boundary",
+      "target": "internal/search/client.go",
+      "kind": "GO_SEMANTIC_PRESERVING",
+      "expected": "GREEN",
+      "old": "\tif len(query.SourceScopeIDs) > 0 {\n\t\tbody.Query.Bool.Filter = append(body.Query.Bool.Filter, anyFieldFilter(\"source_scope_ids\", query.SourceScopeIDs))\n\t}",
+      "new": "\tif len(query.SourceScopeIDs) >= 1 {\n\t\tbody.Query.Bool.Filter = append(body.Query.Bool.Filter, anyFieldFilter(\"source_scope_ids\", query.SourceScopeIDs))\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree VectorSearch builds four filter clauses -- tenant, embedding profile, source scope set and version state -- and the test reads them back out of the serialized request body.",
+  "mutant_meaning": "With the scope predicate never appended the request carries only three clauses and the scope set is absent, so the assertion on the authorized scope set fails: exactly the declared RED negative control (a retrieval scope filter must be server-built and present, never optional), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.search.client-supplied-scope-filter`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

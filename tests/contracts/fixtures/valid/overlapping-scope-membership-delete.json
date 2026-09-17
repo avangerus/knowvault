@@ -1,0 +1,34 @@
+{
+  "scenario_version": "1.0",
+  "organization_id": "org_alpha",
+  "connection_id": "conn_files",
+  "external_object_id": "shared-file-42",
+  "initial_memberships": [
+    {
+      "source_scope_id": "scope_projects",
+      "source_scope_revision": 3,
+      "state": "ACTIVE"
+    },
+    {
+      "source_scope_id": "scope_audit",
+      "source_scope_revision": 8,
+      "state": "ACTIVE"
+    }
+  ],
+  "event": {
+    "operation": "DELETE",
+    "delete_semantics": "SCOPE_MEMBERSHIP_REMOVED",
+    "source_scope_id": "scope_projects",
+    "scope_revision": 3
+  },
+  "expected": {
+    "source_object_lifecycle_state": "ACTIVE",
+    "source_object_queryable": true,
+    "current_version_preserved": true,
+    "evidence_and_vectors_preserved": true,
+    "membership_scope_projects_revision_3": "REMOVED",
+    "membership_scope_audit_revision_8": "ACTIVE",
+    "queryable_through_scope_projects_revision_3": false,
+    "queryable_through_scope_audit_revision_8": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "result_version": "pdf-render-result-v1",
+  "observed_format": "PDF",
+  "renderer": {
+    "name": "knowvault-pdf-renderer",
+    "version": "1.0.0",
+    "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "renderer_profile_revision": "pdf-render-v1"
+  },
+  "pages": [
+    {
+      "ordinal": 1,
+      "page": 1,
+      "pixel_width": 2,
+      "pixel_height": 1,
+      "png_base64": "iVBORw0KGgo="
+    }
+  ],
+  "warnings": []
+}

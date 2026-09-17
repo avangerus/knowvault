@@ -1,0 +1,20 @@
+{
+  "schema_version": "answer-document-version-v1",
+  "organization_id": "org_alpha",
+  "workspace_id": "ws_alpha",
+  "answer_document_id": "ansdoc_alpha",
+  "version": 2,
+  "previous_version_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "amendment_class": "POLISH",
+  "amendment_reason": "\u041f\u043e\u043b\u0438\u0440\u043e\u0432\u043a\u0430 \u0444\u043e\u0440\u043c\u0443\u043b\u0438\u0440\u043e\u0432\u043a\u0438 \u0431\u0435\u0437 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0441\u043c\u044b\u0441\u043b\u0430.",
+  "amended_at": "2026-08-14T11:00:00Z",
+  "manifest_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "actor_principal_id": "usr_alice",
+  "request_id": "req_answer_002",
+  "signature": {
+    "algorithm": "ED25519",
+    "key_id": "key_answer_signing_alpha",
+    "signed_at": "2026-08-14T11:00:00Z",
+    "value_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}

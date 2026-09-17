@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-authorization-denial-content-free-and-audited",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.authorization.denial-content-free-and-audited",
+  "control_id": "acceptance.r3a1.authorization.denial-content-free-and-audited",
+  "description": "R3a-1 Outcome 2 negative control: a knowvault_search call by a principal without the workspace right must return the existing content-free denial and no data. internal/platform/workspaceapi/mcp_search.go mcpSearchToolCall maps the viewer's single content-free error to the existing -32004 not-found with `if err != nil { writeMCPError(writer, envelope.ID, -32004, \"workspace documents not found\"); return }`. Weakening that guard's condition to `err == nil {` (keeping the same `writeMCPError` call and `return` verbatim, so the mutated file still references `err` and keeps its brace balance) lets a denied non-member call fall through to the success projection, which returns an empty result set and echoes the request offsets instead of the denial. TestMCPSearchDeniesContentFreeWithoutWorkspaceEcho requires the -32004 refusal and asserts the body never echoes the requested workspace id, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPSearchDeniesContentFreeWithoutWorkspaceEcho",
+  "mutations": [
+    {
+      "id": "r3a1-authorization-denial-mapping-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_search.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}",
+      "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a call by a principal without the workspace right resolves through the authorized Evidence viewer and returns its single content-free error, so mcpSearchToolCall emits the existing -32004 `workspace documents not found` refusal with no hit, no fragment and no echo of the requested workspace id, and the denial is recorded in the audit journal under the existing R1 mechanism.",
+  "mutant_meaning": "With the denial mapping weakened to `if err == nil` the denied call skips the refusal and falls through to the success response, which carries an empty results array, offset/limit/has_more and isError false instead of the -32004 content-free denial. The mutated condition still reads `err`, so internal/platform/workspaceapi compiles and the failure is the behavioural TestMCPSearchDeniesContentFreeWithoutWorkspaceEcho assertion (a denied call must return the existing denial and no content), not a build failure; the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.authorization.denial-content-free-and-audited`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

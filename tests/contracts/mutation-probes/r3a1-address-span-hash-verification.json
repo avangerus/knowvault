@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-address-span-hash-verification",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.address.span-hash-verification",
+  "control_id": "acceptance.r3a1.address.span-hash-verification",
+  "description": "R3a-1 Outcome 1 negative control: a tampered index entry whose span hash does not match the original bytes must be refused without content. internal/address/address.go SpanDigestKey.VerifySpan recomputes the org-keyed digest of exactly the span the address points at and compares it to the hash the address carries with `if actual != a.SpanHash {`, returning ErrSpanMismatch. Inverting that comparison to `if actual == a.SpanHash {` serves the span when the digests differ and refuses when they match, so a tampered entry is returned as if it were the original. TestVerifySpanRefusesTamperedIndexEntry builds an address whose SpanHash does not match the original and requires the refusal, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/address",
+  "test_name": "TestVerifySpanRefusesTamperedIndexEntry",
+  "mutations": [
+    {
+      "id": "r3a1-address-span-hash-comparison-inverted",
+      "target": "internal/address/address.go",
+      "kind": "GO_ADDRESS_SPAN_HASH_WEAKENING",
+      "expected": "RED",
+      "old": "\tif actual != a.SpanHash {",
+      "new": "\tif actual == a.SpanHash {"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree VerifySpan hashes the resolved span with the address's organization key and refuses with a wrapped ErrSpanMismatch when the recomputed digest differs from Address.SpanHash, returning no span bytes, so TestVerifySpanRefusesTamperedIndexEntry observes the tampered index entry refused while a matching entry is served.",
+  "mutant_meaning": "With the comparison inverted the guard fires only when the recomputed digest equals the carried hash, so the tampered entry (digests differ) passes the check and is returned as if it were the original span while a genuine entry is refused. TestVerifySpanRefusesTamperedIndexEntry fails the refusal assertion, which is exactly the declared RED negative control (a tampered span hash must never be served), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.address.span-hash-verification`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

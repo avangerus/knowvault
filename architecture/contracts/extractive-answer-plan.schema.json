@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/extractive-answer-plan.schema.json",
+  "title": "Extractive Answer Claim Plan 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "answer_mode", "verification_method", "digest_key_version", "authorized_context_hash", "claims", "citations"],
+  "properties": {
+    "schema_version": { "const": "extractive-answer-plan-v1" },
+    "answer_mode": { "const": "EXTRACTIVE" },
+    "verification_method": { "const": "BYTE_EXACT_CITATION" },
+    "digest_key_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "authorized_context_hash": { "type": "string", "pattern": "^hmac-sha256:k[1-9][0-9]{0,8}:[0-9a-f]{64}$" },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "kind", "text", "utf8_bytes", "citation_numbers"],
+        "properties": {
+          "claim_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "kind": { "const": "FACT" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 2000, "pattern": "^[^\\r\\n]*$" },
+          "utf8_bytes": { "type": "integer", "minimum": 1, "maximum": 2000 },
+          "citation_numbers": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } }
+        }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["citation_number", "claim_id", "source_object_id", "source_version_id", "extraction_id", "evidence_fragment_id", "cited_excerpt", "utf8_bytes", "anchor_hash"],
+        "properties": {
+          "citation_number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "claim_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "source_object_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "source_version_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "extraction_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "evidence_fragment_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "cited_excerpt": { "type": "string", "minLength": 1, "maxLength": 2000, "pattern": "^[^\\r\\n]*$" },
+          "utf8_bytes": { "type": "integer", "minimum": 1, "maximum": 2000 },
+          "anchor_hash": { "type": "string", "pattern": "^hmac-sha256:k[1-9][0-9]{0,8}:[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

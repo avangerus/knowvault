@@ -1,0 +1,35 @@
+[Unit]
+Description=KnowVault native dispatcher isolated host qualification
+Requires=knowvault-native-supervisor.service
+BindsTo=knowvault-native-supervisor.service
+After=knowvault-native-supervisor.service
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=/opt/knowvault/supervisor/dispatcher
+Restart=no
+TimeoutStopSec=30
+SendSIGKILL=no
+KillMode=process
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/knowvault/sandbox /sys/fs/cgroup/knowvault_native.slice/knowvault-native-supervisor.service
+Environment=KNOWVAULT_DISPATCHER_ROOT_DIR=/run/knowvault/sandbox
+Environment=KNOWVAULT_DISPATCHER_SUBMIT_SOCKET=unix:///run/knowvault/sandbox/submit/dispatcher.sock
+Environment=KNOWVAULT_DISPATCHER_HANDOFF_SOCKET=unix:///run/knowvault/sandbox/supervisor/handoff.sock
+Environment=KNOWVAULT_DISPATCHER_OFFICE_REGISTER_SOCKET=unix:///run/knowvault/sandbox/office/register.sock
+Environment=KNOWVAULT_DISPATCHER_PDF_REGISTER_SOCKET=unix:///run/knowvault/sandbox/pdf/register.sock
+Environment=KNOWVAULT_DISPATCHER_SUPERVISOR_UID=0
+Environment=KNOWVAULT_DISPATCHER_SUPERVISOR_GID=0
+Environment=KNOWVAULT_DISPATCHER_SUBMITTER_UID=65530
+Environment=KNOWVAULT_DISPATCHER_SUBMITTER_GID=65530
+Environment=KNOWVAULT_DISPATCHER_OFFICE_WORKER_UID=65532
+Environment=KNOWVAULT_DISPATCHER_OFFICE_WORKER_GID=65532
+Environment=KNOWVAULT_DISPATCHER_PDF_WORKER_UID=65533
+Environment=KNOWVAULT_DISPATCHER_PDF_WORKER_GID=65533
+Environment=KNOWVAULT_DISPATCHER_MAX_PAYLOAD_BYTES=67108864
+Environment=KNOWVAULT_DISPATCHER_FRAME_TIMEOUT_MS=5000

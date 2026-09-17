@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/audit-checkpoint.schema.json",
+  "title": "Audit Checkpoint 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "organization_id",
+    "checkpoint_sequence",
+    "event_first_sequence",
+    "event_last_sequence",
+    "first_event_hash",
+    "last_event_hash",
+    "previous_checkpoint_hash",
+    "created_at",
+    "checkpoint_hash",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "organization_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "checkpoint_sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "event_first_sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "event_last_sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "first_event_hash": { "$ref": "#/$defs/sha256" },
+    "last_event_hash": { "$ref": "#/$defs/sha256" },
+    "previous_checkpoint_hash": { "$ref": "#/$defs/sha256" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "checkpoint_hash": { "$ref": "#/$defs/sha256" },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signed_at", "value_base64"],
+      "properties": {
+        "algorithm": { "const": "ED25519" },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "value_base64": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" }
+      }
+    }
+  }
+}

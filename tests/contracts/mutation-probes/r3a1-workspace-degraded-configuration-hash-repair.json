@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-workspace-degraded-configuration-hash-repair",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.workspace.degraded-configuration-hash-read-and-repair",
+  "control_id": "acceptance.r3a1.workspace.degraded-configuration-hash-read-and-repair",
+  "description": "R3a-1 carried-over acc2 guard: a workspace whose persisted revision configuration hash no longer matches the hash recomputed from its live metadata must be readable by a member with the closed degraded marker WORKSPACE_CONFIGURATION_HASH_STALE (never WORKSPACE_PERSISTENCE_FAILED), and a member mutation must repair it by authorizing against the recomputed live hash and persisting a corrected revision through the audited policy.decision path. internal/workspace/repository/repository.go compareConfigurationHash is the single predicate both paths share: on a stored-versus-live mismatch it returns `return configurationHashChange{Stale: true, EffectiveHash: computedHash}` so the repair precondition is the live hash a member read exposes as its ETag. Weakening that to keep the stale stored hash (`EffectiveHash: storedHash`) leaves Stale true so the read still reports degraded, but the mutation keeps requiring the stale stored hash and can never repair it. TestConfigurationHashStaleMutationUsesLivePreconditionAndRepairs requires EffectiveHash to be the recomputed live hash and the post-repair read to clear the marker, so it kills the mutant. The anchor occurs exactly once in repository.go.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/workspace/repository",
+  "test_name": "TestConfigurationHashStaleMutationUsesLivePreconditionAndRepairs",
+  "mutations": [
+    {
+      "id": "r3a1-workspace-degraded-configuration-hash-repair-precondition-stays-stale",
+      "target": "internal/workspace/repository/repository.go",
+      "kind": "GO_WORKSPACE_CONFIGURATION_HASH_REPAIR_PRECONDITION_WEAKENING",
+      "expected": "RED",
+      "old": "\treturn configurationHashChange{Stale: true, EffectiveHash: computedHash}",
+      "new": "\treturn configurationHashChange{Stale: true, EffectiveHash: storedHash}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree compareConfigurationHash reports a stored-versus-live mismatch as stale and exposes the recomputed live hash as EffectiveHash, so configurationHashReadOutcome marks the read degraded with the closed reason WORKSPACE_CONFIGURATION_HASH_STALE and authorizeMutation re-hashes the workspace against the live precondition and journals a content-free policy.decision SUCCESS event. TestConfigurationHashStaleMutationUsesLivePreconditionAndRepairs observes Stale true, EffectiveHash equal to the recomputed live hash, the marker cleared after a repair persists that hash, and the healthy sibling keeping its stored hash, so the baseline is green.",
+  "mutant_meaning": "With EffectiveHash set back to the stale stored hash the read is still reported degraded (Stale stays true), but the mutation precondition never advances to the live hash, so a stale workspace can never be repaired and the returned effective hash stays the stale stored hash. TestConfigurationHashStaleMutationUsesLivePreconditionAndRepairs fails its `EffectiveHash == live hash` assertion (and the post-repair cleared-marker assertion), which is exactly the declared RED weakening: the workspace would remain permanently degraded. The mutant still compiles and the failure is behavioural, so it is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.workspace.degraded-configuration-hash-read-and-repair`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

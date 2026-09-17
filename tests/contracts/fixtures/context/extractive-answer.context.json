@@ -1,0 +1,73 @@
+{
+  "authorization_hmac_test_keys": {
+    "k1": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE="
+  },
+  "authorization_snapshot": {
+    "authorized_candidate_set_hash": "hmac-sha256:k1:6cea82e617e1c061619e15d7064a160f1d18907cdfb8a1b33739f11cfdf350d0",
+    "authorized_candidate_set_integrity_hash": "sha256:846988e3147aed6c226f675d8fd4ff903ab218f1fad731c2374b481e910b1e17",
+    "catalog_entries_integrity_hash": "sha256:846988e3147aed6c226f675d8fd4ff903ab218f1fad731c2374b481e910b1e17",
+    "catalog_id": "catalog_1",
+    "digest_key_version": 1,
+    "organization_id": "org_1",
+    "schema_version": "retrieval-authorization-v1",
+    "signature": "hmac-sha256:k1:7329650cb3fcc2d600a30d9f133074e08acdbd004b585e6d852505ed12dd762e",
+    "workspace_id": "workspace_1"
+  },
+  "authorized_candidate_set": [
+    {
+      "anchor": {
+        "kind": "PDF",
+        "normalization_version": "text-v1",
+        "offset_unit": "UTF8_BYTE",
+        "page": 4,
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "text_end": 95,
+        "text_start": 24
+      },
+      "anchor_hash": "hmac-sha256:k1:30b243e196b3ed331d0278ff457e3b831e3e5637c514a7da96418b3f57ad5817",
+      "evidence_fragment_id": "ev_release_date",
+      "evidence_text_hash": "sha256:42abe131919eafb797fcf55da978c3cddf720a1b8ce17ef58d5b4c1ee9e7ae0b",
+      "exact_context_base64": "0JTQsNGC0LAg0LfQsNC/0YPRgdC60LAg0LHRi9C70LAg0L/QtdGA0LXQvdC10YHQtdC90LAg0L3QsCAyNSDQuNGO0LvRjy4K",
+      "exact_context_hash": "sha256:2058eed1b6f98c90e7450edec67b86421c7f03562ae8ce6eadb1c561d7a35ab3",
+      "extraction_id": "extraction_pdf_1",
+      "extraction_profile_hash": "sha256:1d928469a464202015164f23c07b49889be1805df99faf5a647ee56fcccf7d16",
+      "ordinal": 1,
+      "source_object_id": "source_object_1",
+      "source_version_content_hash": "sha256:73582134a2b5fbb6154925791da338dbe06b0708ca22ccae9649ab4b9403f2ef",
+      "source_version_id": "source_version_1"
+    }
+  ],
+  "trusted_authorization_catalog": {
+    "catalog_id": "catalog_1",
+    "digest_key_version": 1,
+    "entries": [
+      {
+        "anchor": {
+          "kind": "PDF",
+          "normalization_version": "text-v1",
+          "offset_unit": "UTF8_BYTE",
+          "page": 4,
+          "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+          "text_end": 95,
+          "text_start": 24
+        },
+        "anchor_hash": "hmac-sha256:k1:30b243e196b3ed331d0278ff457e3b831e3e5637c514a7da96418b3f57ad5817",
+        "evidence_fragment_id": "ev_release_date",
+        "evidence_text_hash": "sha256:42abe131919eafb797fcf55da978c3cddf720a1b8ce17ef58d5b4c1ee9e7ae0b",
+        "exact_context_base64": "0JTQsNGC0LAg0LfQsNC/0YPRgdC60LAg0LHRi9C70LAg0L/QtdGA0LXQvdC10YHQtdC90LAg0L3QsCAyNSDQuNGO0LvRjy4K",
+        "exact_context_hash": "sha256:2058eed1b6f98c90e7450edec67b86421c7f03562ae8ce6eadb1c561d7a35ab3",
+        "extraction_id": "extraction_pdf_1",
+        "extraction_profile_hash": "sha256:1d928469a464202015164f23c07b49889be1805df99faf5a647ee56fcccf7d16",
+        "ordinal": 1,
+        "source_object_id": "source_object_1",
+        "source_version_content_hash": "sha256:73582134a2b5fbb6154925791da338dbe06b0708ca22ccae9649ab4b9403f2ef",
+        "source_version_id": "source_version_1"
+      }
+    ],
+    "entries_integrity_hash": "sha256:846988e3147aed6c226f675d8fd4ff903ab218f1fad731c2374b481e910b1e17",
+    "organization_id": "org_1",
+    "schema_version": "trusted-authorized-catalog-v1",
+    "signature": "hmac-sha256:k1:bd1f50242e7cbf93f333004d5e2de9c06e1b4128952a2eb93760692f07e22f90",
+    "workspace_id": "workspace_1"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "sandbox-outcome-v1",
+  "lease_id": "lease-001",
+  "job_id": "job-001",
+  "worker_id": "worker-001",
+  "parser_type": "TEXT",
+  "handoff": {
+    "transfer_state": "CONFIRMED",
+    "confirmation_id": "handoff-001"
+  },
+  "status": "SUCCEEDED",
+  "reported_at": "2026-08-06T10:00:10Z",
+  "extraction_identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

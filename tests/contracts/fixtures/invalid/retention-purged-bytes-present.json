@@ -1,0 +1,25 @@
+{
+  "scenario_version": "1.0",
+  "question_run_id": "qr_0001",
+  "retention_state": "PURGED",
+  "stored": {
+    "question_text": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0451\u043d \u0437\u0430\u043f\u0443\u0441\u043a?",
+    "answer_markdown": "\u0423\u0442\u0451\u043a\u0448\u0438\u0439 \u043e\u0442\u0432\u0435\u0442",
+    "answer_structured_json": {"claims": []},
+    "cited_excerpts": ["\u0423\u0442\u0451\u043a\u0448\u0430\u044f \u0446\u0438\u0442\u0430\u0442\u0430"],
+    "manifest_canonical_bytes": "ZXhhbXBsZQ==",
+    "manifest_hash": "sha256:52942a9655d801f4f8bee92b4ea450ea271f9c101d5df3dee20e41673b38807f",
+    "manifest_signing_bytes_retained": true,
+    "manifest_signature_metadata_retained": true,
+    "audit_tombstone_retained": true
+  },
+  "read_request": {
+    "include_answer_body": true,
+    "include_cited_excerpts": true,
+    "include_manifest": true
+  },
+  "expected": {
+    "disclosure_allowed": false,
+    "error_code": "ANSWER_CONTENT_PURGED"
+  }
+}

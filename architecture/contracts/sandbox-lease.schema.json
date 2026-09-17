@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-lease.schema.json",
+  "title": "Sandbox Lease and Registration 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "lease_id", "job_id", "worker_id", "parser_type",
+    "registration", "issued_at", "expires_at", "attempt", "state"
+  ],
+  "properties": {
+    "schema_version": { "const": "sandbox-lease-v1" },
+    "lease_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "worker_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "parser_type": { "enum": ["TEXT", "STRUCTURED", "HTML", "EML", "OFFICE", "PDF", "OCR"] },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["socket_id", "parser_type", "single_socket", "capabilities"],
+      "properties": {
+        "socket_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "parser_type": { "enum": ["TEXT", "STRUCTURED", "HTML", "EML", "OFFICE", "PDF", "OCR"] },
+        "single_socket": { "const": true },
+        "capabilities": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["PULL_JOB", "PUSH_OUTCOME"] } }
+      }
+    },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "state": { "enum": ["OFFERED", "CLAIMED", "TRANSFERRED", "QUARANTINED", "COMPLETED", "EXPIRED"] }
+  },
+  "allOf": [
+    { "if": { "properties": { "parser_type": { "const": "TEXT" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "TEXT" } } } } } },
+    { "if": { "properties": { "parser_type": { "const": "STRUCTURED" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "STRUCTURED" } } } } } },
+    { "if": { "properties": { "parser_type": { "const": "HTML" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "HTML" } } } } } },
+    { "if": { "properties": { "parser_type": { "const": "EML" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "EML" } } } } } },
+    { "if": { "properties": { "parser_type": { "const": "OFFICE" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "OFFICE" } } } } } },
+    { "if": { "properties": { "parser_type": { "const": "PDF" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "PDF" } } } } } },
+    { "if": { "properties": { "parser_type": { "const": "OCR" } }, "required": ["parser_type"] }, "then": { "properties": { "registration": { "type": "object", "properties": { "parser_type": { "const": "OCR" } } } } } }
+  ]
+}

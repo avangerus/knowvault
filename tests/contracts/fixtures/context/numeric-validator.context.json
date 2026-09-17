@@ -1,0 +1,31 @@
+{
+  "claim": {
+    "claim_id": "C1",
+    "kind": "FACT",
+    "text": "Budget 1200 USD, readiness 75% at 2026-07-25."
+  },
+  "verification_input": {
+    "claim_id": "C1",
+    "kind": "FACT",
+    "claim_text_hash": "sha256:4357c73263abbf90a5278bf494e4afe6b573ca882b93f7ea08f249a3f586760c",
+    "evidence": [
+      {
+        "citation_number": 1,
+        "source_version_id": "source_version_numeric_1",
+        "extraction_id": "extraction_numeric_1",
+        "evidence_fragment_id": "evidence_numeric_1",
+        "evidence_text_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "cited_excerpt_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "anchor_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ],
+    "supporting_claims": []
+  },
+  "citations": [
+    {
+      "citation_number": 1,
+      "cited_excerpt": "Budget 1200 USD, readiness 75% at 2026-07-25."
+    }
+  ],
+  "uncited_context": "An uncited fragment contains 50%."
+}

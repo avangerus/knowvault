@@ -1,0 +1,26 @@
+FROM golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669 AS builder
+
+WORKDIR /src
+ENV GOTOOLCHAIN=local
+ENV GOEXPERIMENT=jsonv2
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG BUILT_AT=unknown
+
+COPY go.mod go.sum ./
+COPY cmd/connector ./cmd/connector
+COPY internal/platform ./internal/platform
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -mod=readonly \
+    -trimpath \
+    -buildvcs=false \
+    -ldflags="-s -w -X knowvault.local/verified-workspace/internal/platform/buildinfo.Version=${VERSION} -X knowvault.local/verified-workspace/internal/platform/buildinfo.Revision=${REVISION} -X knowvault.local/verified-workspace/internal/platform/buildinfo.BuiltAt=${BUILT_AT}" \
+    -o /out/knowvault-connector ./cmd/connector
+
+FROM scratch AS runtime
+USER 65532:65532
+COPY --from=builder /out/knowvault-connector /knowvault-connector
+ENTRYPOINT ["/knowvault-connector"]

@@ -1,0 +1,103 @@
+# The operator is delivered as a one-shot, static deployment artifact.  The
+# builder is the same digest-locked Go toolchain used by the application images;
+# the released stage is scratch and contains only the operator, its migration
+# stream, and a generated content identity/provenance record.
+ARG SOURCE_DATE_EPOCH=1704067200
+FROM golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669 AS builder
+
+WORKDIR /src
+ENV GOTOOLCHAIN=local
+ENV GOEXPERIMENT=jsonv2
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=0.1.0
+ARG REVISION=unknown
+ARG BUILT_AT=unknown
+ARG SOURCE_DATE_EPOCH
+
+# Warm the exact go.sum-verified module cache once.  No network is available to
+# the actual compile or identity-generation steps below; a missing cache entry
+# therefore fails the build instead of silently downloading a dependency.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/operator ./cmd/operator
+COPY internal ./internal
+COPY db/migrations ./db/migrations
+
+RUN --network=none test "${TARGETOS}" = linux && test "${TARGETARCH}" = amd64 && \
+    install -d /out/runtime && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -mod=readonly \
+    -trimpath \
+    -buildvcs=false \
+    -ldflags="-s -w -buildid=" \
+    -o /out/runtime/knowvault-operator ./cmd/operator
+
+# Build the exact migration closure into the image and derive identity from the
+# resulting binary plus the ordered, named migration bytes.  The identity does
+# not include BUILT_AT, so two builds with the same source, lock and release
+# version remain content-identical even when the provenance timestamp changes.
+# The generated JSON is an identity/provenance hook, not a pretend SBOM:
+# release tooling runs the pinned Syft version against the final image and
+# attaches the resulting SPDX document to the declared identity.
+RUN --network=none sh -ceu '\
+    echo operator-artifact-generator-v3 >/dev/null && \
+    install -d /out/runtime/db /out/runtime/usr/share/knowvault && \
+    cp -a /src/db/migrations /out/runtime/db/migrations && \
+    find /out/runtime/db/migrations -type d -exec chmod 0555 {} + && \
+    find /out/runtime/db/migrations -type f -exec chmod 0444 {} + && \
+    binary_sha256=$(sha256sum /out/runtime/knowvault-operator | cut -d" " -f1) && \
+    migration_sha256=$(cd /out/runtime && find db/migrations -type f -name "000*.sql" -print0 \
+        | sort -z | xargs -0 sha256sum | sha256sum | cut -d" " -f1) && \
+    identity_sha256=$(printf "knowvault-operator-artifact-v1\\0sha256:%s\\0sha256:%s\\0%s\\0" \
+        "$binary_sha256" "$migration_sha256" "$VERSION" | sha256sum | cut -d" " -f1) && \
+    printf "%s\\n" \
+      "{" \
+      "  \"schema\": \"knowvault-operator-artifact-v1\"," \
+      "  \"name\": \"knowvault-operator\"," \
+      "  \"version\": \"${VERSION}\"," \
+      "  \"platform\": \"${TARGETOS}/${TARGETARCH}\"," \
+      "  \"revision\": \"${REVISION}\"," \
+      "  \"built_at\": \"${BUILT_AT}\"," \
+      "  \"source_date_epoch\": \"${SOURCE_DATE_EPOCH}\"," \
+      "  \"artifact_identity\": \"sha256:${identity_sha256}\"," \
+      "  \"binary\": {" \
+      "    \"path\": \"/knowvault-operator\"," \
+      "    \"sha256\": \"sha256:${binary_sha256}\"" \
+      "  }," \
+      "  \"migrations\": {" \
+      "    \"path\": \"/db/migrations\"," \
+      "    \"glob\": \"000*.sql\"," \
+      "    \"sha256\": \"sha256:${migration_sha256}\"" \
+      "  }," \
+      "  \"runtime\": {" \
+      "    \"base\": \"scratch\"," \
+      "    \"user\": \"0:0\"," \
+      "    \"filesystem\": \"read-only-compatible\"," \
+      "    \"network\": \"no-runtime-downloads\"" \
+      "  }," \
+      "  \"sbom\": {" \
+      "    \"status\": \"RELEASE_ATTESTATION_REQUIRED\"," \
+      "    \"format\": \"SPDX-2.3\"," \
+      "    \"generator\": \"Syft\"," \
+      "    \"generator_version\": \"1.48.0\"," \
+      "    \"output\": \"knowvault-operator.sbom.spdx.json\"," \
+      "    \"identity_binding\": \"artifact_identity\"" \
+      "  }" \
+      "}" > /out/runtime/usr/share/knowvault/operator-artifact.json && \
+    chmod 0444 /out/runtime/usr/share/knowvault/operator-artifact.json && \
+    find /out/runtime -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + \
+'
+
+FROM scratch AS runtime
+
+LABEL org.opencontainers.image.title="knowvault-operator" \
+      io.knowvault.artifact.identity-path="/usr/share/knowvault/operator-artifact.json" \
+      io.knowvault.runtime.network="no-runtime-downloads" \
+      io.knowvault.runtime.read-only="true"
+
+USER 0:0
+WORKDIR /
+COPY --from=builder /out/runtime/ /
+ENTRYPOINT ["/knowvault-operator"]

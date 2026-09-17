@@ -1,0 +1,8 @@
+{
+  "schema_version": "operator-failure-v1",
+  "code": "DEPENDENCY_UNAVAILABLE",
+  "action": "FIX_MOUNT_AND_RESTART",
+  "retryable": true,
+  "metric_name": "operator_dependency_failures_total",
+  "fallback_allowed": false
+}

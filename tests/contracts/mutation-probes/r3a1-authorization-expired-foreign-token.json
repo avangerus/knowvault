@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-authorization-expired-foreign-token",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.authorization.expired-and-foreign-token-refused",
+  "control_id": "acceptance.r3a1.authorization.expired-and-foreign-token-refused",
+  "description": "R3a-1 Outcome 3 negative control: an MCP session that the deployment cannot accept must never reach tools/list. The expired bearer session is refused when the identity repository ResolveSession returns its expiry error, and the foreign (non-accepted tenant) session is refused by internal/platform/httpauth/auth.go matchesResolvedSession, which cross-checks every resolved session field against the trusted tenant: `session.Access.OrganizationID == string(tenantID)` / `session.Claims.OrganizationID() == tenantID`. Weakening that predicate to `return true` drops the identity/tenant cross-check, so the foreign-tenant session passes authentication and reaches tools/list instead of the documented 401 UNAUTHENTICATED. TestMCPExternalAuthorizationRejectsExpiredAndForeignTokens drives both resolvers through the real in-process /api/v1/mcp handler and asserts the 401 UNAUTHENTICATED content-free refusal (and exactly one authentication attempt) for the expired_session and foreign_tenant subtests, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPExternalAuthorizationRejectsExpiredAndForeignTokens",
+  "mutations": [
+    {
+      "id": "r3a1-authorization-session-tenant-match-weakened",
+      "target": "internal/platform/httpauth/auth.go",
+      "kind": "GO_MCP_AUTHORIZATION_SESSION_MATCH_WEAKENING",
+      "expected": "RED",
+      "old": "\treturn session.SessionID != \"\" && session.Access.OrganizationID == string(tenantID) && session.Access.PrincipalID != \"\" && session.Access.RequestID == requestID &&\n\t\tsession.Claims.OrganizationID() == tenantID && session.Claims.PrincipalID() == identity.PrincipalID(session.Access.PrincipalID) && session.Access.Validate() == nil",
+      "new": "\treturn true"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree httpauth.Authenticate rejects the expired session at ResolveSession and the foreign-tenant session at matchesResolvedSession, so both subtests of TestMCPExternalAuthorizationRejectsExpiredAndForeignTokens observe the documented 401 UNAUTHENTICATED with a body that carries no tool name, schema or list content, and the MCP method is never dispatched.",
+  "mutant_meaning": "With matchesResolvedSession weakened to `return true` the foreign-tenant session passes the identity/tenant cross-check and is dispatched to tools/list, so the foreign_tenant subtest observes a success body instead of the expected 401 UNAUTHENTICATED content-free refusal, which is exactly the declared RED negative control (a foreign token must never reach the tool list), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.authorization.expired-and-foreign-token-refused`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Isolated document-parser worker (ADR-0062, P2/I2/S2b+S2c).
+
+  This module lives in workers/document-parser/ and is QUALIFIED_NOT_ACTIVE per
+  architecture/versions.json: Apache POI may appear here and nowhere else in the
+  repository. It is not part of the Go module, is not in any production image build
+  context, and is not referenced by any production manifest.
+
+  The 2.1.0 candidate keeps the immutable document-parser-result-v1 Office wire
+  contract and adds the separately versioned pdf-parser-result-v1 text-PDF wire
+  contract. Exactly two direct dependencies are declared, and
+  dependencies.lock.json pins the whole 17-artifact resolved closure by digest.
+  Optional PDFBox cryptographic providers are not runtime dependencies and remain
+  outside the closure.
+
+  No test dependency is declared on purpose: the worker is proven end-to-end from Go
+  against the real built image, so the image's runtime closure stays exactly the 17
+  qualified artifacts recorded in docs/qualification-s2b-document-parser.md.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>local.knowvault</groupId>
+  <artifactId>document-parser-worker</artifactId>
+  <version>2.1.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Fixed epoch: reproducible archive entry timestamps. -->
+    <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>
+    <poi.version>5.5.1</poi.version>
+    <pdfbox.version>3.0.8</pdfbox.version>
+    <log4j-api.version>2.25.5</log4j-api.version>
+  </properties>
+
+  <!-- Keep the transitive logging facade on the currently reviewed fixed release. -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-api</artifactId>
+        <version>${log4j-api.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>${poi.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>${pdfbox.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>document-parser-worker</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.14.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>local.knowvault.docparser.Main</mainClass>
+              <addClasspath>true</addClasspath>
+              <classpathPrefix>lib/</classpathPrefix>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <id>copy-runtime-closure</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <includeScope>runtime</includeScope>
+              <outputDirectory>${project.build.directory}/lib</outputDirectory>
+              <overWriteReleases>false</overWriteReleases>
+              <overWriteSnapshots>false</overWriteSnapshots>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

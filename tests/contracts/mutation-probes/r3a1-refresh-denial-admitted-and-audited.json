@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-refresh-denial-admitted-and-audited",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.authorization.refresh-denial-admitted-and-audited",
+  "control_id": "acceptance.r3a1.authorization.refresh-denial-admitted-and-audited",
+  "description": "R3a-1 Outcome 2 negative control: a knowvault_refresh call by a principal without the workspace right must return the existing content-free denial and no data, and the denial class must be journalled through the R1 mechanism after the admission. internal/platform/workspaceapi/mcp_adapter.go mcpRefreshToolCall delegates to the shared workspaceToolRefreshPage core and maps its error with `if err != nil { code, message := mcpWorkspaceSourceToolError(err); writeMCPError(writer, envelope.ID, code, message); return }`. Weakening that guard's condition to `err == nil` (keeping the same `mcpWorkspaceSourceToolError` call, `writeMCPError` call and `return` verbatim, so the mutated file still reads `err` and keeps its brace balance) makes a denied non-member refresh fall through to the success projection, which returns an empty `refreshed`/`skipped` page and `isError: false` instead of the existing -32004 `source scope not found` content-free denial. The anchor includes the refresh-specific `workspaceToolRefreshPage` dispatch line above the guard because the bare four-line denial block is byte-identical in the sibling sources-list handler and so would not be unique; the prefix makes it occur exactly once in mcp_adapter.go. TestWorkspaceSourceToolsMCPDenialMapsWorkspacerepositoryCodes requires the -32004 refusal with no result member and no content for both the sources and the refresh tools (including a real `workspacerepository.CodeNotFound`/`CodeDenied` denial), so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestWorkspaceSourceToolsMCPDenialMapsWorkspacerepositoryCodes",
+  "mutations": [
+    {
+      "id": "r3a1-refresh-denial-mapping-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_adapter.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tpage, available, err := handler.workspaceToolRefreshPage(request, access, arguments.WorkspaceID, arguments.SourceScopeID, arguments.Offset, arguments.Limit)\n\tif !available {\n\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\treturn\n\t}\n\tif err != nil {\n\t\tcode, message := mcpWorkspaceSourceToolError(err)\n\t\twriteMCPError(writer, envelope.ID, code, message)\n\t\treturn\n\t}",
+      "new": "\tpage, available, err := handler.workspaceToolRefreshPage(request, access, arguments.WorkspaceID, arguments.SourceScopeID, arguments.Offset, arguments.Limit)\n\tif !available {\n\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")\n\t\treturn\n\t}\n\tif err == nil {\n\t\tcode, message := mcpWorkspaceSourceToolError(err)\n\t\twriteMCPError(writer, envelope.ID, code, message)\n\t\treturn\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a knowvault_refresh call by a principal without the workspace right resolves the workspace's bound sources through the injected SourceService (in production the source facade over workspacerepository.Store, whose ListSources returns one content-free CodeNotFound/CodeDenied for a non-member, unknown or foreign workspace), so mcpRefreshToolCall emits the existing content-free -32004 `source scope not found` with no `refreshed` row, no `skipped` reason and no echo of the requested workspace id. The REST parity route GET/POST /api/v1/workspaces/{workspace_id}/tools/refresh returns the twin 404 NOT_FOUND with the same content-free body, and the denied membership read is journalled through the shared R1 admission-before-data mechanism with the closed DENIED class (see TestR3A1RefreshDenialAdmittedAndJournaled).",
+  "mutant_meaning": "With the denial mapping weakened to `if err == nil` a denied/foreign refresh skips the refusal and falls through to the success projection, which carries an empty refreshed/skipped page, the echoed offset/limit and isError false instead of the existing -32004 content-free denial. The mutated condition still reads `err`, so internal/platform/workspaceapi compiles and the failure is the behavioural TestWorkspaceSourceToolsMCPDenialMapsWorkspacerepositoryCodes assertion (a denied refresh must return the existing denial and no content), not a build failure; the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.authorization.refresh-denial-admitted-and-audited`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

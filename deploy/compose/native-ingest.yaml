@@ -1,0 +1,14 @@
+# Qualification overlay. Activate only with the matching host supervisor,
+# dispatcher and qualified parser artifact; see docs/NATIVE-INGEST.md.
+# This does not grant the application a process/container launch capability.
+services:
+  worker:
+    environment:
+      KNOWVAULT_WORKER_NATIVE_PROFILE: document-parser-sandbox-v3
+    volumes:
+      - type: bind
+        source: /run/knowvault/sandbox/submit
+        target: /run/knowvault/sandbox/submit
+        read_only: true
+        bind:
+          create_host_path: false

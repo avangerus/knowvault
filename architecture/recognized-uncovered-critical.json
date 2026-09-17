@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "entries": [
+    {"critical_id": "SIG-001", "disposition": "STAGE_GATED", "product_stage": "STAGE_6", "evidence": "docs/corpus-uncovered-evidence.md#sig-001--stage_6"},
+    {"critical_id": "CAN-003", "disposition": "STAGE_GATED", "product_stage": "STAGE_5", "evidence": "docs/corpus-uncovered-evidence.md#can-003--stage_5"},
+    {"critical_id": "SRC-010", "disposition": "STAGE_GATED", "product_stage": "STAGE_5", "evidence": "docs/corpus-uncovered-evidence.md#src-010--stage_5"},
+    {"critical_id": "IMM-004", "disposition": "STAGE_GATED", "product_stage": "STAGE_6", "evidence": "docs/corpus-uncovered-evidence.md#imm-004--stage_6"},
+    {"critical_id": "EVD-005", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#evd-005--stage_4"},
+    {"critical_id": "QRY-006", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#qry-006--stage_4"},
+    {"critical_id": "ACL-007", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#acl-007--stage_4"},
+    {"critical_id": "ACL-008", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#acl-008--stage_4"},
+    {"critical_id": "ACL-009", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#acl-009--stage_4"},
+    {"critical_id": "ACL-011", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#acl-011--stage_4"},
+    {"critical_id": "QRY-003", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#qry-003--stage_4"},
+    {"critical_id": "QRY-005", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#qry-005--stage_4"},
+    {"critical_id": "QRY-008", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#qry-008--stage_4"},
+    {"critical_id": "QRY-009", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#qry-009--stage_4"},
+    {"critical_id": "SRCH-009", "disposition": "STAGE_GATED", "product_stage": "STAGE_3", "evidence": "docs/corpus-uncovered-evidence.md#srch-009--stage_3"},
+    {"critical_id": "SRCH-011", "disposition": "STAGE_GATED", "product_stage": "STAGE_3", "evidence": "docs/corpus-uncovered-evidence.md#srch-011--stage_3"},
+    {"critical_id": "MOD-008", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#mod-008--stage_4"},
+    {"critical_id": "MOD-009", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#mod-009--stage_4"},
+    {"critical_id": "MOD-010", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#mod-010--stage_4"},
+    {"critical_id": "MOD-011", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#mod-011--stage_4"},
+    {"critical_id": "MOD-012", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#mod-012--stage_4"},
+    {"critical_id": "CIT-001", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#cit-001--stage_4"},
+    {"critical_id": "CIT-003", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#cit-003--stage_4"},
+    {"critical_id": "CIT-006", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#cit-006--stage_4"},
+    {"critical_id": "CIT-007", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#cit-007--stage_4"},
+    {"critical_id": "CIT-008", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#cit-008--stage_4"},
+    {"critical_id": "CIT-009", "disposition": "STAGE_GATED", "product_stage": "STAGE_4", "evidence": "docs/corpus-uncovered-evidence.md#cit-009--stage_4"},
+    {"critical_id": "ING-006", "disposition": "DUAL_LAYER", "probe": "tests/contracts/mutation-probes/ing-006.ps1", "evidence": "docs/corpus-uncovered-evidence.md#ing-006--acceptancestoragesource-binary-persistence-rule"}
+  ]
+}

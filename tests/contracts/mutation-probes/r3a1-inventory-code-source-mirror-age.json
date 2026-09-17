@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-inventory-code-source-mirror-age",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.inventory.code-source-mirror-age",
+  "control_id": "acceptance.r3a1.inventory.code-source-mirror-age",
+  "description": "R3a-1 Outcome 2 and Outcome 4 inventory: the workspace list must expose the code-source mirror age (mirror_age_seconds and, when persisted, mirrored_at) only on the code-source row and never on a document row. internal/platform/workspaceapi/mcp_workspace_list.go mcpWorkspaceObjectProjection gates that member with `if item.ObjectType == mcpGrepCodeObjectType {`. Weakening that gate to a constant false drops the mirror age from every row, so the code row loses the freshness fact the owner canon requires. TestMCPWorkspaceListCodeSourceCarriesMirrorAge asserts mirror_age_seconds=90 and the RFC3339 mirrored_at on the code row (and their absence on the document row) in both the MCP tool and the REST parity route, so it kills the mutant.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPWorkspaceListCodeSourceCarriesMirrorAge",
+  "mutations": [
+    {
+      "id": "r3a1-list-code-mirror-age-dropped",
+      "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+      "kind": "GO_LIST_CODE_MIRROR_AGE_WEAKENING",
+      "expected": "RED",
+      "old": "\tif item.ObjectType == mcpGrepCodeObjectType {",
+      "new": "\tif false {"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree mcpWorkspaceObjectProjection adds mirror_age_seconds and mirrored_at to the code-source row and leaves the document row byte-identical to the prior projection, so both the MCP tools/call path and the REST list-objects route report the code-source mirror age while the document row carries no mirror member.",
+  "mutant_meaning": "With the code-source gate weakened to `if false` no row receives mirror_age_seconds or mirrored_at, so TestMCPWorkspaceListCodeSourceCarriesMirrorAge fails on the missing code-row mirror age (and the REST parity assertion), which is exactly the declared RED negative control (the inventory must not silently drop the mirror age), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.inventory.code-source-mirror-age`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

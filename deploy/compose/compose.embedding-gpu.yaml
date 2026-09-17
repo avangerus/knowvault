@@ -1,0 +1,48 @@
+# Overlay: serve the embedding channel from a model runtime outside this
+# compose file (a GPU host), instead of the in-compose CPU runtime.
+#
+#   KNOWVAULT_EMBEDDING_UPSTREAM_IP=<ip of the model host> \
+#   docker compose --env-file .env -f compose.yaml -f compose.embedding-gpu.yaml up -d
+#
+# Nothing above the proxy changes. The server and the worker keep speaking
+# mTLS to `knowvault-embedding`, the embedding profile keeps declaring
+# `https://knowvault-embedding`, and the profile's identity hashes keep
+# covering the model artifact, the tokenizer, the runtime and its launch
+# parameters. What changes is which process answers behind that name — which
+# is exactly the boundary a proxy exists to move.
+#
+# Two things an operator must do besides starting this overlay, because
+# neither can be decided here:
+#
+#  1. Point KNOWVAULT_EMBEDDING_UPSTREAM_IP at the model host. The port is
+#     8087 in proxy/embedding-gpu.conf; change that one line for a runtime
+#     that listens elsewhere.
+#  2. Replace embedding-profile.json with the profile of the model that
+#     actually answers there, including its dimension, and re-run the
+#     capability-mount step of bootstrap.sh. A profile whose recomputed hash
+#     does not match its declared hash is refused at startup, and a corpus
+#     embedded under the previous profile is NOT reused: moving a workspace
+#     onto the new vector space is the owner's explicit
+#     `search-profile:revise` command, which re-embeds in the background and
+#     switches over only when it is complete. See README.md.
+#
+# Leaving step 2 undone is safe and visible: the deployment keeps answering
+# under the profile its corpus was indexed with, and the new runtime is simply
+# not used.
+#
+# The in-compose CPU runtime is left declared so a rollback is one command
+# with the base file alone and the warm model cache volume survives. Nothing
+# routes to it while this overlay is active; `docker compose stop embedding`
+# reclaims its memory once the GPU channel is verified end to end.
+
+services:
+  embedding-proxy:
+    extra_hosts:
+      # The upstream is named in proxy/embedding-gpu.conf and addressed here,
+      # so the same committed configuration is correct on every stand.
+      - "knowvault-embedding-upstream:${KNOWVAULT_EMBEDDING_UPSTREAM_IP:?set the model host address}"
+    volumes:
+      - ./proxy/embedding-gpu.conf:/etc/nginx/nginx.conf:ro
+      - ./pki/embedding/server.crt:/etc/nginx/tls/server.crt:ro
+      - ./pki/embedding/server.key:/etc/nginx/tls/server.key:ro
+      - ./pki/embedding/ca.crt:/etc/nginx/tls/client-ca.crt:ro

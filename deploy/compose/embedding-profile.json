@@ -1,0 +1,15 @@
+{
+  "schema_version": "embedding-profile-v1",
+  "id": "multilingual-e5-small-cpu-v1",
+  "model_id": "intfloat/multilingual-e5-small",
+  "artifact_hash": "sha256:2c7b3f36b81c87980fbc4e280f4fc2f28fd7d7495e44320c8292e5cde07049f5",
+  "tokenizer_hash": "sha256:e58c132de71a88c282214029efc9967f07856a74b82bb8859e6c00a344b2a208",
+  "runtime_hash": "sha256:98fa3c65a8c2921f7f97a3b7ee41e845286d90031aa1bb95768a5e882f96f1bc",
+  "configuration_hash": "sha256:bdfc80662b3b203f399ac8ef2783ee0e94b903b9fb13035c3e6bc1c64521feb7",
+  "endpoint": "https://knowvault-embedding:443",
+  "server_name": "knowvault-embedding",
+  "dimension": 384,
+  "max_input_bytes": 8192,
+  "revision": 1,
+  "profile_hash": "sha256:12d33c57c0edc6d090342ac262001e699e23ebd7884c6dc2c31882239770f02a"
+}

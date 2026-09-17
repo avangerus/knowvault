@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.3",
+  "event_id": "22222222-2222-4222-8222-222222222222",
+  "claimed_organization_id": "org_alpha",
+  "connection_id": "conn_files",
+  "source_scope_id": "scope_projects",
+  "scope_revision": 3,
+  "connector_job_id": "job_sync_scope_projects_0002",
+  "operation": "DELETE",
+  "delete_semantics": "SOURCE_OBJECT_DELETED",
+  "external_object_id": "file-0001",
+  "external_version_key": null,
+  "object_type": "FILE",
+  "object_metadata": null,
+  "content_reference": null,
+  "acl_snapshot": null,
+  "event_time": "2026-07-14T12:05:00Z",
+  "observed_at": "2026-07-14T12:05:01Z",
+  "idempotency_key": "connector-file-0001-delete",
+  "integrity": {
+    "algorithm": "ED25519",
+    "key_id": "contract-test-ed25519-01",
+    "signed_at": "2026-07-14T12:05:01Z",
+    "nonce": "ERITFBUWFxgZGhscHR4fIA",
+    "payload_hash": "sha256:8f7f8a30bb4ed139407f0948a162cc692e75165f533cea8d3d5f368efc79ded7",
+    "value_base64": "PN79Uuuzap9zBawUWKoJcnxyCgaB4h7hZNLqQ0NMt9N+bKel9dtEy6PczUgDlPuRFIe9AB6C5XHO+3T7y3tYAQ=="
+  }
+}

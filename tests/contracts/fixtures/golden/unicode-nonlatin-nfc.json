@@ -1,0 +1,21 @@
+{
+  "vector_version": "1.0",
+  "normalization_version": "text-v1",
+  "source_text_escaped": "\u041a\u0440\u0430\u0438\u0306 \u0441\u0432\u0435\u0442\u0430\r\n",
+  "canonical_text_escaped": "\u041a\u0440\u0430\u0439 \u0441\u0432\u0435\u0442\u0430\n",
+  "canonical_utf8_hex": "d09ad180d0b0d0b920d181d0b2d0b5d182d0b00a",
+  "canonical_utf8_length": 20,
+  "canonical_text_hash": "sha256:77cc7ff7c64088f9c9f160c8f912cce86b156797fa1376772a32865a03e82d69",
+  "byte_ranges": [
+    {
+      "label": "cyrillic-composed-breve",
+      "text": "\u0439",
+      "start": 6,
+      "end": 8
+    }
+  ],
+  "question_trimmed_text_escaped": "\u041a\u0440\u0430\u0439 \u0441\u0432\u0435\u0442\u0430",
+  "question_trimmed_utf8_hex": "d09ad180d0b0d0b920d181d0b2d0b5d182d0b0",
+  "question_trimmed_utf8_length": 19,
+  "question_trimmed_text_hash": "sha256:ad46b3d015926ba49d0659fc6b6085cad0604faee44865ac63d1cc6d6fd01137"
+}

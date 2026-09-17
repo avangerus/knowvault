@@ -1,0 +1,70 @@
+{
+  "schema": "knowvault-parser-runtime-lock-v3",
+  "component": "oci.document-parser-worker",
+  "dockerfile": "workers/document-parser/Dockerfile",
+  "platform": "linux/amd64",
+  "oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
+  "config_digest": "sha256:8006f7ddf504af8aee59afea5fcc719f673d7df80f6717c2ffced6b428c8d467",
+  "layer_digests": [
+    "sha256:88a11acca421df58865f88d823431f52bda8175d5e6fd1692f2a487cc08f4c70",
+    "sha256:17c02ca28da47e5a67ba1947fd042307e2285f94bf2d25bc0409f58337b05faf",
+    "sha256:63c13e8ea6c10b81562d53428ece2363c7bb062d5d9747c2f87bbaeea22963a0",
+    "sha256:36940d4560923835ac9eeccc0143ca747fe22821bc818faef116a68b7d522889",
+    "sha256:6497328e1d8bf7f489b5284b656625833be2bea7f0709bb4447810c65845465a",
+    "sha256:77ab5ba073fde3c4a0b3a17426a495c37713063bb59a0816dd90b3dc86a01cd2",
+    "sha256:bdc0761c2529d7d054fc5c57ac1571244b5ec959f764161d846600211af80818",
+    "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+  ],
+  "builder_image": "maven:3.9-eclipse-temurin-21@sha256:8f6ac126f7810bb5549c4cd122d2bf0e9cda5bdeb0838aa928f09e779fd8bef8",
+  "runtime_base": "scratch",
+  "runtime_strategy": "jlink",
+  "jvm_modules": [
+    "java.base",
+    "java.desktop",
+    "java.logging",
+    "java.security.jgss",
+    "java.xml.crypto"
+  ],
+  "native_runtime": [
+    {
+      "package": "libc6",
+      "version": "2.39-0ubuntu8.8",
+      "architecture": "amd64",
+      "license": "LGPL-2.1-or-later"
+    }
+  ],
+  "artifact_identity": {
+    "path": "/app/artifact.sha256",
+    "digest": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414"
+  },
+  "sbom": {
+    "path": "workers/document-parser/release/sbom.spdx.json",
+    "digest": "sha256:60a3a408e78a4c52b26aeb70376d288ceee6d753bc19ccab0c9e96907ac34217",
+    "format": "SPDX-2.3",
+    "bound_oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
+    "bound_artifact_digest": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414",
+    "generator": {
+      "name": "Syft",
+      "version": "1.48.0",
+      "source_commit": "3e2bc6ed095f7ec1a415fb38cfe1c319e95dfed6",
+      "image_digest": "sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c",
+      "release_checksum_manifest_sha256": "0dd856e828c76a9c5a736a0d568a136b64acf0d9720b868547e2217e7bed5d61",
+      "observed_artifact_count": 20
+    }
+  },
+  "vulnerability_scan": {
+    "attestation": "workers/document-parser/release/vulnerability-attestation.json",
+    "attestation_digest": "sha256:f6b16fc7dc0c414c635325e8936601e542647242ef5328e273d124b008799599",
+    "bound_oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
+    "bound_artifact_digest": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414",
+    "scanner": {
+      "name": "Grype",
+      "version": "0.116.0",
+      "source_commit": "3b014b00097d43933e5cce485e744db8289a406f",
+      "image_digest": "sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
+      "release_checksum_manifest_sha256": "c9cc93489491e6a2c9cd0e3382ddc1bf6b16f1ff8fc897cc0d00b270943517b6"
+    }
+  },
+  "notices": "workers/document-parser/release/THIRD_PARTY_NOTICES.md",
+  "source_compliance": "workers/document-parser/release/source-compliance/openjdk-temurin-21.0.12+8/SOURCE-OFFER.json"
+}

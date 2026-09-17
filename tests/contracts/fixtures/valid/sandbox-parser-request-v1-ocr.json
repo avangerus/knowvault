@@ -1,0 +1,15 @@
+{
+  "schema_version": "sandbox-parser-request-v1",
+  "parser_type": "OCR",
+  "operation": "OBSERVE_OCR_TOKENS",
+  "media_family": "PNG",
+  "sandbox_profile_revision": "ocr-sandbox-v1",
+  "observation_profile_revision": "ocr-observation-v1",
+  "ocr_profile_revision": "tessdata-v1",
+  "max_input_bytes": 1048576,
+  "max_output_bytes": 1048576,
+  "max_units": 10000,
+  "max_pages": 1,
+  "max_decoded_pixels": 10000000,
+  "output_contract": "ocr-result-v1"
+}

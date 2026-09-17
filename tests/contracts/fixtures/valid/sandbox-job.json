@@ -1,0 +1,17 @@
+{
+  "schema_version": "sandbox-job-v1",
+  "job_id": "job-001",
+  "lease_id": "lease-001",
+  "parser_type": "TEXT",
+  "source_version_id": "source-version-001",
+  "input_artifact": {
+    "artifact_id": "artifact-001",
+    "content_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "media_type": "text/plain"
+  },
+  "submitted_at": "2026-08-06T10:00:00Z",
+  "deadline_at": "2026-08-06T10:00:30Z",
+  "worker_pull_only": true,
+  "container_creation_capability": "FORBIDDEN",
+  "output_contract": "document-parser-result-v1"
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-outcome-v2.schema.json",
+  "title": "Sandbox Outcome Protocol 2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "lease_id", "job_id", "worker_id", "parser_request", "output_contract", "handoff", "status", "reported_at", "result_digest", "runtime_profile_hash", "execution_confirmation_id"],
+  "properties": {
+    "schema_version": { "const": "sandbox-outcome-v2" },
+    "lease_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "worker_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+    "parser_request": { "$ref": "https://knowvault.local/schemas/sandbox-parser-request-v1.schema.json" },
+    "output_contract": { "enum": ["document-parser-result-v1", "pdf-parser-result-v1", "pdf-render-result-v1", "ocr-result-v1"] },
+    "handoff": { "type": "object", "additionalProperties": false, "required": ["transfer_state", "confirmation_id"], "properties": { "transfer_state": { "enum": ["CONFIRMED", "RETRY", "QUARANTINED"] }, "confirmation_id": { "type": "string", "minLength": 1, "maxLength": 128 } } },
+    "status": { "enum": ["SUCCEEDED", "FAILED", "QUARANTINED"] },
+    "reported_at": { "type": "string", "format": "date-time" },
+    "result_digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
+    "runtime_profile_hash": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
+    "execution_confirmation_id": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" }
+  },
+  "allOf": [
+    { "if": { "properties": { "handoff": { "type": "object", "properties": { "transfer_state": { "const": "CONFIRMED" } }, "required": ["transfer_state"] } }, "required": ["handoff"] }, "then": { "properties": { "worker_id": { "type": "string", "minLength": 1, "maxLength": 128 }, "status": { "const": "SUCCEEDED" }, "result_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "runtime_profile_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "execution_confirmation_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } } },
+    { "if": { "properties": { "handoff": { "type": "object", "properties": { "transfer_state": { "const": "RETRY" } }, "required": ["transfer_state"] } }, "required": ["handoff"] }, "then": { "properties": { "worker_id": { "type": "null" }, "status": { "const": "FAILED" }, "result_digest": { "type": "null" }, "runtime_profile_hash": { "type": "null" }, "execution_confirmation_id": { "type": "null" } } } },
+    { "if": { "properties": { "handoff": { "type": "object", "properties": { "transfer_state": { "const": "QUARANTINED" } }, "required": ["transfer_state"] } }, "required": ["handoff"] }, "then": { "properties": { "worker_id": { "type": "string", "minLength": 1, "maxLength": 128 }, "status": { "const": "QUARANTINED" }, "result_digest": { "type": "null" }, "runtime_profile_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "execution_confirmation_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } } }
+  ],
+  "oneOf": [
+    { "properties": { "output_contract": { "const": "document-parser-result-v1" }, "parser_request": { "type": "object", "properties": { "output_contract": { "const": "document-parser-result-v1" } }, "required": ["output_contract"] } } },
+    { "properties": { "output_contract": { "const": "pdf-parser-result-v1" }, "parser_request": { "type": "object", "properties": { "output_contract": { "const": "pdf-parser-result-v1" } }, "required": ["output_contract"] } } },
+    { "properties": { "output_contract": { "const": "pdf-render-result-v1" }, "parser_request": { "type": "object", "properties": { "output_contract": { "const": "pdf-render-result-v1" } }, "required": ["output_contract"] } } },
+    { "properties": { "output_contract": { "const": "ocr-result-v1" }, "parser_request": { "type": "object", "properties": { "output_contract": { "const": "ocr-result-v1" } }, "required": ["output_contract"] } } }
+  ]
+}

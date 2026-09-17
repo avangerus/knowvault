@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/source-scope.schema.json",
+  "title": "Immutable Source Scope Revision 1.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_scope_id",
+    "revision",
+    "connection_id",
+    "connection_revision",
+    "source_type",
+    "discovered_scope_id",
+    "discovered_identity_digest",
+    "access_mode",
+    "scope_config",
+    "sync_interval_seconds",
+    "content_freshness_sla_seconds",
+    "acl_freshness_sla_seconds",
+    "object_limit",
+    "byte_limit",
+    "created_by",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.2" },
+    "source_scope_id": { "$ref": "#/$defs/id" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "connection_id": { "$ref": "#/$defs/id" },
+    "connection_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "source_type": { "enum": ["FOLDER", "GIT", "MAIL", "SITE"] },
+    "discovered_scope_id": { "$ref": "#/$defs/id" },
+    "discovered_identity_digest": {
+      "type": "string",
+      "pattern": "^hmac-sha256:k[1-9][0-9]{0,8}:[0-9a-f]{64}$"
+    },
+    "access_mode": { "enum": ["WORKSPACE_MANAGED", "SOURCE_ENFORCED"] },
+    "scope_config": { "type": "object" },
+    "sync_interval_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "content_freshness_sla_seconds": { "type": "integer", "minimum": 60, "maximum": 604800 },
+    "acl_freshness_sla_seconds": {
+      "type": ["integer", "null"],
+      "minimum": 60,
+      "maximum": 86400
+    },
+    "object_limit": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+    "byte_limit": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "created_by": { "$ref": "#/$defs/id" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": { "access_mode": { "const": "SOURCE_ENFORCED" } },
+        "required": ["access_mode"]
+      },
+      "then": {
+        "type": "object",
+        "properties": { "acl_freshness_sla_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 } }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source_type": { "const": "FOLDER" },
+            "scope_config": { "$ref": "#/$defs/folderConfig" }
+          },
+          "required": ["source_type", "scope_config"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_type": { "const": "GIT" },
+            "scope_config": { "$ref": "#/$defs/gitConfig" }
+          },
+          "required": ["source_type", "scope_config"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_type": { "const": "MAIL" },
+            "scope_config": { "$ref": "#/$defs/mailConfig" }
+          },
+          "required": ["source_type", "scope_config"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_type": { "const": "SITE" },
+            "scope_config": { "$ref": "#/$defs/siteConfig" }
+          },
+          "required": ["source_type", "scope_config"]
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.?(?:[/\\\\]|$))(?!.*[\\u0000-\\u001F\\u007F]).*$"
+    },
+    "pathPattern": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.?(?:[/\\\\]|$))(?!.*[\\u0000-\\u001F\\u007F]).+$"
+    },
+    "folderConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_alias",
+        "relative_root",
+        "path_matcher_version",
+        "recursive",
+        "include_globs",
+        "exclude_globs",
+        "max_file_bytes",
+        "ocr_mode",
+        "follow_symlinks",
+        "formats"
+      ],
+      "properties": {
+        "root_alias": { "$ref": "#/$defs/id" },
+        "relative_root": { "$ref": "#/$defs/relativePath" },
+        "path_matcher_version": { "const": "scope-glob-v1" },
+        "recursive": { "type": "boolean" },
+        "include_globs": { "$ref": "#/$defs/pathPatterns" },
+        "exclude_globs": { "$ref": "#/$defs/pathPatterns" },
+        "max_file_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "ocr_mode": { "enum": ["OFF", "AUTO"] },
+        "follow_symlinks": { "const": false },
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["PDF", "DOCX", "PPTX", "XLSX", "CSV", "TXT", "MARKDOWN", "HTML", "JSON", "XML", "EML", "SOURCE_CODE", "PNG", "JPEG"]
+          }
+        }
+      }
+    },
+    "pathPatterns": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/pathPattern" }
+    },
+    "gitConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_id",
+        "branch_name",
+        "path_matcher_version",
+        "include_paths",
+        "exclude_paths",
+        "max_blob_bytes",
+        "text_media_types",
+        "submodules",
+        "lfs_content"
+      ],
+      "properties": {
+        "repository_id": { "$ref": "#/$defs/id" },
+        "branch_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^(?!-)(?!HEAD$)(?!.*(?:\\.\\.|@\\{|[~^:*?\\[\\]\\\\\\s]))(?!.*(?:^|/)\\.)(?!.*\\.lock(?:/|$))(?!.*//)(?!.*[./]$)[A-Za-z0-9._/-]+$"
+        },
+        "path_matcher_version": { "const": "scope-glob-v1" },
+        "include_paths": { "$ref": "#/$defs/pathPatterns" },
+        "exclude_paths": { "$ref": "#/$defs/pathPatterns" },
+        "max_blob_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "text_media_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$" }
+        },
+        "submodules": { "const": false },
+        "lfs_content": { "const": false }
+      }
+    },
+    "mailConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mailbox_id",
+        "folder_or_label_ids",
+        "from_date",
+        "include_attachments",
+        "max_message_bytes",
+        "max_attachment_bytes",
+        "body_preference"
+      ],
+      "properties": {
+        "mailbox_id": { "$ref": "#/$defs/id" },
+        "folder_or_label_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "from_date": { "type": ["string", "null"], "format": "date-time" },
+        "include_attachments": { "type": "boolean" },
+        "max_message_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "max_attachment_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "body_preference": { "const": "PLAIN_THEN_SANITIZED_HTML" }
+      }
+    },
+    "siteConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seed_urls",
+        "sitemap_url",
+        "allowed_url_prefixes",
+        "path_matcher_version",
+        "include_patterns",
+        "exclude_patterns",
+        "max_depth",
+        "max_response_bytes",
+        "requests_per_second",
+        "max_redirects",
+        "query_policy",
+        "respect_robots_txt",
+        "render_mode"
+      ],
+      "properties": {
+        "seed_urls": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "type": "string", "format": "uri", "maxLength": 4096 }
+        },
+        "sitemap_url": { "type": ["string", "null"], "format": "uri", "maxLength": 4096 },
+        "allowed_url_prefixes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "type": "string", "format": "uri", "maxLength": 4096 }
+        },
+        "path_matcher_version": { "const": "scope-glob-v1" },
+        "include_patterns": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "exclude_patterns": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "max_depth": { "type": "integer", "minimum": 0, "maximum": 32 },
+        "max_response_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "requests_per_second": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "max_redirects": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "query_policy": { "enum": ["PRESERVE", "DROP_TRACKING"] },
+        "respect_robots_txt": { "const": true },
+        "render_mode": { "const": "HTML_ONLY" }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "seed_urls": { "type": "array", "minItems": 1 },
+            "sitemap_url": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seed_urls": { "type": "array", "maxItems": 0 },
+            "sitemap_url": { "type": "string", "format": "uri" }
+          }
+        }
+      ]
+    }
+  }
+}

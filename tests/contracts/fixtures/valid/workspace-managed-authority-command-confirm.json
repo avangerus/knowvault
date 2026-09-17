@@ -1,0 +1,22 @@
+{
+  "schema_version": "workspace-managed-authority-command-v1",
+  "operation": "WORKSPACE_MANAGED_CONFIRM",
+  "request": {
+    "organization_id": "org_acme",
+    "workspace_id": "ws_alpha",
+    "workspace_revision": 7,
+    "workspace_configuration_hash": "sha256:1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d",
+    "workspace_source_id": "binding_0A1B2C3D4E5F6G7H8J9K0M1N2P",
+    "source_scope_id": "scope_folder_alpha",
+    "source_scope_revision": 3,
+    "scope_config_hash": "sha256:9d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f0",
+    "access_mode": "WORKSPACE_MANAGED",
+    "confirmation_actor_grant_id": "grant_alpha",
+    "confirmation_actor_grant_revision": 1,
+    "confirmation_actor_grant_hash": "sha256:7e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac05",
+    "warning_version": "workspace-managed-risk-v1",
+    "warning_contract_hash": "sha256:58a05c0a7a3960ed45ccea66d8c9a570e581ff97438f407c20ec9c669512cd2d",
+    "acknowledgement_code": "WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL",
+    "expected_policy_revision": "policy-r7"
+  }
+}

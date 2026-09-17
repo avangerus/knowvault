@@ -1,0 +1,92 @@
+{
+  "vector_version": "workspace-managed-authority-command-v1",
+  "canonicalization_version": "json-v1",
+  "vectors": [
+    {
+      "id": "grant-issue",
+      "operation": "WORKSPACE_CONFIRMATION_GRANT_ISSUE",
+      "input": {
+        "operation": "WORKSPACE_CONFIRMATION_GRANT_ISSUE",
+        "request": {
+          "expected_policy_revision": "policy-r7",
+          "expected_workspace_configuration_hash": "sha256:1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d",
+          "expected_workspace_revision": 7,
+          "organization_id": "org_acme",
+          "target_principal_id": "user_maria",
+          "ttl_seconds": 3600,
+          "workspace_id": "ws_alpha"
+        },
+        "schema_version": "workspace-managed-authority-command-v1"
+      },
+      "canonical_jcs": "{\"operation\":\"WORKSPACE_CONFIRMATION_GRANT_ISSUE\",\"request\":{\"expected_policy_revision\":\"policy-r7\",\"expected_workspace_configuration_hash\":\"sha256:1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d\",\"expected_workspace_revision\":7,\"organization_id\":\"org_acme\",\"target_principal_id\":\"user_maria\",\"ttl_seconds\":3600,\"workspace_id\":\"ws_alpha\"},\"schema_version\":\"workspace-managed-authority-command-v1\"}",
+      "canonical_utf8_hex": "7b226f7065726174696f6e223a22574f524b53504143455f434f4e4649524d4154494f4e5f4752414e545f4953535545222c2272657175657374223a7b2265787065637465645f706f6c6963795f7265766973696f6e223a22706f6c6963792d7237222c2265787065637465645f776f726b73706163655f636f6e66696775726174696f6e5f68617368223a227368613235363a31633966326234643163396632623464316339663262346431633966326234643163396632623464316339663262346431633966326234643163396632623464222c2265787065637465645f776f726b73706163655f7265766973696f6e223a372c226f7267616e697a6174696f6e5f6964223a226f72675f61636d65222c227461726765745f7072696e636970616c5f6964223a22757365725f6d61726961222c2274746c5f7365636f6e6473223a333630302c22776f726b73706163655f6964223a2277735f616c706861227d2c22736368656d615f76657273696f6e223a22776f726b73706163652d6d616e616765642d617574686f726974792d636f6d6d616e642d7631227d",
+      "request_hash": "sha256:87eda82a726d3c64d0ebcefb1112d906c803ab35ecef4c5ab18e781354a70c61"
+    },
+    {
+      "id": "grant-revoke",
+      "operation": "WORKSPACE_CONFIRMATION_GRANT_REVOKE",
+      "input": {
+        "operation": "WORKSPACE_CONFIRMATION_GRANT_REVOKE",
+        "request": {
+          "expected_policy_revision": "policy-r7",
+          "grant_hash": "sha256:7e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac05",
+          "grant_id": "grant_alpha",
+          "grant_revision": 1,
+          "organization_id": "org_acme",
+          "workspace_id": "ws_alpha"
+        },
+        "schema_version": "workspace-managed-authority-command-v1"
+      },
+      "canonical_jcs": "{\"operation\":\"WORKSPACE_CONFIRMATION_GRANT_REVOKE\",\"request\":{\"expected_policy_revision\":\"policy-r7\",\"grant_hash\":\"sha256:7e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac05\",\"grant_id\":\"grant_alpha\",\"grant_revision\":1,\"organization_id\":\"org_acme\",\"workspace_id\":\"ws_alpha\"},\"schema_version\":\"workspace-managed-authority-command-v1\"}",
+      "canonical_utf8_hex": "7b226f7065726174696f6e223a22574f524b53504143455f434f4e4649524d4154494f4e5f4752414e545f5245564f4b45222c2272657175657374223a7b2265787065637465645f706f6c6963795f7265766973696f6e223a22706f6c6963792d7237222c226772616e745f68617368223a227368613235363a37653331616330353765333161633035376533316163303537653331616330353765333161633035376533316163303537653331616330353765333161633035222c226772616e745f6964223a226772616e745f616c706861222c226772616e745f7265766973696f6e223a312c226f7267616e697a6174696f6e5f6964223a226f72675f61636d65222c22776f726b73706163655f6964223a2277735f616c706861227d2c22736368656d615f76657273696f6e223a22776f726b73706163652d6d616e616765642d617574686f726974792d636f6d6d616e642d7631227d",
+      "request_hash": "sha256:35110fffc9b5d5f9f0ca9402d11ff2501a0328c114c021d78854da474c0761d1"
+    },
+    {
+      "id": "confirm",
+      "operation": "WORKSPACE_MANAGED_CONFIRM",
+      "input": {
+        "operation": "WORKSPACE_MANAGED_CONFIRM",
+        "request": {
+          "access_mode": "WORKSPACE_MANAGED",
+          "acknowledgement_code": "WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL",
+          "confirmation_actor_grant_hash": "sha256:7e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac05",
+          "confirmation_actor_grant_id": "grant_alpha",
+          "confirmation_actor_grant_revision": 1,
+          "expected_policy_revision": "policy-r7",
+          "organization_id": "org_acme",
+          "scope_config_hash": "sha256:9d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f0",
+          "source_scope_id": "scope_folder_alpha",
+          "source_scope_revision": 3,
+          "warning_contract_hash": "sha256:58a05c0a7a3960ed45ccea66d8c9a570e581ff97438f407c20ec9c669512cd2d",
+          "warning_version": "workspace-managed-risk-v1",
+          "workspace_configuration_hash": "sha256:1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d",
+          "workspace_id": "ws_alpha",
+          "workspace_revision": 7,
+          "workspace_source_id": "binding_0A1B2C3D4E5F6G7H8J9K0M1N2P"
+        },
+        "schema_version": "workspace-managed-authority-command-v1"
+      },
+      "canonical_jcs": "{\"operation\":\"WORKSPACE_MANAGED_CONFIRM\",\"request\":{\"access_mode\":\"WORKSPACE_MANAGED\",\"acknowledgement_code\":\"WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL\",\"confirmation_actor_grant_hash\":\"sha256:7e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac057e31ac05\",\"confirmation_actor_grant_id\":\"grant_alpha\",\"confirmation_actor_grant_revision\":1,\"expected_policy_revision\":\"policy-r7\",\"organization_id\":\"org_acme\",\"scope_config_hash\":\"sha256:9d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f09d47e6f0\",\"source_scope_id\":\"scope_folder_alpha\",\"source_scope_revision\":3,\"warning_contract_hash\":\"sha256:58a05c0a7a3960ed45ccea66d8c9a570e581ff97438f407c20ec9c669512cd2d\",\"warning_version\":\"workspace-managed-risk-v1\",\"workspace_configuration_hash\":\"sha256:1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d1c9f2b4d\",\"workspace_id\":\"ws_alpha\",\"workspace_revision\":7,\"workspace_source_id\":\"binding_0A1B2C3D4E5F6G7H8J9K0M1N2P\"},\"schema_version\":\"workspace-managed-authority-command-v1\"}",
+      "canonical_utf8_hex": "7b226f7065726174696f6e223a22574f524b53504143455f4d414e414745445f434f4e4649524d222c2272657175657374223a7b226163636573735f6d6f6465223a22574f524b53504143455f4d414e41474544222c2261636b6e6f776c656467656d656e745f636f6465223a22574f524b53504143455f4d454d424552535f4d41595f524541445f574954484f55545f534f555243455f4e41544956455f41434c222c22636f6e6669726d6174696f6e5f6163746f725f6772616e745f68617368223a227368613235363a37653331616330353765333161633035376533316163303537653331616330353765333161633035376533316163303537653331616330353765333161633035222c22636f6e6669726d6174696f6e5f6163746f725f6772616e745f6964223a226772616e745f616c706861222c22636f6e6669726d6174696f6e5f6163746f725f6772616e745f7265766973696f6e223a312c2265787065637465645f706f6c6963795f7265766973696f6e223a22706f6c6963792d7237222c226f7267616e697a6174696f6e5f6964223a226f72675f61636d65222c2273636f70655f636f6e6669675f68617368223a227368613235363a39643437653666303964343765366630396434376536663039643437653666303964343765366630396434376536663039643437653666303964343765366630222c22736f757263655f73636f70655f6964223a2273636f70655f666f6c6465725f616c706861222c22736f757263655f73636f70655f7265766973696f6e223a332c227761726e696e675f636f6e74726163745f68617368223a227368613235363a35386130356330613761333936306564343563636561363664386339613537306535383166663937343338663430376332306563396336363935313263643264222c227761726e696e675f76657273696f6e223a22776f726b73706163652d6d616e616765642d7269736b2d7631222c22776f726b73706163655f636f6e66696775726174696f6e5f68617368223a227368613235363a31633966326234643163396632623464316339663262346431633966326234643163396632623464316339663262346431633966326234643163396632623464222c22776f726b73706163655f6964223a2277735f616c706861222c22776f726b73706163655f7265766973696f6e223a372c22776f726b73706163655f736f757263655f6964223a2262696e64696e675f30413142324333443445354636473748384a394b304d314e3250227d2c22736368656d615f76657273696f6e223a22776f726b73706163652d6d616e616765642d617574686f726974792d636f6d6d616e642d7631227d",
+      "request_hash": "sha256:9a4061308ea1cc902b9bcbee75354c0f020826f5cfa3d56ad12ac08fd78b5639"
+    },
+    {
+      "id": "confirm-revoke",
+      "operation": "WORKSPACE_MANAGED_CONFIRM_REVOKE",
+      "input": {
+        "operation": "WORKSPACE_MANAGED_CONFIRM_REVOKE",
+        "request": {
+          "confirmation_hash": "sha256:5b08d9e25b08d9e25b08d9e25b08d9e25b08d9e25b08d9e25b08d9e25b08d9e2",
+          "confirmation_id": "confirmation_alpha",
+          "expected_policy_revision": "policy-r7",
+          "organization_id": "org_acme",
+          "workspace_id": "ws_alpha"
+        },
+        "schema_version": "workspace-managed-authority-command-v1"
+      },
+      "canonical_jcs": "{\"operation\":\"WORKSPACE_MANAGED_CONFIRM_REVOKE\",\"request\":{\"confirmation_hash\":\"sha256:5b08d9e25b08d9e25b08d9e25b08d9e25b08d9e25b08d9e25b08d9e25b08d9e2\",\"confirmation_id\":\"confirmation_alpha\",\"expected_policy_revision\":\"policy-r7\",\"organization_id\":\"org_acme\",\"workspace_id\":\"ws_alpha\"},\"schema_version\":\"workspace-managed-authority-command-v1\"}",
+      "canonical_utf8_hex": "7b226f7065726174696f6e223a22574f524b53504143455f4d414e414745445f434f4e4649524d5f5245564f4b45222c2272657175657374223a7b22636f6e6669726d6174696f6e5f68617368223a227368613235363a35623038643965323562303864396532356230386439653235623038643965323562303864396532356230386439653235623038643965323562303864396532222c22636f6e6669726d6174696f6e5f6964223a22636f6e6669726d6174696f6e5f616c706861222c2265787065637465645f706f6c6963795f7265766973696f6e223a22706f6c6963792d7237222c226f7267616e697a6174696f6e5f6964223a226f72675f61636d65222c22776f726b73706163655f6964223a2277735f616c706861227d2c22736368656d615f76657273696f6e223a22776f726b73706163652d6d616e616765642d617574686f726974792d636f6d6d616e642d7631227d",
+      "request_hash": "sha256:3d98c11dd6ee45b522d99227a42e70109c57be26ec9f33d40dcc9ab59ac1afb7"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "vector_version": "2.0",
+  "algorithm": "ED25519",
+  "public_key_base64": "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
+  "manifest": {
+    "hash_input_rule": "JCS(manifest without manifest_hash and without signature)",
+    "expected_signing_object": {
+      "algorithm": "ED25519",
+      "key_id": "contract-test-ed25519-01",
+      "manifest_hash": "sha256:52942a9655d801f4f8bee92b4ea450ea271f9c101d5df3dee20e41673b38807f",
+      "signed_at": "2026-07-14T12:00:15Z"
+    },
+    "expected_signing_jcs": "{\"algorithm\":\"ED25519\",\"key_id\":\"contract-test-ed25519-01\",\"manifest_hash\":\"sha256:52942a9655d801f4f8bee92b4ea450ea271f9c101d5df3dee20e41673b38807f\",\"signed_at\":\"2026-07-14T12:00:15Z\"}",
+    "signature_base64": "99it0GUIxjFf9kpgmaW9gxiKqfY5T3XKSH5rnBWxpUlQV02JW7OyfV3rKObFSHfCbJgM+HGG+ZfhiQiHrZsUCg=="
+  },
+  "connector": {
+    "hash_input_rule": "JCS(event without integrity)",
+    "expected_signing_object": {
+      "algorithm": "ED25519",
+      "connection_id": "conn_files",
+      "connector_job_id": "job_sync_scope_projects_0001",
+      "event_id": "11111111-1111-4111-8111-111111111111",
+      "key_id": "contract-test-ed25519-01",
+      "nonce": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "payload_hash": "sha256:8ee47f383b6e8bf9b0557f13448767e033b62f05f1cb42f5a7c3b996b8f63243",
+      "signed_at": "2026-07-14T12:00:00Z",
+      "source_scope_id": "scope_projects",
+      "scope_revision": 3
+    },
+    "expected_signing_jcs": "{\"algorithm\":\"ED25519\",\"connection_id\":\"conn_files\",\"connector_job_id\":\"job_sync_scope_projects_0001\",\"event_id\":\"11111111-1111-4111-8111-111111111111\",\"key_id\":\"contract-test-ed25519-01\",\"nonce\":\"AQIDBAUGBwgJCgsMDQ4PEA\",\"payload_hash\":\"sha256:8ee47f383b6e8bf9b0557f13448767e033b62f05f1cb42f5a7c3b996b8f63243\",\"scope_revision\":3,\"signed_at\":\"2026-07-14T12:00:00Z\",\"source_scope_id\":\"scope_projects\"}",
+    "signature_base64": "KmuqfOwoOqUt2wS/FhCM4AGM4TNlPrMvocfaWdHmEceIiuQN4EHWi8IgAjjfa6Hp9K4DJSVmfOuqrJk+9M+fCQ=="
+  }
+}

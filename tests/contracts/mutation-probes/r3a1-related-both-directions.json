@@ -1,0 +1,33 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-related-both-directions",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.related.cross-source-both-directions",
+  "control_id": "acceptance.r3a1.related.cross-source-both-directions",
+  "description": "R3a-1 Outcome 2 cross-source relation contract: the workspace `knowvault_related` MCP tool and its shared relation core must return both directions of a relation — the objects the addressed object references (direction `references`) and the documents that reference the addressed object (direction `referencing`) — every hit carrying the related object's immutable address (source, version, object and span hash), its version and its moment. internal/platform/workspaceapi/mcp_related.go's mcpRelatedDirection resolves the closed direction vocabulary; the `referencing`, `references` and `both` members are all accepted. Dropping `references` (or `referencing`) from that case list makes the corresponding direction return -32602 instead of the relation page, which is a compilable behavioural regression, not a vacuous one. internal/platform/workspaceapi/mcp_related_test.go TestMCPRelatedReturnsBothDirectionsWithAddressVersion calls the tool once per direction and requires the served hit to carry the version, moment and full address (span text_hash and object fragment_id), so it kills either weakened direction. The anchor occurs exactly once in mcp_related.go.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPRelatedReturnsBothDirectionsWithAddressVersion",
+  "mutations": [
+    {
+      "id": "r3a1-related-references-direction-dropped",
+      "target": "internal/platform/workspaceapi/mcp_related.go",
+      "kind": "GO_MCP_RELATED_DIRECTION_WEAKENING",
+      "expected": "RED",
+      "old": "\tcase mcpRelatedDirectionReferencing, mcpRelatedDirectionReferences, mcpRelatedDirectionBoth:",
+      "new": "\tcase mcpRelatedDirectionReferencing, mcpRelatedDirectionBoth:"
+    },
+    {
+      "id": "r3a1-related-referencing-direction-dropped",
+      "target": "internal/platform/workspaceapi/mcp_related.go",
+      "kind": "GO_MCP_RELATED_DIRECTION_WEAKENING",
+      "expected": "RED",
+      "old": "\tcase mcpRelatedDirectionReferencing, mcpRelatedDirectionReferences, mcpRelatedDirectionBoth:",
+      "new": "\tcase mcpRelatedDirectionReferences, mcpRelatedDirectionBoth:"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree mcpRelatedDirection accepts `referencing`, `references` and `both`, so a call naming either direction is forwarded to the authorized relation source and returns the relation page with each hit's relation kind, excerpt, version, moment and immutable address; TestMCPRelatedReturnsBothDirectionsWithAddressVersion passes both directions with the address/version assertions.",
+  "mutant_meaning": "With `references` dropped the `references` call is rejected with -32602 before the relation source is touched, so the test's references case fails (RED); with `referencing` dropped the `referencing` call is rejected and the test's referencing case fails (RED). Both mutants still compile and fail behaviourally, so the guard is killed by the registered probe and is not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.related.cross-source-both-directions`; the identical cases are committed both here and in the registry so the proof is pinned to the product guard."
+}

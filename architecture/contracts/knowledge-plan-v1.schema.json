@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/contracts/knowledge-plan-v1.schema.json",
+  "title": "KnowVault knowledge-plan-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "operation", "confidence", "question_hash", "plan_hash"],
+  "properties": {
+    "schema_version": {"const": "knowledge-plan-v1"},
+    "status": {"enum": ["READY", "UNKNOWN", "CLARIFICATION_REQUIRED"]},
+    "operation": {"enum": ["LOOKUP", "EXPLAIN", "COMPARE", "AGGREGATE", "AUDIT", "CODE_TRACE", "UNKNOWN", "CLARIFY"]},
+    "subject_terms": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "entity_hints": {"type": "array", "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "filters": {
+      "type": "array", "maxItems": 32,
+      "items": {"type": "object", "additionalProperties": false, "required": ["name", "value"], "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 128}, "value": {"type": "string", "minLength": 1, "maxLength": 256}}}
+    },
+    "aggregate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["function"],
+      "properties": {
+        "function": {"enum": ["SUM", "COUNT", "AVG", "MIN", "MAX"]},
+        "metric": {"type": "string", "minLength": 1, "maxLength": 256},
+        "group_by": {"type": "array", "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        "order": {"enum": ["ASC", "DESC"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
+    "confidence": {"enum": ["NONE", "LOW", "MEDIUM", "HIGH"]},
+    "reasons": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "clarification": {"type": "string", "maxLength": 2048},
+    "question_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "plan_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "READY"}}}, "then": {"properties": {"operation": {"enum": ["LOOKUP", "EXPLAIN", "COMPARE", "AGGREGATE", "AUDIT", "CODE_TRACE"]}}}},
+    {"if": {"properties": {"status": {"const": "UNKNOWN"}}}, "then": {"properties": {"operation": {"const": "UNKNOWN"}}}},
+    {"if": {"properties": {"status": {"const": "CLARIFICATION_REQUIRED"}}}, "then": {"required": ["clarification"], "properties": {"operation": {"const": "CLARIFY"}, "clarification": {"type": "string", "minLength": 1}}}},
+    {"if": {"properties": {"operation": {"const": "AGGREGATE"}}}, "then": {"required": ["aggregate"], "properties": {"aggregate": {"type": "object"}}}}
+  ]
+}

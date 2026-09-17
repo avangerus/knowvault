@@ -1,0 +1,33 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-search-denial-admitted-and-audited",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.search.denial-admitted-and-audited",
+  "control_id": "acceptance.r3a1.search.denial-admitted-and-audited",
+  "description": "R3a-1 Outcome 2 negative control for the canonical `knowvault_search` workspace tool: a call by a principal without the workspace right must answer the existing content-free denial (no hit content, no structuredContent, no workspace-id echo) and must record admission before data and its classed denial outcome through the same evidence-search boundary the production viewer implements. internal/platform/workspaceapi/mcp_search.go's mcpSearchToolCall dispatches the authorized EvidenceSearch and then maps its error to the content-free -32004 `workspace documents not found`. Weakening the denial guard `if err != nil` to `if err == nil` (keeping the same `writeMCPError`/`return` block verbatim so the mutated file still reads `err` and keeps its brace balance) makes a denied non-member call fall through to the success projection with an empty result page and `isError: false` instead of the existing -32004 refusal. Weakening the denial mapping from `-32004`/`workspace documents not found` to the generic `-32000`/`service unavailable` replaces the existing content-free denial with the wrong refusal. Both mutants compile and are killed behaviourally by internal/platform/workspaceapi/mcp_search_test.go TestMCPKnowvaultSearchDenialAdmittedAndAudited, which requires the -32004 refusal with no result member, no leaked hit content or workspace id and the `admission,denied:WORKSPACE_DENIED` evidence-search order.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPKnowvaultSearchDenialAdmittedAndAudited",
+  "mutations": [
+    {
+      "id": "r3a1-search-denial-guard-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_search.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}",
+      "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")\n\t\treturn\n\t}"
+    },
+    {
+      "id": "r3a1-search-denial-mapping-weakened-to-service-unavailable",
+      "target": "internal/platform/workspaceapi/mcp_search.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace documents not found\")",
+      "new": "\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a `knowvault_search` call by a principal without the workspace right resolves the requested workspace through the injected EvidenceSearch (in production the *evidence.Viewer, whose SearchFragments returns one content-free ErrNotFound for a non-member, unknown or foreign workspace), so mcpSearchToolCall emits the existing content-free -32004 `workspace documents not found` with no `results`, no `structuredContent` and no echo of the requested workspace id. The denied membership read is journalled through the shared R1 admission-before-data mechanism with the closed WORKSPACE_DENIED class (TestMCPKnowvaultSearchDenialAdmittedAndAudited asserts the `admission,denied:WORKSPACE_DENIED` evidence-search order).",
+  "mutant_meaning": "With the denial guard weakened to `if err == nil` a denied/foreign call skips the refusal and falls through to the success projection, which carries an empty `results` list, the page metadata and `isError: false` instead of the existing -32004 content-free denial; with the denial mapping weakened to -32000 the same denial is answered with the generic service-unavailable refusal instead of the existing content-free -32004. Both mutated files still read `err` and keep the -32004 branch referenced, so internal/platform/workspaceapi compiles and the failure is the behavioural TestMCPKnowvaultSearchDenialAdmittedAndAudited assertion (a denied `knowvault_search` call must return the existing denial and no content), not a build failure; each mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes these cases from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.search.denial-admitted-and-audited`; the identical cases are committed both here and in the registry so the proof is pinned to the product guard."
+}

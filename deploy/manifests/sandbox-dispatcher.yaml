@@ -1,0 +1,76 @@
+apiVersion: knowvault.io/v1
+kind: SandboxDispatcherDeployment
+metadata:
+  name: knowvault-sandbox-dispatcher
+spec:
+  lifecycle: CONTRACT_ONLY
+  activation: EXTERNAL_ACCEPTANCE_REQUIRED
+  binary: knowvault-sandbox-dispatcher
+  protocol: DISPATCHER_V2
+  startup_environment:
+    KNOWVAULT_DISPATCHER_ROOT_DIR: /run/knowvault/sandbox
+    KNOWVAULT_DISPATCHER_SUBMIT_SOCKET: unix:///run/knowvault/sandbox/submit/dispatcher.sock
+    KNOWVAULT_DISPATCHER_HANDOFF_SOCKET: unix:///run/knowvault/sandbox/supervisor/handoff.sock
+    KNOWVAULT_DISPATCHER_OFFICE_REGISTER_SOCKET: unix:///run/knowvault/sandbox/office/register.sock
+    KNOWVAULT_DISPATCHER_PDF_REGISTER_SOCKET: unix:///run/knowvault/sandbox/pdf/register.sock
+    KNOWVAULT_DISPATCHER_SUPERVISOR_UID: "0"
+    KNOWVAULT_DISPATCHER_SUPERVISOR_GID: "0"
+    KNOWVAULT_DISPATCHER_SUBMITTER_UID: "65530"
+    KNOWVAULT_DISPATCHER_SUBMITTER_GID: "65530"
+    KNOWVAULT_DISPATCHER_OFFICE_WORKER_UID: "65532"
+    KNOWVAULT_DISPATCHER_OFFICE_WORKER_GID: "65532"
+    KNOWVAULT_DISPATCHER_PDF_WORKER_UID: "65533"
+    KNOWVAULT_DISPATCHER_PDF_WORKER_GID: "65533"
+    KNOWVAULT_DISPATCHER_MAX_PAYLOAD_BYTES: "67108864"
+    KNOWVAULT_DISPATCHER_FRAME_TIMEOUT_MS: "5000"
+  capabilities:
+    creates_containers: false
+    container_runtime_access: false
+    database_access: false
+    secret_access: false
+    worker_input_direction: PULL_ONLY
+  registration:
+    socket_cardinality: ONE_PER_PARSER_ROLE
+    parser_type_binding: SOCKET_PROPERTY
+  role_sockets:
+    submit:
+      path: /run/knowvault/sandbox/submit/dispatcher.sock
+      owner_uid: 65530
+      owner_gid: 65530
+      mode: "0600"
+      mount_cardinality: EXACTLY_ONE_CONSUMER
+    supervisor_handoff:
+      path: /run/knowvault/sandbox/supervisor/handoff.sock
+      owner_uid: 0
+      owner_gid: 0
+      mode: "0600"
+      mount_cardinality: EXACTLY_ONE_CONSUMER
+    register_office:
+      path: /run/knowvault/sandbox/office/register.sock
+      owner_uid: 65532
+      owner_gid: 65532
+      mode: "0600"
+      mount_cardinality: EXACTLY_ONE_CONSUMER
+    register_pdf:
+      path: /run/knowvault/sandbox/pdf/register.sock
+      owner_uid: 65533
+      owner_gid: 65533
+      mode: "0600"
+      mount_cardinality: EXACTLY_ONE_CONSUMER
+  peer_credentials:
+    source: SO_PEERCRED
+    exact_uid_gid_required: true
+    role_uids_pairwise_distinct: true
+  lease:
+    unit: ONE_DOCUMENT
+    handoff_before_transfer: RETRY
+    handoff_after_transfer: QUARANTINE
+    confirmation: EXPLICIT_REQUIRED
+  termination:
+    supervisor: REQUIRED
+    namespace: KERNEL
+    deadline: HARD
+    descendant_cleanup: REQUIRED
+  limits:
+    source: KERNEL_OBSERVATION
+    identity_binding: REQUIRED

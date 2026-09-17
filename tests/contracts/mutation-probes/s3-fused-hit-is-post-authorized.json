@@ -1,0 +1,33 @@
+{
+  "probe_version": "1.0",
+  "name": "s3-fused-hit-is-post-authorized",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.search.stale-index-postauthorization",
+  "control_id": "acceptance.search.stale-index-postauthorization",
+  "description": "S3 Outcome 2 (SRCH-002): every fragment that survives fusion is re-resolved against live PostgreSQL state before it can be returned, so a candidate the external index still holds cannot enter an answer on the strength of what the index believed when it was written. internal/retrieval/workspacesearch.go drops a fused hit that app.evidence_fragment_readable no longer admits. Short-circuiting that check (the weakening) makes the search trust the index: a workspace whose grant was revoked after indexing keeps receiving its own passages, because the vectors and the lexical rows are still there. TestS3HybridWorkspaceSearchNegativeControls revokes the confirmation through the production authority runtime after indexing and asserts every mode returns nothing while the index still holds the documents, so it kills the mutant.",
+  "harness": "POSTGRES_INTEGRATION",
+  "test_package": "./tests/integration/postgres",
+  "test_name": "TestS3HybridWorkspaceSearchNegativeControls",
+  "mutations": [
+    {
+      "id": "s3-fused-hit-trusts-the-index",
+      "target": "internal/retrieval/workspacesearch.go",
+      "kind": "GO_RETRIEVAL_POSTAUTHORIZATION_WEAKENING",
+      "expected": "RED",
+      "old": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; !authorizedNow {",
+      "new": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; false && !authorizedNow {"
+    },
+    {
+      "id": "s3-fused-hit-postauthorization-boundary",
+      "target": "internal/retrieval/workspacesearch.go",
+      "kind": "GO_SEMANTIC_PRESERVING",
+      "expected": "GREEN",
+      "old": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; !authorizedNow {",
+      "new": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; authorizedNow != true {"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a revoked grant empties the lexical, vector and hybrid modes even though the indexed documents and their vectors are untouched.",
+  "mutant_meaning": "With the live-authorization branch short-circuited the revoked workspace keeps receiving hits from the still-populated index, so the revocation control fails: exactly the declared RED negative control (a stale index must never authorize a hit), so the mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the POSTGRES_INTEGRATION harness for the invariant entry `acceptance.search.stale-index-postauthorization`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

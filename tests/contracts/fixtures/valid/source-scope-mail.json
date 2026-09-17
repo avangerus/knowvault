@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.2",
+  "source_scope_id": "scope_mail_alpha",
+  "revision": 1,
+  "connection_id": "conn_mail",
+  "connection_revision": 1,
+  "source_type": "MAIL",
+  "discovered_scope_id": "discovered_mail_alpha_project_r1",
+  "discovered_identity_digest": "hmac-sha256:k1:accaae9ea0a529cb8f71dc37789275037d7f37317ee17805b6f7968d89803e44",
+  "access_mode": "WORKSPACE_MANAGED",
+  "scope_config": {
+    "mailbox_id": "mailbox-alpha",
+    "folder_or_label_ids": ["project-alpha", "inbox"],
+    "from_date": "2026-01-01T00:00:00Z",
+    "include_attachments": true,
+    "max_message_bytes": 52428800,
+    "max_attachment_bytes": 104857600,
+    "body_preference": "PLAIN_THEN_SANITIZED_HTML"
+  },
+  "sync_interval_seconds": 300,
+  "content_freshness_sla_seconds": 600,
+  "acl_freshness_sla_seconds": null,
+  "object_limit": 100000,
+  "byte_limit": 10737418240,
+  "created_by": "user_admin",
+  "created_at": "2026-07-14T10:00:00Z"
+}

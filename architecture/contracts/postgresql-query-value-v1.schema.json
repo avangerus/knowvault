@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/postgresql-query-value-v1.schema.json",
+  "title": "PostgreSQL Query Canonical Row Value v1",
+  "description": "JCS array of typed values in the immutable projection column order. This is a value contract, never a raw row/model input contract.",
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 256,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ordinal", "type_fingerprint", "logical_type", "value_tag", "value"],
+    "properties": {
+      "ordinal": { "type": "integer", "minimum": 1, "maximum": 256 },
+      "type_fingerprint": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "logical_type": {
+        "enum": ["BOOL", "INT", "NUMERIC", "UUID", "DATE", "TIMESTAMP", "TIMESTAMPTZ", "TEXT", "JSON", "JSONB"]
+      },
+      "value_tag": {
+        "enum": ["NULL", "BOOL", "INT", "NUMERIC", "UUID", "DATE", "TIMESTAMP_LOCAL", "TIMESTAMPTZ_UTC", "TEXT", "JSON", "JSONB"]
+      },
+      "value": {}
+    },
+    "allOf": [
+      {
+        "if": { "properties": { "value_tag": { "const": "NULL" } }, "required": ["value_tag"] },
+        "then": { "properties": { "value": { "type": "null" } } }
+      },
+      {
+        "if": { "properties": { "value_tag": { "enum": ["BOOL"] } }, "required": ["value_tag"] },
+        "then": { "properties": { "value": { "type": "boolean" } } }
+      },
+      {
+        "if": { "properties": { "value_tag": { "enum": ["INT", "NUMERIC", "UUID", "DATE", "TIMESTAMP_LOCAL", "TIMESTAMPTZ_UTC", "TEXT"] } }, "required": ["value_tag"] },
+        "then": { "properties": { "value": { "type": "string" } } }
+      },
+      {
+        "if": { "properties": { "value_tag": { "enum": ["JSON", "JSONB"] } }, "required": ["value_tag"] },
+        "then": { "required": ["value"] }
+      }
+    ],
+    "oneOf": [
+        { "properties": { "logical_type": { "const": "BOOL" }, "value_tag": { "enum": ["BOOL", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "INT" }, "value_tag": { "enum": ["INT", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "NUMERIC" }, "value_tag": { "enum": ["NUMERIC", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "UUID" }, "value_tag": { "enum": ["UUID", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "DATE" }, "value_tag": { "enum": ["DATE", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "TIMESTAMP" }, "value_tag": { "enum": ["TIMESTAMP_LOCAL", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "TIMESTAMPTZ" }, "value_tag": { "enum": ["TIMESTAMPTZ_UTC", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "TEXT" }, "value_tag": { "enum": ["TEXT", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "JSON" }, "value_tag": { "enum": ["JSON", "NULL"] } } },
+        { "properties": { "logical_type": { "const": "JSONB" }, "value_tag": { "enum": ["JSONB", "NULL"] } } }
+      ]
+  }
+}

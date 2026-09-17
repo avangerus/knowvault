@@ -1,0 +1,355 @@
+version: 2
+default: deny
+legal_review_required_for_changes: true
+version_lock: architecture/versions.json
+
+scope_policy:
+  application_dependency:
+    default: deny
+    rule: only allowlisted permissive licenses; copyleft-linked libraries require an accepted ADR and legal approval
+  shipped_oci_package:
+    default: deny
+    rule: every package in the image SBOM must have a concluded license; standalone GPL/LGPL OS packages require source-compliance evidence and legal approval
+  build_only_tool:
+    default: deny
+    rule: license must be recorded even when the tool is absent from production; copyleft tools require legal review before distributing the build image
+  model_artifact:
+    default: deny
+    rule: exact revision, weight hash, license text and AIBOM entry are mandatory
+
+allow:
+  - Apache-2.0
+  - MIT
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - PostgreSQL
+  - PSF-2.0
+  - ISC
+
+conditional_allow:
+  - expression: Artistic-2.0
+    scope: npm CLI bundled in the exact build-only Node image and prohibited as the project package manager
+    requires: ADR-0009-exact-builder-digest-sbom-and-no-production-copy
+  - expression: GPL-2.0-only WITH Classpath-exception-2.0
+    scope: pinned, jlink-stripped OpenJDK runtime used only by the isolated document-parser worker (Apache POI/PDFBox), ADR-0066 composed with ADR-0062
+    requires: accepted-license-adr-and-third-party-notice
+  - expression: MPL-2.0
+    scope: file-level copyleft dependency with no product-source modification
+    requires: explicit-legal-approval
+  - expression: GPL-or-LGPL-standalone-oci-package
+    scope: unmodified standalone operating-system package that is not linked into KnowVault
+    requires: explicit-legal-approval-source-offer-and-third-party-notice
+
+deny:
+  - AGPL-1.0-only
+  - AGPL-1.0-or-later
+  - AGPL-3.0-only
+  - AGPL-3.0-or-later
+  - GPL-2.0-only
+  - GPL-2.0-or-later
+  - GPL-3.0-only
+  - GPL-3.0-or-later
+  - SSPL-1.0
+  - BUSL-1.1
+  - Elastic-2.0
+  - Commons-Clause
+  - PolyForm-Noncommercial-1.0.0
+  - unknown
+  - custom-noncommercial
+  - research-only
+
+selected_components:
+  - name: Go
+    status: ACTIVE
+    role: application language and runtime
+    license: BSD-3-Clause
+    source: https://go.dev/LICENSE
+  - name: TypeScript
+    status: ACTIVE
+    role: UI language
+    license: Apache-2.0
+    source: https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt
+  - name: React
+    status: ACTIVE
+    role: UI library
+    license: MIT
+    source: https://github.com/facebook/react/blob/main/LICENSE
+  - name: React DOM
+    status: ACTIVE
+    role: UI rendering library
+    license: MIT
+    source: https://github.com/facebook/react/blob/main/LICENSE
+  - name: React TypeScript definitions
+    status: ACTIVE
+    role: build-only typechecking of React UI source
+    license: MIT
+    source: https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/LICENSE
+  - name: React DOM TypeScript definitions
+    status: ACTIVE
+    role: build-only typechecking of React DOM UI source
+    license: MIT
+    source: https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/LICENSE
+  - name: esbuild
+    status: ACTIVE
+    role: build-only static UI bundler
+    license: MIT
+    source: https://github.com/evanw/esbuild/blob/master/LICENSE.md
+  - name: esbuild platform packages
+    status: ACTIVE
+    role: exact optional native binaries for every supported esbuild platform in the all-platform lock
+    license: MIT
+    source: https://github.com/evanw/esbuild/blob/master/LICENSE.md
+  - name: Node.js
+    status: ACTIVE
+    role: build-only JavaScript runtime
+    license: MIT
+    source: https://github.com/nodejs/node/blob/main/LICENSE
+  - name: pnpm
+    status: ACTIVE
+    role: build-only package manager
+    license: MIT
+    source: https://github.com/pnpm/pnpm/blob/main/LICENSE
+  - name: Corepack
+    status: ACTIVE
+    role: bundled build-only activation of checksum-pinned pnpm
+    license: MIT
+    source: https://github.com/nodejs/corepack/blob/main/LICENSE.md
+  - name: npm CLI
+    status: ACTIVE
+    role: bundled in the pinned Node builder image but prohibited as the project package manager
+    license: Artistic-2.0
+    source: https://github.com/npm/cli/blob/latest/LICENSE
+  - name: Yarn Classic
+    status: ACTIVE
+    role: bundled in the pinned Node builder image but prohibited as the project package manager
+    license: BSD-2-Clause
+    source: https://github.com/yarnpkg/yarn/blob/master/LICENSE
+  - name: Ajv
+    status: ACTIVE
+    role: build-time JSON Schema 2020-12 and contract fixture validation
+    license: MIT
+    source: https://github.com/ajv-validator/ajv/blob/master/LICENSE
+  - name: ajv-formats
+    status: ACTIVE
+    role: build-time RFC date-time and URI format validation
+    license: MIT
+    source: https://github.com/ajv-validator/ajv-formats/blob/master/LICENSE
+  - name: fast-deep-equal
+    status: ACTIVE
+    role: transitive contract-test dependency of Ajv
+    license: MIT
+    source: https://github.com/epoberezkin/fast-deep-equal/blob/master/LICENSE
+  - name: fast-uri
+    status: ACTIVE
+    role: transitive contract-test URI implementation
+    license: BSD-3-Clause
+    source: https://github.com/fastify/fast-uri/blob/main/LICENSE
+  - name: json-schema-traverse
+    status: ACTIVE
+    role: transitive contract-test dependency of Ajv
+    license: MIT
+    source: https://github.com/epoberezkin/json-schema-traverse/blob/master/LICENSE
+  - name: require-from-string
+    status: ACTIVE
+    role: transitive contract-test dependency of Ajv
+    license: MIT
+    source: https://github.com/floatdrop/require-from-string/blob/master/license
+  - name: scheduler
+    status: ACTIVE
+    role: transitive React DOM scheduling runtime
+    license: MIT
+    source: https://github.com/facebook/react/blob/main/LICENSE
+  - name: csstype
+    status: ACTIVE
+    role: transitive build-only CSS type definitions for React UI
+    license: MIT
+    source: https://github.com/frenic/csstype/blob/master/LICENSE
+  - name: oapi-codegen
+    status: ACTIVE
+    role: build-only Go type and server interface generation from OpenAPI
+    license: Apache-2.0
+    source: https://github.com/oapi-codegen/oapi-codegen/blob/main/LICENSE
+  - name: pgx
+    status: ACTIVE
+    role: PostgreSQL driver
+    license: MIT
+    source: https://github.com/jackc/pgx/blob/master/LICENSE
+  - name: cloud.google.com/go/compute/metadata
+    status: ACTIVE
+    role: transitive OIDC runtime metadata helper
+    license: Apache-2.0
+    source: https://github.com/googleapis/google-cloud-go/blob/compute/metadata/v0.3.0/LICENSE
+  - name: go-oidc
+    status: ACTIVE
+    role: sole OIDC ID-token and JWK verification library
+    license: Apache-2.0
+    source: https://github.com/coreos/go-oidc/blob/v3.20.0/LICENSE
+  - name: go-jose
+    status: ACTIVE
+    role: transitive JOSE and JWK primitives used by go-oidc
+    license: Apache-2.0
+    source: https://github.com/go-jose/go-jose/blob/v4.1.4/LICENSE
+  - name: golang.org/x/oauth2
+    status: ACTIVE
+    role: authorization-code exchange and PKCE client support
+    license: BSD-3-Clause
+    source: https://github.com/golang/oauth2/blob/v0.36.0/LICENSE
+  - name: pgpassfile
+    status: ACTIVE
+    role: transitive PostgreSQL password-file parser for pgx configuration
+    license: MIT
+    source: https://github.com/jackc/pgpassfile/blob/master/LICENSE
+  - name: pgservicefile
+    status: ACTIVE
+    role: transitive PostgreSQL service-file parser for pgx configuration
+    license: MIT
+    source: https://github.com/jackc/pgservicefile/blob/master/LICENSE
+  - name: puddle
+    status: ACTIVE
+    role: transitive bounded connection pool used by pgxpool
+    license: MIT
+    source: https://github.com/jackc/puddle/blob/master/LICENSE
+  - name: golang.org/x/sync
+    status: ACTIVE
+    role: transitive concurrency primitives used by pgxpool
+    license: BSD-3-Clause
+    source: https://cs.opensource.google/go/x/sync/+/master:LICENSE
+  - name: golang.org/x/sys
+    status: ACTIVE
+    role: Linux-only pidfd, SCM_RIGHTS and cgroup-v2 supervision primitives for the one-shot parser dispatcher
+    license: BSD-3-Clause
+    source: https://cs.opensource.google/go/x/sys/+/refs/tags/v0.47.0:LICENSE
+  - name: golang.org/x/text
+    status: ACTIVE
+    role: full Unicode NFC normalization in canonical text
+    license: BSD-3-Clause
+    source: https://cs.opensource.google/go/x/text/+/master:LICENSE
+  - name: golang.org/x/net
+    status: ACTIVE
+    role: golang.org/x/net/html tree parsing for the safe folder-HTML extractor (html-v1)
+    license: BSD-3-Clause
+    source: https://cs.opensource.google/go/x/net/+/refs/tags/v0.57.0:LICENSE
+  - name: sqlc
+    status: ACTIVE
+    role: typed SQL code generation
+    license: MIT
+    source: https://github.com/sqlc-dev/sqlc/blob/main/LICENSE
+  - name: Syft
+    status: ACTIVE
+    role: build and release SBOM generation
+    license: Apache-2.0
+    source: https://github.com/anchore/syft/blob/main/LICENSE
+  - name: Grype
+    status: ACTIVE
+    role: build and release vulnerability scanning
+    license: Apache-2.0
+    source: https://github.com/anchore/grype/blob/main/LICENSE
+  - name: actions/checkout
+    status: ACTIVE
+    role: pinned GitHub CI checkout action
+    license: MIT
+    source: https://github.com/actions/checkout/blob/main/LICENSE
+  - name: PostgreSQL
+    status: ACTIVE
+    role: metadata, RLS, jobs, outbox, audit
+    license: PostgreSQL
+    source: https://www.postgresql.org/about/licence/
+  - name: OpenSearch
+    status: ACTIVE
+    role: lexical and vector search
+    license: Apache-2.0
+    source: https://github.com/opensearch-project/OpenSearch/blob/main/LICENSE.txt
+  - name: libc6 (isolated parser runtime)
+    status: DEFERRED
+    role: amd64 native loader closure for the scratch-based jlink document-parser worker (ADR-0066)
+    license: LGPL-2.1-or-later
+    source: https://launchpad.net/ubuntu/+source/glibc/2.39-0ubuntu8.8
+  - name: Apache POI
+    status: DEFERRED
+    role: OOXML (DOCX/PPTX/XLSX) structure extraction in the isolated document-parser worker (ADR-0062)
+    license: Apache-2.0
+    source: https://github.com/apache/poi/blob/trunk/legal/LICENSE
+  - name: Apache PDFBox
+    status: DEFERRED
+    role: text-PDF extraction and deterministic page render in the isolated document-parser worker (ADR-0062, ADR-0063)
+    license: Apache-2.0
+    source: https://github.com/apache/pdfbox/blob/trunk/LICENSE.txt
+  - name: Tesseract OCR
+    status: DEFERRED
+    role: OCR engine in the isolated OCR worker (ADR-0063)
+    license: Apache-2.0
+    source: https://github.com/tesseract-ocr/tesseract/blob/main/LICENSE
+  - name: tessdata (Tesseract trained data)
+    status: DEFERRED
+    role: OCR model artifact for the isolated OCR worker (ADR-0063)
+    license: Apache-2.0
+    source: https://github.com/tesseract-ocr/tessdata/blob/main/LICENSE
+  - name: Leptonica
+    status: DEFERRED
+    role: image-processing library linked by the Tesseract OCR worker (ADR-0063)
+    license: BSD-2-Clause
+    source: https://github.com/DanBloomberg/leptonica/blob/master/leptonica-license.txt
+  - name: vLLM
+    status: DEFERRED
+    role: model serving runtime
+    license: Apache-2.0
+    source: https://github.com/vllm-project/vllm/blob/main/LICENSE
+  - name: Qwen3-Embedding-0.6B
+    status: DEFERRED
+    role: embeddings
+    license: Apache-2.0
+    source: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+  - name: Qwen3-Reranker-0.6B
+    status: DEFERRED
+    role: reranking
+    license: Apache-2.0
+    source: https://huggingface.co/Qwen/Qwen3-Reranker-0.6B
+  - name: Qwen3-14B
+    status: DEFERRED
+    role: answer generation and citation verification
+    license: Apache-2.0
+    source: https://huggingface.co/Qwen/Qwen3-14B/blob/main/LICENSE
+  - name: OpenTelemetry
+    status: DEFERRED
+    role: telemetry
+    license: Apache-2.0
+    source: https://github.com/open-telemetry/opentelemetry-collector/blob/main/LICENSE
+explicitly_not_selected:
+  - name: MinIO
+    reason: AGPL and no required object-storage role in 1.0
+  - name: HashiCorp Vault
+    reason: BSL; use customer-provided secret/KMS integration
+  - name: Grafana
+    reason: AGPL; export metrics to customer monitoring stack
+  - name: Prometheus
+    reason: only protocol-compatible metrics export is planned; no Prometheus binary or library is shipped in 1.0
+  - name: Redis
+    reason: no cache or separate queue is required in 1.0
+  - name: Qdrant
+    reason: OpenSearch already owns lexical and vector retrieval
+  - name: Temporal
+    reason: PostgreSQL leases and outbox are sufficient for 1.0
+
+release_artifacts:
+  required:
+    - sbom.spdx.json per container
+    - aibom.json with model id, exact revision, weight hash, license
+    - THIRD_PARTY_NOTICES.md
+    - image-lock.json with immutable digests
+    - package-level concluded licenses for every OCI layer
+    - source/compliance bundle for every conditionally allowed copyleft package
+  forbidden:
+    - latest tags
+    - unpinned git dependencies
+    - runtime model downloads
+    - dependency with missing license metadata
+    - CA certificates and trust bundles supplied as KnowVault release artifacts
+
+container_rules:
+  - top-level project license never substitutes for package-level OCI SBOM review
+  - development and production image references both require tag plus digest
+  - multiarch index digest is the architecture lock; each offline release additionally records selected platform manifest and layer blob digests
+  - build images are inventoried even though they are absent from production
+  - scratch application images remain subject to SBOM for the binary; KnowVault images and build contexts must not contain a CA bundle
+  - database-ca.pem and oidc-ca.pem are customer-supplied external runtime artifacts, are never shipped by KnowVault, and remain the customer's licensing responsibility
+  - deferred Tika, PaddleOCR and vLLM images block release until exact digest and transitive license review are recorded

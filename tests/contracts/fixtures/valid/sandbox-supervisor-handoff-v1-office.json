@@ -1,0 +1,17 @@
+{
+  "schema_version": "sandbox-supervisor-handoff-v1",
+  "handoff_id": "h_7Jp3M8tQ2vN6xR4kL9cD5sW1aF0gB8yZ",
+  "parser_type": "OFFICE",
+  "artifact_hash": "sha256:3b12599c3ada7db8174168fe0a4c685954e3068673ab1ad3e7ede63884428def",
+  "sandbox_profile_revision": "document-parser-sandbox-v2",
+  "observation_profile_revision": "office-obs-v1",
+  "pidfd_transport": "SCM_RIGHTS",
+  "pid_namespace_inode": "4026533001",
+  "cgroup_path": "/knowvault/parser/office/h_7Jp3M8tQ2vN6xR4kL9cD5sW1aF0gB8yZ",
+  "expected_worker_uid": 65532,
+  "expected_worker_gid": 65532,
+  "issued_at": "2026-08-28T12:00:00Z",
+  "expires_at": "2026-08-28T12:00:30Z",
+  "one_shot": true,
+  "max_leases": 1
+}

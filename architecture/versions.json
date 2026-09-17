@@ -1,0 +1,667 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "lock_version": 1,
+  "status": "accepted-baseline",
+  "observed_at": "2026-07-15T00:00:00+03:00",
+  "policy": {
+    "container_references": "tag-and-multiarch-index-digest-required-in-development-and-production",
+    "runtime_latest_tags": false,
+    "runtime_downloads": false,
+    "node_in_production": false,
+    "go_toolchain_auto_download": false,
+    "release_requires_transitive_sbom_and_license_gate": true,
+    "offline_bundle_requires_platform_manifest_and_blob_digests": true
+  },
+  "toolchains": {
+    "go": {
+      "version": "1.26.5",
+      "go_directive": "1.26.0",
+      "toolchain_directive": "go1.26.5",
+      "ci_environment": {
+        "GOTOOLCHAIN": "local",
+        "GOEXPERIMENT": "jsonv2"
+      },
+      "build_image": "golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669",
+      "license": "BSD-3-Clause"
+    },
+    "node": {
+      "version": "24.18.0",
+      "scope": "build-only",
+      "build_image": "node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+      "license": "MIT"
+    },
+    "pnpm": {
+      "version": "11.4.0",
+      "activation": "corepack-with-pinned-version-and-lockfile",
+      "dist_integrity": "sha512-8P68fjdVKrSFSUqRQkGzOOCzWAuT1UzjHwCTMBWICGMSkDihtK5OQUoO5jrDW/IRl+mQFyxKaCVkULVjYxCWjw==",
+      "license": "MIT"
+    },
+    "corepack_bundled": {
+      "version": "0.35.0",
+      "scope": "build-only-pnpm-activation",
+      "license": "MIT",
+      "rule": "only the packageManager field with pinned pnpm version and sha512 is accepted"
+    },
+    "npm_bundled": {
+      "version": "11.16.0",
+      "scope": "present-in-pinned-node-builder-but-not-used",
+      "license": "Artistic-2.0",
+      "rule": "npm is inventoried by the builder SBOM but must not install or execute project scripts"
+    },
+    "yarn_bundled": {
+      "version": "1.22.22",
+      "scope": "present-in-pinned-node-builder-but-not-used",
+      "license": "BSD-2-Clause",
+      "rule": "Yarn is inventoried by the builder SBOM but must not install or execute project scripts"
+    }
+  },
+  "frontend": {
+    "react": {
+      "version": "19.2.6",
+      "dist_integrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+      "license": "MIT"
+    },
+    "react_dom": {
+      "version": "19.2.6",
+      "dist_integrity": "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==",
+      "license": "MIT"
+    },
+    "react_types": {
+      "package": "@types/react",
+      "version": "19.2.7",
+      "scope": "build-only-static-typechecking",
+      "dist_integrity": "sha512-MWtvHrGZLFttgeEj28VXHxpmwYbor/ATPYbBfSFZEIRK0ecCFLl2Qo55z52Hss+UV9CRN7trSeq1zbgx7YDWWg==",
+      "license": "MIT"
+    },
+    "react_dom_types": {
+      "package": "@types/react-dom",
+      "version": "19.2.3",
+      "scope": "build-only-static-typechecking",
+      "dist_integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+      "license": "MIT"
+    },
+    "typescript": {
+      "version": "6.0.3",
+      "dist_integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+      "license": "Apache-2.0"
+    },
+    "esbuild": {
+      "version": "0.28.1",
+      "scope": "build-only-static-bundling",
+      "dist_integrity": "sha512-HrJrvZv5ayxBzPfwphOoNzkzOIIlifzk0KJrGK2c8R4+LKpMtpYLQeUdjnwjWv/LZlkH2laZk+4w78pi99D4Vw==",
+      "license": "MIT"
+    },
+    "ajv": {
+      "version": "8.20.0",
+      "scope": "build-and-contract-test-only",
+      "dist_integrity": "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==",
+      "license": "MIT"
+    },
+    "ajv_formats": {
+      "version": "3.0.1",
+      "scope": "build-and-contract-test-only",
+      "dist_integrity": "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==",
+      "license": "MIT"
+    }
+  },
+  "node_transitive_dependencies": {
+    "fast_deep_equal": {
+      "package": "fast-deep-equal",
+      "version": "3.1.3",
+      "dist_integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+      "license": "MIT"
+    },
+    "fast_uri": {
+      "package": "fast-uri",
+      "version": "3.1.3",
+      "dist_integrity": "sha512-i70LwGWUduXqzicKXWshooq+sWL1K3WUU5rKZNG/0i3a1OSoX3HqhH5WbWwTmqWfor4urUakGPiRQcleRZTwOg==",
+      "license": "BSD-3-Clause"
+    },
+    "json_schema_traverse": {
+      "package": "json-schema-traverse",
+      "version": "1.0.0",
+      "dist_integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+      "license": "MIT"
+    },
+    "require_from_string": {
+      "package": "require-from-string",
+      "version": "2.0.2",
+      "dist_integrity": "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==",
+      "license": "MIT"
+    },
+    "esbuild_aix_ppc64": {
+      "package": "@esbuild/aix-ppc64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==",
+      "license": "MIT"
+    },
+    "esbuild_android_arm": {
+      "package": "@esbuild/android-arm",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-0k2F129Xdio1TdJfzJ8sy1Q47vUD2NnwdhiAf7drUN1EBTfPf4hsFCtmMgu/6m8JSzsBrlmVjudMBQqOfG8usQ==",
+      "license": "MIT"
+    },
+    "esbuild_android_arm64": {
+      "package": "@esbuild/android-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-34EGEbCIAgosYz6goLcopX6Mo7NyGv9tfwEM2/7Ce2VcVRk568iSvniGWcUXIy7wEDR1wzolcxcriFVrWYcwBg==",
+      "license": "MIT"
+    },
+    "esbuild_android_x64": {
+      "package": "@esbuild/android-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-dbwY7ltSMDWsRatcRpCnES4F+im88OCUgGZjy52shC7GqHRE/cYlxNbB4Z4UpJswpcc4Qxd2oE/ufM0p61IKng==",
+      "license": "MIT"
+    },
+    "esbuild_darwin_arm64": {
+      "package": "@esbuild/darwin-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-TZbWkQY7kvTAXbXUT7uVACR5cMHsDiSz9z7ZKAX/RTq/WJEk3QyRr0wZpNhBDX+/0CtdqUIJlOiodQcta6tY3Q==",
+      "license": "MIT"
+    },
+    "esbuild_darwin_x64": {
+      "package": "@esbuild/darwin-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-zfdzgK9ACBNZLI/CyHTOx81SyNbM6YXn7rxSgX97VjyiPl9W1i4Ka4fgKECEoFCKGpvBj5qArWIGgQjOwkgskQ==",
+      "license": "MIT"
+    },
+    "esbuild_freebsd_arm64": {
+      "package": "@esbuild/freebsd-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-wG2EA8ENdEI0qhkSZMjfqrdY+ziCYCPMmtZjjIwOmXFjmyzEHn+UUxk5of+SYsjtfs3VpnlC7QLzSI5hY/rOAw==",
+      "license": "MIT"
+    },
+    "esbuild_freebsd_x64": {
+      "package": "@esbuild/freebsd-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-i7dZ9vQgnvSCzi/rYCXNgtF/U+eKZNJBzu3eTQbRgHnM7tNSizLOkRFAl3qzVc/Op/u5YkHHa4pf/3DOYHthLQ==",
+      "license": "MIT"
+    },
+    "esbuild_linux_arm": {
+      "package": "@esbuild/linux-arm",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-qVXBOHQS+d5Y722GwJzJUtOLlX7km3CraOaGormF1pDtPd2C/l1SHRPgjLunLGe51Sh5YYWKMFDyV4SxgMQYTQ==",
+      "license": "MIT"
+    },
+    "esbuild_linux_arm64": {
+      "package": "@esbuild/linux-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-yHs+0uc8+nvEAfAfxrWQKK5peSNzBc4PegcMO0EJ2hT71uA7vB8Ihg2e77R2P7SG5uYjPbHlLLmve4LLLRCf0g==",
+      "license": "MIT"
+    },
+    "esbuild_linux_ia32": {
+      "package": "@esbuild/linux-ia32",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-d1z4ZuP0ajrfz/FhGT4vv278rX8KnPPJx8i5+AtK7TYbx9Le9F1hyzurZpkEyjkGa9dUGhQow4C1NmeGvqxN2w==",
+      "license": "MIT"
+    },
+    "esbuild_linux_loong64": {
+      "package": "@esbuild/linux-loong64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-M5sRjUVZrkm1OAPR3dlOYzNmN+loZKGVi1VUQGrwuqLcbR6qeAz+famMhjASeH3YVKvZz+zT1jlh/keC3Rj/lg==",
+      "license": "MIT"
+    },
+    "esbuild_linux_mips64el": {
+      "package": "@esbuild/linux-mips64el",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-mRObBZeHh2OxcBFPWE/FjylkRgZdYuiTR3vaTozquCGOH14iP9oN4x4Ge81CoIDYQrXmIxpFumJBu5MtZpnQJQ==",
+      "license": "MIT"
+    },
+    "esbuild_linux_ppc64": {
+      "package": "@esbuild/linux-ppc64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-slScBsMAb3GFDcdrCgLwZtPYRoH2H/youv10QiZyRjmsP48fznoveWytSgCI/R0ZcUgpc0ZhIUEx6LHts8yrfQ==",
+      "license": "MIT"
+    },
+    "esbuild_linux_riscv64": {
+      "package": "@esbuild/linux-riscv64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-kw0owk1o0GFETUJyW0jc0G4Yzs0BHZn0JDZ8JRT088vjJYX777BAs1fDGxAC+q831qOs2DTC96mNsG2opdfyyQ==",
+      "license": "MIT"
+    },
+    "esbuild_linux_s390x": {
+      "package": "@esbuild/linux-s390x",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-/lAIjX8aYFRByhh6L5rYtPEDRqa9de/4V/juOXcta5frjvzXO4/sqEtyytse0g3zZFuWu5cDN0MkLz2qRDD2Ag==",
+      "license": "MIT"
+    },
+    "esbuild_linux_x64": {
+      "package": "@esbuild/linux-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-u/anNYF2mmVOEDwLtnQ1wOr3EZ9sTNGLWrsYGYwHWzGA3Si84IOkHXlbWTD1NB+9/1lcnweYKO54uhxZydNzfA==",
+      "license": "MIT"
+    },
+    "esbuild_netbsd_arm64": {
+      "package": "@esbuild/netbsd-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-oks0DYbLwWMmaakTsCb+zL4E+aHRVLom9IJZOAthMQEPiQmydXHkziYEsGYRx0uNV/IjEKGAV941JzH02pflqw==",
+      "license": "MIT"
+    },
+    "esbuild_netbsd_x64": {
+      "package": "@esbuild/netbsd-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-aeL6lAnN89Hz43Mlh1G8ARasbuoYvSITDEx0tHh5b7jJnHcssqgjy9Yx430GDpmCa6OyrKoS0aNRjKundRizGg==",
+      "license": "MIT"
+    },
+    "esbuild_openbsd_arm64": {
+      "package": "@esbuild/openbsd-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-MEFJe5C3R8pwXdZ5Y21oo6m7ePiS0d9pWucn99O/wvyJZChoIQKrQDxKrGeW8F5+T0okTHesAmDeiHDTIq0V/Q==",
+      "license": "MIT"
+    },
+    "esbuild_openbsd_x64": {
+      "package": "@esbuild/openbsd-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-i/ZLIOafE0Z8cI/XANJAixoJL/uRAoS2xOA3rb0xN+KK0K177cMAsQYkzHtBrtMXAKuAc7HGgcWiZ/sRC1Nxgw==",
+      "license": "MIT"
+    },
+    "esbuild_openharmony_arm64": {
+      "package": "@esbuild/openharmony-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-ge+Z7EXFNt2BO1oAMsVpiQ8EwndV9i1xXerAeTIK7AtPs3bKFXQM7nlRxDSIUIMeueR1CNXxqztLzdNeReKBJg==",
+      "license": "MIT"
+    },
+    "esbuild_sunos_x64": {
+      "package": "@esbuild/sunos-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-BEjgtECkL3vY+SaSQ6nzVfiALUeFxpawyp8Jmf5PtYhf1Ug40N1h/hxlhts+f1FvSvarEigdxS3BlSMI2PJLcQ==",
+      "license": "MIT"
+    },
+    "esbuild_win32_arm64": {
+      "package": "@esbuild/win32-arm64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-lCv9eK/H6ZJWbE7bh2nw54CZ9M2nupBxJcTsdk/QQnWkdSjKGuxmmH8/GWrlT1eMmZfn4dGcCjRte397WqfQXA==",
+      "license": "MIT"
+    },
+    "esbuild_win32_ia32": {
+      "package": "@esbuild/win32-ia32",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-zvb/mB2bSCoJOpoCBgYKKpX6YM6mJBlBUVUtVj41DlZJVEB6/0CKlRYxP5wWl1C1ILiCoAU5wZZ4q1P3qeS6Eg==",
+      "license": "MIT"
+    },
+    "esbuild_win32_x64": {
+      "package": "@esbuild/win32-x64",
+      "version": "0.28.1",
+      "dist_integrity": "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A==",
+      "license": "MIT"
+    },
+    "scheduler": {
+      "package": "scheduler",
+      "version": "0.27.0",
+      "dist_integrity": "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==",
+      "license": "MIT"
+    },
+    "csstype": {
+      "package": "csstype",
+      "version": "3.2.3",
+      "dist_integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+      "license": "MIT"
+    }
+  },
+  "go_dependencies": {
+    "google_compute_metadata": {
+      "module": "cloud.google.com/go/compute/metadata",
+      "version": "v0.3.0",
+      "module_sum": "h1:Tz+eQXMEqDIKRsmY3cHTL6FVaynIjX2QxYC4trgAKZc=",
+      "go_mod_sum": "h1:zFmK7XCadkQkj6TtorcaGlCW1hT1fIilQDwofLpJ20k=",
+      "source_commit": "b952f41fc832fbe5ed74f47ae0e6d6f2e93448e0",
+      "license": "Apache-2.0"
+    },
+    "oidc": {
+      "module": "github.com/coreos/go-oidc/v3",
+      "version": "v3.20.0",
+      "module_sum": "h1:EtE0WIBHk03N+DqGkY4+UONzzZHk7amKt6IyNd7OsZE=",
+      "go_mod_sum": "h1:DYCf24+ncYi+XkIH97GY1+dqoRlbaSI26KVTCI9SrY4=",
+      "source_commit": "75dfa5c0626c48e0ad8b761fdd9e1dc51cb8498a",
+      "license": "Apache-2.0"
+    },
+    "go_jose": {
+      "module": "github.com/go-jose/go-jose/v4",
+      "version": "v4.1.4",
+      "module_sum": "h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=",
+      "go_mod_sum": "h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=",
+      "source_commit": "0e59876635f3dbf46d7b5e97b52bb75a3f96e7d9",
+      "license": "Apache-2.0"
+    },
+    "pgx": {
+      "module": "github.com/jackc/pgx/v5",
+      "version": "v5.10.0",
+      "module_sum": "h1:VhSvgU2jSli8o3AqIEOTJr7rZwAEUVo4E4XhR94Zfr0=",
+      "go_mod_sum": "h1:mal1tBGAFfLHvZzaYh77YS/eC6IX9OWbRV1QIIM0Jn4=",
+      "source_commit": "7293fb11125be0373a92f716683f2d494f6fd4b0",
+      "license": "MIT"
+    },
+    "pgpassfile": {
+      "module": "github.com/jackc/pgpassfile",
+      "version": "v1.0.0",
+      "module_sum": "h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=",
+      "go_mod_sum": "h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=",
+      "source_commit": "99d8e8e28945ffceaf75b0299fcb2bb656b8a683",
+      "license": "MIT"
+    },
+    "pgservicefile": {
+      "module": "github.com/jackc/pgservicefile",
+      "version": "v0.0.0-20240606120523-5a60cdf6a761",
+      "module_sum": "h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=",
+      "go_mod_sum": "h1:5TJZWKEWniPve33vlWYSoGYefn3gLQRzjfDlhSJ9ZKM=",
+      "source_commit": "5a60cdf6a76120dc3d5152b95f3b5fd8aa7cc9eb",
+      "license": "MIT"
+    },
+    "puddle": {
+      "module": "github.com/jackc/puddle/v2",
+      "version": "v2.2.2",
+      "module_sum": "h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo=",
+      "go_mod_sum": "h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=",
+      "source_commit": "bd09d14bd4018b6d65a9d7770e2f3ddf8b00af1c",
+      "license": "MIT"
+    },
+    "x_oauth2": {
+      "module": "golang.org/x/oauth2",
+      "version": "v0.36.0",
+      "module_sum": "h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=",
+      "go_mod_sum": "h1:YDBUJMTkDnJS+A4BP4eZBjCqtokkg1hODuPjwiGPO7Q=",
+      "source_commit": "4d954e69a88d9e1ccb8439f8d5b6cbef230c4ef9",
+      "license": "BSD-3-Clause"
+    },
+    "x_sync": {
+      "module": "golang.org/x/sync",
+      "version": "v0.22.0",
+      "module_sum": "h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=",
+      "go_mod_sum": "h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=",
+      "source_commit": "1eb64d4bc0cde6da1bb8ebc7f178bb577508e5d0",
+      "license": "BSD-3-Clause"
+    },
+    "x_sys": {
+      "module": "golang.org/x/sys",
+      "version": "v0.47.0",
+      "module_sum": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+      "go_mod_sum": "h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=",
+      "source_commit": "9e7e939dcafac07e8ab4cffa6e5fc74908413f00",
+      "role": "Linux-only pidfd, SCM_RIGHTS and cgroup-v2 supervision primitives for the one-shot parser dispatcher",
+      "license": "BSD-3-Clause"
+    },
+    "x_text": {
+      "module": "golang.org/x/text",
+      "version": "v0.40.0",
+      "module_sum": "h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=",
+      "go_mod_sum": "h1:hpnzDAfGV753zIKo+wk3u1bVKCGPbrnF7+7LBF/UHVY=",
+      "source_commit": "724af9c35838492dcaacc1ac51a8a0187c994c54",
+      "role": "full Unicode NFC normalization for text-v1",
+      "license": "BSD-3-Clause"
+    },
+    "x_net": {
+      "module": "golang.org/x/net",
+      "version": "v0.57.0",
+      "module_sum": "h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=",
+      "go_mod_sum": "h1:KpXc8iv+r3XplLAG/f7Jsf9RPszJzdR0f58q9vGOuEU=",
+      "source_commit": "b8f09f6f062ceb4531b7af4bd17a5c8fe9c4b2b5",
+      "role": "golang.org/x/net/html tree parsing for the safe folder-HTML extractor (html-v1); stdlib-only import subset, html/charset deliberately unused so no x/text pull",
+      "license": "BSD-3-Clause"
+    }
+  },
+  "go_build_tools": {
+    "oapi_codegen": {
+      "module": "github.com/oapi-codegen/oapi-codegen/v2",
+      "version": "v2.7.2",
+      "module_sum": "h1:EKgVTwbZKQHZh8+ZnU+5TLVv1kedWZ2h0SRuFydoGio=",
+      "go_mod_sum": "h1:qzFy6iuobJw/hD1aRILee4G87/ShmhR0xYCwcUtZMCw=",
+      "source_commit": "c5590db43374a95d850bc78848bb34379e0153d7",
+      "scope": "build-only-code-generation",
+      "license": "Apache-2.0",
+      "rule": "module and transitive checksums must be committed; offline build uses a checksum-verified module-proxy archive or reviewed source bundle, never a Go vendor override"
+    },
+    "sqlc": {
+      "module": "github.com/sqlc-dev/sqlc",
+      "version": "v1.31.1",
+      "module_sum": "h1:+V+BjBJfFNPX/RFfL8eiZD9jk9lVJUEGGllWvnYNqbc=",
+      "go_mod_sum": "h1:6ZPww/Jd3G6MzJeW6NrqizjL+52vYNaaXP9yMeJ/Nao=",
+      "source_commit": "a95e91d70ad9e1181253c333a1cfdd75ae4b95a5",
+      "scope": "build-only-code-generation",
+      "license": "MIT",
+      "rule": "exact module and transitive checksums must be committed; offline build uses a checksum-verified module-proxy archive, reviewed source bundle or checksum-locked binary, never a Go vendor override"
+    },
+    "syft": {
+      "module": "github.com/anchore/syft",
+      "version": "v1.48.0",
+      "source_commit": "3e2bc6ed095f7ec1a415fb38cfe1c319e95dfed6",
+      "release_checksum_manifest_sha256": "0dd856e828c76a9c5a736a0d568a136b64acf0d9720b868547e2217e7bed5d61",
+      "image": "anchore/syft:v1.48.0@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c",
+      "image_digest": "sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c",
+      "scope": "build-and-release-sbom-generation",
+      "license": "Apache-2.0",
+      "rule": "offline bundle contains either this exact scanner image or a platform binary listed in the pinned upstream checksum manifest; CI verifies the selected identity before execution"
+    },
+    "grype": {
+      "module": "github.com/anchore/grype",
+      "version": "v0.116.0",
+      "source_commit": "3b014b00097d43933e5cce485e744db8289a406f",
+      "release_checksum_manifest_sha256": "c9cc93489491e6a2c9cd0e3382ddc1bf6b16f1ff8fc897cc0d00b270943517b6",
+      "image": "anchore/grype:v0.116.0@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
+      "image_digest": "sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
+      "scope": "build-and-release-vulnerability-scanning",
+      "license": "Apache-2.0",
+      "rule": "offline bundle contains either this exact scanner image or a platform binary listed in the pinned upstream checksum manifest; release evidence records the exact scanned OCI and artifact identities"
+    }
+  },
+  "ci_actions": {
+    "checkout": {
+      "repository": "actions/checkout",
+      "version": "v7.0.0",
+      "source_commit": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+      "license": "MIT",
+      "scope": "github-ci-only"
+    },
+    "powershell_probe_runner": {
+      "repository": "PowerShell/PowerShell",
+      "version": "v7.6.4",
+      "source_commit": "abeb8444d065feeccf80bda83eed5675a37719c1",
+      "release_artifact": "powershell_7.6.4-1.deb_amd64.deb",
+      "release_checksum_sha256": "e5688e0569568d48051c49d3e93504cde47af709cdaaabd9a8892bc676b3bdf3",
+      "license": "MIT",
+      "scope": "ci-probe-execution-only",
+      "rule": "installed inside the pinned CI Go builder from the exact release URL, verified by the pinned sha256 before the mutation runner executes the ADR-0071 dual-layer probes; it is never part of a product image, deployment or runtime"
+    }
+  },
+  "data_services": {
+    "postgresql": {
+      "version": "18.4",
+      "image": "postgres:18.4@sha256:b913fd5699b8bd23fa4b06d72ecdd939fad43b80fb8651bac06caa0e6d135cac",
+      "license": "PostgreSQL"
+    },
+    "opensearch": {
+      "version": "3.7.0",
+      "image": "opensearchproject/opensearch:3.7.0@sha256:123e6591a47b1d54686890551bdb35739c85193ecded381219fc9e059e18128f",
+      "license": "Apache-2.0"
+    },
+    "reverse_proxy": {
+      "version": "1.27.5",
+      "image": "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10",
+      "license": "BSD-2-Clause",
+      "scope": "deploy/compose one-compose install: public TLS front door and the embedding mTLS-terminating sidecar",
+      "adr": "docs/adr/0090-one-compose-install-runtime-components-proposed.md"
+    },
+    "built_in_idp": {
+      "version": "26.3.3",
+      "image": "quay.io/keycloak/keycloak:26.3.3@sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597",
+      "license": "Apache-2.0",
+      "scope": "deploy/compose one-compose install: the customer's built-in OIDC provider (bring-your-own OIDC provider remains supported by editing KNOWVAULT_PROVIDER_ID)",
+      "adr": "docs/adr/0090-one-compose-install-runtime-components-proposed.md"
+    },
+    "embedding_runtime": {
+      "version": "1.6.1",
+      "image": "ghcr.io/huggingface/text-embeddings-inference:cpu-1.6@sha256:66db77d7856c9319bbfaf2c5b80a6d0e0ac9ff128ade09eaca1d9c20213617a4",
+      "license": "Apache-2.0",
+      "scope": "deploy/compose one-compose install: CPU-only interim embedding channel (ADR-0080 §2.4, ADR-0088 GEN-2 addendum) serving intfloat/multilingual-e5-small; not yet the full ADR-0080 §3 qualification matrix — see deploy/compose/README.md"
+    }
+  },
+  "application_images": {
+    "server_runtime_base": "scratch",
+    "worker_runtime_base": "scratch",
+    "connector_runtime_base": "scratch",
+    "ca_bundle": "must-be-explicitly-versioned-scanned-and-listed-if-copied-or-mounted"
+  },
+  "operator_artifact": {
+    "version": "0.1.0",
+    "image": "knowvault-operator:0.1.0",
+    "image_digest": "sha256:a96e84878ec9c6bce6953cf8ee375a6a0926bd1a8002f3ae53aec6d53d19ce31",
+    "binary": "knowvault-operator",
+    "source": "cmd/operator",
+    "platform": "linux/amd64",
+    "migrations": "db/migrations",
+    "dockerfile": "deploy/images/Dockerfile.operator",
+    "builder_image": "golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669",
+    "runtime_base": "scratch",
+    "runtime_user": "0:0",
+    "runtime_filesystem": "read-only-compatible",
+    "runtime_network": "no-runtime-downloads",
+    "build_network": "module-cache-warm-then-none",
+    "source_date_epoch": "1704067200",
+    "binary_digest": "sha256:86638dd298ea3b4e77a65b2a5d88fc86c6462ece90889fee970f55ed29bb953a",
+    "migration_digest": "sha256:a237b8542b291553e632f12db1708d656380a464b13a76a67c3642e5a8836e93",
+    "artifact_identity": "sha256:85adcfc39d9b7a04afc2189eed4e58889686b493243036d94eda1e842b8d3a3b",
+    "license": "BSD-3-Clause",
+    "license_source": "https://go.dev/LICENSE",
+    "sbom": {
+      "status": "RELEASE_ATTESTATION_REQUIRED",
+      "format": "SPDX-2.3",
+      "generator": "Syft",
+      "generator_version": "1.48.0",
+      "output": "knowvault-operator.sbom.spdx.json",
+      "identity_binding": "artifact_identity"
+    }
+  },
+  "supply_chain_lifecycle": {
+    "states": ["DEFERRED", "QUALIFIED_NOT_ACTIVE", "EVIDENCE_ONLY", "ACTIVE"],
+    "DEFERRED": "Default. The component may not appear in executable source, imports, production manifests, build files, images or runtime configuration. A protected CONTRACT_ONLY protocol manifest may name it only as a non-activating wire contract; the architecture checker rejects runtime references, capabilities and activation from that surface. Its leak-scan tokens are denied repository-wide.",
+    "QUALIFIED_NOT_ACTIVE": "The component has passed exact-version qualification and may be used ONLY inside its declared isolated worker build/test subtree. It stays unreachable from production composition, deploy and runtime: no application source in the subtree, no production manifest referencing it, no production image build context containing it, no direct application import. Its leak-scan tokens stay denied everywhere outside that subtree — this is a narrowing of scope, not a suspension of the scan.",
+    "EVIDENCE_ONLY": "Real build or test evidence exists, but one or more release gates are still red (such as reproducibility, vulnerability, offline provenance or the production v2 wire). The component is permitted only inside its declared isolated evidence subtree, remains unreachable from production, and cannot be called an acceptance or activation proof.",
+    "ACTIVE": "Production use is permitted. A component reaches ACTIVE only atomically with a working end-to-end path and acceptance evidence, and leaving QUALIFIED_NOT_ACTIVE or EVIDENCE_ONLY requires editing both this lock and the closed registry in scripts/check-architecture.go, so activation cannot be a silent or forgotten step.",
+    "rule": "Every deferred entry declares its lifecycle explicitly; there is no implicit state. A QUALIFIED_NOT_ACTIVE or EVIDENCE_ONLY entry must additionally declare its exact version, isolated subtree, exact leak tokens and evidence document. A CONTRACT_ONLY protocol manifest is not an executable production surface and must pass its dedicated no-activation check. The boundary is enforced by checkSupplyChainLifecycleBoundary, checkDeploymentManifests and checkDeferredStageLeaks, and is reusable per component without copying an exception."
+  },
+  "deferred_runtime_locks": {
+    "status": "stage-blocking-before-first-use",
+    "components": [
+      { "id": "oci.document-parser-worker", "kind": "OCI_IMAGE", "stage": "STAGE_2", "lifecycle": "QUALIFIED_NOT_ACTIVE" },
+      { "id": "oci.sandbox-dispatcher", "kind": "OCI_IMAGE", "stage": "STAGE_2", "lifecycle": "DEFERRED" },
+      { "id": "maven.apache-poi", "kind": "MAVEN_ARTIFACT", "stage": "STAGE_2", "lifecycle": "QUALIFIED_NOT_ACTIVE" },
+      { "id": "maven.apache-pdfbox", "kind": "MAVEN_ARTIFACT", "stage": "STAGE_2", "lifecycle": "QUALIFIED_NOT_ACTIVE" },
+      { "id": "oci.tesseract-ocr-worker", "kind": "OCI_IMAGE", "stage": "STAGE_2", "lifecycle": "EVIDENCE_ONLY" },
+      { "id": "model.tessdata", "kind": "MODEL_ARTIFACT", "stage": "STAGE_2", "lifecycle": "EVIDENCE_ONLY" },
+      { "id": "oci.vllm", "kind": "OCI_IMAGE", "stage": "STAGE_3", "lifecycle": "DEFERRED" },
+      { "id": "model.embedding", "kind": "MODEL_ARTIFACT", "stage": "STAGE_3", "lifecycle": "DEFERRED" },
+      { "id": "model.reranker", "kind": "MODEL_ARTIFACT", "stage": "STAGE_3", "lifecycle": "DEFERRED" },
+      { "id": "model.generator", "kind": "MODEL_ARTIFACT", "stage": "STAGE_4", "lifecycle": "DEFERRED" },
+      { "id": "model.verifier", "kind": "MODEL_ARTIFACT", "stage": "STAGE_4", "lifecycle": "DEFERRED" },
+      { "id": "oci.opentelemetry-collector", "kind": "OCI_IMAGE", "stage": "STAGE_6", "lifecycle": "DEFERRED" }
+    ],
+    "rule": "No component may start in any environment from an unpinned tag or download a model at runtime. The stage-specific dependency gate below applies before first use, not only before release. Selection requires an accepted version-lock change and license evidence."
+  },
+  "deferred_dependency_locks": {
+    "status": "deny-before-import-or-runtime-start",
+    "stage_gates": {
+      "STAGE_1": [
+        { "id": "scim.server-auth", "kind": "GO_MODULE", "lifecycle": "DEFERRED" }
+      ],
+      "STAGE_2": [
+        {
+          "id": "oci.document-parser-worker",
+          "kind": "OCI_IMAGE",
+          "lifecycle": "QUALIFIED_NOT_ACTIVE",
+          "qualification": {
+            "exact_version": "2.1.0",
+            "isolated_subtree": "workers/document-parser/",
+            "leak_tokens": ["document-parser-worker"],
+            "evidence": "docs/qualification-s2b-document-parser.md",
+            "builder_image": "maven:3.9-eclipse-temurin-21@sha256:8f6ac126f7810bb5549c4cd122d2bf0e9cda5bdeb0838aa928f09e779fd8bef8",
+            "runtime_base": "scratch",
+            "runtime_strategy": "jlink",
+            "runtime_modules": ["java.base", "java.desktop", "java.logging", "java.security.jgss", "java.xml.crypto"],
+            "oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
+            "config_digest": "sha256:8006f7ddf504af8aee59afea5fcc719f673d7df80f6717c2ffced6b428c8d467",
+            "artifact_digest": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414",
+            "layer_digests": [
+              "sha256:88a11acca421df58865f88d823431f52bda8175d5e6fd1692f2a487cc08f4c70",
+              "sha256:17c02ca28da47e5a67ba1947fd042307e2285f94bf2d25bc0409f58337b05faf",
+              "sha256:63c13e8ea6c10b81562d53428ece2363c7bb062d5d9747c2f87bbaeea22963a0",
+              "sha256:36940d4560923835ac9eeccc0143ca747fe22821bc818faef116a68b7d522889",
+              "sha256:6497328e1d8bf7f489b5284b656625833be2bea7f0709bb4447810c65845465a",
+              "sha256:77ab5ba073fde3c4a0b3a17426a495c37713063bb59a0816dd90b3dc86a01cd2",
+              "sha256:bdc0761c2529d7d054fc5c57ac1571244b5ec959f764161d846600211af80818",
+              "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+            ],
+            "compliance": "workers/document-parser/release/source-compliance/openjdk-temurin-21.0.12+8/SOURCE-OFFER.json"
+          }
+        },
+        { "id": "oci.sandbox-dispatcher", "kind": "OCI_IMAGE", "lifecycle": "DEFERRED" },
+        {
+          "id": "maven.apache-poi",
+          "kind": "MAVEN_ARTIFACT",
+          "lifecycle": "QUALIFIED_NOT_ACTIVE",
+          "qualification": {
+            "exact_version": "5.5.1",
+            "isolated_subtree": "workers/document-parser/",
+            "leak_tokens": ["org.apache.poi", "apache-poi"],
+            "evidence": "docs/qualification-s2b-document-parser.md"
+          }
+        },
+        {
+          "id": "maven.apache-pdfbox",
+          "kind": "MAVEN_ARTIFACT",
+          "lifecycle": "QUALIFIED_NOT_ACTIVE",
+          "qualification": {
+            "exact_version": "3.0.8",
+            "isolated_subtree": "workers/document-parser/",
+            "leak_tokens": ["org.apache.pdfbox", "apache-pdfbox", "pdfbox"],
+            "evidence": "docs/qualification-s2b-document-parser.md"
+          }
+        },
+        {
+          "id": "oci.tesseract-ocr-worker",
+          "kind": "OCI_IMAGE",
+          "lifecycle": "EVIDENCE_ONLY",
+          "qualification": {
+            "exact_version": "1.0.0",
+            "isolated_subtree": "workers/tesseract-ocr/",
+            "leak_tokens": ["tesseract", "leptonica", "tessdata"],
+            "evidence": "workers/tesseract-ocr/release/image-lock.json"
+          }
+        },
+        {
+          "id": "model.tessdata",
+          "kind": "MODEL_ARTIFACT",
+          "lifecycle": "EVIDENCE_ONLY",
+          "qualification": {
+            "exact_version": "1.0.0",
+            "isolated_subtree": "workers/tesseract-ocr/",
+            "leak_tokens": ["tesseract", "leptonica", "tessdata"],
+            "evidence": "workers/tesseract-ocr/release/image-lock.json"
+          }
+        }
+      ],
+      "STAGE_3": [
+        { "id": "go.opensearch-client", "kind": "GO_MODULE_OR_ADR", "lifecycle": "DEFERRED" },
+        { "id": "oci.vllm", "kind": "OCI_IMAGE", "lifecycle": "DEFERRED" },
+        { "id": "model.embedding", "kind": "MODEL_ARTIFACT", "lifecycle": "DEFERRED" },
+        { "id": "model.reranker", "kind": "MODEL_ARTIFACT", "lifecycle": "DEFERRED" }
+      ],
+      "STAGE_4": [
+        { "id": "model.generator", "kind": "MODEL_ARTIFACT", "lifecycle": "DEFERRED" },
+        { "id": "model.verifier", "kind": "MODEL_ARTIFACT", "lifecycle": "DEFERRED" }
+      ],
+      "STAGE_5": [
+        { "id": "git.https-transport", "kind": "IMPLEMENTATION_OR_ADR", "lifecycle": "DEFERRED" },
+        { "id": "mail.microsoft-graph", "kind": "GO_MODULE", "lifecycle": "DEFERRED" },
+        { "id": "mail.gmail-api", "kind": "GO_MODULE", "lifecycle": "DEFERRED" },
+        { "id": "mail.imap", "kind": "GO_MODULE", "lifecycle": "DEFERRED" },
+        { "id": "s3.compatible-client", "kind": "GO_MODULE", "lifecycle": "DEFERRED" }
+      ],
+      "STAGE_6": [
+        { "id": "go.opentelemetry", "kind": "GO_MODULE", "lifecycle": "DEFERRED" },
+        { "id": "oci.opentelemetry-collector", "kind": "OCI_IMAGE", "lifecycle": "DEFERRED" },
+        { "id": "kms.provider-adapters", "kind": "PROVIDER_SDK", "lifecycle": "DEFERRED" },
+        { "id": "secret.provider-adapters", "kind": "PROVIDER_SDK", "lifecycle": "DEFERRED" }
+      ]
+    },
+    "rule": "A listed module, binary, image, model or provider client cannot appear in source imports, go.mod, executable image manifests or runtime configuration until its gate is replaced by accepted exact entries in this lock with license evidence. A protected CONTRACT_ONLY protocol manifest is permitted only when it declares no executable image, runtime capability or activation and passes the dedicated architecture check. A QUALIFIED_NOT_ACTIVE entry is the other narrow exception and only inside its declared isolated subtree, never in production composition, deploy, runtime or a production image build context. Stdlib-only alternatives require an accepted ADR and contract tests."
+  }
+}

@@ -1,0 +1,93 @@
+# Build output
+/bin/
+/dist/
+/out/
+/.tmp-*
+/web/dist/
+!/web/dist/
+!/web/dist/**
+**/node_modules/
+**/.pnpm-store/
+/tests/contracts/licenses.json
+/coverage/
+**/coverage/
+**/.nyc_output/
+**/.cache/
+**/.pytest_cache/
+**/__pycache__/
+*.py[cod]
+**/target/
+**/obj/
+*.test
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+*.class
+*.jar
+*.war
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.sqlite
+*.sqlite3
+*.orig
+*.rej
+
+# Local runtime state and source data
+/.local/
+/data/
+*.log
+*.pid
+*.tmp
+*.temp
+*.bak
+
+# Local toolchain and agent state (kept outside the published repository)
+/.agents/
+/.claude/
+/.dev-tooling/
+/.playwright-mcp/
+/.qwen/
+/.codex-docker-cli
+/knowvault-parser-canon-89600822/
+
+# Operator-owned, host-specific lab/qualification deployments: not
+# part of the governed production deploy surface or the ACTIVE image
+# inventory. See deploy/lab/README.md.
+/deploy/lab/
+
+# Private development instructions and working records
+/AGENTS.md
+/CLAUDE.md
+/.codex/
+/docs/handoff/
+/docs/reviews/
+/docs/delivery-archive/
+/deploy/profiles/*-acc2.json
+
+# Secrets and developer overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+*.local
+.envrc
+.direnv/
+**/docker-compose.override.yml
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

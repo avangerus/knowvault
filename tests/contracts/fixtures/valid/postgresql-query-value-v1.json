@@ -1,0 +1,30 @@
+[
+  {
+    "ordinal": 1,
+    "type_fingerprint": "oid:2950",
+    "logical_type": "UUID",
+    "value_tag": "UUID",
+    "value": "550e8400-e29b-41d4-a716-446655440000"
+  },
+  {
+    "ordinal": 2,
+    "type_fingerprint": "oid:1700:p:12:s:3",
+    "logical_type": "NUMERIC",
+    "value_tag": "NUMERIC",
+    "value": "12.345"
+  },
+  {
+    "ordinal": 3,
+    "type_fingerprint": "oid:25",
+    "logical_type": "TEXT",
+    "value_tag": "TEXT",
+    "value": "North route"
+  },
+  {
+    "ordinal": 4,
+    "type_fingerprint": "oid:3802",
+    "logical_type": "JSONB",
+    "value_tag": "JSONB",
+    "value": { "tonnes": 12.345, "verified": true }
+  }
+]

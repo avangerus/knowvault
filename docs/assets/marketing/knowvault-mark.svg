@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80" role="img" aria-labelledby="title">
+  <title id="title">KnowVault</title>
+  <rect width="80" height="80" rx="22" fill="#102B35"/>
+  <path d="M23 21h12v38H23zm16 19 15-19h14L52 40l16 19H54z" fill="#86E4CB"/>
+  <circle cx="62" cy="62" r="6" fill="#F3BA72"/>
+</svg>

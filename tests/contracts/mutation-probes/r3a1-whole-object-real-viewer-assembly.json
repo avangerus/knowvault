@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-whole-object-real-viewer-assembly",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.read.whole-object-real-viewer-assembly",
+  "control_id": "acceptance.r3a1.read.whole-object-real-viewer-assembly",
+  "description": "The shared authorized whole-object reader must return the complete verified assembly. The mutation replaces its finished text with only the anchor fragment after successful assembly, preserving compilation while truncating the result. TestKVA01WholeObjectReadOutcomeOne drives real MCP pagination and PostgreSQL artifacts and compares every page hash, length and concatenation with the canonical seeded input, independently of fragment assembly.",
+  "harness": "GO_UNIT",
+  "test_package": "./tests/integration/postgres",
+  "test_name": "TestKVA01WholeObjectReadOutcomeOne",
+  "mutations": [
+    {
+      "id": "r3a1-whole-object-viewer-assembly-anchor-only",
+      "target": "internal/source/evidence/viewer_layout.go",
+      "kind": "GO_EVIDENCE_WHOLE_OBJECT_ASSEMBLY_WEAKENING",
+      "expected": "RED",
+      "old": "\tresult.Text, result.Fragments, result.Representation = text, spans, representation",
+      "new": "\tresult.Text, result.Fragments, result.Representation = text, spans, representation\n\tresult.Text = result.Fragment.Text"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "The layout-v2 reader verifies LF gaps, geometry, total length and canonical hash. Its complete page sequence equals the canonical seeded input. Legacy profiles retain their historical concatenation bytes.",
+  "mutant_meaning": "The returned text contains only the addressed fragment despite successful full assembly. The real MCP test fails because the page surface cannot provide the expected whole input and hash. The mutant compiles and its failure is behavioral.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.read.whole-object-real-viewer-assembly`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

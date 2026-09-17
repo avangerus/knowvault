@@ -1,0 +1,23 @@
+{
+  "schema_version": "source-discovery-result-v1",
+  "result_id": "sdr_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  "request_id": "sdrq_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "organization_id": "org_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "actor_principal_id": "usr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "connection_id": "conn_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "connection_revision": 1,
+  "database_identity_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "trust_profile_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "privilege_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "security_epoch": 3,
+  "status": "SUCCEEDED",
+  "view_count": 1,
+  "prepared_view_count": 1,
+  "needs_interpretation_view_count": 0,
+  "metadata_artifact_id": "art_01ARZ3NDEKTSV4RRFFQ69G5FAX",
+  "metadata_plaintext_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "result_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "created_at": "2026-09-09T10:01:00Z",
+  "expires_at": "2026-09-09T10:15:00Z",
+  "unexpected": true
+}

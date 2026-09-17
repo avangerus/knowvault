@@ -1,0 +1,28 @@
+{
+  "scenario_version": "1.0",
+  "organization_id": "org_alpha",
+  "connection_id": "conn_files",
+  "external_object_id": "shared-file-42",
+  "discoveries": [
+    {
+      "source_scope_id": "scope_projects",
+      "source_scope_revision": 3,
+      "access_mode": "WORKSPACE_MANAGED"
+    },
+    {
+      "source_scope_id": "scope_audit",
+      "source_scope_revision": 8,
+      "access_mode": "SOURCE_ENFORCED"
+    }
+  ],
+  "expected": {
+    "source_object_count": 1,
+    "source_version_count": 1,
+    "evidence_set_count": 1,
+    "vector_set_count": 1,
+    "active_scope_memberships": 2,
+    "removing_scope_projects_keeps_scope_audit_queryable": true,
+    "grant_path_must_match_workspace_binding": true
+  }
+}
+

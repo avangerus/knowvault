@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/source-connection-trust-verify-result.schema.json",
+  "title": "Source Connection Trust Verify Result 1.0",
+  "description": "ADR-0087 §2 result: the closed content-free response of a completed or replayed VerifyConnectionTrust command (REST POST /api/v1/sources/connections/{id}:verify-trust and MCP knowvault_verify_connection_trust), identical to what a replay of the same idempotency key returns. Carries no connector identity, attestation text or timestamp; those live only in the canonical document (source-connection-trust-verify.schema.json) and never leave the command boundary in the response.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result_id", "result_hash"],
+  "properties": {
+    "result_id": { "$ref": "#/$defs/id" },
+    "result_hash": { "$ref": "#/$defs/sha256Hash" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "sha256Hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

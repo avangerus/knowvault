@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-supervisor-handoff-v1.schema.json",
+  "title": "Sandbox supervisor handoff v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "parser_type",
+    "artifact_hash",
+    "sandbox_profile_revision",
+    "observation_profile_revision",
+    "pidfd_transport",
+    "pid_namespace_inode",
+    "cgroup_path",
+    "expected_worker_uid",
+    "expected_worker_gid",
+    "issued_at",
+    "expires_at",
+    "one_shot",
+    "max_leases"
+  ],
+  "properties": {
+    "schema_version": { "const": "sandbox-supervisor-handoff-v1" },
+    "handoff_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{31,127}$" },
+    "parser_type": { "enum": ["OFFICE", "PDF", "OCR"] },
+    "artifact_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sandbox_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "observation_profile_revision": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "pidfd_transport": { "const": "SCM_RIGHTS" },
+    "pid_namespace_inode": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "cgroup_path": { "type": "string", "pattern": "^/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$", "maxLength": 4096 },
+    "expected_worker_uid": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "expected_worker_gid": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "one_shot": { "const": true },
+    "max_leases": { "const": 1 }
+  }
+}

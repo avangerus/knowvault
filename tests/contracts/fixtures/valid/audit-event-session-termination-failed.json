@@ -1,0 +1,22 @@
+{
+  "schema_version": "audit-event-v1",
+  "event_id": "audit_session_term_2",
+  "organization_id": "org_alpha",
+  "sequence": 3,
+  "workspace_id": null,
+  "actor_type": "SYSTEM",
+  "actor_principal_id": null,
+  "on_behalf_of_principal_id": null,
+  "action": "session.terminated",
+  "resource_type": "IDENTITY",
+  "resource_id": "req_logout_002",
+  "request_id": "req_logout_002",
+  "policy_decision_id": null,
+  "outcome": "FAILED",
+  "error_code": "SESSION_TERMINATION_FAILED",
+  "referenced_evidence_ids": [],
+  "metadata": {},
+  "previous_event_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "event_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "occurred_at": "2026-08-14T09:01:00Z"
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "results": [
+    {
+      "claim_id": "C1",
+      "verification_input_hash": "sha256:6b397a686d0a7c475b3144897c9c61ca8ef85392119e459fea0744e848ae929f",
+      "outcome": "SUPPORTED"
+    },
+    {
+      "claim_id": "C2",
+      "verification_input_hash": "sha256:23c3ddbdbb3d786c2c79aeaab3a03f305430a83bba35f320d2d3abb1c05da0eb",
+      "outcome": "SUPPORTED"
+    },
+    {
+      "claim_id": "C4",
+      "verification_input_hash": "sha256:32ead5040b21f51a9eb328f7d97a06604d4716052c5e7f0004d307705e05922d",
+      "outcome": "SUPPORTED"
+    }
+  ]
+}

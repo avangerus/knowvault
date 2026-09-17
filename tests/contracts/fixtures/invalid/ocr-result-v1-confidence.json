@@ -1,0 +1,34 @@
+{
+  "result_version": "ocr-result-v1",
+  "observed_format": "PNG",
+  "parser": {
+    "name": "knowvault-tesseract-ocr",
+    "version": "1.0.0",
+    "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "observation_profile_revision": "ocr-observation-v1"
+  },
+  "ocr": {
+    "model_id": "eng",
+    "model_revision": "tessdata-v1",
+    "artifact_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "profile_revision": "tessdata-v1"
+  },
+  "pages": [
+    {
+      "page": 1,
+      "tokens": [
+        {
+          "page": 1,
+          "token_id": "ocr-token-0",
+          "canonical_token_text": "Alpha",
+          "ordinal": 0,
+          "join_after": "NONE",
+          "bounding_box": { "x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1 },
+          "confidence": 1.1
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

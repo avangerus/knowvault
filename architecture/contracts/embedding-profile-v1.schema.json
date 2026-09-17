@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/contracts/embedding-profile-v1.schema.json",
+  "title": "KnowVault embedding-profile-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "id", "model_id", "artifact_hash", "tokenizer_hash",
+    "runtime_hash", "configuration_hash", "endpoint", "server_name",
+    "dimension", "max_input_bytes", "revision", "profile_hash"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "const": "embedding-profile-v1"},
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"},
+    "model_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"},
+    "artifact_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "tokenizer_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "runtime_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "configuration_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "endpoint": {"type": "string", "pattern": "^https://[^/?#]+$"},
+    "server_name": {"type": "string", "minLength": 1, "maxLength": 253},
+    "dimension": {"type": "integer", "minimum": 1, "maximum": 65536},
+    "max_input_bytes": {"type": "integer", "minimum": 1, "maximum": 131072},
+    "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "profile_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

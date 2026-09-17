@@ -1,0 +1,33 @@
+FROM golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669 AS builder
+
+WORKDIR /src
+ENV GOTOOLCHAIN=local
+ENV GOEXPERIMENT=jsonv2
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG BUILT_AT=unknown
+
+COPY go.mod go.sum ./
+COPY cmd/worker ./cmd/worker
+COPY internal ./internal
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -mod=readonly \
+    -trimpath \
+    -buildvcs=false \
+    -ldflags="-s -w -X knowvault.local/verified-workspace/internal/platform/buildinfo.Version=${VERSION} -X knowvault.local/verified-workspace/internal/platform/buildinfo.Revision=${REVISION} -X knowvault.local/verified-workspace/internal/platform/buildinfo.BuiltAt=${BUILT_AT}" \
+    -o /out/knowvault-worker ./cmd/worker
+
+RUN install -d -o 0 -g 65530 -m 0750 \
+    /out/runtime/run/knowvault/secrets \
+    /out/runtime/run/knowvault/sources \
+    /out/runtime/run/knowvault/trust \
+    /out/runtime/run/knowvault/source-trust
+
+FROM scratch AS runtime
+USER 65530:65530
+COPY --from=builder /out/knowvault-worker /knowvault-worker
+COPY --from=builder --chown=0:65530 --chmod=0750 /out/runtime/run/knowvault /run/knowvault
+ENTRYPOINT ["/knowvault-worker"]

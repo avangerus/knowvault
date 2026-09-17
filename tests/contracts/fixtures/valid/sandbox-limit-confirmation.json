@@ -1,0 +1,16 @@
+{
+  "schema_version": "sandbox-limit-confirmation-v1",
+  "lease_id": "lease-001",
+  "job_id": "job-001",
+  "worker_id": "worker-001",
+  "observed_at": "2026-08-06T10:00:02Z",
+  "observation_method": "KERNEL_CGROUP_NAMESPACE",
+  "limits": {
+    "cpu_millis": 1000,
+    "memory_bytes": 268435456,
+    "pids_max": 64,
+    "wall_clock_ms": 30000
+  },
+  "extraction_identity": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "confirmed": true
+}

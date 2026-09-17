@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/source-discovery-job-payload.schema.json",
+  "title": "Source Discovery Job Payload 1.0",
+  "description": "The only accepted payload for a SOURCE_DISCOVERY job. The worker resolves the connection, trust and mounted credential from the durable request; no credential, DSN, SQL, catalog detail or source row is carried in the queue.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_discovery_request_id"],
+  "properties": {
+    "source_discovery_request_id": { "$ref": "#/$defs/id" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^sdrq_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    }
+  }
+}

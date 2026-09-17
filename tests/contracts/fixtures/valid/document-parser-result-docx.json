@@ -1,0 +1,18 @@
+{
+  "result_version": "document-parser-result-v1",
+  "observed_format": "DOCX",
+  "parser": { "name": "knowvault-office-parser", "version": "1.0", "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "observation_profile_revision": "docx-obs-v1" },
+  "text_units": [
+    {
+      "ordinal": 1,
+      "locator": { "kind": "DOCX", "section_path": ["word/document.xml", "body"], "paragraph_ordinal": 1, "paragraph_native_id": "native:p1" },
+      "raw_text": "Hello world"
+    },
+    {
+      "ordinal": 2,
+      "locator": { "kind": "DOCX", "section_path": ["word/document.xml", "body"], "paragraph_ordinal": 2 },
+      "raw_text": "Second paragraph without a native id: the Go runtime derives its identity."
+    }
+  ],
+  "warnings": []
+}

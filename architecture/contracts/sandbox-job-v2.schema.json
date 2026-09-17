@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/sandbox-job-v2.schema.json",
+  "title": "Sandbox Job Protocol 2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "lease_id", "parser_request", "input_artifact", "submitted_at", "deadline_at", "worker_pull_only", "container_creation_capability"],
+  "properties": {
+    "schema_version": { "const": "sandbox-job-v2" },
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "lease_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "parser_request": { "$ref": "https://knowvault.local/schemas/sandbox-parser-request-v1.schema.json" },
+    "input_artifact": { "type": "object", "additionalProperties": false, "required": ["artifact_id", "content_digest", "media_type"], "properties": { "artifact_id": { "type": "string", "minLength": 1, "maxLength": 128 }, "content_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "media_type": { "type": "string", "minLength": 1, "maxLength": 256 } } },
+    "submitted_at": { "type": "string", "format": "date-time" },
+    "deadline_at": { "type": "string", "format": "date-time" },
+    "worker_pull_only": { "const": true },
+    "container_creation_capability": { "const": "FORBIDDEN" }
+  }
+}

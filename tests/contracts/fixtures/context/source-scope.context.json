@@ -1,0 +1,207 @@
+{
+  "organization_id": "org_alpha",
+  "policy_revision": "policy-42",
+  "discovery_digest_test_keys": {
+    "k1": "c3ludGhldGljLXNvdXJjZS1kaXNjb3Zlcnkta2V5LXYx"
+  },
+  "capability_profiles": {
+    "cap_folder_1": {
+      "connector_build_id": "folder-agent-1.0.0",
+      "connector_type": "FOLDER",
+      "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "stable_object_ids": true,
+      "item_level_acl": false,
+      "acl_refresh": false
+    },
+    "cap_git_1": {
+      "connector_build_id": "git-connector-1.0.0",
+      "connector_type": "GIT",
+      "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "stable_object_ids": true,
+      "item_level_acl": true,
+      "acl_refresh": true
+    },
+    "cap_mail_1": {
+      "connector_build_id": "mail-connector-1.0.0",
+      "connector_type": "MAIL",
+      "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "stable_object_ids": true,
+      "item_level_acl": false,
+      "acl_refresh": false
+    },
+    "cap_site_1": {
+      "connector_build_id": "site-connector-1.0.0",
+      "connector_type": "SITE",
+      "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "stable_object_ids": true,
+      "item_level_acl": false,
+      "acl_refresh": false
+    }
+  },
+  "connector_trust_records": {
+    "trust_conn_folder_r1": {
+      "trust_record_id": "trust_conn_folder_r1", "organization_id": "org_alpha", "connection_id": "conn_folder", "connection_revision": 1,
+      "connector_type": "FOLDER", "connector_build_id": "folder-agent-1.0.0", "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "capability_profile_id": "cap_folder_1", "capability_profile_hash": "sha256:9f26b5adc3d0d3ba79a0d8bfcc2ad552de9a9d6696bb0183cdf223534a28cf80",
+      "platform": "WINDOWS",
+      "trust_profile_hash": "sha256:752d2f3ea600d0fc7803aa363b1dd1ade4acee410edc42eac5d53504b8e8aa78",
+      "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "verified_at": "2026-07-14T09:00:00Z", "status": "VERIFIED"
+    },
+    "trust_conn_git_r1": {
+      "trust_record_id": "trust_conn_git_r1", "organization_id": "org_alpha", "connection_id": "conn_git", "connection_revision": 1,
+      "connector_type": "GIT", "connector_build_id": "git-connector-1.0.0", "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "capability_profile_id": "cap_git_1", "capability_profile_hash": "sha256:901c78a3892151b4d3cc609f8bfc5bc12579996492009d92cc6bdab1bf64e3de",
+      "trust_profile_hash": "sha256:f8f9c80451d5350ab8d1054b3d8125cb52f1ee094ec35032d9da10c3a2972bfa",
+      "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "verified_at": "2026-07-14T09:00:00Z", "status": "VERIFIED"
+    },
+    "trust_conn_mail_r1": {
+      "trust_record_id": "trust_conn_mail_r1", "organization_id": "org_alpha", "connection_id": "conn_mail", "connection_revision": 1,
+      "connector_type": "MAIL", "connector_build_id": "mail-connector-1.0.0", "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "capability_profile_id": "cap_mail_1", "capability_profile_hash": "sha256:770b4ce6d987c05ec78ad27ab792ef532120dbbc49ae9a1cba8b12a7f4cff4d8",
+      "trust_profile_hash": "sha256:4bb1bbd0c3d799fdbbad447588f94d2ee3c69f44df10cf839cf30ff08471b408",
+      "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "verified_at": "2026-07-14T09:00:00Z", "status": "VERIFIED"
+    },
+    "trust_conn_site_r1": {
+      "trust_record_id": "trust_conn_site_r1", "organization_id": "org_alpha", "connection_id": "conn_site_scope", "connection_revision": 1,
+      "connector_type": "SITE", "connector_build_id": "site-connector-1.0.0", "connector_version": "1.0.0",
+      "connector_artifact_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "capability_profile_id": "cap_site_1", "capability_profile_hash": "sha256:ebce0486f747f2480ee952f896e7cd1455fcbb42935eeb9f2c04bf1451e558a9",
+      "trust_profile_hash": "sha256:bd7637e2fe8876728db0959d8ab95ab6b1c8d292c2a5cbbf772ead5932fd191e",
+      "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "verified_at": "2026-07-14T09:00:00Z", "status": "VERIFIED"
+    }
+  },
+  "connections": {
+    "conn_folder": {
+      "revisions": {
+        "1": {
+          "source_type": "FOLDER",
+          "discovered_scopes": {
+            "discovered_folder_alpha_r1": {
+              "discovered_scope_id": "discovered_folder_alpha_r1",
+              "connection_id": "conn_folder",
+              "connection_revision": 1,
+              "discovered_identity_digest": "hmac-sha256:k1:c243b078e668d591e82a0498a037e5720b12e4515259a59abcaabf5afeef5ac4"
+            },
+            "discovered_folder_beta_r1": {
+              "discovered_scope_id": "discovered_folder_beta_r1",
+              "connection_id": "conn_folder",
+              "connection_revision": 1,
+              "discovered_identity_digest": "hmac-sha256:k1:e65ce2c13b2340f3950cd616557573c5abf0f6f32c72a9e7c3e654efcb9f7e0b"
+            }
+          },
+          "platform": "WINDOWS",
+          "root_alias": "docs-root",
+          "allowed_access_modes": ["WORKSPACE_MANAGED"],
+          "connector_build_id": "folder-agent-1.0.0",
+          "connector_version": "1.0.0",
+          "connector_artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "capability_profile_id": "cap_folder_1",
+          "capability_profile_hash": "sha256:9f26b5adc3d0d3ba79a0d8bfcc2ad552de9a9d6696bb0183cdf223534a28cf80",
+          "trust_profile_hash": "sha256:752d2f3ea600d0fc7803aa363b1dd1ade4acee410edc42eac5d53504b8e8aa78",
+          "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "connector_trust_record_id": "trust_conn_folder_r1",
+          "connector_trust_verified_at": "2026-07-14T09:00:00Z",
+          "connector_trust_status": "VERIFIED",
+          "max_object_limit": 1000000,
+          "max_byte_limit": 1099511627776
+        }
+      }
+    },
+    "conn_git": {
+      "revisions": {
+        "1": {
+          "source_type": "GIT",
+          "discovered_scopes": {
+            "discovered_git_alpha_main_r1": {
+              "discovered_scope_id": "discovered_git_alpha_main_r1",
+              "connection_id": "conn_git",
+              "connection_revision": 1,
+              "discovered_identity_digest": "hmac-sha256:k1:82586576f5185be49bcd6c4021f6c0e7cf796dae4b4bfca78d3cadd125368444"
+            }
+          },
+          "repository_ids": ["repo-alpha"],
+          "discovered_branches": ["main", "release/1.0"],
+          "allowed_access_modes": ["WORKSPACE_MANAGED", "SOURCE_ENFORCED"],
+          "connector_build_id": "git-connector-1.0.0",
+          "connector_version": "1.0.0",
+          "connector_artifact_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "capability_profile_id": "cap_git_1",
+          "capability_profile_hash": "sha256:901c78a3892151b4d3cc609f8bfc5bc12579996492009d92cc6bdab1bf64e3de",
+          "trust_profile_hash": "sha256:f8f9c80451d5350ab8d1054b3d8125cb52f1ee094ec35032d9da10c3a2972bfa",
+          "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "connector_trust_record_id": "trust_conn_git_r1",
+          "connector_trust_verified_at": "2026-07-14T09:00:00Z",
+          "connector_trust_status": "VERIFIED",
+          "max_object_limit": 1000000,
+          "max_byte_limit": 1099511627776
+        }
+      }
+    },
+    "conn_mail": {
+      "revisions": {
+        "1": {
+          "source_type": "MAIL",
+          "discovered_scopes": {
+            "discovered_mail_alpha_project_r1": {
+              "discovered_scope_id": "discovered_mail_alpha_project_r1",
+              "connection_id": "conn_mail",
+              "connection_revision": 1,
+              "discovered_identity_digest": "hmac-sha256:k1:accaae9ea0a529cb8f71dc37789275037d7f37317ee17805b6f7968d89803e44"
+            }
+          },
+          "mailbox_ids": ["mailbox-alpha"],
+          "folder_or_label_ids": ["project-alpha", "inbox"],
+          "allowed_access_modes": ["WORKSPACE_MANAGED"],
+          "connector_build_id": "mail-connector-1.0.0",
+          "connector_version": "1.0.0",
+          "connector_artifact_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "capability_profile_id": "cap_mail_1",
+          "capability_profile_hash": "sha256:770b4ce6d987c05ec78ad27ab792ef532120dbbc49ae9a1cba8b12a7f4cff4d8",
+          "trust_profile_hash": "sha256:4bb1bbd0c3d799fdbbad447588f94d2ee3c69f44df10cf839cf30ff08471b408",
+          "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "connector_trust_record_id": "trust_conn_mail_r1",
+          "connector_trust_verified_at": "2026-07-14T09:00:00Z",
+          "connector_trust_status": "VERIFIED",
+          "max_object_limit": 1000000,
+          "max_byte_limit": 1099511627776
+        }
+      }
+    },
+    "conn_site_scope": {
+      "revisions": {
+        "1": {
+          "source_type": "SITE",
+          "discovered_scopes": {
+            "discovered_site_alpha_r1": {
+              "discovered_scope_id": "discovered_site_alpha_r1",
+              "connection_id": "conn_site_scope",
+              "connection_revision": 1,
+              "discovered_identity_digest": "hmac-sha256:k1:e30997e5ffad4dc0cc27201adee6e3dd40292dab964f217875d0678dc48c6c75"
+            }
+          },
+          "origin_allowlist": ["https://docs.example.com"],
+          "allowed_access_modes": ["WORKSPACE_MANAGED"],
+          "connector_build_id": "site-connector-1.0.0",
+          "connector_version": "1.0.0",
+          "connector_artifact_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "capability_profile_id": "cap_site_1",
+          "capability_profile_hash": "sha256:ebce0486f747f2480ee952f896e7cd1455fcbb42935eeb9f2c04bf1451e558a9",
+          "trust_profile_hash": "sha256:bd7637e2fe8876728db0959d8ab95ab6b1c8d292c2a5cbbf772ead5932fd191e",
+          "contract_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "connector_trust_record_id": "trust_conn_site_r1",
+          "connector_trust_verified_at": "2026-07-14T09:00:00Z",
+          "connector_trust_status": "VERIFIED",
+          "max_object_limit": 1000000,
+          "max_byte_limit": 1099511627776
+        }
+      }
+    }
+  }
+}

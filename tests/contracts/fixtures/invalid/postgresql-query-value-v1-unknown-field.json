@@ -1,0 +1,10 @@
+[
+  {
+    "ordinal": 1,
+    "type_fingerprint": "oid:2950",
+    "logical_type": "UUID",
+    "value_tag": "UUID",
+    "value": "550e8400-e29b-41d4-a716-446655440000",
+    "unexpected": true
+  }
+]

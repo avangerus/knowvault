@@ -1,0 +1,32 @@
+# E2E image for the R3 charter: the built server, worker and operator binaries
+# plus the in-container orchestration harness (tests/e2e/harness). The binaries
+# are compiled on the host by the e2e test (pinned toolchain, CGO_ENABLED=0,
+# GOOS=linux GOARCH=amd64) and this file assembles the scratch runtime stage
+# mirroring deploy/images/Dockerfile.server: same mount contract, same web
+# assets, same pinned runtime group — except the harness runs as root so it
+# can prepare the mounts and spawn the product binaries under the pinned
+# runtime group.
+#
+# Build context: a staging directory prepared by the e2e test containing the
+# four binaries, web/dist and db/migrations. This image is test infrastructure
+# only; it is not a production image and is not covered by the deploy/images
+# mount contract.
+
+FROM --platform=linux/amd64 scratch
+
+COPY knowvault-server /knowvault-server
+COPY knowvault-worker /knowvault-worker
+COPY knowvault-operator /knowvault-operator
+COPY e2e-harness /e2e-harness
+
+COPY --chown=0:65532 --chmod=0750 run/knowvault/secrets /run/knowvault/secrets
+COPY --chown=0:65532 --chmod=0750 run/knowvault/trust /run/knowvault/trust
+COPY --chown=0:65532 --chmod=0750 run/knowvault/sources /run/knowvault/sources
+COPY --chown=0:65532 --chmod=0750 run/knowvault/search /run/knowvault/search
+
+# The staged web directory contains the dist/ subtree, so the image lands the
+# assets at /web/dist exactly where the server's webui component pins them.
+COPY --chown=0:65532 web /web
+COPY db/migrations /db/migrations
+
+ENTRYPOINT ["/e2e-harness"]

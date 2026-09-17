@@ -1,0 +1,8 @@
+{
+  "schema_version": "operator-failure-v1",
+  "code": "DEPENDENCY_UNAVAILABLE",
+  "action": "RETRY_AFTER_DEPENDENCY_RECOVERY",
+  "retryable": false,
+  "metric_name": "operator_dependency_failures_total",
+  "fallback_allowed": true
+}

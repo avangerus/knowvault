@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/contracts/embedding-mount-manifest-v1.schema.json",
+  "title": "KnowVault embedding capability mount manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "organization_id", "profile_file", "profile_hash",
+    "root_ca_file", "client_certificate_file", "client_key_file"
+  ],
+  "properties": {
+    "schema": {"type": "string", "const": "knowvault-embedding-manifest-v1"},
+    "organization_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "profile_file": {"type": "string", "const": "profile.json"},
+    "profile_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "root_ca_file": {"type": "string", "const": "root-ca.pem"},
+    "client_certificate_file": {"type": "string", "const": "client-cert.pem"},
+    "client_key_file": {"type": "string", "const": "client-key.pem"}
+  }
+}

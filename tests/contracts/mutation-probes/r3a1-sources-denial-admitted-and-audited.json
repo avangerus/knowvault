@@ -1,0 +1,33 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-sources-denial-admitted-and-audited",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.sources.denial-admitted-and-audited",
+  "control_id": "acceptance.r3a1.sources.denial-admitted-and-audited",
+  "description": "Transport denial and delegation probe for knowvault_sources and its REST twin. A denied source service must yield no inventory, confirmation context or workspace-id echo. Weakening the ListSources error guard lets the denied call fall through to success; dropping typed denial recognition maps it to service unavailable. Both mutants compile and are killed by TestMCPKnowvaultSourcesDenialAdmittedAndAudited. Its fake admission/denial strings establish delegation only, not durable audit. Production admission and terminal persistence, including failed appends and cancellation, are separately proved by tests/integration/postgres/source_metadata_audit_test.go through the real repository and PostgreSQL journal.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPKnowvaultSourcesDenialAdmittedAndAudited",
+  "mutations": [
+    {
+      "id": "r3a1-sources-denial-mapping-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_adapter.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tstatuses, err := handler.sources.ListSources(request.Context(), access, arguments.WorkspaceID)\n\tif err != nil {",
+      "new": "\tstatuses, err := handler.sources.ListSources(request.Context(), access, arguments.WorkspaceID)\n\tif err == nil {"
+    },
+    {
+      "id": "r3a1-sources-typed-denial-recognition-dropped",
+      "target": "internal/platform/workspaceapi/mcp_adapter.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tif workspaceSourceToolErrorIsDenial(err) {\n\t\treturn -32004, \"source scope not found\"\n\t}",
+      "new": "\tif false {\n\t\treturn -32004, \"source scope not found\"\n\t}"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "The injected source service denies access. MCP returns -32004 source scope not found without a result; REST returns 404 NOT_FOUND without content. The fake records delegation order only. The production source.metadata.read.admitted/completed/failed events and closed SOURCE_METADATA_READ_DENIED failure code are covered by the separate real-PostgreSQL source metadata tests, not by this mutation probe.",
+  "mutant_meaning": "With the ListSources denial guard weakened to `if err == nil` a denied/foreign call skips the refusal and falls through to the success projection, which carries an empty `sources` list, the confirmation context and `isError: false` instead of the existing -32004 content-free denial; with the typed denial recognition dropped the same workspacerepository CodeDenied/CodeNotFound maps to the generic -32000 service-unavailable instead of -32004. Both mutated files still read `err` and keep the -32004 branch referenced, so internal/platform/workspaceapi compiles and the failure is the behavioural TestMCPKnowvaultSourcesDenialAdmittedAndAudited assertion (a denied `knowvault_sources` call must return the existing denial and no content), not a build failure; each mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes these cases from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.sources.denial-admitted-and-audited`; the identical cases are committed both here and in the registry so the proof is pinned to the product guard."
+}

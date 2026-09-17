@@ -1,0 +1,16 @@
+{
+  "vector_version": "1.0",
+  "vectors": [
+    {
+      "id": "application-javascript-canonical-format-mismatch",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/javascript",
+        "profile": {"canonical_format": "PDF", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "const value = 1;",
+      "excerpt": "const value = 1;"
+    }
+  ]
+}

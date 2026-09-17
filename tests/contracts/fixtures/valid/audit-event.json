@@ -1,0 +1,25 @@
+{
+  "schema_version": "audit-event-v1",
+  "event_id": "audit_event_1",
+  "organization_id": "org1",
+  "sequence": 1,
+  "workspace_id": "ws_alpha",
+  "actor_type": "HUMAN",
+  "actor_principal_id": "user_anna",
+  "on_behalf_of_principal_id": null,
+  "action": "question.created",
+  "resource_type": "QUESTION_RUN",
+  "resource_id": "qr_0001",
+  "request_id": "req_qr_0001",
+  "policy_decision_id": "pd_question_create",
+  "outcome": "SUCCESS",
+  "error_code": null,
+  "referenced_evidence_ids": [],
+  "metadata": {
+    "question_run_id": "qr_0001",
+    "policy_revision": "policy-42"
+  },
+  "previous_event_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "event_hash": "sha256:a8c1497752544d5e1439e8cd8e8a3d0869b5065063c924eec9882323b8ae9a52",
+  "occurred_at": "2026-07-14T12:00:00Z"
+}

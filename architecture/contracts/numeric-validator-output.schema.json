@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/numeric-validator-output.schema.json",
+  "title": "Numeric Validator Output 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "validation_input_hash",
+    "material_literals",
+    "unsupported_literals",
+    "outcome"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "claim_id": { "type": "string", "pattern": "^C[1-9][0-9]*$" },
+    "validation_input_hash": { "$ref": "#/$defs/sha256" },
+    "material_literals": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/supportedLiteral" }
+    },
+    "unsupported_literals": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/unsupportedLiteral" }
+    },
+    "outcome": { "enum": ["PASSED", "FAILED"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "PASSED" } }, "required": ["outcome"] },
+      "then": { "properties": { "unsupported_literals": { "type": "array", "maxItems": 0 } } }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "FAILED" } }, "required": ["outcome"] },
+      "then": { "properties": { "unsupported_literals": { "type": "array", "minItems": 1 } } }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "literalClass": { "enum": ["NUMBER", "PERCENT", "CURRENCY", "DATE_TIME", "VALUE_WITH_UNIT"] },
+    "literalText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F]).+$"
+    },
+    "supportedLiteral": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_start", "claim_end", "text", "class", "citation_numbers"],
+      "properties": {
+        "claim_start": { "type": "integer", "minimum": 0, "maximum": 9007199254740990 },
+        "claim_end": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "text": { "$ref": "#/$defs/literalText" },
+        "class": { "$ref": "#/$defs/literalClass" },
+        "citation_numbers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      }
+    },
+    "unsupportedLiteral": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_start", "claim_end", "text", "class", "reason"],
+      "properties": {
+        "claim_start": { "type": "integer", "minimum": 0, "maximum": 9007199254740990 },
+        "claim_end": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "text": { "$ref": "#/$defs/literalText" },
+        "class": { "$ref": "#/$defs/literalClass" },
+        "reason": { "enum": ["NOT_IN_CITED_EXCERPT", "INCOMPLETE_VALUE_UNIT", "UNSUPPORTED_NUMERAL_SCRIPT"] }
+      }
+    }
+  }
+}

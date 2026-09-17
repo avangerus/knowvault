@@ -1,0 +1,13 @@
+# The repository-wide ignore intentionally excludes db/.  The operator is the
+# one production artifact that must carry the immutable migration stream, so
+# this Dockerfile-specific context admits exactly that stream plus its Go inputs.
+**
+!go.mod
+!go.sum
+!cmd
+!cmd/**
+!internal
+!internal/**
+!db
+!db/migrations
+!db/migrations/**

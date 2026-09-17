@@ -1,0 +1,17 @@
+{
+  "kind": "POSTGRESQL_QUERY_CELL",
+  "connection_id": "conn_external",
+  "projection_lineage_id": "lineage_waste",
+  "projection_revision": 1,
+  "projection_contract_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "entity_identity_digest": "hmac-sha256:k1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "row_version_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "column_ordinal": 3,
+  "column_name": "tonnes",
+  "canonical_value_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "text_start": 0,
+  "text_end": 6,
+  "offset_unit": "UTF8_BYTE",
+  "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+  "normalization_version": "text-v1"
+}

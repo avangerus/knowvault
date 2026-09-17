@@ -1,0 +1,374 @@
+name: required-architecture
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  anti-drift:
+    name: architecture / anti-drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Verify architecture baseline in pinned Go builder
+        env:
+          GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
+        run: >-
+          docker run --rm
+          -e GOTOOLCHAIN=local
+          -e GOEXPERIMENT=jsonv2
+          -v "$PWD:/src:ro"
+          -w /src
+          "$GO_IMAGE"
+          go run ./scripts/check-architecture.go -root /src
+      - name: Run JSON Schema suite in pinned Node builder
+        env:
+          NODE_IMAGE: node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo:ro"
+          -w /tmp/contracts
+          -e REPO_ROOT=/repo
+          "$NODE_IMAGE"
+          sh -ceu 'cp /repo/tests/contracts/package.json /repo/tests/contracts/pnpm-lock.yaml /repo/tests/contracts/schema-tests.mjs /repo/tests/contracts/license-tests.mjs .; corepack pnpm install --frozen-lockfile --ignore-scripts; node schema-tests.mjs; corepack pnpm licenses list --json > licenses.json; node license-tests.mjs licenses.json'
+      - name: Run semantic and integrity contract suite in pinned Go builder
+        env:
+          GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
+        run: >-
+          docker run --rm
+          -e GOTOOLCHAIN=local
+          -e GOEXPERIMENT=jsonv2
+          -e REPO_ROOT=/repo
+          -v "$PWD:/repo:ro"
+          -w /repo/tests/contracts/runner
+          "$GO_IMAGE"
+          go test -count=1 ./...
+      - name: Run Go and PostgreSQL tests with real prerequisites in pinned Go builder
+        env:
+          GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
+          POSTGRES_IMAGE: postgres:18.4@sha256:b913fd5699b8bd23fa4b06d72ecdd939fad43b80fb8651bac06caa0e6d135cac
+          NODE_IMAGE: node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+          SYFT_IMAGE: anchore/syft:v1.48.0@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c
+          GRYPE_IMAGE: anchore/grype:v0.116.0@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821
+        run: |
+          set -euo pipefail
+          container=knowvault-stage1-rls
+          network=knowvault-stage1-rls-net
+          postgres_password=knowvault-ci-live-only-2026
+          office_image=knowvault-document-parser-worker:architecture-check
+          qualification_image=knowvault-ocr-worker:architecture-check
+          docker_cli=$(readlink -f "$(command -v docker)")
+          node_stage=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-mutation-node.XXXXXX")
+          scan_stage=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-parser-scan.XXXXXX")
+          grype_cache=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-grype-db.XXXXXX")
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; docker image rm -f "$office_image" "$qualification_image" >/dev/null 2>&1 || true; rm -rf "$node_stage" "$scan_stage" "$grype_cache"' EXIT
+          # The Go image intentionally has no Node runtime. Build a complete,
+          # frozen contract-test runtime with the already-pinned Node image so
+          # mutation-runner can execute schema-tests.mjs against each mutated
+          # REPO_ROOT without using host Node or an unpinned package install.
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp/kv-node-home \
+            -e COREPACK_HOME=/tmp/kv-node-corepack \
+            -v "$PWD:/repo:ro" \
+            -v "$node_stage:/out" \
+            -w /tmp \
+            "$NODE_IMAGE" \
+            sh -ceu '
+              work=/tmp/kv-contracts
+              rm -rf "$work"
+              mkdir -p "$work" /tmp/kv-node-home /tmp/kv-node-corepack /out/bin
+              cd "$work"
+              cp -a /repo/tests/contracts /out/contracts
+              cp /repo/tests/contracts/package.json /repo/tests/contracts/pnpm-lock.yaml /repo/tests/contracts/schema-tests.mjs /repo/tests/contracts/license-tests.mjs .
+              corepack pnpm install --frozen-lockfile --ignore-scripts
+              cp -a node_modules /out/contracts/node_modules
+              cp -f /usr/local/bin/node /out/bin/node
+              chmod a+rx /out/bin/node
+              test -x /out/bin/node
+              test -f /out/contracts/node_modules/ajv/package.json
+              test "$(/out/bin/node --version)" = "v24.18.0"
+            '
+          bash tests/integration/postgres/prepare-office-worker.sh "$office_image" "$scan_stage/parser.oci.tar"
+          # Build the real OCR qualification image before the integration
+          # package runs. It is evidence-only and intentionally absent from
+          # production composition, but the live DispatcherV2 test must never
+          # fall back to a mock or an unbuilt local tag.
+          bash tests/integration/postgres/prepare-ocr-worker.sh "$qualification_image"
+          # Scan the exact OCI archive verified by prepare-office-worker.sh.
+          # These scanners have no Docker socket or network access, and the
+          # Grype scans consume only the imported, hash-validated database.
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 64 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
+            -e HOME=/tmp \
+            -e SYFT_CACHE_DIR=/tmp/syft-cache \
+            -e SYFT_CHECK_FOR_APP_UPDATE=false \
+            -e SYFT_PARALLELISM=1 \
+            -v "$scan_stage:/scan:rw" \
+            -v "$scan_stage/parser.oci.tar:/scan/parser.oci.tar:ro" \
+            "$SYFT_IMAGE" oci-archive:/scan/parser.oci.tar -o syft-json=/scan/syft.json
+          grype_db_url='https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-09-15T00:33:48Z_1789453896.tar.zst?checksum=sha256%3Ada59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60'
+          docker run --rm --network bridge --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 4g \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777 \
+            -e HOME=/tmp \
+            -e GRYPE_DB_CACHE_DIR=/cache \
+            -v "$grype_cache:/cache" \
+            "$GRYPE_IMAGE" db import "$grype_db_url"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 64 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
+            -e HOME=/tmp \
+            -e GRYPE_DB_CACHE_DIR=/cache \
+            -e GRYPE_DB_AUTO_UPDATE=false \
+            -e GRYPE_CHECK_FOR_APP_UPDATE=false \
+            -e GRYPE_DB_VALIDATE_BY_HASH_ON_START=true \
+            -v "$grype_cache:/cache:ro" \
+            -v "$scan_stage:/scan:rw" \
+            -v "$scan_stage/parser.oci.tar:/scan/parser.oci.tar:ro" \
+            "$GRYPE_IMAGE" oci-archive:/scan/parser.oci.tar -o json --file /scan/grype.json
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 64 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
+            -e HOME=/tmp \
+            -e GRYPE_DB_CACHE_DIR=/cache \
+            -e GRYPE_DB_AUTO_UPDATE=false \
+            -e GRYPE_CHECK_FOR_APP_UPDATE=false \
+            -e GRYPE_DB_VALIDATE_BY_HASH_ON_START=true \
+            -v "$grype_cache:/cache:ro" \
+            -v "$scan_stage:/scan:rw" \
+            "$GRYPE_IMAGE" 'pkg:deb/ubuntu/libc6@2.39-0ubuntu8.8?arch=amd64&distro=ubuntu-24.04' \
+              --distro ubuntu:24.04 -o json --file /scan/grype-native.json
+          docker run --rm \
+            -e GOTOOLCHAIN=local \
+            -e GOEXPERIMENT=jsonv2 \
+            -v "$PWD:/src:ro" \
+            -v "$scan_stage:/scan:ro" \
+            -w /src \
+            "$GO_IMAGE" \
+            go run ./scripts/check-architecture.go -root /src \
+              -verify-parser-syft-json /scan/syft.json \
+              -verify-parser-grype-json /scan/grype.json \
+              -verify-parser-native-grype-json /scan/grype-native.json
+          docker network create "$network" >/dev/null
+          docker run -d --rm --name "$container" --network "$network" -e POSTGRES_DB=knowvault_test -e POSTGRES_PASSWORD="$postgres_password" "$POSTGRES_IMAGE" >/dev/null
+          timeout 30s bash -c 'until docker exec "$1" pg_isready -U postgres -d knowvault_test >/dev/null 2>&1; do sleep 1; done' _ "$container"
+          docker exec "$container" pg_isready -U postgres -d knowvault_test >/dev/null
+          docker run --rm --network "$network" \
+            -e GOTOOLCHAIN=local \
+            -e GOEXPERIMENT=jsonv2 \
+            -e REPO_ROOT=/src \
+            -e KNOWVAULT_TEST_POSTGRES_URL="postgres://postgres:${postgres_password}@${container}:5432/knowvault_test?sslmode=disable" \
+            -e KNOWVAULT_TEST_OFFICE_WORKER_IMAGE="$office_image" \
+            -e KNOWVAULT_TEST_OCR_WORKER_IMAGE="$qualification_image" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$docker_cli:/usr/local/bin/docker:ro" \
+            -v "$PWD:/src:ro" \
+            -w /src \
+            "$GO_IMAGE" \
+            go test -mod=readonly -count=1 ./...
+          # The ordinary suite remains developer-friendly on hosts without a
+          # writable unified cgroup or CLONE_NEWPID. This dedicated invocation
+          # is the non-skippable Linux proof: real pidfds, SCM_RIGHTS,
+          # SO_PEERCRED, a fresh PID namespace and a dedicated cgroup must all
+          # work, or CI is red.
+          docker run --rm --privileged --cgroupns=host --network "$network" \
+            -e GOTOOLCHAIN=local \
+            -e GOEXPERIMENT=jsonv2 \
+            -e KNOWVAULT_REQUIRE_REAL_V2=1 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$PWD:/src:ro" \
+            -w /src \
+            "$GO_IMAGE" \
+            go test -mod=readonly -race -count=1 ./tests/integration/sandboxdispatch
+          # Required real Go↔Java↔PostgreSQL proof. The external supervisor
+          # creates PID namespaces, chroots, tmpfs mounts, pidfds and dedicated
+          # cgroup-v2 leaves; missing kernel authority is fatal, never a skip.
+          docker run --rm --privileged --cgroupns=host --network "$network" \
+            -e GOTOOLCHAIN=local \
+            -e GOEXPERIMENT=jsonv2 \
+            -e KNOWVAULT_REQUIRE_REAL_V2=1 \
+            -e REPO_ROOT=/src \
+            -e KNOWVAULT_TEST_POSTGRES_URL="postgres://postgres:${postgres_password}@${container}:5432/knowvault_test?sslmode=disable" \
+            -e KNOWVAULT_TEST_OFFICE_WORKER_IMAGE="$office_image" \
+            -e KNOWVAULT_TEST_OCR_WORKER_IMAGE="$qualification_image" \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$docker_cli:/usr/local/bin/docker:ro" \
+            -v "$PWD:/src:ro" \
+            -w /src \
+            "$GO_IMAGE" \
+            go test -mod=readonly -count=1 ./tests/integration/postgres
+          # Mutation registry includes the Office parser's real-v2 harness.
+          # Keep this invocation non-skippable: without a writable cgroup-v2,
+          # PID namespace and Docker socket the harness must fail rather than
+          # silently treating the integration proof as a developer-only skip.
+          docker run --rm --privileged --cgroupns=host --network "$network" \
+            -e GOTOOLCHAIN=local \
+            -e GOEXPERIMENT=jsonv2 \
+            -e REPO_ROOT=/src \
+            -e KNOWVAULT_TEST_POSTGRES_URL="postgres://postgres:${postgres_password}@${container}:5432/knowvault_test?sslmode=disable" \
+            -e KNOWVAULT_TEST_OFFICE_WORKER_IMAGE="$office_image" \
+            -e KNOWVAULT_TEST_OCR_WORKER_IMAGE="$qualification_image" \
+            -e KNOWVAULT_REQUIRE_REAL_V2=1 \
+            -e TEMP=/tmp \
+            -e TMP=/tmp \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$docker_cli:/usr/local/bin/docker:ro" \
+            -v "$PWD:/src:ro" \
+            -v "$node_stage/bin:/opt/knowvault-node:ro" \
+            -v "$node_stage/contracts:/src/tests/contracts:ro" \
+            -e PATH=/opt/knowvault-node:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -w /src \
+            "$GO_IMAGE" \
+            sh -ceu '
+              test "$(command -v node)" = "/opt/knowvault-node/node"
+              test "$(node --version)" = "v24.18.0"
+              apt-get update -qq >/dev/null
+              apt-get install -y -qq --no-install-recommends wget ca-certificates >/dev/null
+              wget -qO /tmp/powershell.deb https://github.com/PowerShell/PowerShell/releases/download/v7.6.4/powershell_7.6.4-1.deb_amd64.deb
+              echo "e5688e0569568d48051c49d3e93504cde47af709cdaaabd9a8892bc676b3bdf3  /tmp/powershell.deb" | sha256sum -c -
+              dpkg -i /tmp/powershell.deb >/dev/null 2>&1 || apt-get install -y -f >/dev/null
+              pwsh -NoProfile -Command "exit 0"
+              go run ./tests/contracts/mutation-runner -root /src
+            '
+      - name: Run the R3 e2e proof with built binaries and real PostgreSQL in pinned Go builder
+        env:
+          GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
+        run: |
+          set -euo pipefail
+          docker_cli=$(readlink -f "$(command -v docker)")
+          docker_buildx=$(command -v docker-buildx || true)
+          test -n "$docker_buildx" || docker_buildx=/usr/libexec/docker/cli-plugins/docker-buildx
+          docker_buildx=$(readlink -f "$docker_buildx")
+          test -x "$docker_buildx"
+          e2e_stage="$RUNNER_TEMP/kv-e2e-stage"
+          mkdir -p "$e2e_stage"
+          docker run --rm \
+            -e GOTOOLCHAIN=local \
+            -e GOEXPERIMENT=jsonv2 \
+            -e E2E_STAGE_DIR="$e2e_stage" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$docker_cli:/usr/local/bin/docker:ro" \
+            -v "$docker_buildx:/usr/local/libexec/docker/cli-plugins/docker-buildx:ro" \
+            -v "$PWD:/src:ro" \
+            -v "$e2e_stage:$e2e_stage" \
+            -w /src \
+            "$GO_IMAGE" \
+            bash -ceu '
+              set -o pipefail
+              set +e
+              go test -mod=readonly -json -tags e2e ./tests/e2e -run=^TestE2ER3FullLoop$ -count=1 -timeout 30m 2>&1 | tee /tmp/knowvault-r3-go-test.json
+              test_status=${PIPESTATUS[0]}
+              set -e
+              go run ./scripts/check-architecture.go -verify-e2e-json /tmp/knowvault-r3-go-test.json -verify-e2e-package knowvault.local/verified-workspace/tests/e2e -verify-e2e-test TestE2ER3FullLoop
+              test "$test_status" -eq 0
+            '
+      - name: Verify the exact Linux UI dependency license surface
+        env:
+          NODE_IMAGE: node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo:ro"
+          -w /tmp/web
+          "$NODE_IMAGE"
+          sh -ceu 'cp /repo/web/package.json /repo/web/pnpm-lock.yaml /repo/tests/contracts/web-license-tests.mjs .; corepack pnpm install --frozen-lockfile --ignore-scripts; corepack pnpm licenses list --json > licenses.json; node web-license-tests.mjs licenses.json'
+      - name: Compile static UI in pinned Node builder
+        env:
+          NODE_IMAGE: node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo:ro"
+          -w /tmp/web
+          "$NODE_IMAGE"
+          sh -ceu 'cp /repo/web/package.json /repo/web/pnpm-lock.yaml /repo/web/tsconfig.json .; cp -R /repo/web/src .; corepack pnpm install --frozen-lockfile --ignore-scripts; corepack pnpm exec tsc --noEmit; corepack pnpm exec esbuild --version; corepack pnpm exec esbuild src/evidence_source_page_test.ts --bundle --platform=node --format=cjs --jsx=automatic --loader:.css=empty --outfile=/tmp/evidence-page-test.cjs; node /tmp/evidence-page-test.cjs; corepack pnpm exec esbuild src/main.tsx --bundle --format=esm --jsx=automatic --minify --outdir=dist/assets --target=es2025; cp src/index.html dist/index.html; test -s dist/index.html; test -s dist/assets/main.js; test -s dist/assets/main.css; diff -ru /repo/web/dist dist'
+      - name: Build and smoke the production server image
+        run: |
+          set -euo pipefail
+          image=knowvault-server:architecture-check
+          trap 'docker image rm -f "$image" >/dev/null 2>&1 || true' EXIT
+          docker build --file deploy/images/Dockerfile.server --tag "$image" .
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '65532:65532'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$image")" = '["/knowvault-server"]'
+          container=$(docker create "$image")
+          docker export --output /tmp/knowvault-server-rootfs.tar "$container"
+          docker rm "$container" >/dev/null
+          tar -tf /tmp/knowvault-server-rootfs.tar > /tmp/knowvault-server-rootfs.txt
+          grep -qx 'knowvault-server' /tmp/knowvault-server-rootfs.txt
+          grep -qx 'web/dist/index.html' /tmp/knowvault-server-rootfs.txt
+          grep -qx 'run/knowvault/secrets/' /tmp/knowvault-server-rootfs.txt
+          grep -qx 'run/knowvault/trust/' /tmp/knowvault-server-rootfs.txt
+          ! grep -Eq '(^|/)(bin|sbin|usr|etc/ssl)/|\.(pem|key|p12)$' /tmp/knowvault-server-rootfs.txt
+          set +e
+          output=$(timeout 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            -e KNOWVAULT_ORGANIZATION_ID=org_alpha \
+            -e KNOWVAULT_PROVIDER_ID=idp_primary \
+            -e KNOWVAULT_PUBLIC_ORIGIN=https://workspace.example \
+            -e KNOWVAULT_HTTP_ADDR=:8080 \
+            "$image" 2>&1)
+          status=$?
+          set -e
+          test "$status" -eq 1
+          grep -q 'error_code=COMPOSITION_RUNTIME_STARTUP_FAILED' <<<"$output"
+          ! grep -Eq 'org_alpha|workspace\.example|/run/knowvault|postgres://' <<<"$output"
+      - name: Build and smoke the production worker image
+        run: |
+          set -euo pipefail
+          image=knowvault-worker:architecture-check
+          trap 'docker image rm -f "$image" >/dev/null 2>&1 || true' EXIT
+          docker build --file deploy/images/Dockerfile.worker --tag "$image" .
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '65532:65532'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$image")" = '["/knowvault-worker"]'
+          container=$(docker create "$image")
+          docker export --output /tmp/knowvault-worker-rootfs.tar "$container"
+          docker rm "$container" >/dev/null
+          tar -tf /tmp/knowvault-worker-rootfs.tar > /tmp/knowvault-worker-rootfs.txt
+          grep -qx 'knowvault-worker' /tmp/knowvault-worker-rootfs.txt
+          grep -qx 'run/knowvault/secrets/' /tmp/knowvault-worker-rootfs.txt
+          grep -qx 'run/knowvault/sources/' /tmp/knowvault-worker-rootfs.txt
+          grep -qx 'run/knowvault/trust/' /tmp/knowvault-worker-rootfs.txt
+          ! grep -Eq '(^|/)(bin|sbin|usr|etc/ssl)/|\.(pem|key|p12)$' /tmp/knowvault-worker-rootfs.txt
+          set +e
+          output=$(timeout 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            -e KNOWVAULT_ORGANIZATION_ID=org_alpha \
+            -e KNOWVAULT_PROVIDER_ID=idp_primary \
+            -e KNOWVAULT_WORKER_ID=worker_alpha \
+            -e KNOWVAULT_WORKER_LEASE_SECONDS=60 \
+            -e KNOWVAULT_WORKER_POLL_SECONDS=2 \
+            "$image" 2>&1)
+          status=$?
+          set -e
+          test "$status" -eq 1
+          grep -q 'error_code=WORKER_STARTUP_FAILED' <<<"$output"
+          ! grep -Eq 'org_alpha|idp_primary|worker_alpha|/run/knowvault|postgres://' <<<"$output"
+      - name: Build and smoke the contract-only dispatcher image
+        run: |
+          set -euo pipefail
+          image=knowvault-dispatcher:architecture-check
+          trap 'docker image rm -f "$image" >/dev/null 2>&1 || true' EXIT
+          docker build --file deploy/images/Dockerfile.dispatcher --tag "$image" .
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '0:0'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$image")" = '["/knowvault-sandbox-dispatcher"]'
+          container=$(docker create "$image")
+          docker export --output /tmp/knowvault-dispatcher-rootfs.tar "$container"
+          docker rm "$container" >/dev/null
+          tar -tf /tmp/knowvault-dispatcher-rootfs.tar > /tmp/knowvault-dispatcher-rootfs.txt
+          grep -qx 'knowvault-sandbox-dispatcher' /tmp/knowvault-dispatcher-rootfs.txt
+          grep -qx 'run/knowvault/sandbox/' /tmp/knowvault-dispatcher-rootfs.txt
+          ! grep -Eq '(^|/)(bin|sbin|usr|etc/ssl)/|\.(pem|key|p12)$' /tmp/knowvault-dispatcher-rootfs.txt
+          set +e
+          output=$(timeout 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "$image" 2>&1)
+          status=$?
+          set -e
+          test "$status" -eq 1
+          grep -q 'error_code=DISPATCHER_CONFIG_INVALID' <<<"$output"
+          ! grep -Eq '/run/knowvault|postgres://|KNOWVAULT_' <<<"$output"

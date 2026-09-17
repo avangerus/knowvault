@@ -1,0 +1,13 @@
+{
+  "vector_version": "1.0",
+  "canonicalization_version": "json-v1",
+  "input": {
+    "workspace_id": "ws_alpha",
+    "workspace_revision": 7,
+    "question_text": "\u041f\u0440\u043e\u0435\u043a\u0442 é\n🚀 \u0433\u043e\u0442\u043e\u0432"
+  },
+  "canonical_jcs": "{\"question_text\":\"\u041f\u0440\u043e\u0435\u043a\u0442 é\\n🚀 \u0433\u043e\u0442\u043e\u0432\",\"workspace_id\":\"ws_alpha\",\"workspace_revision\":7}",
+  "canonical_utf8_hex": "7b227175657374696f6e5f74657874223a22d09fd180d0bed0b5d0bad18220c3a95c6ef09f9a8020d0b3d0bed182d0bed0b2222c22776f726b73706163655f6964223a2277735f616c706861222c22776f726b73706163655f7265766973696f6e223a377d",
+  "canonical_request_hash": "sha256:66892228d310a96b56392203a1091a04295bc23819c2f80de982a4d5f71318a2"
+}
+

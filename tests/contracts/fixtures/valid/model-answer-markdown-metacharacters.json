@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.4",
+  "claims": [
+    {
+      "claim_id": "C1",
+      "text": "\u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 [\u0441\u043b\u0443\u0436\u0435\u0431\u043d\u044b\u0439 \u043e\u0442\u0447\u0451\u0442](javascript:alert(1)) \u0434\u043b\u044f \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f.",
+      "kind": "FACT",
+      "unknown_reason": null,
+      "evidence_ids": ["ev_safe"],
+      "supporting_claim_ids": []
+    }
+  ],
+  "sections": [
+    {
+      "section_id": "S1",
+      "title": null,
+      "ordered_claim_ids": ["C1"]
+    }
+  ]
+}

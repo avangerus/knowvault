@@ -1,0 +1,17 @@
+{
+  "profile": {
+    "schema_version": "retrieval-profile-v1",
+    "profile_revision": "hybrid-r1",
+    "implementation_artifact_hash": "sha256:1212121212121212121212121212121212121212121212121212121212121212",
+    "analyzer_revision": "analyzer-ru-en-v1",
+    "analyzer_config_hash": "sha256:1313131313131313131313131313131313131313131313131313131313131313",
+    "embedding_profile_hash": "sha256:bf9298c5b4d89dea9c825ecd5b09e863e22a08b3d07bfd2bbfec74462e0a43c7",
+    "reranking_profile_hash": "sha256:26103fea4beae08adf6710d33c305751bdfefc96ab3832f6119fdcdb67a0ba6d",
+    "lexical": {"candidate_limit": 50, "bm25_k1": 1.2, "bm25_b": 0.75},
+    "vector": {"candidate_limit": 50, "similarity": "COSINE", "ef_search": 128},
+    "fusion": {"method": "RRF", "rrf_k": 60, "tie_break": "EVIDENCE_ID_ASC"},
+    "reranking": {"candidate_limit": 100, "output_limit": 30},
+    "context": {"max_evidence": 30, "token_budget": 24000, "parent_expansion": "ONE_LEVEL", "source_diversity_limit": 12}
+  },
+  "profile_hash": "sha256:9e39a40315912d7f70deb1d4a394a9116abf407f0780d3d624ff923b2e44706a"
+}

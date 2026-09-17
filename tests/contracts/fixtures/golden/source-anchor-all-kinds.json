@@ -1,0 +1,134 @@
+{
+  "vector_version": "1.0",
+  "vectors": [
+    {
+      "id": "pdf",
+      "anchor": {
+        "kind": "PDF",
+        "page": 1,
+        "text_start": 18,
+        "text_end": 22,
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "normalization_version": "text-v1",
+        "bounding_boxes": [
+          {
+            "x": 72,
+            "y": 144,
+            "width": 24,
+            "height": 12,
+            "coordinate_unit": "PDF_POINT",
+            "coordinate_origin": "TOP_LEFT"
+          }
+        ]
+      }
+    },
+    {
+      "id": "docx",
+      "paragraph_derivation": {
+        "paragraph_text": "\u041f\u0440\u043e\u0435\u043a\u0442",
+        "normalization_version": "text-v1",
+        "paragraph_ordinal": 1,
+        "paragraph_text_hash": "sha256:f45edf00685108531375b7875b42e916577dd4ab50d98241a55ee13ecda997ad",
+        "section_path": ["\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442", "\u0420\u0430\u0437\u0434\u0435\u043b 1"],
+        "derivation_jcs": "{\"normalization_version\":\"text-v1\",\"paragraph_ordinal\":1,\"paragraph_text_hash\":\"sha256:f45edf00685108531375b7875b42e916577dd4ab50d98241a55ee13ecda997ad\",\"section_path\":[\"\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\",\"\u0420\u0430\u0437\u0434\u0435\u043b 1\"]}"
+      },
+      "anchor": {
+        "kind": "DOCX",
+        "section_path": ["\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442", "\u0420\u0430\u0437\u0434\u0435\u043b 1"],
+        "paragraph_id": "derived:sha256:d9040613ffd193cd16950880a2822c94f15fead56f1c1c85dcd663e7c7bcf641",
+        "text_start": 2,
+        "text_end": 14,
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "normalization_version": "text-v1"
+      }
+    },
+    {
+      "id": "pptx",
+      "anchor": {
+        "kind": "PPTX",
+        "slide": 2,
+        "shape_id": "shape-7",
+        "text_start": 2,
+        "text_end": 14,
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "normalization_version": "text-v1"
+      }
+    },
+    {
+      "id": "xlsx-single-cell",
+      "anchor": {
+        "kind": "XLSX",
+        "sheet": "\u0411\u044e\u0434\u0436\u0435\u0442",
+        "range": "B12"
+      }
+    },
+    {
+      "id": "email",
+      "anchor": {
+        "kind": "EMAIL",
+        "message_id": "message-immutable-42",
+        "mime_part": "text/plain",
+        "text_start": 2,
+        "text_end": 14,
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "normalization_version": "text-v1"
+      }
+    },
+    {
+      "id": "git",
+      "anchor": {
+        "kind": "GIT",
+        "repository": "alpha/api",
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "src/release.go",
+        "line_start": 10,
+        "line_end": 14
+      }
+    },
+    {
+      "id": "html",
+      "anchor": {
+        "kind": "HTML",
+        "canonical_url": "https://docs.example.test/alpha/release",
+        "dom_path": "main/article/p[2]",
+        "text_start": 2,
+        "text_end": 14,
+        "offset_unit": "UTF8_BYTE",
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "normalization_version": "text-v1"
+      }
+    },
+    {
+      "id": "text",
+      "anchor": {
+        "kind": "TEXT",
+        "line_start": 3,
+        "line_end": 5
+      }
+    },
+    {
+      "id": "ocr-single-image",
+      "anchor": {
+        "kind": "OCR",
+        "page": 1,
+        "token_start_ordinal": 0,
+        "token_end_ordinal": 1,
+        "range_semantics": "START_INCLUSIVE_END_EXCLUSIVE",
+        "coordinate_unit": "NORMALIZED_0_1",
+        "coordinate_origin": "TOP_LEFT",
+        "bounding_boxes": [
+          {
+            "x": 0.1,
+            "y": 0.2,
+            "width": 0.4,
+            "height": 0.1
+          }
+        ]
+      }
+    }
+  ]
+}

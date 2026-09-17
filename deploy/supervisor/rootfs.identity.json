@@ -1,0 +1,8 @@
+{
+  "artifact_hash": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414",
+  "oci_archive_sha256": "024b7e44021154a024af07caf246917b93913686a19f25a1d47a9351c75be16d",
+  "oci_config_digest": "sha256:8006f7ddf504af8aee59afea5fcc719f673d7df80f6717c2ffced6b428c8d467",
+  "oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
+  "rootfs_tree_sha256": "57f844763873eb9bd9896938ba89beaad459da1eb62fbf154c30602f983c5e7d",
+  "schema_version": "knowvault-native-parser-rootfs-v1"
+}

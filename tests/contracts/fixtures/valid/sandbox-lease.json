@@ -1,0 +1,17 @@
+{
+  "schema_version": "sandbox-lease-v1",
+  "lease_id": "lease-001",
+  "job_id": "job-001",
+  "worker_id": "worker-001",
+  "parser_type": "TEXT",
+  "registration": {
+    "socket_id": "unix:///run/knowvault/parser.sock",
+    "parser_type": "TEXT",
+    "single_socket": true,
+    "capabilities": ["PULL_JOB", "PUSH_OUTCOME"]
+  },
+  "issued_at": "2026-08-06T10:00:01Z",
+  "expires_at": "2026-08-06T10:00:31Z",
+  "attempt": 1,
+  "state": "TRANSFERRED"
+}

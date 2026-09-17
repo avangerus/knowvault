@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/operator-failure.schema.json",
+  "title": "Operator Failure Contract 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "code", "action", "retryable", "metric_name", "fallback_allowed"],
+  "properties": {
+    "schema_version": { "const": "operator-failure-v1" },
+    "code": { "enum": ["DEPENDENCY_UNAVAILABLE", "MOUNT_INVALID", "MIGRATION_INCOMPATIBLE", "RESTORE_NEGATIVE_CHECK_FAILED"] },
+    "action": {
+      "enum": [
+        "RETRY_AFTER_DEPENDENCY_RECOVERY",
+        "FIX_MOUNT_AND_RESTART",
+        "ROLL_BACK_OR_RUN_COMPATIBLE_MIGRATION",
+        "STOP_AND_RESTORE_FROM_VERIFIED_BACKUP"
+      ]
+    },
+    "retryable": { "type": "boolean" },
+    "metric_name": {
+      "enum": [
+        "operator_dependency_failures_total",
+        "operator_mount_failures_total",
+        "operator_migration_failures_total",
+        "operator_restore_negative_check_failures_total"
+      ]
+    },
+    "fallback_allowed": { "const": false }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "code": { "const": "DEPENDENCY_UNAVAILABLE" } }, "required": ["code"] },
+      "then": { "properties": { "action": { "const": "RETRY_AFTER_DEPENDENCY_RECOVERY" }, "metric_name": { "const": "operator_dependency_failures_total" } } }
+    },
+    {
+      "if": { "properties": { "code": { "const": "MOUNT_INVALID" } }, "required": ["code"] },
+      "then": { "properties": { "action": { "const": "FIX_MOUNT_AND_RESTART" }, "metric_name": { "const": "operator_mount_failures_total" } } }
+    },
+    {
+      "if": { "properties": { "code": { "const": "MIGRATION_INCOMPATIBLE" } }, "required": ["code"] },
+      "then": { "properties": { "action": { "const": "ROLL_BACK_OR_RUN_COMPATIBLE_MIGRATION" }, "metric_name": { "const": "operator_migration_failures_total" } } }
+    },
+    {
+      "if": { "properties": { "code": { "const": "RESTORE_NEGATIVE_CHECK_FAILED" } }, "required": ["code"] },
+      "then": { "properties": { "action": { "const": "STOP_AND_RESTORE_FROM_VERIFIED_BACKUP" }, "metric_name": { "const": "operator_restore_negative_check_failures_total" } } }
+    }
+  ]
+}

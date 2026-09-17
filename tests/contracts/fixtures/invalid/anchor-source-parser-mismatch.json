@@ -1,0 +1,16 @@
+{
+  "vector_version": "1.0",
+  "vectors": [
+    {
+      "id": "mime-json-parser-pdf-mismatch",
+      "extraction": {
+        "source_object_type": "FILE",
+        "source_version_media_type": "application/json",
+        "profile": {"canonical_format": "PDF", "ocr": null}
+      },
+      "anchor": {"kind": "TEXT", "line_start": 1, "line_end": 1},
+      "canonical_text": "{\"value\":1}",
+      "excerpt": "{\"value\":1}"
+    }
+  ]
+}

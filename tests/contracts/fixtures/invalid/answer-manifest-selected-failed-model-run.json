@@ -1,0 +1,22 @@
+{
+  "scenario_version": "1.0",
+  "base_manifest_fixture": "valid/answer-manifest-completed.json",
+  "mutations": [
+    {
+      "operation": "REPLACE",
+      "json_pointer": "/model_runs/2/outcome",
+      "value": "FAILED"
+    },
+    {
+      "operation": "REPLACE",
+      "json_pointer": "/model_runs/2/output_hash",
+      "value": null
+    }
+  ],
+  "preprocessor": "REHASH_AND_RESIGN_WITH_TEST_TENANT_KEY",
+  "expected": {
+    "schema_valid": true,
+    "terminal_commit_allowed": false
+  }
+}
+

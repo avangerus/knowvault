@@ -1,0 +1,46 @@
+{
+  "renderer": "answer-renderer-v1",
+  "locale": "ru-RU",
+  "normalization": "text-v1",
+  "purpose": "Prove that headings, lists, emphasis, code, links, images, autolinks, HTML, entities and fake citations remain inert Text nodes.",
+  "input": {
+    "claims": [
+      {
+        "claim_id": "C1",
+        "text": "# Heading; - item; *bold*; `code`; [link](javascript:alert(1)); ![image](https://evil.example/x); <https://evil.example>; <script>alert(1)</script>; &copy;; [999].",
+        "kind": "FACT",
+        "citation_numbers": [1]
+      }
+    ],
+    "sections": [
+      {
+        "section_id": "S1",
+        "title": null,
+        "ordered_claim_ids": ["C1"]
+      }
+    ]
+  },
+  "expected": {
+    "canonical_markdown": "\\# Heading; \\- item; \\*bold\\*; \\`code\\`; \\[link\\]\\(javascript:alert\\(1\\)\\); \\!\\[image\\]\\(https://evil\\.example/x\\); \\<https://evil\\.example\\>; \\<script\\>alert\\(1\\)\\</script\\>; &amp;copy;; \\[999\\]\\. [1]\n",
+    "utf8_length": 202,
+    "utf8_hex": "5c232048656164696e673b205c2d206974656d3b205c2a626f6c645c2a3b205c60636f64655c603b205c5b6c696e6b5c5d5c286a6176617363726970743a616c6572745c28315c295c293b205c215c5b696d6167655c5d5c2868747470733a2f2f6576696c5c2e6578616d706c652f785c293b205c3c68747470733a2f2f6576696c5c2e6578616d706c655c3e3b205c3c7363726970745c3e616c6572745c28315c295c3c2f7363726970745c3e3b2026616d703b636f70793b3b205c5b3939395c5d5c2e205b315d0a",
+    "answer_hash": "sha256:5ad61fb8ec5ffa12d5a0496ac82a206dc7af4722003cbd840d2a00c55c0045d3",
+    "claim_spans": [
+      {
+        "claim_id": "C1",
+        "start": 0,
+        "end": 197,
+        "offset_unit": "UTF8_BYTE",
+        "escaped_text": "\\# Heading; \\- item; \\*bold\\*; \\`code\\`; \\[link\\]\\(javascript:alert\\(1\\)\\); \\!\\[image\\]\\(https://evil\\.example/x\\); \\<https://evil\\.example\\>; \\<script\\>alert\\(1\\)\\</script\\>; &amp;copy;; \\[999\\]\\."
+      }
+    ],
+    "must_not_contain": [
+      "[link](javascript:alert(1))",
+      "![image](https://evil.example/x)",
+      "<https://evil.example>",
+      "<script>",
+      "&copy;",
+      "[999]"
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="500" viewBox="0 0 1120 500" role="img" aria-labelledby="title desc">
+  <title id="title">From your AI chat to the source, context and connections</title>
+  <desc id="desc">Illustrative flow: follow an evidence link from an MCP-compatible chat to a protected KnowVault source page with retained text and provenance. Stored relationships are available through MCP and REST API; navigation to related documents inside this page is planned.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#567F85"/></marker></defs>
+  <rect x="1" y="1" width="1118" height="498" rx="20" fill="#F3F8F8" stroke="#CCDDE0"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="28" y="39" fill="#153E46" font-size="24" font-weight="700">An answer is the start. The evidence is one click away.</text>
+    <text x="1090" y="65" fill="#607E84" text-anchor="end" font-size="13">Illustrative flow, not a product screenshot</text>
+    <rect x="28" y="89" width="296" height="331" rx="14" fill="white" stroke="#CCDDE0"/>
+    <path d="M28 136H324" stroke="#CCDDE0"/>
+    <text x="48" y="119" fill="#153E46" font-size="19" font-weight="700">1  Your AI chat + MCP</text>
+    <rect x="48" y="157" width="256" height="66" rx="10" fill="#EDF3F5"/>
+    <text x="62" y="184" fill="#355E62" font-size="17">When is this invoice due?</text>
+    <text x="62" y="207" fill="#607E84" font-size="14">Ask in the agent you already use</text>
+    <text x="48" y="258" fill="#153E46" font-size="18">Payment is due within 30 days</text>
+    <text x="48" y="284" fill="#153E46" font-size="18">of the invoice date.</text>
+    <rect x="48" y="310" width="256" height="45" rx="8" fill="#DDF2EB"/>
+    <text x="62" y="338" fill="#14675D" font-size="17" font-weight="700">[1] Contract · Open evidence ↗</text>
+    <text x="48" y="389" fill="#607E84" font-size="15">A source link, not just generated text</text>
+    <path d="M327 254H384" stroke="#567F85" stroke-width="2.5" marker-end="url(#arrow)"/>
+    <rect x="390" y="89" width="338" height="331" rx="14" fill="white" stroke="#8EC6B8" stroke-width="2"/>
+    <path d="M390 136H728" stroke="#CCDDE0"/>
+    <text x="410" y="119" fill="#153E46" font-size="19" font-weight="700">2  KnowVault evidence page</text>
+    <text x="410" y="168" fill="#607E84" font-size="14">CONTRACT · RETAINED SOURCE PASSAGE</text>
+    <text x="410" y="200" fill="#153E46" font-size="20" font-weight="700">Payment terms</text>
+    <rect x="410" y="217" width="298" height="70" rx="9" fill="#E1F5ED"/>
+    <text x="423" y="245" fill="#255B53" font-size="17">“Payment is due within 30 days</text>
+    <text x="423" y="270" fill="#255B53" font-size="17">of the invoice date.”</text>
+    <text x="410" y="316" fill="#476A72" font-size="16">Read the context within this fragment</text>
+    <path d="M410 334H708" stroke="#CCDDE0"/>
+    <text x="410" y="361" fill="#153E46" font-size="16">Source path · Saved version · Observed at</text>
+    <text x="410" y="388" fill="#14675D" font-size="16" font-weight="700">Access checked when you open it</text>
+    <path d="M732 254H789" stroke="#567F85" stroke-width="2.5" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+    <rect x="794" y="89" width="298" height="331" rx="14" fill="#EDF3F5" stroke="#94AEB4" stroke-dasharray="5 4"/>
+    <text x="814" y="119" fill="#153E46" font-size="19" font-weight="700">3  Explore connections</text>
+    <g fill="white" stroke="#CCDDE0"><rect x="814" y="160" width="258" height="45" rx="9"/><rect x="814" y="220" width="258" height="45" rx="9"/><rect x="814" y="280" width="258" height="45" rx="9"/></g>
+    <g fill="#355E62" font-size="17"><text x="832" y="188">Referenced documents</text><text x="832" y="248">Related business records</text><text x="832" y="308">Other linked materials</text></g>
+    <text x="814" y="363" fill="#14675D" font-size="16" font-weight="700">Available via MCP / API today</text>
+    <text x="814" y="391" fill="#607E84" font-size="16">Navigation inside this page: planned</text>
+    <text x="560" y="465" text-anchor="middle" fill="#476A72" font-size="17">Share the evidence link. Each reader still needs access. Relations reflect the connected data.</text>
+  </g>
+</svg>

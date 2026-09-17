@@ -1,0 +1,33 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-list-objects-denial-admitted-and-audited",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.list-objects.denial-admitted-and-audited",
+  "control_id": "acceptance.r3a1.list-objects.denial-admitted-and-audited",
+  "description": "R3a-1 Outcome 2 negative control for the canonical `knowvault_list_objects` workspace object-inventory tool and its REST parity route GET/POST /api/v1/workspaces/{workspace_id}/tools/list-objects: a call by a principal without the workspace right must answer the existing content-free denial (no objects, no skipped items, no address, no workspace-id echo; MCP -32004 `workspace objects not found`, REST 404 NOT_FOUND) and must record admission before data and its classed denial outcome through the same authorized EvidenceInventory boundary the production Evidence viewer composes. internal/platform/workspaceapi/mcp_workspace_list.go's mcpWorkspaceListPage dispatches the authorized inventory read and then maps its error to the content-free -32004. Weakening the denial guard `if err != nil` to `if err == nil` (keeping the same `writeMCPError`/`return` block verbatim so the mutated file still reads `err` and keeps its brace balance) makes a denied non-member call fall through to the success projection with an empty object page and `isError: false` instead of the existing -32004 refusal. Weakening the denial mapping from `-32004`/`workspace objects not found` to the generic `-32000`/`service unavailable` replaces the existing content-free denial with the wrong refusal. Both mutants compile and are killed behaviourally by internal/platform/workspaceapi/workspaceapi_mcp_evidence_test.go TestMCPKnowvaultListObjectsDenialAdmittedAndAudited, which requires the -32004 refusal with no leaked object/skipped/address or workspace id over both transports and the `admission,denied` inventory-source order.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/platform/workspaceapi",
+  "test_name": "TestMCPKnowvaultListObjectsDenialAdmittedAndAudited",
+  "mutations": [
+    {
+      "id": "r3a1-list-objects-denial-guard-weakened-to-fall-through",
+      "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\tif err != nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace objects not found\")\n\t\treturn\n\t}",
+      "new": "\tif err == nil {\n\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace objects not found\")\n\t\treturn\n\t}"
+    },
+    {
+      "id": "r3a1-list-objects-denial-mapping-weakened-to-service-unavailable",
+      "target": "internal/platform/workspaceapi/mcp_workspace_list.go",
+      "kind": "GO_MCP_AUTHORIZATION_DENIAL_CONTENT_FREE_WEAKENING",
+      "expected": "RED",
+      "old": "\t\twriteMCPError(writer, envelope.ID, -32004, \"workspace objects not found\")",
+      "new": "\t\twriteMCPError(writer, envelope.ID, -32000, \"service unavailable\")"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree a `knowvault_list_objects` call by a principal without the workspace right resolves the requested workspace through the injected EvidenceInventory capability (in production the authorized *evidence.Viewer inventory read, which returns one content-free typed denial for a non-member, unknown or foreign workspace), so the tool emits the existing content-free -32004 `workspace objects not found` with no object rows, no skipped reasons, no address and no echo of the requested workspace id; the REST parity route answers the twin 404 NOT_FOUND over the identical workspaceInventoryPage core. The denied membership read is journalled through the shared R1 admission-before-data mechanism with the closed denial outcome class (TestMCPKnowvaultListObjectsDenialAdmittedAndAudited asserts the `admission,denied:WORKSPACE_DENIED` inventory-source order on both transports).",
+  "mutant_meaning": "With the denial guard weakened to `if err == nil` a denied/foreign call skips the refusal and falls through to the success projection, which carries an empty object page and `isError: false`; the same weakening also refuses served calls (whose error is nil) with -32004. With the denial mapping weakened to -32000 the same denial is answered with the generic service-unavailable refusal instead of the existing content-free -32004. Both mutated files still read `err` and keep the -32004 branch referenced, so internal/platform/workspaceapi compiles and the failure is the behavioural TestMCPKnowvaultListObjectsDenialAdmittedAndAudited assertion (a denied `knowvault_list_objects` call must return the existing denial and no content), not a build failure; each mutant is killed by the registered probe and not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes these cases from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.list-objects.denial-admitted-and-audited`; the identical cases are committed both here and in the registry so the proof is pinned to the product guard."
+}

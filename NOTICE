@@ -1,0 +1,12 @@
+KnowVault
+Copyright 2026 KnowVault contributors.
+
+This product includes software developed as part of the KnowVault project.
+https://github.com/avangerus/knowvault
+
+The Apache License 2.0 applies to KnowVault's original source code and project
+documentation. Third-party software, model weights, datasets, and other
+separately licensed materials retain their original licenses and notices.
+See architecture/licenses.yaml and worker release notices for component
+licensing information. A source-code release does not include or relicense
+the operator's documents, credentials, or private evaluation corpora.

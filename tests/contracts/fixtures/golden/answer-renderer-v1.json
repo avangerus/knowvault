@@ -1,0 +1,63 @@
+{
+  "renderer": "answer-renderer-v1",
+  "locale": "ru-RU",
+  "normalization": "text-v1",
+  "input": {
+    "claims": [
+      {
+        "claim_id": "C1",
+        "text": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.",
+        "kind": "FACT",
+        "citation_numbers": [1]
+      },
+      {
+        "claim_id": "C2",
+        "text": "\u041f\u0435\u0440\u0432\u043e\u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u0440\u043e\u043a \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u043c.",
+        "kind": "INFERENCE",
+        "citation_numbers": []
+      },
+      {
+        "claim_id": "C3",
+        "text": "\u041f\u043e \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u043c \u0434\u0430\u043d\u043d\u044b\u043c \u043d\u0435\u043b\u044c\u0437\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c, \u043a\u0442\u043e \u0443\u0442\u0432\u0435\u0440\u0434\u0438\u043b \u043f\u0435\u0440\u0435\u043d\u043e\u0441.",
+        "kind": "UNKNOWN",
+        "citation_numbers": []
+      }
+    ],
+    "sections": [
+      {
+        "section_id": "S1",
+        "title": null,
+        "ordered_claim_ids": ["C1", "C2", "C3"]
+      }
+    ]
+  },
+  "expected": {
+    "canonical_markdown": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f\\. [1]\n\n**\u0412\u044b\u0432\u043e\u0434:** \u041f\u0435\u0440\u0432\u043e\u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u0440\u043e\u043a \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u043c\\.\n\n**\u041d\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043e:** \u041f\u043e \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u043c \u0434\u0430\u043d\u043d\u044b\u043c \u043d\u0435\u043b\u044c\u0437\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c, \u043a\u0442\u043e \u0443\u0442\u0432\u0435\u0440\u0434\u0438\u043b \u043f\u0435\u0440\u0435\u043d\u043e\u0441\\.\n",
+    "utf8_length": 337,
+    "utf8_hex": "d094d0b0d182d0b020d0b7d0b0d0bfd183d181d0bad0b020d0b1d18bd0bbd0b020d0bfd0b5d180d0b5d0bdd0b5d181d0b5d0bdd0b020d0bdd0b020323520d0b8d18ed0bbd18f5c2e205b315d0a0a2a2ad092d18bd0b2d0bed0b43a2a2a20d09fd0b5d180d0b2d0bed0bdd0b0d187d0b0d0bbd18cd0bdd18bd0b920d181d180d0bed0ba20d0b1d0bed0bbd18cd188d0b520d0bdd0b520d18fd0b2d0bbd18fd0b5d182d181d18f20d0b0d0bad182d183d0b0d0bbd18cd0bdd18bd0bc5c2e0a0a2a2ad09dd0b520d183d181d182d0b0d0bdd0bed0b2d0bbd0b5d0bdd0be3a2a2a20d09fd0be20d0b4d0bed181d182d183d0bfd0bdd18bd0bc20d0b4d0b0d0bdd0bdd18bd0bc20d0bdd0b5d0bbd18cd0b7d18f20d183d181d182d0b0d0bdd0bed0b2d0b8d182d18c2c20d0bad182d0be20d183d182d0b2d0b5d180d0b4d0b8d0bb20d0bfd0b5d180d0b5d0bdd0bed1815c2e0a",
+    "answer_hash": "sha256:097ce990de61e008855173cc25cdf86307aaa4827f2566897c81fff5480d7d19",
+    "claim_spans": [
+      {
+        "claim_id": "C1",
+        "start": 0,
+        "end": 72,
+        "offset_unit": "UTF8_BYTE",
+        "escaped_text": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f\\."
+      },
+      {
+        "claim_id": "C2",
+        "start": 94,
+        "end": 189,
+        "offset_unit": "UTF8_BYTE",
+        "escaped_text": "\u041f\u0435\u0440\u0432\u043e\u043d\u0430\u0447\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u0440\u043e\u043a \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435 \u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0430\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u043c\\."
+      },
+      {
+        "claim_id": "C3",
+        "start": 224,
+        "end": 336,
+        "offset_unit": "UTF8_BYTE",
+        "escaped_text": "\u041f\u043e \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u043c \u0434\u0430\u043d\u043d\u044b\u043c \u043d\u0435\u043b\u044c\u0437\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c, \u043a\u0442\u043e \u0443\u0442\u0432\u0435\u0440\u0434\u0438\u043b \u043f\u0435\u0440\u0435\u043d\u043e\u0441\\."
+      }
+    ]
+  }
+}

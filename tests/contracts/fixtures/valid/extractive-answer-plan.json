@@ -1,0 +1,31 @@
+{
+  "answer_mode": "EXTRACTIVE",
+  "authorized_context_hash": "hmac-sha256:k1:6cea82e617e1c061619e15d7064a160f1d18907cdfb8a1b33739f11cfdf350d0",
+  "citations": [
+    {
+      "anchor_hash": "hmac-sha256:k1:30b243e196b3ed331d0278ff457e3b831e3e5637c514a7da96418b3f57ad5817",
+      "citation_number": 1,
+      "cited_excerpt": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.",
+      "claim_id": "C1",
+      "evidence_fragment_id": "ev_release_date",
+      "extraction_id": "extraction_pdf_1",
+      "source_object_id": "source_object_1",
+      "source_version_id": "source_version_1",
+      "utf8_bytes": 71
+    }
+  ],
+  "claims": [
+    {
+      "citation_numbers": [
+        1
+      ],
+      "claim_id": "C1",
+      "kind": "FACT",
+      "text": "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0443\u0441\u043a\u0430 \u0431\u044b\u043b\u0430 \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u0430 \u043d\u0430 25 \u0438\u044e\u043b\u044f.",
+      "utf8_bytes": 71
+    }
+  ],
+  "digest_key_version": 1,
+  "schema_version": "extractive-answer-plan-v1",
+  "verification_method": "BYTE_EXACT_CITATION"
+}

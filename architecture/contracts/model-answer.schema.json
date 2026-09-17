@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knowvault.local/schemas/model-answer.schema.json",
+  "title": "Model Claim Plan 1.4",
+  "description": "This is not final Markdown. The server renders verified claims and persisted citations deterministically.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "claims", "sections"],
+  "properties": {
+    "schema_version": { "const": "1.4" },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "text", "kind", "unknown_reason", "evidence_ids", "supporting_claim_ids"],
+        "properties": {
+          "claim_id": { "type": "string", "pattern": "^C[1-9][0-9]*$" },
+          "text": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "pattern": "^(?!\\s)(?!.*\\s$)(?!.*[\\u0000-\\u001F\\u007F-\\u009F\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]).+$"
+              },
+              { "type": "null" }
+            ]
+          },
+          "kind": { "enum": ["FACT", "INFERENCE", "UNKNOWN"] },
+          "unknown_reason": { "enum": [null, "NO_RELEVANT_EVIDENCE", "INSUFFICIENT_SUPPORT", "CONFLICTING_EVIDENCE"] },
+          "evidence_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 12,
+            "items": { "type": "string", "pattern": "^ev_[A-Za-z0-9_-]+$" }
+          },
+          "supporting_claim_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 12,
+            "items": { "type": "string", "pattern": "^C[1-9][0-9]*$" }
+          }
+        },
+        "allOf": [
+          {
+            "if": { "type": "object", "properties": { "kind": { "const": "FACT" } }, "required": ["kind"] },
+            "then": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string" },
+                "unknown_reason": { "type": "null" },
+                "evidence_ids": { "type": "array", "minItems": 1 },
+                "supporting_claim_ids": { "type": "array", "maxItems": 0 }
+              }
+            }
+          },
+          {
+            "if": { "type": "object", "properties": { "kind": { "const": "INFERENCE" } }, "required": ["kind"] },
+            "then": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string" },
+                "unknown_reason": { "type": "null" },
+                "evidence_ids": { "type": "array", "maxItems": 0 },
+                "supporting_claim_ids": { "type": "array", "minItems": 1 }
+              }
+            }
+          },
+          {
+            "if": { "type": "object", "properties": { "kind": { "const": "UNKNOWN" } }, "required": ["kind"] },
+            "then": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "null" },
+                "unknown_reason": { "enum": ["NO_RELEVANT_EVIDENCE", "INSUFFICIENT_SUPPORT", "CONFLICTING_EVIDENCE"] },
+                "evidence_ids": { "type": "array", "maxItems": 0 },
+                "supporting_claim_ids": { "type": "array", "maxItems": 0 }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["section_id", "title", "ordered_claim_ids"],
+        "properties": {
+          "section_id": { "type": "string", "pattern": "^S[1-9][0-9]*$" },
+          "title": { "type": "null" },
+          "ordered_claim_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 40,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^C[1-9][0-9]*$" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "probe_version": "1.0",
+  "name": "r3a1-address-whole-object-hash-integrity",
+  "kind": "GO_UNIT_MUTATION_PROBE",
+  "invariant_id": "acceptance.r3a1.address.whole-object-hash-integrity",
+  "control_id": "acceptance.r3a1.address.whole-object-hash-integrity",
+  "description": "R3a-1 Outcome 1 whole-object read: every page must report the hash of the whole original, not of the page it carries, so a client can verify that the reassembled document equals the stored original. internal/address/address.go Read sets `WholeHash: canon.Hash(original)` from the full original bytes. Weakening that to hash only the current page makes a multi-page read report a hash that depends on the page cut and no longer equals the original. The existing evidence-backed test TestReadReassemblesPagesToWholeOriginalHash compares each page's WholeHash against WholeHash(original) and the reassembled concatenation against the original hash.",
+  "harness": "GO_UNIT",
+  "test_package": "./internal/address",
+  "test_name": "TestReadReassemblesPagesToWholeOriginalHash",
+  "mutations": [
+    {
+      "id": "r3a1-address-whole-object-hash-replaced-by-page-hash",
+      "target": "internal/address/address.go",
+      "kind": "GO_ADDRESS_WHOLE_OBJECT_HASH_WEAKENING",
+      "expected": "RED",
+      "old": "\t\tWholeHash:  canon.Hash(original),",
+      "new": "\t\tWholeHash:  WholeHash(page.Data),"
+    }
+  ],
+  "baseline_expectation": "GREEN",
+  "baseline_meaning": "On the unmutated tree every page of a multi-page read reports WholeHash(original), and the concatenation of all pages hashes to the same whole-original hash as the stored object.",
+  "mutant_meaning": "With the whole-object hash weakened to WholeHash(page.Data) the first page of a cut read reports the hash of its 7-byte slice instead of the whole original, so TestReadReassemblesPagesToWholeOriginalHash fails the per-page whole-hash comparison (RED). The mutant is therefore killed by the registered probe, not vacuous.",
+  "runner": "tests/contracts/mutation-runner/main.go executes this case from tests/contracts/mutation-registry.json under the GO_UNIT harness for the invariant entry `acceptance.r3a1.address.whole-object-hash-integrity`; the identical case is committed both here and in the registry so the proof is pinned to the product guard."
+}

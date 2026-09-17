@@ -1,0 +1,44 @@
+{
+  "scenario_version": "1.0",
+  "question_run_id": "qr_0001",
+  "historical_provenance": {
+    "workspace_id": "ws_alpha",
+    "workspace_revision": 7,
+    "source_scope_id": "scope_projects",
+    "source_scope_revision": 3
+  },
+  "material_citations": [
+    {
+      "citation_number": 1,
+      "source_object_id": "source_object_1",
+      "source_scope_id": "scope_projects",
+      "source_scope_revision": 3,
+      "access_mode": "WORKSPACE_MANAGED"
+    }
+  ],
+  "current_reader_context": {
+    "workspace_member_active": true,
+    "current_workspace_revision": 8,
+    "enabled_bindings": [
+      {
+        "source_scope_id": "scope_projects",
+        "source_scope_revision": 4,
+        "enabled": true
+      }
+    ],
+    "active_object_memberships": [
+      {
+        "source_object_id": "source_object_1",
+        "source_scope_id": "scope_projects",
+        "source_scope_revision": 3,
+        "state": "REMOVED"
+      }
+    ]
+  },
+  "expected": {
+    "answer_body_allowed": false,
+    "cited_excerpts_allowed": false,
+    "partial_redaction_allowed": false,
+    "error_code": "ANSWER_CURRENT_SCOPE_CITATION_DENIED"
+  }
+}

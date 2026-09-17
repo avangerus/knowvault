@@ -1,0 +1,20 @@
+{
+  "schema_version": "answer-document-version-v1",
+  "organization_id": "org_alpha",
+  "workspace_id": "ws_alpha",
+  "answer_document_id": "ansdoc_alpha",
+  "version": 1,
+  "previous_version_hash": null,
+  "amendment_class": null,
+  "amendment_reason": null,
+  "amended_at": "2026-08-14T10:00:00Z",
+  "manifest_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "actor_principal_id": "usr_alice",
+  "request_id": "req_answer_001",
+  "signature": {
+    "algorithm": "ED25519",
+    "key_id": "key_answer_signing_alpha",
+    "signed_at": "2026-08-14T10:00:00Z",
+    "value_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "source-discovery-request-v1",
+  "request_id": "sdrq_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "organization_id": "org1",
+  "actor_principal_id": "usr1",
+  "connection_id": "conn1",
+  "connection_revision": 1,
+  "trust_profile_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "security_epoch": 1,
+  "max_views": 65,
+  "max_columns": 256,
+  "max_comment_bytes": 65536,
+  "statement_timeout_ms": 300000,
+  "transaction_timeout_ms": 600000,
+  "idempotency_key_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "issued_at": "2026-09-09T09:00:00Z",
+  "expires_at": "2026-09-09T09:15:00Z"
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": "native-ingest-supervisor-config-v1",
+  "dispatcher": {
+    "handoff_socket": "/run/knowvault/sandbox/supervisor/handoff.sock",
+    "status_file": "/run/knowvault/sandbox/supervisor/status.json",
+    "office_register_socket": "/run/knowvault/sandbox/office/register.sock",
+    "pdf_register_socket": "/run/knowvault/sandbox/pdf/register.sock",
+    "uid": 0,
+    "gid": 0
+  },
+  "runtime": {
+    "runc_path": "/usr/bin/runc",
+    "runtime_dir": "/run/knowvault-native-ingest-supervisor",
+    "runc_state_root": "/run/knowvault-native-ingest-supervisor/runc-state",
+    "bundle_root": "/run/knowvault-native-ingest-supervisor/bundles",
+    "cgroup_root": "/sys/fs/cgroup/knowvault_native.slice/knowvault-native-supervisor.service/parsers",
+    "oci_archive": "/opt/knowvault/native-ingest-v3/parser.oci.tar",
+    "rootfs": "/opt/knowvault/native-ingest-v3/rootfs",
+    "rootfs_identity": "/opt/knowvault/native-ingest-v3/rootfs.identity.json",
+    "handoff_timeout_seconds": 5,
+    "ready_timeout_seconds": 45,
+    "status_poll_seconds": 0.25,
+    "shutdown_grace_seconds": 120,
+    "handoff_lifetime_seconds": 120
+  },
+  "image": {
+    "oci_archive_sha256": "024b7e44021154a024af07caf246917b93913686a19f25a1d47a9351c75be16d",
+    "oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
+    "oci_config_digest": "sha256:8006f7ddf504af8aee59afea5fcc719f673d7df80f6717c2ffced6b428c8d467",
+    "artifact_hash": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414",
+    "sandbox_profile_revision": "document-parser-sandbox-v3",
+    "working_dir": "/app",
+    "runc_sha256": "96553ef9a475e9f50caceea99b18ec32c242cf77bc33e63fa2db669cdec44a52",
+    "worker_jar_sha256": "b110e603535e2c07d58918d123a3d5bae77e0ea4d09ee65a8ce1876e4ff65a4d",
+    "rootfs_tree_sha256": "57f844763873eb9bd9896938ba89beaad459da1eb62fbf154c30602f983c5e7d",
+    "layers": [
+      "sha256:88a11acca421df58865f88d823431f52bda8175d5e6fd1692f2a487cc08f4c70",
+      "sha256:17c02ca28da47e5a67ba1947fd042307e2285f94bf2d25bc0409f58337b05faf",
+      "sha256:63c13e8ea6c10b81562d53428ece2363c7bb062d5d9747c2f87bbaeea22963a0",
+      "sha256:36940d4560923835ac9eeccc0143ca747fe22821bc818faef116a68b7d522889",
+      "sha256:6497328e1d8bf7f489b5284b656625833be2bea7f0709bb4447810c65845465a",
+      "sha256:77ab5ba073fde3c4a0b3a17426a495c37713063bb59a0816dd90b3dc86a01cd2",
+      "sha256:bdc0761c2529d7d054fc5c57ac1571244b5ec959f764161d846600211af80818",
+      "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1"
+    ],
+    "entrypoint": [
+      "/opt/jre/bin/java",
+      "-XX:ActiveProcessorCount=1",
+      "-XX:MaxRAMPercentage=75.0",
+      "-XX:+ExitOnOutOfMemoryError",
+      "-Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory",
+      "-Dlog4j2.simplelogLevel=OFF",
+      "-Dlog4j2.defaultStatusLevel=OFF",
+      "-Dlog4j2.status.entries=0",
+      "-Djava.awt.headless=true",
+      "-Dfile.encoding=UTF-8",
+      "-Djava.io.tmpdir=/tmp",
+      "-Duser.language=en",
+      "-Duser.country=US",
+      "-cp",
+      "/app/document-parser-worker.jar:/app/lib/*",
+      "local.knowvault.docparser.Main"
+    ]
+  },
+  "roles": [
+    {
+      "parser_type": "OFFICE",
+      "uid": 65532,
+      "gid": 65532,
+      "observation_profile_revision": "office-obs-v1",
+      "registration_socket": "/run/knowvault/sandbox/office/register.sock"
+    },
+    {
+      "parser_type": "PDF",
+      "uid": 65533,
+      "gid": 65533,
+      "observation_profile_revision": "pdf-obs-v1",
+      "registration_socket": "/run/knowvault/sandbox/pdf/register.sock"
+    }
+  ]
+}

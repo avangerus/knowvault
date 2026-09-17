@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="570" viewBox="0 0 1120 570" role="img" aria-labelledby="title desc">
+  <title id="title">Many company sources. One knowledge layer. Web, MCP and API.</title>
+  <desc id="desc">Documents and prepared SQL are the pilot sources. Code, email and additional enterprise and media connectors extend the roadmap. KnowVault checks access, retains versions and audits reads for its web interface, MCP agents and REST API clients.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#567F85"/></marker></defs>
+  <rect x="1" y="1" width="1118" height="568" rx="20" fill="#F3F8F8" stroke="#CCDDE0"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <g fill="#476A72" font-size="16" font-weight="700"><text x="30" y="40">CONNECT COMPANY KNOWLEDGE</text><text x="412" y="40">GOVERN SEARCH AND READS</text><text x="808" y="40">CHOOSE YOUR INTERFACE</text></g>
+    <rect x="28" y="66" width="322" height="106" rx="13" fill="#E1F5ED" stroke="#A5D9C7"/>
+    <text x="48" y="94" fill="#14675D" font-size="13" font-weight="700">PILOT</text>
+    <text x="48" y="124" fill="#153E46" font-size="24" font-weight="700">Documents + PostgreSQL</text>
+    <text x="48" y="152" fill="#476A72" font-size="16">Folders · MD / TXT · DOCX · Text PDF</text>
+    <rect x="28" y="186" width="322" height="75" rx="13" fill="white" stroke="#CCDDE0"/>
+    <text x="48" y="211" fill="#476A72" font-size="12" font-weight="700">IMPLEMENTED · OUTSIDE PILOT ACCEPTANCE</text>
+    <text x="48" y="242" fill="#153E46" font-size="22" font-weight="700">GitHub / GitLab · Git · IMAP</text>
+    <rect x="28" y="275" width="322" height="193" rx="13" fill="white" stroke="#94AEB4" stroke-dasharray="5 4"/>
+    <text x="48" y="301" fill="#476A72" font-size="13" font-weight="700">CONNECTOR ROADMAP</text>
+    <g fill="#153E46" font-size="18"><text x="48" y="333">Mail · Chat · Wikis · Websites</text><text x="48" y="362">CRM / ERP · Drives · Databases</text><text x="48" y="391">APIs · Event buses · Change feeds</text><text x="48" y="420">Audio · Video · Photos · Scans</text></g>
+    <text x="48" y="447" fill="#476A72" font-size="14">Future coverage, prioritized by customer need</text>
+    <path d="M350 120H378V371H350M350 223H378M378 266H407" fill="none" stroke="#567F85" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="410" y="66" width="308" height="402" rx="16" fill="#143E48"/>
+    <text x="434" y="109" fill="white" font-size="32" font-weight="700">KnowVault</text>
+    <text x="434" y="142" fill="#C3D8DA" font-size="18">One governed knowledge layer</text>
+    <path d="M434 166H694" stroke="#52777E"/>
+    <g fill="white" font-size="20"><text x="434" y="203">Synchronize and version</text><text x="434" y="244">Search and read evidence</text><text x="434" y="285">Resolve available relations</text></g>
+    <path d="M434 311H694" stroke="#52777E"/>
+    <g fill="#86E4CB" font-size="19" font-weight="700"><text x="434" y="350">Check permissions</text><text x="434" y="386">Audit data access</text><text x="434" y="422">Keep source addresses</text></g>
+    <path d="M723 266H764V128H799M764 266H799M764 266V401H799" fill="none" stroke="#567F85" stroke-width="2"/>
+    <g fill="none" stroke="#567F85" stroke-width="2" marker-end="url(#arrow)"><path d="M780 128H800"/><path d="M780 266H800"/><path d="M780 401H800"/></g>
+    <g fill="white" stroke="#CCDDE0"><rect x="804" y="66" width="288" height="123" rx="13"/><rect x="804" y="204" width="288" height="123" rx="13"/><rect x="804" y="342" width="288" height="126" rx="13"/></g>
+    <g fill="#153E46" font-size="26" font-weight="700"><text x="824" y="108">Web interface</text><text x="824" y="246">MCP</text><text x="824" y="384">REST API</text></g>
+    <g fill="#476A72" font-size="18"><text x="824" y="140">Search · Questions · Evidence</text><text x="824" y="168">Sources · Access · Audit</text><text x="824" y="279">Your AI chat or coding agent</text><text x="824" y="307">Search · Read · Cite · Relate</text><text x="824" y="417">Your applications and workflows</text><text x="824" y="445">Integrate with OpenAPI contracts</text></g>
+    <rect x="28" y="494" width="1064" height="50" rx="12" fill="#D6E9E6"/>
+    <text x="560" y="525" text-anchor="middle" fill="#153E46" font-size="19" font-weight="700">Edge / on-premises: local sources + identity + storage + search + models + agent client</text>
+  </g>
+</svg>

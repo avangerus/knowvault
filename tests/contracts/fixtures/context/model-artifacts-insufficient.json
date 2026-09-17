@@ -1,0 +1,12 @@
+{
+  "mr_embedding_zero_1": {
+    "input": {
+      "schema_version": "embedding-input-v1",
+      "profile_revision": "embedding-profile-v1",
+      "profile_hash": "sha256:bf9298c5b4d89dea9c825ecd5b09e863e22a08b3d07bfd2bbfec74462e0a43c7",
+      "question_text": "Who approved the delay?",
+      "question_hash": "sha256:c91a6b1d65563787359d0625b1e8e8be59c37f826828e9afa9ab8fea302eb634"
+    },
+    "output": {"schema_version": "embedding-output-v1", "dimension": 1024, "vector_sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333"}
+  }
+}
