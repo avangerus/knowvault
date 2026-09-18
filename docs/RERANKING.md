@@ -83,3 +83,23 @@ Server wiring is accepted without a reindex for a reranker change.
 See the [model card](https://huggingface.co/BAAI/bge-reranker-v2-m3) for the
 upstream model and license. The pinned revision and file hashes are recorded
 in `deploy/compose/reranking-profile.json` and `reranking-runtime.json`.
+
+### Deployment smoke, September 18, 2026
+
+An operator-assisted demo used server revision `b6ed0d1` and provisioning fix
+`8f0afa1`, both published before deployment. A fictional support document was
+ingested through the ordinary source confirmation and activation workflow.
+REST search reported a successful rerank, the exact configured profile and a
+readable retained evidence address; one request took **2.42 seconds**.
+
+An independent HTTP MCP client used a temporary SERVICE access code to
+initialize, list tools, search with reranking and read the returned address.
+An unissued workspace was denied, and the revoked code subsequently received
+HTTP 401. A preliminary answer from a separate model host correctly stated the
+fictional response time and escalation contact, with one verified citation;
+that question took **60.74 seconds**.
+
+These checks cover one synthetic document. They do not establish customer SQL
+answer quality, broad-list completeness, production throughput or host-reboot
+recovery. The deployed CPU reranker used about **2.7 GiB** after these requests;
+its memory is additional to the application and embedding services.
