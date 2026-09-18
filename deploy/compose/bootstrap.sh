@@ -100,9 +100,13 @@ fi
 #    file, mirroring the operator's own "secrets generate never overwrites"
 #    contract).
 # ---------------------------------------------------------------------------
+# Public bind-mounted files must be readable after restrictive archive unpacking.
+chmod 0644 postgres-init-keycloak-db.sh proxy/nginx.conf proxy/embedding.conf
 install -d -m 0700 secrets pki/platform pki/keycloak pki/proxy pki/search pki/embedding keycloak \
   mounts/server/secrets mounts/server/trust mounts/server/search mounts/server/embedding \
   mounts/worker/secrets mounts/worker/trust mounts/worker/source-trust mounts/worker/source mounts/worker/search mounts/worker/embedding
+install -d -o 0 -g 65532 -m 0750 mounts/server/secrets
+install -d -o 0 -g 65530 -m 0750 mounts/worker/secrets
 install -d -m 0755 mounts/worker/source/inbox
 
 new_secret() { openssl rand -hex 32 | tr -d '\r\n'; }
@@ -118,31 +122,42 @@ chmod 0600 secrets/owner.password
 ca() {
   local name="$1" cn="$2" sans="$3"
   if [ -s "pki/$name.crt" ]; then return; fi
-  cat >"/tmp/$name.ext" <<EOF
+  local temporary_directory
+  temporary_directory=$(mktemp -d)
+  cat >"$temporary_directory/request.ext" <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
 subjectAltName=$sans
 EOF
-  openssl req -new -newkey rsa:2048 -nodes -keyout "pki/$name.key" -out "/tmp/$name.csr" -subj "/CN=$cn" >/dev/null 2>&1
-  openssl x509 -req -in "/tmp/$name.csr" -CA pki/platform/ca.crt -CAkey pki/platform/ca.key -CAcreateserial -days 397 -sha256 \
-    -extfile "/tmp/$name.ext" -out "pki/$name.crt" >/dev/null 2>&1
-  rm -f "/tmp/$name.csr" "/tmp/$name.ext"
+  openssl req -new -newkey rsa:2048 -nodes -keyout "pki/$name.key" -out "$temporary_directory/request.csr" -subj "/CN=$cn" >/dev/null 2>&1
+  openssl x509 -req -in "$temporary_directory/request.csr" -CA pki/platform/ca.crt -CAkey pki/platform/ca.key -CAcreateserial -days 397 -sha256 \
+    -extfile "$temporary_directory/request.ext" -out "pki/$name.crt" >/dev/null 2>&1
+  rm -f "$temporary_directory/request.csr" "$temporary_directory/request.ext"
+  rmdir "$temporary_directory"
 }
 
 if [ ! -s pki/platform/ca.crt ]; then
   openssl req -x509 -newkey rsa:4096 -nodes -sha256 -days 825 \
-    -keyout pki/platform/ca.key -out pki/platform/ca.crt -subj '/CN=knowvault platform CA' >/dev/null 2>&1
+    -keyout pki/platform/ca.key -out pki/platform/ca.crt -subj '/CN=knowvault platform CA' \
+    -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1
 fi
 ca platform/postgres knowvault-postgres 'DNS:knowvault-postgres,DNS:localhost,IP:127.0.0.1'
 ca proxy/server knowvault.local 'DNS:knowvault.local,DNS:localhost,IP:127.0.0.1'
 ca keycloak/server knowvault-idp.local 'DNS:knowvault-idp.local,DNS:knowvault-idp,DNS:localhost,IP:127.0.0.1'
 ca embedding/server knowvault-embedding 'DNS:knowvault-embedding,DNS:localhost,IP:127.0.0.1'
+# Repair an empty directory left by Docker's bind-mount creation on a failed
+# earlier install, then supply the embedding proxy's client trust bundle.
+if [ -d pki/embedding/ca.crt ]; then rmdir pki/embedding/ca.crt; fi
+install -o 0 -g 0 -m 0644 pki/platform/ca.crt pki/embedding/ca.crt
 chown_ignore() { chown "$@" 2>/dev/null || true; }
 chown_ignore 999:999 pki/platform/postgres.key; chmod 0600 pki/platform/postgres.key
 chmod 0644 pki/platform/postgres.crt pki/platform/ca.crt
 chmod 0600 pki/proxy/server.key pki/keycloak/server.key pki/embedding/server.key
 chmod 0644 pki/proxy/server.crt pki/keycloak/server.crt pki/embedding/server.crt
+# The pinned Keycloak image runs as UID1000 with GID0.
+chown 0:0 pki/keycloak/server.key
+chmod 0440 pki/keycloak/server.key
 
 # embedding mTLS client certificate (the server/worker side of the channel;
 # the same platform CA signs both ends, exactly like the search mount below).
@@ -193,8 +208,14 @@ plugins.security.ssl.http.clientauth_mode: REQUIRE
 plugins.security.allow_default_init_securityindex: true
 plugins.security.authcz.admin_dn:
   - 'C=de,L=test,O=client,OU=client,CN=kirk'
+plugins.security.nodes_dn:
+  - 'CN=knowvault-search'
 plugins.security.restapi.roles_enabled: [all_access, security_rest_api_access]
 EOF
+# The pinned OpenSearch image and its health check run as UID/GID1000.
+chown 0:1000 pki/search/node.key pki/search/client.key
+chmod 0440 pki/search/node.key pki/search/client.key
+chmod 0644 pki/search/ca.crt pki/search/node.crt pki/search/client.crt pki/search/opensearch.yml
 
 # Keycloak realm import: one client (this server), one OWNER user.
 # Keycloak 26's realm-default declarative user profile marks email,
@@ -209,7 +230,7 @@ OWNER_PASSWORD=$(cat secrets/owner.password)
 OWNER_FIRST_NAME="${KNOWVAULT_OWNER_DISPLAY_NAME%% *}"
 OWNER_LAST_NAME="${KNOWVAULT_OWNER_DISPLAY_NAME#* }"
 [ "$OWNER_LAST_NAME" = "$KNOWVAULT_OWNER_DISPLAY_NAME" ] && OWNER_LAST_NAME="Owner"
-OWNER_EMAIL="${KNOWVAULT_OWNER_USERNAME}@${KNOWVAULT_ORGANIZATION_ID}.local"
+OWNER_EMAIL="${KNOWVAULT_OWNER_USERNAME}@knowvault.local"
 sed -e "s/__KNOWVAULT_OIDC_CLIENT_SECRET__/$CLIENT_SECRET/" \
     -e "s/__KNOWVAULT_OWNER_USERNAME__/$KNOWVAULT_OWNER_USERNAME/" \
     -e "s/__KNOWVAULT_OWNER_PRINCIPAL_ID__/$KNOWVAULT_OWNER_PRINCIPAL_ID/" \
@@ -218,6 +239,8 @@ sed -e "s/__KNOWVAULT_OIDC_CLIENT_SECRET__/$CLIENT_SECRET/" \
     -e "s/__KNOWVAULT_OWNER_FIRST_NAME__/$OWNER_FIRST_NAME/" \
     -e "s/__KNOWVAULT_OWNER_LAST_NAME__/$OWNER_LAST_NAME/" \
     keycloak/knowvault-realm.json.template >keycloak/knowvault-realm.json
+chown 0:0 keycloak/knowvault-realm.json
+chmod 0440 keycloak/knowvault-realm.json
 
 echo "PKI and secrets ready."
 
@@ -309,9 +332,9 @@ done
 install -d -o 0 -g 65530 -m 0750 mounts/worker/source-trust mounts/worker/source
 
 install -o 0 -g 65532 -m 0440 pki/platform/ca.crt mounts/server/trust/database-ca.pem
-install -o 0 -g 65532 -m 0440 pki/keycloak/server.crt mounts/server/trust/oidc-ca.pem
+install -o 0 -g 65532 -m 0440 pki/platform/ca.crt mounts/server/trust/oidc-ca.pem
 install -o 0 -g 65530 -m 0440 pki/platform/ca.crt mounts/worker/trust/database-ca.pem
-install -o 0 -g 65530 -m 0440 pki/keycloak/server.crt mounts/worker/trust/oidc-ca.pem
+install -o 0 -g 65530 -m 0440 pki/platform/ca.crt mounts/worker/trust/oidc-ca.pem
 install -o 0 -g 65530 -m 0440 pki/platform/ca.crt mounts/worker/trust/git-ca.pem
 install -o 0 -g 65530 -m 0440 pki/platform/ca.crt mounts/worker/trust/mail-ca.pem
 install -o 0 -g 65530 -m 0440 pki/platform/ca.crt mounts/worker/source-trust/git-ca.pem
@@ -446,13 +469,14 @@ for _ in $(seq 1 20); do
   KC_TOKEN=$(curl -sS --max-time 15 --cacert "$KC_CACERT" $KC_RESOLVE \
     -d client_id=admin-cli -d username=kv-admin -d "password=${KNOWVAULT_KEYCLOAK_ADMIN_PASSWORD}" -d grant_type=password \
     https://knowvault-idp.local:8443/realms/master/protocol/openid-connect/token 2>/dev/null |
-    sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+    sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p') || KC_TOKEN=""
   [ -n "$KC_TOKEN" ] && break
   sleep 3
 done
 
 if [ -z "$KC_TOKEN" ]; then
-  echo "warning: could not obtain a Keycloak admin token -- external_identity mappings were not created; log in once, then re-run bootstrap.sh to finish this step." >&2
+  echo "Keycloak did not become ready; external_identity mappings were not created. Re-run bootstrap.sh after resolving identity service readiness." >&2
+  exit 1
 else
   kc_user_sub() {
     curl -sS --max-time 15 --cacert "$KC_CACERT" $KC_RESOLVE -H "Authorization: Bearer $KC_TOKEN" \
@@ -466,7 +490,7 @@ else
     CONNECTOR_ADMIN_LAST_NAME="${KNOWVAULT_CONNECTOR_ADMIN_DISPLAY_NAME#* }"
     [ "$CONNECTOR_ADMIN_LAST_NAME" = "$KNOWVAULT_CONNECTOR_ADMIN_DISPLAY_NAME" ] && CONNECTOR_ADMIN_LAST_NAME="Admin"
     curl -sS --max-time 15 --cacert "$KC_CACERT" $KC_RESOLVE -H "Authorization: Bearer $KC_TOKEN" -H 'Content-Type: application/json' \
-      -d "{\"username\":\"$KNOWVAULT_CONNECTOR_ADMIN_USERNAME\",\"enabled\":true,\"email\":\"${KNOWVAULT_CONNECTOR_ADMIN_USERNAME}@${KNOWVAULT_ORGANIZATION_ID}.local\",\"emailVerified\":true,\"firstName\":\"$CONNECTOR_ADMIN_FIRST_NAME\",\"lastName\":\"$CONNECTOR_ADMIN_LAST_NAME\",\"requiredActions\":[],\"attributes\":{\"knowvault_principal_id\":[\"$CONNECTOR_ADMIN_PRINCIPAL\"]},\"credentials\":[{\"type\":\"password\",\"value\":\"$CONNECTOR_ADMIN_PASSWORD\",\"temporary\":false}]}" \
+      -d "{\"username\":\"$KNOWVAULT_CONNECTOR_ADMIN_USERNAME\",\"enabled\":true,\"email\":\"${KNOWVAULT_CONNECTOR_ADMIN_USERNAME}@knowvault.local\",\"emailVerified\":true,\"firstName\":\"$CONNECTOR_ADMIN_FIRST_NAME\",\"lastName\":\"$CONNECTOR_ADMIN_LAST_NAME\",\"requiredActions\":[],\"attributes\":{\"knowvault_principal_id\":[\"$CONNECTOR_ADMIN_PRINCIPAL\"]},\"credentials\":[{\"type\":\"password\",\"value\":\"$CONNECTOR_ADMIN_PASSWORD\",\"temporary\":false}]}" \
       https://knowvault-idp.local:8443/admin/realms/knowvault/users >/dev/null
   fi
 
