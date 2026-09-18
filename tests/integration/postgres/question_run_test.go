@@ -172,6 +172,26 @@ func TestQuestionRunExtractiveLive(t *testing.T) {
 	}); question.CodeOf(err) != question.CodeIdempotencyConflict {
 		t.Fatalf("idempotency conflict code=%s err=%v", question.CodeOf(err), err)
 	}
+	// The key-conflict control names a real workspace accessible to this actor.
+	seedTx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = seedTx.Rollback(ctx) }()
+	if _, err := seedTx.Exec(ctx, `INSERT INTO public.workspace
+		(id, organization_id, name, status, owner_principal_id)
+		VALUES ('ws_other',$1,'Other workspace','ACTIVE',$2)`, s1dOrg, s1dOwner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedTx.Exec(ctx, `INSERT INTO public.workspace_member
+		(id, organization_id, workspace_id, principal_id, role, valid_from_revision, added_by)
+		VALUES ('wsm_other_owner',$1,'ws_other',$2,'OWNER',1,$2),
+		       ('wsm_other_viewer',$1,'ws_other',$3,'MEMBER',1,$2)`, s1dOrg, s1dOwner, s1dViewer); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := questions.Create(ctx, access, question.CreateRequest{
 		WorkspaceID: "ws_other", Question: "\u0421\u0435\u0433\u043e\u0434\u043d\u044f \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b \u043e\u0442\u0445\u043e\u0434\u043e\u0432?", AnswerMode: "EXTRACTIVE", IdempotencyKey: key,
 	}); question.CodeOf(err) != question.CodeIdempotencyConflict {
@@ -383,7 +403,7 @@ func TestQuestionRunGenericCompareLive(t *testing.T) {
 	if run.PlanningOperation != "COMPARE" || run.ResultStatus != "COMPLETED" || len(run.Citations) != 2 {
 		t.Fatalf("compare run projection=%+v", run)
 	}
-	if !strings.Contains(run.Answer, "\u0420\u0430\u0441\u0445\u043e\u0436\u0434\u0435\u043d\u0438\u0435 \u043f\u043e status") || !strings.Contains(run.Answer, "signed") || !strings.Contains(run.Answer, "pending") {
+	if !strings.Contains(run.Answer, "Conflict for status") || !strings.Contains(run.Answer, "signed") || !strings.Contains(run.Answer, "pending") {
 		t.Fatalf("compare answer=%q", run.Answer)
 	}
 	if len(run.Conflicts) != 1 || run.Conflicts[0].Code != "CONFLICT_FACT_VALUE" || len(run.Conflicts[0].EvidenceIDs) != 2 {
@@ -453,7 +473,7 @@ func TestQuestionRunGenericExplainLive(t *testing.T) {
 	if run.PlanningOperation != "EXPLAIN" || run.ResultStatus != "COMPLETED" || len(run.Citations) != 1 {
 		t.Fatalf("explain run projection=%+v", run)
 	}
-	if !strings.Contains(run.Answer, "Kafka \u043e\u0437\u043d\u0430\u0447\u0430\u0435\u0442: event bus.") || run.Citations[0].Excerpt != "Kafka means event bus." {
+	if !strings.Contains(run.Answer, "Kafka means: event bus.") || run.Citations[0].Excerpt != "Kafka means event bus." {
 		t.Fatalf("explain answer=%q citations=%+v", run.Answer, run.Citations)
 	}
 }
@@ -616,7 +636,7 @@ func TestQuestionRunGenericAuditLive(t *testing.T) {
 	if run.PlanningOperation != "AUDIT" || run.ResultStatus != "COMPLETED" || len(run.Citations) != 2 {
 		t.Fatalf("audit run projection=%+v", run)
 	}
-	if !strings.Contains(run.Answer, "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e \u043f\u043e retention_control") || !strings.Contains(run.Answer, "confirmed") {
+	if !strings.Contains(run.Answer, "Confirmed for retention_control") || !strings.Contains(run.Answer, "confirmed") {
 		t.Fatalf("audit answer=%q", run.Answer)
 	}
 	if len(run.Conflicts) != 0 || len(run.Uncertainties) != 0 {

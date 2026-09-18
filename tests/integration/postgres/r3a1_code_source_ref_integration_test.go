@@ -55,7 +55,7 @@ const (
 	kvA04GitCapabilityID  = "cap_kva04git"
 	kvA04GitTrustRecordID = "trust_kva04git"
 	kvA04GitTrustArtifact = "artifact_trust_kva04git"
-	kvA04GitDiscoveryID   = "disc_01ARZ3NDEKTSV4RRFFQ69G5FZA"
+	kvA04GitDiscoveryID   = "discovered_01ARZ3NDEKTSV4RRFFQ69G5FZA"
 	kvA04GitIdentityArt   = "artifact_identity_kva04git"
 	kvA04GitDisplayArt    = "artifact_display_kva04git"
 	kvA04GitConfigArt     = "artifact_scope_config_kva04git"
@@ -271,7 +271,7 @@ func TestKVA04CodeSourceRefOutcomeFour(t *testing.T) {
 	seedS1dOrg(t, ctx, admin, s1dOrg, s1dOwner)
 	configHash := seedKVA04GitScope(t, ctx, admin, codec, s1dOrg, s1dOwner)
 	seedS1dScopeAuthority(t, ctx, admin, s1dOrg, s1dWorkspace, s1dOwner, s1dViewer,
-		kvA04GitScopeID, configHash, 1, "binding_kva04git", "grant_kva04git", "confirmation_kva04git")
+		kvA04GitScopeID, configHash, 1, "binding_01ARZ3NDEKTSV4RRFFQ69G5FZC", "grant_kva04git", "confirmation_kva04git")
 
 	shaA := strings.Repeat("a", 40)
 	shaB := strings.Repeat("b", 40)
@@ -309,6 +309,19 @@ func TestKVA04CodeSourceRefOutcomeFour(t *testing.T) {
 	}
 	authority := newAuthorityRuntime(t, ctx)
 	handler, token, csrf := kvA01Handler(t, s1dOrg, s1dViewer, viewer, authority)
+	viewerAccess := database.AccessContext{OrganizationID: s1dOrg, PrincipalID: s1dViewer, RequestID: "req_git_ref_read"}
+	inventory, err := viewer.ListObjects(ctx, viewerAccess, s1dWorkspace, true, 0, 100)
+	if err != nil {
+		t.Fatalf("Git inventory before ref reads: %v", err)
+	}
+	for _, item := range inventory.Items {
+		if item.FirstFragmentID == "" {
+			t.Fatalf("Git version has no readable fragment: %#v", item)
+		}
+		if _, err := viewer.ReadObjectExactVersion(ctx, viewerAccess, s1dWorkspace, item.FirstFragmentID, item.SourceVersionID); err != nil {
+			t.Fatalf("Git version %s cannot be read: %v", item.ExternalVersionKey, err)
+		}
+	}
 
 	t.Run("ref-scoped grep carries the ref-A file:lines address and no ref-B leak", func(t *testing.T) {
 		args := `{"workspace_id":` + strconv.Quote(s1dWorkspace) + `,"pattern":"KV_A04_REF_A_ONLY","ref":` + strconv.Quote(shaA) + `}`
@@ -336,6 +349,15 @@ func TestKVA04CodeSourceRefOutcomeFour(t *testing.T) {
 		}
 		if version["external_version_key"] != keyA {
 			t.Fatalf("ref-A hit address external_version_key=%v want %q", version["external_version_key"], keyA)
+		}
+		canonical, ok := hit["canonical_address"].(string)
+		if !ok || canonical == "" {
+			t.Fatal("historical Git hit has no canonical address")
+		}
+		addressArgs := `{"workspace_id":` + strconv.Quote(s1dWorkspace) + `,"pattern":"KV_A04_REF_A_ONLY","address":` + strconv.Quote(canonical) + `}`
+		addressBody, addressEnvelope, addressPage := kvA04Grep(t, handler, token, csrf, addressArgs)
+		if addressEnvelope.Error != nil || len(addressPage.Matches) != 1 {
+			t.Fatalf("historical-address grep failed: err=%#v matches=%d body=%s", addressEnvelope.Error, len(addressPage.Matches), addressBody)
 		}
 		path, _ := hit["path"].(string)
 		if path == "" || !strings.Contains(path, kvA04GitPath) {
@@ -419,6 +441,14 @@ func TestKVA04CodeSourceRefOutcomeFour(t *testing.T) {
 		}
 		if !bytes.Equal(bytesB, contentB) {
 			t.Fatalf("ref-B read returned %q, want the ref-B bytes", string(bytesB))
+		}
+	})
+
+	t.Run("all-versions grep includes both immutable Git versions", func(t *testing.T) {
+		args := `{"workspace_id":` + strconv.Quote(s1dWorkspace) + `,"pattern":"KV_A04_REF_[AB]_ONLY","all_versions":true}`
+		body, envelope, page := kvA04Grep(t, handler, token, csrf, args)
+		if envelope.Error != nil || len(page.Matches) != 2 {
+			t.Fatalf("all-versions grep: err=%#v matches=%d body=%s", envelope.Error, len(page.Matches), body)
 		}
 	})
 

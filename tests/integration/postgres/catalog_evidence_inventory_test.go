@@ -582,7 +582,7 @@ func TestKVWorkspaceInventoryNonFolderTypedReason(t *testing.T) {
 	seedS1dOrg(t, ctx, admin, s1dOrg, s1dOwner)
 	configHash := seedKVA04GitScope(t, ctx, admin, codec, s1dOrg, s1dOwner)
 	seedS1dScopeAuthority(t, ctx, admin, s1dOrg, s1dWorkspace, s1dOwner, s1dViewer,
-		kvA04GitScopeID, configHash, 1, "binding_kva02git", "grant_kva02git", "confirmation_kva02git")
+		kvA04GitScopeID, configHash, 1, "binding_01ARZ3NDEKTSV4RRFFQ69G5FZC", "grant_kva02git", "confirmation_kva02git")
 
 	// A GIT_FILE path with no admitted extension: the GIT adapter only admits
 	// TXT, so the pipeline's format-determination branch quarantines the object

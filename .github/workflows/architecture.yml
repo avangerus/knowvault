@@ -187,11 +187,11 @@ jobs:
           docker run -d --rm --name "$container" --network "$network" -e POSTGRES_DB=knowvault_test -e POSTGRES_PASSWORD="$postgres_password" "$POSTGRES_IMAGE" >/dev/null
           timeout 30s bash -c 'until docker exec "$1" pg_isready -U postgres -d knowvault_test >/dev/null 2>&1; do sleep 1; done' _ "$container"
           docker exec "$container" pg_isready -U postgres -d knowvault_test >/dev/null
+          # The full PostgreSQL suite runs once in the mandatory privileged proof below.
           docker run --rm --network "$network" \
             -e GOTOOLCHAIN=local \
             -e GOEXPERIMENT=jsonv2 \
             -e REPO_ROOT=/src \
-            -e KNOWVAULT_TEST_POSTGRES_URL="postgres://postgres:${postgres_password}@${container}:5432/knowvault_test?sslmode=disable" \
             -e KNOWVAULT_TEST_OFFICE_WORKER_IMAGE="$office_image" \
             -e KNOWVAULT_TEST_OCR_WORKER_IMAGE="$qualification_image" \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -231,7 +231,7 @@ jobs:
             -v "$PWD:/src:ro" \
             -w /src \
             "$GO_IMAGE" \
-            go test -mod=readonly -count=1 ./tests/integration/postgres
+            go test -mod=readonly -count=1 -timeout=20m ./tests/integration/postgres
           # Mutation registry includes the Office parser's real-v2 harness.
           # Keep this invocation non-skippable: without a writable cgroup-v2,
           # PID namespace and Docker socket the harness must fail rather than

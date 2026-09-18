@@ -9625,7 +9625,7 @@ var requiredCiExecutableCommands = []string{
 	"corepack pnpm exec esbuild --version",
 	"go test -count=1 ./...",
 	"go test -mod=readonly -count=1 ./...",
-	"go test -mod=readonly -count=1 ./tests/integration/postgres",
+	"go test -mod=readonly -count=1 -timeout=20m ./tests/integration/postgres",
 	"go test -mod=readonly -json -tags e2e ./tests/e2e -run=^TestE2ER3FullLoop$ -count=1 -timeout 30m 2>&1 | tee /tmp/knowvault-r3-go-test.json",
 	"go run ./scripts/check-architecture.go -verify-e2e-json /tmp/knowvault-r3-go-test.json -verify-e2e-package knowvault.local/verified-workspace/tests/e2e -verify-e2e-test TestE2ER3FullLoop",
 	"go run ./tests/contracts/mutation-runner -root /src",

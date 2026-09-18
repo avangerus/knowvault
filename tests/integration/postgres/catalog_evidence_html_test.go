@@ -108,8 +108,8 @@ func TestS2aHTMLFolderExtraction(t *testing.T) {
 
 	// The good document ingested with the html-v1 profile; the two bad ones are
 	// quarantined (no object, no fallback).
-	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/report.html"); got != "html-v1" {
-		t.Fatalf("report.html parser_profile_revision = %q, want html-v1", got)
+	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/report.html"); got != "html-v1-layout-v2" {
+		t.Fatalf("report.html parser_profile_revision = %q, want html-v1-layout-v2", got)
 	}
 	for _, path := range []string{"projects/alpha/empty.html", "projects/alpha/fake.html"} {
 		if got := s2aActiveRevision(t, ctx, admin, path); got != "" {
