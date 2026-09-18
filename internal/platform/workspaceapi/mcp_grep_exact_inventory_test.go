@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/source/evidence"
 )
@@ -12,6 +13,14 @@ import (
 type currentOnlyGrepEvidence struct {
 	*fakeGrepInventoryEvidence
 	historicalID string
+	denyRead     bool
+}
+
+func (service *currentOnlyGrepEvidence) Read(ctx context.Context, access database.AccessContext, workspaceID, fragmentID string) (evidence.Fragment, error) {
+	if service.denyRead || fragmentID == service.historicalID {
+		return evidence.Fragment{}, evidence.ErrNotFound
+	}
+	return service.fakeGrepInventoryEvidence.Read(ctx, access, workspaceID, fragmentID)
 }
 
 func (service *currentOnlyGrepEvidence) ReadObject(ctx context.Context, access database.AccessContext, workspaceID, fragmentID string) (evidence.WholeObject, error) {
@@ -77,6 +86,30 @@ func TestMCPGrepHistoricalInventoryRefusesUnavailableOrWrongVersion(t *testing.T
 		page, err := source.GrepFragmentsAtRef(context.Background(), database.AccessContext{}, "ws_alpha", "needle", "aaaa", 0, 10)
 		if !errors.Is(err, evidence.ErrNotFound) || len(page.Hits) != 0 {
 			t.Fatalf("unavailable or wrong version disclosed data: page=%#v err=%v", page, err)
+		}
+	}
+}
+
+func TestMCPGrepExactFailureKeepsAuthorizedSelectorRefusal(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		base, ids := grepRefService(t)
+		current := &currentOnlyGrepEvidence{fakeGrepInventoryEvidence: base, denyRead: denied}
+		service := &exactInventoryGrepEvidence{currentOnlyGrepEvidence: current}
+		harness := grepInventoryHarness(t, base)
+		harness.handler.evidence = service
+		canonical := mcpGrepCanonicalAddressKeyed(nil, base.objects[ids["doc"]], "")
+		selector, err := address.Parse(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selector.Version = "version_stale"
+		page, ref, err := harness.handler.mcpGrepAtAddress(context.Background(), database.AccessContext{}, "ws_alpha", selector, "needle", 0, 10)
+		want := errMCPGrepInvalidAddress
+		if denied {
+			want = evidence.ErrNotFound
+		}
+		if !errors.Is(err, want) || len(page.Hits) != 0 || ref != "" {
+			t.Fatalf("denied=%t: result=%#v ref=%q err=%v", denied, page, ref, err)
 		}
 	}
 }

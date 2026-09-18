@@ -467,12 +467,12 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	}
 	for index, example := range []struct{ kind, text, status, stop, answer string }{
 		{"clarification", "\u0430 \u0441\u043a\u043e\u043b\u044c\u043a\u043e?", "COMPLETED", "CLARIFICATION", clarification},
-		{"absent", "\u041a\u0430\u043a\u0430\u044f \u0442\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430 \u0437\u0430\u0432\u0442\u0440\u0430 \u043d\u0430 \u041b\u0443\u043d\u0435?", "INSUFFICIENT_EVIDENCE", "ANSWER", "\u0412 \u043e\u0431\u043b\u0430\u0441\u0442\u0438 \u043d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u043e\u0442\u0432\u0435\u0442\u0430."},
-		{"forged", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u0432\u0435\u0440\u0438\u0442\u044c \u0446\u0438\u0442\u0430\u0442\u044b \u043e\u0442\u0432\u0435\u0442\u0430 \u0441 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c\u0438. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c \u0437\u0430\u043f\u0440\u043e\u0441."},
-		{"forged_address_only", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u0432\u0435\u0440\u0438\u0442\u044c \u0446\u0438\u0442\u0430\u0442\u044b \u043e\u0442\u0432\u0435\u0442\u0430 \u0441 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c\u0438. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c \u0437\u0430\u043f\u0440\u043e\u0441."},
-		{"unseen_fragment", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u0432\u0435\u0440\u0438\u0442\u044c \u0446\u0438\u0442\u0430\u0442\u044b \u043e\u0442\u0432\u0435\u0442\u0430 \u0441 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c\u0438. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c \u0437\u0430\u043f\u0440\u043e\u0441."},
-		{"edited_quote", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u0432\u0435\u0440\u0438\u0442\u044c \u0446\u0438\u0442\u0430\u0442\u044b \u043e\u0442\u0432\u0435\u0442\u0430 \u0441 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c\u0438. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c \u0437\u0430\u043f\u0440\u043e\u0441."},
-		{"context", "\u0430 \u0432\u0447\u0435\u0440\u0430?", "INSUFFICIENT_EVIDENCE", "ANSWER", "\u0412 \u043e\u0431\u043b\u0430\u0441\u0442\u0438 \u043d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u043e\u0442\u0432\u0435\u0442\u0430."},
+		{"absent", "\u041a\u0430\u043a\u0430\u044f \u0442\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430 \u0437\u0430\u0432\u0442\u0440\u0430 \u043d\u0430 \u041b\u0443\u043d\u0435?", "INSUFFICIENT_EVIDENCE", "ANSWER", "The workspace has no data to answer this question."},
+		{"forged", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
+		{"forged_address_only", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
+		{"unseen_fragment", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
+		{"edited_quote", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
+		{"context", "\u0430 \u0432\u0447\u0435\u0440\u0430?", "INSUFFICIENT_EVIDENCE", "ANSWER", "The workspace has no data to answer this question."},
 	} {
 		scenario = example.kind
 		key := make([]byte, 32)
@@ -583,7 +583,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	scopeKey[0] = 34
 	scopeRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(scopeKey)})
 	scenario = "answer"
-	if err != nil || scopeRun.ToolLoop == nil || scopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || scopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || scopeRun.Answer != "\u041e\u0431\u043b\u0430\u0441\u0442\u044c \u0434\u0430\u043d\u043d\u044b\u0445 \u0438\u0437\u043c\u0435\u043d\u0438\u043b\u0430\u0441\u044c \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u0437\u0430\u043f\u0440\u043e\u0441\u0430. \u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441." || len(scopeRun.Citations) != 0 {
+	if err != nil || scopeRun.ToolLoop == nil || scopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || scopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || scopeRun.Answer != "The workspace changed during the request. Please try again." || len(scopeRun.Citations) != 0 {
 		t.Fatalf("scope change was not surfaced safely: %v %+v", err, scopeRun)
 	}
 	if !scopeRevokeDone || scopeChangedModelCalls != 2 || len(scopeRun.ToolLoop.Calls) != 3 {

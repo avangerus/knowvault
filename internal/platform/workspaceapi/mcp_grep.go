@@ -436,6 +436,17 @@ func (handler *Handler) mcpGrepAtAddress(ctx context.Context, access database.Ac
 			refVersionID = resolution.RefVersionID
 		}
 		object, err = handler.readEvidenceObjectSelection(ctx, access, workspaceID, selector.Object, &selector, refVersionID)
+		if err != nil && strings.HasPrefix(selector.Version, "version_") {
+			// Preserve the invalid-selector refusal only when a current,
+			// authorized read proves that this fragment belongs to another
+			// version. Denied or retired fragments remain content-free not
+			// found; the fallback never supplies bytes to the grep result.
+			fragment, readErr := handler.evidence.Read(ctx, access, workspaceID, selector.Object)
+			if readErr == nil && fragment.FragmentID == selector.Object &&
+				fragment.SourceObjectID == selector.Source && fragment.SourceVersionID != selector.Version {
+				return GrepPage{}, "", errMCPGrepInvalidAddress
+			}
+		}
 	} else {
 		object, err = objects.ReadObject(ctx, access, workspaceID, selector.Object)
 	}
