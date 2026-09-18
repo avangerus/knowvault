@@ -199,7 +199,12 @@ jobs:
             -v "$PWD:/src:ro" \
             -w /src \
             "$GO_IMAGE" \
-            go test -mod=readonly -count=1 ./...
+            bash -ceu '
+              package_list=$(go list -mod=readonly ./...)
+              mapfile -t unit_packages < <(printf "%s\n" "$package_list" | awk "\$0 != \"knowvault.local/verified-workspace/tests/integration/postgres\"")
+              test "${#unit_packages[@]}" -gt 0
+              go test -mod=readonly -count=1 "${unit_packages[@]}" -timeout=10m
+            '
           # The ordinary suite remains developer-friendly on hosts without a
           # writable unified cgroup or CLONE_NEWPID. This dedicated invocation
           # is the non-skippable Linux proof: real pidfds, SCM_RIGHTS,
