@@ -190,7 +190,7 @@ ensure_cache_volume() {
   docker run --rm \
     --read-only \
     --network none \
-    --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
+    --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
     --memory 64m --cpus 0.25 \
     -v "$CACHE_VOLUME:/cache" \
     "$HELPER_IMAGE" \
