@@ -18,6 +18,19 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: Enable OCI-compatible Docker image store
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import json, pathlib
+          path = pathlib.Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          config.setdefault('features', {})['containerd-snapshotter'] = True
+          path.write_text(json.dumps(config) + '\n')
+          PY
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | python3 -c 'import json,sys; assert any(k == "driver-type" and v == "io.containerd.snapshotter.v1" for k,v in json.load(sys.stdin)), "OCI-compatible Docker image store is required"'
       - name: Verify architecture baseline in pinned Go builder
         env:
           GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
