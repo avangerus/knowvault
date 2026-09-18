@@ -1,0 +1,86 @@
+# Optional neural reranking capability, independent of the embedding index.
+# Provision its tenant-bound profile and mTLS mount before starting the server.
+# The model revision is the exact tested Hugging Face commit, not main.
+services:
+  reranking:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6@sha256:66db77d7856c9319bbfaf2c5b80a6d0e0ac9ff128ade09eaca1d9c20213617a4
+    container_name: knowvault-reranking-runtime
+    user: "1000:1000"
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2.0
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    command:
+      - --model-id
+      - BAAI/bge-reranker-v2-m3
+      - --revision
+      - "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+      - --dtype
+      - float32
+      - --port
+      - "80"
+      - --tokenization-workers
+      - "2"
+      - --max-client-batch-size
+      - "32"
+      - --max-batch-requests
+      - "4"
+      - --max-batch-tokens
+      - "8192"
+      - --max-concurrent-requests
+      - "32"
+      - --payload-limit
+      - "524288"
+      - --disable-spans
+      - --json-output
+    volumes:
+      - knowvault-reranking-cache:/data
+    networks:
+      default:
+        aliases: [knowvault-reranking-backend]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 90s
+
+  reranking-proxy:
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    container_name: knowvault-reranking-proxy
+    restart: unless-stopped
+    read_only: true
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    cpus: 0.25
+    tmpfs: [/tmp]
+    volumes:
+      - ./proxy/reranking.conf:/etc/nginx/nginx.conf:ro
+      - ./pki/reranking/server.crt:/etc/nginx/tls/server.crt:ro
+      - ./pki/reranking/server.key:/etc/nginx/tls/server.key:ro
+      - ./pki/reranking/ca.crt:/etc/nginx/tls/client-ca.crt:ro
+    depends_on:
+      reranking:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [knowvault-reranking]
+
+  server:
+    volumes:
+      - ./mounts/server/reranking:/run/knowvault/reranking:ro
+    depends_on:
+      reranking-proxy:
+        condition: service_started
+
+volumes:
+  knowvault-reranking-cache:
+    name: knowvault-reranking-cache

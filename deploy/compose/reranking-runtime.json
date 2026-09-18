@@ -1,0 +1,17 @@
+{
+  "auto_truncate": false,
+  "disable_spans": true,
+  "dtype": "float32",
+  "json_output": true,
+  "max_batch_requests": 4,
+  "max_batch_tokens": 8192,
+  "max_client_batch_size": 32,
+  "max_concurrent_requests": 32,
+  "mkl_num_threads": 2,
+  "model_config_hash": "sha256:13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
+  "model_id": "BAAI/bge-reranker-v2-m3",
+  "model_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+  "omp_num_threads": 2,
+  "payload_limit": 524288,
+  "tokenization_workers": 2
+}

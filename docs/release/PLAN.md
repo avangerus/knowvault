@@ -12,6 +12,8 @@ complete source reads and inspectable evidence pages.
 - Track source updates, disappearance and return without silently replacing evidence.
 - Attribute access to users or service identities and support credential revocation.
 - Provide a simple web search interface with optional preliminary model answers.
+- Rerank authorized search candidates with a separately identified neural model
+  before pagination, preserving source addresses and reporting any degradation.
 
 See [pilot status](../PILOT-STATUS.md) for available workflows and measured
 limitations, and [pilot acceptance](../PILOT-ACCEPTANCE.md) for evaluation steps.

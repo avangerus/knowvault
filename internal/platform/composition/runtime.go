@@ -33,6 +33,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/webui"
 	"knowvault.local/verified-workspace/internal/platform/workspaceapi"
 	"knowvault.local/verified-workspace/internal/question"
+	"knowvault.local/verified-workspace/internal/reranking"
 	"knowvault.local/verified-workspace/internal/retrieval"
 	"knowvault.local/verified-workspace/internal/search"
 	"knowvault.local/verified-workspace/internal/searchprofile"
@@ -299,16 +300,33 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		return fail(StartupStageSearchClient)
 	}
 	acquired.push(searchClient.Close)
-	var retrievalExecutor *retrieval.Executor
-	if embeddingClient == nil {
-		retrievalExecutor, err = retrieval.NewExecutorWithGraph(searchClient, viewer, databaseStore, knowledgegraph.NewRepository())
+	// Reranking changes candidate order after live authorization. Its mounted
+	// transport and identity are independent of the corpus embedding revision.
+	rerankingConfig, rerankingMountErr := reranking.LoadMountedForTenant(string(config.OrganizationID()))
+	var rerankingClient *reranking.Client
+	if rerankingMountErr != nil {
+		if reranking.CodeOf(rerankingMountErr) != reranking.CodeMountUnavailable {
+			return fail(StartupStageRerankingMount)
+		}
 	} else {
-		vectorProvider, vectorProviderErr := retrieval.NewOpenSearchVectorProvider(embeddingClient, searchClient)
-		if vectorProviderErr != nil {
+		rerankingClient, err = reranking.New(rerankingConfig.Profile, rerankingConfig.TrustRoots, rerankingConfig.ClientCertificate, nil)
+		if err != nil {
+			return fail(StartupStageRerankingClient)
+		}
+		acquired.push(rerankingClient.Close)
+	}
+	var vectorProvider retrieval.VectorProvider
+	if embeddingClient != nil {
+		vectorProvider, err = retrieval.NewOpenSearchVectorProvider(embeddingClient, searchClient)
+		if err != nil {
 			return fail(StartupStageRetrievalExecutor)
 		}
-		retrievalExecutor, err = retrieval.NewExecutorWithGraphAndVector(searchClient, viewer, databaseStore, knowledgegraph.NewRepository(), vectorProvider)
 	}
+	var rerankProvider retrieval.RerankProvider
+	if rerankingClient != nil {
+		rerankProvider = rerankingClient
+	}
+	retrievalExecutor, err := retrieval.NewExecutorWithProviders(searchClient, viewer, databaseStore, knowledgegraph.NewRepository(), vectorProvider, rerankProvider)
 	if err != nil {
 		return fail(StartupStageRetrievalExecutor)
 	}

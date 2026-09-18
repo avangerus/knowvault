@@ -38,6 +38,8 @@ func TestStartupStageOfAcceptsOnlyTheClosedRuntimeStartupTaxonomy(t *testing.T) 
 		StartupStageSearchClient,
 		StartupStageEmbeddingMount,
 		StartupStageEmbeddingClient,
+		StartupStageRerankingMount,
+		StartupStageRerankingClient,
 		StartupStageRetrievalExecutor,
 		StartupStageGenerationMount,
 		StartupStageGovernedQueryMount,

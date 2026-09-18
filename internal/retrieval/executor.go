@@ -109,11 +109,12 @@ type Result struct {
 // workspace/Evidence authorization gate. It has no raw SQL or OpenSearch DSL
 // surface and is safe for concurrent use.
 type Executor struct {
-	client *search.Client
-	viewer *evidence.Viewer
-	db     *database.Store
-	graph  *knowledgegraph.Repository
-	vector VectorProvider
+	client   *search.Client
+	viewer   *evidence.Viewer
+	db       *database.Store
+	graph    *knowledgegraph.Repository
+	vector   VectorProvider
+	reranker RerankProvider
 }
 
 func NewExecutor(client *search.Client, viewer *evidence.Viewer) (*Executor, error) {
@@ -144,6 +145,16 @@ func NewExecutorWithGraphAndVector(client *search.Client, viewer *evidence.Viewe
 		return nil, &Error{code: CodeExecutorInvalid}
 	}
 	return &Executor{client: client, viewer: viewer, db: db, graph: graph, vector: vector}, nil
+}
+
+// NewExecutorWithProviders mounts optional vector and neural ranking providers.
+// Ranking receives only text obtained through the live Evidence gate.
+func NewExecutorWithProviders(client *search.Client, viewer *evidence.Viewer, db *database.Store,
+	graph *knowledgegraph.Repository, vector VectorProvider, reranker RerankProvider) (*Executor, error) {
+	if client == nil || viewer == nil || db == nil || graph == nil {
+		return nil, &Error{code: CodeExecutorInvalid}
+	}
+	return &Executor{client: client, viewer: viewer, db: db, graph: graph, vector: vector, reranker: reranker}, nil
 }
 
 // HybridReady reports whether the graph-aware execution boundary is mounted.

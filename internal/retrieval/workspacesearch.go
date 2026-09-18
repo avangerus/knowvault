@@ -68,12 +68,17 @@ const (
 // It is echoed in every result so a measurement run never has to assume which
 // algorithm produced the score it is comparing.
 type WorkspaceSearchProfile struct {
-	Mode     SearchMode
-	Lexical  bool
-	Vector   bool
-	Fusion   string
-	K        int
-	Reranker bool
+	Mode                   SearchMode
+	Lexical                bool
+	Vector                 bool
+	Fusion                 string
+	K                      int
+	Reranker               bool
+	RerankerModelID        string
+	RerankerProfileHash    string
+	RerankerCandidates     int
+	RerankerRepresentation string
+	RerankerDegraded       bool
 	// Diversity identifies deterministic copy deferral after live authorization.
 	// Scores remain the original channel/fusion scores, before this ordering.
 	Diversity string
@@ -127,10 +132,10 @@ type WorkspaceSearchOptions struct {
 	// ever arrives from the owner-only ablation channel, never from a tool
 	// argument.
 	Mode SearchMode
-	// Rerank is accepted so the profile can carry the operator's request
-	// truthfully. Reranking is not part of this contour: a true value is
-	// reported back as the false it actually was rather than silently ignored.
+	// Rerank explicitly requests ranking; a mounted provider enables it by default.
 	Rerank bool
+	// DisableRerank is an operator diagnostic ablation, not a model tool argument.
+	DisableRerank bool
 }
 
 // WorkspaceSearchReady reports whether this executor can serve the hybrid
@@ -300,6 +305,10 @@ func (executor *Executor) SearchWorkspace(ctx context.Context, access database.A
 			Channel: hitChannel(hit.Channels), VersionState: versionState})
 	}
 
+	ranked, err = executor.rerankWorkspaceHits(ctx, query, ranked, options, &profile)
+	if err != nil {
+		return WorkspaceSearchPage{}, err
+	}
 	page := WorkspaceSearchPage{Profile: profile, Partial: fused.Partial || answeredChannelPartial}
 	start := options.Offset
 	if start > int64(len(ranked)) {

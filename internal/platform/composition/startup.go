@@ -40,6 +40,8 @@ const (
 	StartupStageSearchClient       StartupStage = "SEARCH_CLIENT"
 	StartupStageEmbeddingMount     StartupStage = "EMBEDDING_MOUNT"
 	StartupStageEmbeddingClient    StartupStage = "EMBEDDING_CLIENT"
+	StartupStageRerankingMount     StartupStage = "RERANKING_MOUNT"
+	StartupStageRerankingClient    StartupStage = "RERANKING_CLIENT"
 	StartupStageRetrievalExecutor  StartupStage = "RETRIEVAL_EXECUTOR"
 	// StartupStageGenerationMount is GEN-2 (ADR-0088): a present-but-invalid
 	// modelgateway lab mount, or a present mount with no embedding channel to
@@ -55,9 +57,9 @@ const (
 	// absent by default).
 	StartupStageGovernedQueryMount StartupStage = "GOVERNED_QUERY_MOUNT"
 	StartupStageWorkspaceHandler   StartupStage = "WORKSPACE_HANDLER"
-	StartupStageWebUI            StartupStage = "WEB_UI"
-	StartupStageHTTPDispatcher   StartupStage = "HTTP_DISPATCHER"
-	StartupStageHTTPServer       StartupStage = "HTTP_SERVER"
+	StartupStageWebUI              StartupStage = "WEB_UI"
+	StartupStageHTTPDispatcher     StartupStage = "HTTP_DISPATCHER"
+	StartupStageHTTPServer         StartupStage = "HTTP_SERVER"
 )
 
 // StartupStageOf returns a stage only for a composition startup failure and
@@ -103,6 +105,8 @@ func knownStartupStage(stage StartupStage) bool {
 		StartupStageSearchClient,
 		StartupStageEmbeddingMount,
 		StartupStageEmbeddingClient,
+		StartupStageRerankingMount,
+		StartupStageRerankingClient,
 		StartupStageRetrievalExecutor,
 		StartupStageGenerationMount,
 		StartupStageGovernedQueryMount,

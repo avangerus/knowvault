@@ -1,0 +1,16 @@
+{
+  "schema_version": "reranking-profile-v1",
+  "id": "bge-reranker-v2-m3-cpu-v1",
+  "model_id": "BAAI/bge-reranker-v2-m3",
+  "artifact_hash": "sha256:d9e3e081faff1eefb84019509b2f5558fd74c1a05a2c7db22f74174fcedb5286",
+  "tokenizer_hash": "sha256:69564b696052886ed0ac63fa393e928384e0f8caada38c1f4864a9bfbf379c15",
+  "runtime_hash": "sha256:66db77d7856c9319bbfaf2c5b80a6d0e0ac9ff128ade09eaca1d9c20213617a4",
+  "configuration_hash": "sha256:cda5a95b541e9abcb40ca3066d2a678d20d7e65aeb6d6374aa7406fbc4484709",
+  "endpoint": "https://knowvault-reranking:443",
+  "server_name": "knowvault-reranking",
+  "revision": 1,
+  "max_candidates": 32,
+  "max_input_bytes": 524288,
+  "timeout_seconds": 15,
+  "profile_hash": "sha256:f49bfa0a59e197b52f371361f5203a0e928b285433b2bcf33c909426da547cec"
+}

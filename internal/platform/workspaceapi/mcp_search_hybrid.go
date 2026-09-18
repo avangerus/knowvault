@@ -183,5 +183,14 @@ func searchProfileProjection(profile retrieval.WorkspaceSearchProfile) map[strin
 	if profile.Diversity != "" {
 		projection["diversity"] = profile.Diversity
 	}
+	if profile.RerankerModelID != "" {
+		projection["reranker_model_id"] = profile.RerankerModelID
+		projection["reranker_profile_hash"] = profile.RerankerProfileHash
+		projection["reranker_candidates"] = profile.RerankerCandidates
+		projection["reranker_representation"] = profile.RerankerRepresentation
+	}
+	if profile.RerankerDegraded {
+		projection["reranker_degraded"] = true
+	}
 	return projection
 }

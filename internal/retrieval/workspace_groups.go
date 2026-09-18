@@ -333,34 +333,10 @@ func planWorkspaceGroupWindow(groups []workspaceSearchGroup, probes map[string]e
 	if offset < 0 || limit < 1 || probeCount < 0 || probeCount > maximumWorkspaceGroupBudget {
 		return workspaceGroupWindow{}, invalidFusion("workspace grouped page shape invalid")
 	}
-	visible := make([]workspaceSearchGroup, 0, len(groups))
-	seenMembers := make(map[string]workspaceGroupMember)
-	for _, group := range groups {
-		if err := validateWorkspaceGroup(group); err != nil {
-			return workspaceGroupWindow{}, err
-		}
-		for _, member := range group.Members {
-			if previous, duplicate := seenMembers[member.FragmentID]; duplicate {
-				if !workspaceGroupMemberIdentityEqual(previous, member) {
-					return workspaceGroupWindow{}, errWorkspaceGroupLineageConflict
-				}
-			} else {
-				seenMembers[member.FragmentID] = member
-			}
-		}
-		probeID := group.Members[0].FragmentID
-		probe, authorized := probes[probeID]
-		if !authorized {
-			// A probe denial is the ordinary live ACL result. The group is removed
-			// before offset/limit so a revoked row cannot consume page space.
-			continue
-		}
-		if !workspaceFragmentMatchesMember(probe, group.Members[0]) {
-			return workspaceGroupWindow{}, errWorkspaceGroupLineageConflict
-		}
-		visible = append(visible, group)
+	visible, err := visibleWorkspaceGroups(groups, probes)
+	if err != nil {
+		return workspaceGroupWindow{}, err
 	}
-	visible = deferWorkspaceCopyUnits(visible, probes)
 	start := offset
 	if start > int64(len(visible)) {
 		start = int64(len(visible))
@@ -389,6 +365,37 @@ func planWorkspaceGroupWindow(groups []workspaceSearchGroup, probes map[string]e
 		window.NextOffset = start + window.Consumed
 	}
 	return window, nil
+}
+
+func visibleWorkspaceGroups(groups []workspaceSearchGroup, probes map[string]evidence.Fragment) ([]workspaceSearchGroup, error) {
+	visible := make([]workspaceSearchGroup, 0, len(groups))
+	seenMembers := make(map[string]workspaceGroupMember)
+	for _, group := range groups {
+		if err := validateWorkspaceGroup(group); err != nil {
+			return nil, err
+		}
+		for _, member := range group.Members {
+			if previous, duplicate := seenMembers[member.FragmentID]; duplicate {
+				if !workspaceGroupMemberIdentityEqual(previous, member) {
+					return nil, errWorkspaceGroupLineageConflict
+				}
+			} else {
+				seenMembers[member.FragmentID] = member
+			}
+		}
+		probeID := group.Members[0].FragmentID
+		probe, authorized := probes[probeID]
+		if !authorized {
+			// A probe denial is the ordinary live ACL result. The group is removed
+			// before offset/limit so a revoked row cannot consume page space.
+			continue
+		}
+		if !workspaceFragmentMatchesMember(probe, group.Members[0]) {
+			return nil, errWorkspaceGroupLineageConflict
+		}
+		visible = append(visible, group)
+	}
+	return deferWorkspaceCopyUnits(visible, probes), nil
 }
 
 // deferWorkspaceCopyUnits keeps the first ranked copy of an identical file
@@ -495,6 +502,13 @@ func workspaceMemberLexicalScore(text []byte, query string) int64 {
 
 func (executor *Executor) authorizeWorkspaceGroups(ctx context.Context, access database.AccessContext,
 	workspaceID, query string, fusion workspaceGroupedFusion, offset, limit int64) (workspaceGroupedPage, error) {
+	return executor.authorizeWorkspaceGroupsWithRerank(ctx, access, workspaceID, query, fusion, offset, limit,
+		WorkspaceSearchOptions{DisableRerank: true}, &WorkspaceSearchProfile{})
+}
+
+func (executor *Executor) authorizeWorkspaceGroupsWithRerank(ctx context.Context, access database.AccessContext,
+	workspaceID, query string, fusion workspaceGroupedFusion, offset, limit int64,
+	options WorkspaceSearchOptions, profile *WorkspaceSearchProfile) (workspaceGroupedPage, error) {
 	if executor == nil || executor.viewer == nil || len(fusion.Groups) > maximumFusedCandidates {
 		return workspaceGroupedPage{}, &Error{code: CodeExecutorInvalid}
 	}
@@ -513,7 +527,51 @@ func (executor *Executor) authorizeWorkspaceGroups(ctx context.Context, access d
 	for _, fragment := range probes {
 		probeByID[fragment.FragmentID] = fragment
 	}
-	window, err := planWorkspaceGroupWindow(fusion.Groups, probeByID, len(probeIDs), offset, limit)
+	groups := fusion.Groups
+	readCount := len(probeIDs)
+	rerankPartial := false
+	if executor.rerankEnabled(options, profile) {
+		visible, err := visibleWorkspaceGroups(groups, probeByID)
+		if err != nil {
+			return workspaceGroupedPage{}, err
+		}
+		prefix, memberIDs, partial := planWorkspaceRerankPrefix(visible, readCount)
+		rerankPartial = partial
+		members := make(map[string]evidence.Fragment, len(memberIDs))
+		if len(memberIDs) > 0 {
+			fragments, err := executor.viewer.AuthorizeFragments(ctx, access, workspaceID, memberIDs)
+			if err != nil {
+				return workspaceGroupedPage{}, err
+			}
+			for _, fragment := range fragments {
+				members[fragment.FragmentID] = fragment
+			}
+		}
+		readCount += len(memberIDs)
+		head, texts, incomplete, err := authorizedWorkspaceRerankText(prefix, members)
+		if err != nil {
+			return workspaceGroupedPage{}, err
+		}
+		rerankPartial = rerankPartial || incomplete
+		profile.RerankerRepresentation = "authorized-group-members-v1"
+		order, err := executor.rerankOrder(ctx, query, texts, profile)
+		if err != nil {
+			return workspaceGroupedPage{}, err
+		}
+		groups = make([]workspaceSearchGroup, 0, len(visible))
+		if order != nil {
+			for _, original := range order {
+				groups = append(groups, head[original])
+			}
+		} else {
+			groups = append(groups, head...)
+		}
+		groups = append(groups, visible[len(prefix):]...)
+	}
+	if err := ctx.Err(); err != nil {
+		return workspaceGroupedPage{}, err
+	}
+	window, err := planWorkspaceGroupWindow(groups, probeByID, readCount, offset, limit)
 	if err != nil {
 		return workspaceGroupedPage{}, err
 	}
@@ -530,7 +588,7 @@ func (executor *Executor) authorizeWorkspaceGroups(ctx context.Context, access d
 			allFragments[fragment.FragmentID] = fragment
 		}
 	}
-	page := workspaceGroupedPage{Partial: fusion.Partial || window.Partial,
+	page := workspaceGroupedPage{Partial: fusion.Partial || window.Partial || rerankPartial,
 		HasMore: window.HasMore, NextPage: window.NextOffset,
 		Hits: make([]WorkspaceHit, 0, len(window.Groups))}
 	for _, group := range window.Groups {
@@ -616,7 +674,7 @@ func (executor *Executor) searchIndexedWorkspace(ctx context.Context, access dat
 	if err != nil {
 		return WorkspaceSearchPage{}, err
 	}
-	groupedPage, err := executor.authorizeWorkspaceGroups(ctx, access, workspaceID, query, fused, options.Offset, options.Limit)
+	groupedPage, err := executor.authorizeWorkspaceGroupsWithRerank(ctx, access, workspaceID, query, fused, options.Offset, options.Limit, options, &profile)
 	if err != nil {
 		return WorkspaceSearchPage{}, err
 	}
