@@ -25,6 +25,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"knowvault.local/verified-workspace/internal/platform/runtimeidentity"
 )
 
 type config struct {
@@ -349,16 +351,17 @@ func main() {
 	// administrator-owned HTTPS/mTLS manifest into the server root and the
 	// worker's separate chroot; neither component receives a search endpoint or
 	// trust material through environment fallback.
-	if err := prepareSearchMount(ctx, cfg, "/run/knowvault/search"); err != nil {
+	if err := prepareSearchMount(ctx, cfg, "/run/knowvault/search", runtimeidentity.Server); err != nil {
 		rep.failHard("search-mount-server", err)
 	}
-	if err := prepareSearchMount(ctx, cfg, workerChrootDir+"/run/knowvault/search"); err != nil {
+	if err := prepareSearchMount(ctx, cfg, workerChrootDir+"/run/knowvault/search", runtimeidentity.Worker); err != nil {
 		rep.failHard("search-mount-worker", err)
 	}
 	rep.check("search-mount", nil)
 
 	if err := runOperator(ctx, cfg, "secrets", "generate",
 		"-out", workerSecretsMount,
+		"-consumer", "worker",
 		"-organization", cfg.organizationID,
 		"-provider", cfg.providerID,
 		"-database-url-file", "/e2e/run/db_worker.url",
@@ -372,6 +375,7 @@ func main() {
 
 	if err := runOperator(ctx, cfg, "secrets", "verify",
 		"-mount", workerSecretsMount,
+		"-consumer", "worker",
 		"-organization", cfg.organizationID,
 		"-provider", cfg.providerID,
 	); err != nil {
@@ -412,7 +416,7 @@ func main() {
 	rep.check("seed-capability-profile", nil)
 
 	// The pinned source mount lives inside the worker chroot: manifest plus
-	// corpus, owned root:65532 with the mode bits the worker mount loader
+	// corpus, owned root:65530 with the mode bits the worker mount loader
 	// enforces.
 	if err := prepareSourceMount(ctx, cfg, workerChrootDir+"/run/knowvault/sources"); err != nil {
 		rep.failHard("source-mount", err)
@@ -762,15 +766,15 @@ func main() {
 	questionText := "What does the KnowVault pilot note 001 say?"
 	parityKey := idemKey("question-parity")
 	restQuestion, err := client.createQuestion(ctx, created.ID, questionText, parityKey)
-	if err == nil && (restQuestion.ID == "" || restQuestion.WorkspaceID != created.ID || restQuestion.PlanningOperation != "LOOKUP" || restQuestion.ResultStatus != "INSUFFICIENT_EVIDENCE" || len(restQuestion.Citations) != 0 || restQuestion.Freshness.State != "FRESH" || restQuestion.Freshness.CapturedAt == nil || restQuestion.Freshness.LastSuccessfulSyncAt == nil) {
-		err = fmt.Errorf("REST question projection is not explicit partial result: %+v", restQuestion)
+	if err == nil {
+		err = client.verifyPartialQuestion(ctx, created.ID, registered.ConnectionID, "FRESH", restQuestion)
 	}
 	if err != nil {
 		rep.failHard("question-rest", err)
 	}
 	rep.check("question-rest", nil)
 	mcpQuestion, mcpIsError, err := client.mcpQuestion(ctx, created.ID, questionText, parityKey)
-	if err == nil && (!mcpIsError || !sameQuestionProjection(restQuestion, mcpQuestion)) {
+	if err == nil && (mcpIsError || !sameQuestionProjection(restQuestion, mcpQuestion)) {
 		err = fmt.Errorf("MCP projection drift or error bit mismatch: is_error=%v rest=%+v mcp=%+v", mcpIsError, restQuestion, mcpQuestion)
 	}
 	if err != nil {
@@ -787,6 +791,9 @@ func main() {
 	continuationText := "What does the KnowVault pilot note 001 say in the follow-up?"
 	continuationKey := idemKey("question-conversation-continuation")
 	restContinuation, err := client.createQuestionInConversation(ctx, created.ID, restQuestion.ConversationID, continuationText, continuationKey)
+	if err == nil {
+		err = client.verifyPartialQuestion(ctx, created.ID, registered.ConnectionID, "FRESH", restContinuation)
+	}
 	if err == nil && (restContinuation.ConversationID != restQuestion.ConversationID || restContinuation.ConversationTurnID == "" || restContinuation.ConversationTurnID == restQuestion.ConversationTurnID) {
 		err = fmt.Errorf("REST conversation continuation binding is invalid: first=%+v continuation=%+v", restQuestion, restContinuation)
 	}
@@ -795,7 +802,7 @@ func main() {
 	}
 	rep.check("question-conversation-rest", nil)
 	mcpContinuation, mcpContinuationError, err := client.mcpQuestionInConversation(ctx, created.ID, restQuestion.ConversationID, continuationText, continuationKey)
-	if err == nil && (!mcpContinuationError || !sameQuestionProjection(restContinuation, mcpContinuation)) {
+	if err == nil && (mcpContinuationError || !sameQuestionProjection(restContinuation, mcpContinuation)) {
 		err = fmt.Errorf("MCP conversation continuation drift or error bit mismatch: is_error=%v rest=%+v mcp=%+v", mcpContinuationError, restContinuation, mcpContinuation)
 	}
 	if err != nil {
@@ -934,7 +941,7 @@ func main() {
 
 	// Freshness is a server-owned lifecycle input, not a renderer hint. Insert
 	// a real RUNNING sync projection for the same scope, then prove that both
-	// authenticated surfaces persist the same fail-closed stale result. The
+	// authenticated surfaces withhold totals from the incomplete stale corpus.
 	// row uses the already-created durable job only as its immutable FK; no
 	// fixture answer or alternate Question authority is involved.
 	staleSyncRunID := "syncrun_01ARZ3NDEKTSV4RRFFQ69G5FBV"
@@ -946,10 +953,10 @@ func main() {
 		rep.failHard("question-stale-sync-seed", err)
 	}
 	rep.check("question-stale-sync-seed", nil)
-	staleText := "What does the KnowVault pilot note 002 say?"
+	staleText := "How many KnowVault pilot notes are there?"
 	staleKey := idemKey("question-stale-parity")
 	restStale, err := client.createQuestion(ctx, created.ID, staleText, staleKey)
-	if err == nil && (restStale.ResultStatus != "INSUFFICIENT_EVIDENCE" || restStale.CorpusStatus != "PARTIAL" || len(restStale.Citations) != 0) {
+	if err == nil && (restStale.PlanningOperation != "AGGREGATE" || restStale.ResultStatus != "INSUFFICIENT_EVIDENCE" || restStale.CorpusStatus != "PARTIAL" || len(restStale.Citations) != 0 || restStale.Freshness.State != "STALE" || restStale.Freshness.CapturedAt == nil) {
 		err = fmt.Errorf("REST stale projection is not fail-closed: %+v", restStale)
 	}
 	if err != nil {
@@ -964,6 +971,26 @@ func main() {
 		rep.failHard("question-stale-mcp-parity", err)
 	}
 	rep.check("question-stale-mcp-parity", nil)
+	// Saved prose remains readable during a sync; it must carry STALE and
+	// PARTIAL metadata, with the same citation verification as fresh prose.
+	staleLookupText := "What does the KnowVault pilot note 002 say?"
+	staleLookupKey := idemKey("question-stale-lookup-parity")
+	restStaleLookup, err := client.createQuestion(ctx, created.ID, staleLookupText, staleLookupKey)
+	if err == nil {
+		err = client.verifyPartialQuestion(ctx, created.ID, registered.ConnectionID, "STALE", restStaleLookup)
+	}
+	if err != nil {
+		rep.failHard("question-stale-lookup-rest", err)
+	}
+	rep.check("question-stale-lookup-rest", nil)
+	mcpStaleLookup, mcpStaleLookupError, err := client.mcpQuestion(ctx, created.ID, staleLookupText, staleLookupKey)
+	if err == nil && (mcpStaleLookupError || !sameQuestionProjection(restStaleLookup, mcpStaleLookup)) {
+		err = fmt.Errorf("MCP stale lookup drift or error bit mismatch")
+	}
+	if err != nil {
+		rep.failHard("question-stale-lookup-mcp-parity", err)
+	}
+	rep.check("question-stale-lookup-mcp-parity", nil)
 	// Close the synthetic-in-time (but real persisted) running observation so
 	// the subsequent revocation check isolates membership denial from freshness.
 	if _, err := admin.Exec(ctx, `

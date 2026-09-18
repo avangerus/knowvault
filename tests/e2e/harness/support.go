@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"knowvault.local/verified-workspace/internal/platform/runtimeidentity"
 )
 
 // clientSecretReference names the OIDC client secret inside the generated
@@ -24,7 +26,13 @@ import (
 // revision, and the server resolves it at preflight and login time.
 const clientSecretReference = "e2e-client-secret"
 
-const runtimeGID = 65532
+// runtimeGID is the server runtime group the harness spawn() path drops to, and
+// workerRuntimeGID is the distinct worker group the worker trust/source/search
+// mounts are owned by and the chrooted worker drops to.
+const (
+	runtimeGID       = runtimeidentity.ServerGroupID
+	workerRuntimeGID = runtimeidentity.WorkerGroupID
+)
 
 // installTrust writes the host-generated CA into the pinned trust mount so
 // the same root serves both the PostgreSQL verify-full chain and the static

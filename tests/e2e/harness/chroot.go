@@ -56,7 +56,7 @@ func prepareWorkerChroot(ctx context.Context, cfg config) error {
 			return fmt.Errorf("chmod %s: %w", dir, err)
 		}
 		if strings.HasSuffix(dir, "trust") || strings.HasSuffix(dir, "sources") || strings.HasSuffix(dir, "search") {
-			if err := syscall.Chown(dir, 0, runtimeGID); err != nil {
+			if err := syscall.Chown(dir, 0, workerRuntimeGID); err != nil {
 				return fmt.Errorf("chown %s: %w", dir, err)
 			}
 		}
@@ -68,7 +68,7 @@ func prepareWorkerChroot(ctx context.Context, cfg config) error {
 		if err := os.WriteFile(path, caPEM, 0o440); err != nil {
 			return fmt.Errorf("write %s: %w", name, err)
 		}
-		if err := syscall.Chown(path, 0, runtimeGID); err != nil {
+		if err := syscall.Chown(path, 0, workerRuntimeGID); err != nil {
 			return fmt.Errorf("chown %s: %w", name, err)
 		}
 		if err := os.Chmod(path, 0o440); err != nil {
@@ -338,11 +338,18 @@ func workerExecMain() int {
 		fmt.Fprintf(os.Stderr, "worker-exec: chdir: %v\n", err)
 		return 1
 	}
-	if err := syscall.Setgid(runtimeGID); err != nil {
+	// The worker runs under its own group, never the server group: clear every
+	// supplementary group first so the worker cannot retain the invoking root
+	// process's groups, then drop to the pinned worker runtime group and user.
+	if err := syscall.Setgroups(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "worker-exec: setgroups: %v\n", err)
+		return 1
+	}
+	if err := syscall.Setgid(workerRuntimeGID); err != nil {
 		fmt.Fprintf(os.Stderr, "worker-exec: setgid: %v\n", err)
 		return 1
 	}
-	if err := syscall.Setuid(runtimeGID); err != nil {
+	if err := syscall.Setuid(workerRuntimeGID); err != nil {
 		fmt.Fprintf(os.Stderr, "worker-exec: setuid: %v\n", err)
 		return 1
 	}

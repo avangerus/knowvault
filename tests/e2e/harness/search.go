@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"knowvault.local/verified-workspace/internal/platform/runtimeidentity"
 	"knowvault.local/verified-workspace/internal/search"
 )
 
@@ -38,8 +39,12 @@ type e2eSearchManifest struct {
 // chroots cannot accidentally share a writable path. The OpenSearch config
 // directory is never exposed through this mount: only the CA and mTLS client
 // pair needed by search.LoadMountedAt are copied.
-func prepareSearchMount(ctx context.Context, cfg config, mountRoot string) error {
+func prepareSearchMount(ctx context.Context, cfg config, mountRoot string, consumer runtimeidentity.MountConsumer) error {
 	_ = ctx
+	groupID, valid := consumer.GroupID()
+	if !valid {
+		return fmt.Errorf("search mount consumer is invalid")
+	}
 	if cfg.searchCertDir == "" || cfg.searchEndpoint == "" || cfg.searchAlias == "" || cfg.organizationID == "" || mountRoot == "" {
 		return fmt.Errorf("search mount configuration is incomplete")
 	}
@@ -49,7 +54,7 @@ func prepareSearchMount(ctx context.Context, cfg config, mountRoot string) error
 	if err := os.Chmod(mountRoot, 0o750); err != nil {
 		return fmt.Errorf("chmod search mount: %w", err)
 	}
-	if err := syscall.Chown(mountRoot, 0, runtimeGID); err != nil {
+	if err := syscall.Chown(mountRoot, 0, int(groupID)); err != nil {
 		return fmt.Errorf("chown search mount: %w", err)
 	}
 
@@ -68,7 +73,7 @@ func prepareSearchMount(ctx context.Context, cfg config, mountRoot string) error
 	if err != nil {
 		return fmt.Errorf("marshal search manifest: %w", err)
 	}
-	if err := writeSearchMountFile(filepath.Join(mountRoot, searchManifestName), rawManifest); err != nil {
+	if err := writeSearchMountFile(filepath.Join(mountRoot, searchManifestName), rawManifest, int(groupID)); err != nil {
 		return fmt.Errorf("write search manifest: %w", err)
 	}
 	files := []struct {
@@ -87,7 +92,7 @@ func prepareSearchMount(ctx context.Context, cfg config, mountRoot string) error
 		if len(contents) == 0 || len(contents) > 256<<10 {
 			return fmt.Errorf("search material size is invalid")
 		}
-		if err := writeSearchMountFile(filepath.Join(mountRoot, file.target), contents); err != nil {
+		if err := writeSearchMountFile(filepath.Join(mountRoot, file.target), contents, int(groupID)); err != nil {
 			return fmt.Errorf("write search material: %w", err)
 		}
 	}
@@ -96,21 +101,25 @@ func prepareSearchMount(ctx context.Context, cfg config, mountRoot string) error
 	// harness still has a precise provisioning error. This checks ownership,
 	// regular-file/no-follow semantics, manifest tenant binding, CA parsing and
 	// the client key pair before either product process starts.
-	_, err = search.LoadMountedAt(mountRoot, cfg.organizationID)
+	if consumer == runtimeidentity.Worker {
+		_, err = search.LoadWorkerMountedAt(mountRoot, cfg.organizationID)
+	} else {
+		_, err = search.LoadMountedAt(mountRoot, cfg.organizationID)
+	}
 	if err != nil {
 		return fmt.Errorf("validate search mount: %w", err)
 	}
 	return nil
 }
 
-func writeSearchMountFile(path string, contents []byte) error {
+func writeSearchMountFile(path string, contents []byte, groupID int) error {
 	if err := os.WriteFile(path, contents, 0o440); err != nil {
 		return err
 	}
 	if err := os.Chmod(path, 0o440); err != nil {
 		return err
 	}
-	return syscall.Chown(path, 0, runtimeGID)
+	return syscall.Chown(path, 0, groupID)
 }
 
 // waitForSearchProjection proves that the worker's ordered outbox applier

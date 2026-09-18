@@ -332,8 +332,10 @@ type evidenceFragment struct {
 	Text       string `json:"text"`
 	Anchor     string `json:"anchor"`
 	Provenance struct {
-		SourceObjectID string `json:"source_object_id"`
-		ConnectionID   string `json:"connection_id"`
+		SourceObjectID  string `json:"source_object_id"`
+		SourceVersionID string `json:"source_version_id"`
+		ExtractionID    string `json:"extraction_id"`
+		ConnectionID    string `json:"connection_id"`
 	} `json:"provenance"`
 }
 
@@ -537,6 +539,44 @@ func (client *apiClient) mcpQuestionInConversation(ctx context.Context, workspac
 
 func sameQuestionProjection(left, right questionProjection) bool {
 	return reflect.DeepEqual(left, right)
+}
+
+// A partial corpus can return verified prose, with its limits recorded beside
+// the answer. Every disclosed citation must still read from the product API.
+func (client *apiClient) verifyPartialQuestion(ctx context.Context, workspaceID, connectionID, freshness string, run questionProjection) error {
+	if run.ID == "" || run.WorkspaceID != workspaceID || run.PlanningOperation != "LOOKUP" ||
+		run.ResultStatus != "COMPLETED" || run.CorpusStatus != "PARTIAL" || run.Answer == "" ||
+		run.AnswerMode != "EXTRACTIVE" || run.VerificationMethod != "BYTE_EXACT_CITATION" || len(run.Citations) == 0 ||
+		run.Freshness.State != freshness || run.Freshness.CapturedAt == nil ||
+		(freshness == "FRESH" && run.Freshness.LastSuccessfulSyncAt == nil) ||
+		len(run.Uncertainties) != 1 || run.Uncertainties[0].Code != "CORPUS_PARTIAL" ||
+		len(run.Uncertainties[0].EvidenceIDs) == 0 || len(run.Conflicts) != 0 {
+		return fmt.Errorf("question did not expose verified prose and explicit corpus limits")
+	}
+	for index, citation := range run.Citations {
+		fragment, err := client.readEvidence(ctx, workspaceID, citation.EvidenceFragment)
+		if err != nil {
+			return fmt.Errorf("citation %d cannot be read: %w", index+1, err)
+		}
+		anchor, err := base64.StdEncoding.DecodeString(fragment.Anchor)
+		excerptHash := sha256.Sum256([]byte(citation.Excerpt))
+		bound := false
+		for _, id := range run.Uncertainties[0].EvidenceIDs {
+			bound = bound || id == citation.EvidenceFragment
+		}
+		if err != nil || !bound || citation.Number != int64(index+1) || citation.CitationID == "" ||
+			citation.Excerpt == "" || !strings.Contains(fragment.Text, citation.Excerpt) ||
+			!strings.Contains(run.Answer, citation.Excerpt) || !strings.Contains(run.Answer, fmt.Sprintf("[%d]", index+1)) ||
+			fragment.FragmentID != citation.EvidenceFragment || string(anchor) != citation.Anchor ||
+			fragment.Provenance.ConnectionID != connectionID || fragment.Provenance.SourceObjectID != citation.SourceObjectID ||
+			fragment.Provenance.SourceVersionID != citation.SourceVersionID || fragment.Provenance.ExtractionID != citation.ExtractionID ||
+			citation.SourceVersionID == "" || citation.ExtractionID == "" || citation.EvidenceTextHash == "" ||
+			citation.ExcerptHash != fmt.Sprintf("sha256:%x", excerptHash) ||
+			citation.DeepLink != "/api/v1/workspaces/"+workspaceID+"/evidence/"+citation.EvidenceFragment {
+			return fmt.Errorf("citation %d does not bind to its readable source", index+1)
+		}
+	}
+	return nil
 }
 
 func sameConversationProjection(left, right conversationProjection) bool {

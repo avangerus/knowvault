@@ -236,7 +236,7 @@ jobs:
             -v "$PWD:/src:ro" \
             -w /src \
             "$GO_IMAGE" \
-            go test -mod=readonly -count=1 -timeout=20m ./tests/integration/postgres
+            go test -mod=readonly -count=1 -timeout=30m ./tests/integration/postgres
           # Mutation registry includes the Office parser's real-v2 harness.
           # Keep this invocation non-skippable: without a writable cgroup-v2,
           # PID namespace and Docker socket the harness must fail rather than

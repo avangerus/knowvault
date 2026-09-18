@@ -302,8 +302,8 @@ func TestS2bOfficeFolderExtraction(t *testing.T) {
 		if extractionCount != 2 {
 			t.Fatalf("profile upgrade produced %d extractions for one version, want 2", extractionCount)
 		}
-		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/report.docx"); got != "docx-v2" {
-			t.Fatalf("active profile revision = %q, want docx-v2", got)
+		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/report.docx"); got != "docx-v2-struct-layout-v1" {
+			t.Fatalf("active profile revision = %q, want docx-v2-struct-layout-v1", got)
 		}
 		// The historical Extraction and its Evidence are untouched.
 		after := officeFragments(t, ctx, admin, firstExtraction)
