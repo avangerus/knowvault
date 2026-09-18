@@ -115,6 +115,11 @@ Debian package versions and archive SHA-256 values in
 `debian-packages.lock.json`. It builds for `linux/amd64`; the fleet must keep
 arm64 deferred until a separate qualification proves equivalent artifacts.
 
+The build requests all 56 locked package versions explicitly, including
+transitive dependencies, then verifies their archive hashes. The release lock
+records historical unqualified candidates; a Dockerfile change does not
+qualify a new production image.
+
 An outer runtime should additionally use a read-only root, a small writable
 tmpfs for `/tmp`, no network, `--cap-drop=ALL`, `no-new-privileges`, a non-root
 UID, and cgroup CPU/memory/wall-clock limits.

@@ -20,12 +20,12 @@ COPY debian-packages.lock.json verify_packages.py /opt/ocr/
 # The package versions and archive hashes are repository data, not runtime
 # configuration. A changed archive fails the build before the worker is made
 # runnable.
+# Request the complete locked closure before verifying its archive hashes.
 RUN rm -f /etc/apt/apt.conf.d/docker-clean \
     /var/cache/apt/archives/lock \
     && apt-get update \
     && apt-get install --yes --no-install-recommends \
-        tesseract-ocr=5.3.0-2 \
-        tesseract-ocr-eng=1:4.1.0-2 \
+        $(python3 -c 'import json; packages=json.load(open("/opt/ocr/debian-packages.lock.json"))["packages"]; print(" ".join(p["package"]+"="+p["version"] for p in packages))') \
     && python3 /opt/ocr/verify_packages.py \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
         /var/cache/fontconfig/* /var/cache/ldconfig/aux-cache \
