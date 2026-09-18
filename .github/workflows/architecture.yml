@@ -127,6 +127,7 @@ jobs:
           # These scanners have no Docker socket or network access, and the
           # Grype scans consume only the imported, hash-validated database.
           docker run --rm --network none --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 64 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             -e HOME=/tmp \
@@ -138,6 +139,7 @@ jobs:
             "$SYFT_IMAGE" oci-archive:/scan/parser.oci.tar -o syft-json=/scan/syft.json
           grype_db_url='https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-09-15T00:33:48Z_1789453896.tar.zst?checksum=sha256%3Ada59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60'
           docker run --rm --network bridge --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 4g \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777 \
             -e HOME=/tmp \
@@ -145,6 +147,7 @@ jobs:
             -v "$grype_cache:/cache" \
             "$GRYPE_IMAGE" db import "$grype_db_url"
           docker run --rm --network none --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 64 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             -e HOME=/tmp \
@@ -157,6 +160,7 @@ jobs:
             -v "$scan_stage/parser.oci.tar:/scan/parser.oci.tar:ro" \
             "$GRYPE_IMAGE" oci-archive:/scan/parser.oci.tar -o json --file /scan/grype.json
           docker run --rm --network none --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 64 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             -e HOME=/tmp \
