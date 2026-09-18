@@ -8,12 +8,65 @@
 </p>
 
 <p align="center">
+  <a href="#example-questions-and-answers">See examples</a> ·
   <a href="docs/GETTING_STARTED.md">Start a pilot</a> ·
   <a href="docs/MCP_ACCESS_CODE.md">Connect your agent</a> ·
   <a href="#connectors">Connectors</a> ·
   <a href="docs/PILOT-STATUS.md">Release status</a> ·
   <a href="LICENSE">Apache 2.0</a>
 </p>
+
+## Example questions and answers
+
+Illustrative answers using fictional company data, not benchmark results. In your AI client, the model writes the answer using KnowVault's MCP tools; the web interface also offers preliminary model answers.
+
+### Find a rule in company documents
+
+**You:** “Production is down. Who do I call, and how quickly should they respond?”
+
+**Answer:** “Contact the platform on-call engineer. For a P1 incident, the response target is 15 minutes. If nobody acknowledges it within that time, escalate to the incident manager. **[1]**”
+
+<details>
+<summary>Inspect example evidence [1]</summary>
+
+**Incident response policy · P1 escalation · saved version 3**
+
+> P1: Production unavailable. Primary contact: platform on-call engineer. Acknowledgement target: 15 minutes. Escalate to the incident manager if unacknowledged after 15 minutes.
+
+In a real answer, the citation opens a protected KnowVault page with the retained passage, source location, saved version and provenance.
+
+</details>
+
+### Read a business record from SQL
+
+**You:** “What's the amount and due date for invoice INV-0001? Has it been paid?”
+
+**Answer:** “Invoice INV-0001 is for **USD 1,250.50**, due **October 1, 2026**. The saved record has no payment date; that alone does not prove it is still unpaid now. **[2]**”
+
+<details>
+<summary>Inspect example evidence [2]</summary>
+
+**Prepared PostgreSQL view · invoice INV-0001 · saved entity snapshot**
+
+| Field | Retained value |
+| --- | --- |
+| `invoice_id` | `INV-0001` |
+| `amount` | `1250.50` |
+| `currency` | `USD` |
+| `due_date` | `2026-10-01` |
+| `paid_at` | `null` |
+
+The evidence address identifies the saved version. Source modification and observation timestamps help you judge freshness; this is not a live query of the billing system.
+
+</details>
+
+### Recognize when the evidence is missing
+
+**You:** “Did the customer approve the revised delivery date?”
+
+**Example answer when the accessible sources do not establish approval:** “I found the proposed date in the project plan, but no customer approval in the records I could read. I cannot confirm acceptance.”
+
+A useful answer distinguishes a documented fact from a proposal, a missing value or missing evidence. Links let you inspect that distinction yourself.
 
 ## Evidence. Audit. Protection. Local control.
 
