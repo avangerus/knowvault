@@ -5,7 +5,7 @@
     ".dockerignore": "b9f5490b18e89d2b8245793326728dd6c71a31f6b5c5cce70e90c3f04805ef3e",
     ".gitattributes": "93353ef461b2552a06bc1f3eec4fb3a45b93ada969abb36dd2b0637241075e14",
     ".github/CODEOWNERS": "82268d0773925fd9a146792afbbff2cca72b85912daf0677ebf39328ed546424",
-    ".github/workflows/architecture.yml": "ea7cbd1ea1adc58ce968678ab8e2d7385e09e6089af61449707e4ab5453be8a7",
+    ".github/workflows/architecture.yml": "d0e13e64f0ca8d3184e2d9c91b4d8ad4b1f809dcde144a034fc541c272b4f6a2",
     ".github/workflows/codeql.yml": "dcb41262edb59b46f060b0165e245ff330a321fd2cf89efec206decc9cc0ba61",
     ".github/workflows/dependency-review.yml": "7b008ad4d2354e84f79a08cad1acb3e865faac8b5bf35abb14604eb059981bab",
     ".gitignore": "8c758da1cd7d15e6d86f6198aa60c67ba6ba11df7dd30fc665842ae4c9ba1c0d",
