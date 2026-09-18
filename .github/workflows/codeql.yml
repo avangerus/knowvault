@@ -1,0 +1,61 @@
+name: security-codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: codeql / analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Prepare pinned Go SDK
+        if: matrix.language == 'go'
+        env:
+          GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
+        run: |
+          set -euo pipefail
+          sdk_dir="$(mktemp -d "${RUNNER_TEMP:?}/knowvault-codeql-go.XXXXXX")"
+          docker run --rm "$GO_IMAGE" tar -C /usr/local/go -cf - . | tar -C "$sdk_dir" -xf -
+          echo "$sdk_dir/bin" >> "$GITHUB_PATH"
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - name: Build Go (manual)
+        if: matrix.language == 'go'
+        env:
+          GOTOOLCHAIN: local
+          GOEXPERIMENT: jsonv2
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go build -mod=readonly ./cmd/server ./cmd/worker ./cmd/operator
+      - name: Analyze
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          category: /language:${{ matrix.language }}

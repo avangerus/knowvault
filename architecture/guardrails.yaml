@@ -20,6 +20,8 @@ protected_files:
   - deploy/manifests/sandbox-dispatcher.yaml
   - .github/CODEOWNERS
   - .github/workflows/architecture.yml
+  - .github/workflows/codeql.yml
+  - .github/workflows/dependency-review.yml
   - PRODUCT_CONSTITUTION.md
   - ARCHITECTURE.md
   - POKA_YOKE.md

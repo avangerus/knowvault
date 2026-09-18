@@ -69,7 +69,10 @@ jobs:
           node_stage=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-mutation-node.XXXXXX")
           scan_stage=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-parser-scan.XXXXXX")
           grype_cache=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-grype-db.XXXXXX")
-          trap 'docker rm -f "$container" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; docker image rm -f "$office_image" "$qualification_image" >/dev/null 2>&1 || true; rm -rf "$node_stage" "$scan_stage" "$grype_cache"' EXIT
+          # Initialize tracking before the trap, including early failure paths.
+          office_builder="knowvault-office-oci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          office_builder_created=false
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; docker image rm -f "$office_image" "$qualification_image" >/dev/null 2>&1 || true; rm -rf "$node_stage" "$scan_stage" "$grype_cache"; if [ "$office_builder_created" = "true" ]; then docker buildx rm "$office_builder" >/dev/null 2>&1 || true; fi' EXIT
           # The Go image intentionally has no Node runtime. Build a complete,
           # frozen contract-test runtime with the already-pinned Node image so
           # mutation-runner can execute schema-tests.mjs against each mutated
@@ -96,7 +99,12 @@ jobs:
               test -f /out/contracts/node_modules/ajv/package.json
               test "$(/out/bin/node --version)" = "v24.18.0"
             '
-          bash tests/integration/postgres/prepare-office-worker.sh "$office_image" "$scan_stage/parser.oci.tar"
+          # The canonical OCI exporter requires the docker-container driver.
+          # Select it only for this build; leave other builders unchanged.
+          docker buildx create --name "$office_builder" --driver docker-container >/dev/null
+          office_builder_created=true
+          docker buildx inspect --bootstrap "$office_builder" >/dev/null
+          BUILDX_BUILDER="$office_builder" bash tests/integration/postgres/prepare-office-worker.sh "$office_image" "$scan_stage/parser.oci.tar"
           # Build the real OCR qualification image before the integration
           # package runs. It is evidence-only and intentionally absent from
           # production composition, but the live DispatcherV2 test must never

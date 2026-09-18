@@ -34,6 +34,20 @@ schedule or guaranteed response time. Maintainers assess reports against the
 current code and identify affected revisions as part of the fix. Pilot status
 does not reduce the importance of a security report.
 
+## Repository checks
+
+GitHub Actions runs CodeQL with extended security queries for Go and
+JavaScript/TypeScript on pushes, pull requests and a weekly schedule. Pull
+requests also run Dependency Review: newly introduced high or critical
+dependency vulnerabilities fail the check. Actions are pinned to reviewed
+commits in the dependency inventory. These checks supplement the architecture,
+authorization, integrity, license and image checks; they do not replace them.
+
+Dependabot alerts, secret scanning and secret push protection are enabled for
+the public repository. Do not bypass a reported credential warning; revoke an
+exposed credential before cleanup. CodeQL uploads findings to the repository's
+Security tab. A completed analysis alone does not mean all findings are resolved.
+
 ## Security boundaries
 
 - Workspace permissions are checked when tools return data, including reads of
