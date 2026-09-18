@@ -185,8 +185,8 @@ func TestS2dScannedPDFRenderOCRAndEvidenceReal(t *testing.T) {
 		WithPDFExtractor(pdf).WithPDFRenderExtractor(productionPDFRenderExtractor{pdf: pdf}).
 		WithOCRExtractor(liveQualificationOCRExtractor{socketPath: ocrHarness.SubmitSocketPath()})
 	runSync(t, ctx, handler, queue, workerAccess(t, s1dOrg), "scanned-pdf-live")
-	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/scanned.pdf"); got != "pdf-v1" {
-		t.Fatalf("scanned PDF active parser revision = %q, want pdf-v1", got)
+	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/scanned.pdf"); got != "pdf-v1-struct-layout-v1" {
+		t.Fatalf("scanned PDF active parser revision = %q, want pdf-v1-struct-layout-v1", got)
 	}
 	_, versionID, extractionID := s1dTargetEvidence(t, ctx, admin, "projects/alpha/scanned.pdf")
 	var canonical string

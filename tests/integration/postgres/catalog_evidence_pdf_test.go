@@ -116,15 +116,15 @@ func TestS2cPDFFolderExtraction(t *testing.T) {
 		WithPDFExtractor(runtime.pdf)
 	runSync(t, ctx, handler, queue, workerAccess(t, s1dOrg), "pdf-sync")
 
-	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "pdf-v1" {
-		t.Fatalf("valid PDF profile = %q, want pdf-v1", got)
+	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "pdf-v1-struct-layout-v1" {
+		t.Fatalf("valid PDF profile = %q, want pdf-v1-struct-layout-v1", got)
 	}
 	for _, name := range []string{"scanned.pdf", "mixed.pdf", "active.pdf", "fake.pdf"} {
 		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/"+name); got != "" {
 			t.Fatalf("hostile %s published extraction %q", name, got)
 		}
 	}
-	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1" {
+	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1-layout-v2" {
 		t.Fatalf("neighbouring text did not continue after PDF quarantines: %q", got)
 	}
 
@@ -258,7 +258,7 @@ func TestS2cPDFMissingOrWrongWorkerIdentityQuarantines(t *testing.T) {
 		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "" {
 			t.Fatalf("expired PDF worker published %q", got)
 		}
-		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1" {
+		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1-layout-v2" {
 			t.Fatalf("neighbour did not continue: %q", got)
 		}
 	})
