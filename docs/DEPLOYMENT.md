@@ -341,11 +341,18 @@ issues a bounded-TTL, workspace-scoped "access code" from the workspace's
 Access tab (`POST/GET/… /api/v1/workspaces/{id}/access-codes`), and the same
 MCP endpoint accepts it as `Authorization: Bearer <access-code>` — a
 completely separate authentication path from the human session bearer above,
-restricted to `knowvault_question`/`knowvault_evidence_get` and to the
-workspaces the code was issued for. See `docs/MCP_ACCESS_CODE.md`. MCP is the
-read-only JSON-RPC adapter at `/api/v1/mcp` and accepts `initialize`,
-`tools/list`, `knowvault_question`, and the workspace-scoped conversation
-list/get/archive tools. Conversation archive still requires the same
+restricted to the workspaces the code was issued for. A code exposes the
+ordinary read-only knowledge tools (`knowvault_question`,
+`knowvault_evidence_get`, and the workspace-scoped conversation
+list/get/archive tools). When the optional governed preset mount
+(`docs/GOVERNED-SQL-PRESETS.md`) is configured for the workspace and the code
+is authorized for it, the code also exposes `knowvault_queries_list` and
+`knowvault_query_run`. See `docs/MCP_ACCESS_CODE.md`. MCP is the read-only
+JSON-RPC adapter at `/api/v1/mcp` and accepts `initialize`, `tools/list`, and
+those tools. Catalogue discovery may omit `connection_id` only for the single
+administrator-mounted preset connection; execution remains explicit and
+requires `workspace_id`, `connection_id`, and `preset_id`. Conversation archive
+still requires the same
 Idempotency-Key contract;
 no arbitrary SQL or write action is exposed. Workspace creation, source
 registration/binding/activation, exact per-workspace source disable/re-enable,

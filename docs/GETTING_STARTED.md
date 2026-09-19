@@ -40,6 +40,23 @@ the original DOCX or PDF. After an update, a retained address still identifies
 its original version, subject to current permissions and retention. Check the
 source status and observation time when your question requires current data.
 
+## Live database checks
+
+Some workspaces offer a **Live database checks** panel in the browser. It runs a
+small set of administrator-approved checks against a governed read-only database
+connection; you cannot type SQL or supply parameters.
+
+1. Choose one administrator-approved check from the panel.
+2. Run it and inspect the result: it is marked `LIVE_OBSERVATION` and shows the
+   database and connection identity, the exact read window, a typed table, and a
+   collapsed receipt.
+3. Reloading the page does not repeat the check; run it again when you need a
+   fresh result.
+
+These are live values and are not a retained evidence page — no stable source
+address is created for them. Continue to use search and cited sources when an
+answer needs a retained, citable page.
+
 ## Connect your agent
 
 A workspace owner creates a service access code in the workspace's **Access**

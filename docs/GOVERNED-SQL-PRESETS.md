@@ -78,9 +78,13 @@ reviewed query or exposed schema requires a new preset version and binding.
 
 ## MCP workflow
 
-Call `knowvault_queries_list` with `workspace_id` and `connection_id`, choose the
-matching preset, then call `knowvault_query_run` with those two fields and
-`preset_id`. An `sql` field, parameters and unknown members are rejected.
+Call `knowvault_queries_list` with `workspace_id`. `connection_id` is required
+whenever the catalogue spans more than one connection and may be omitted only
+when exactly one administrator-mounted preset connection is available; an
+explicit `connection_id` that does not match the mounted connection fails
+closed. Choose the matching preset, then call `knowvault_query_run` with
+`workspace_id`, `connection_id` and `preset_id` — execution always requires all
+three fields. An `sql` field, parameters and unknown members are rejected.
 
 The result is marked `LIVE_OBSERVATION` and includes the execution interval,
 columns, PostgreSQL text values, nulls, row count, cost estimate, attempt id,
