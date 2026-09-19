@@ -3,6 +3,7 @@ package workspaceapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -133,9 +134,12 @@ func TestGovernedPresetMCPIsMountedOnlyWhenConfiguredAndNeverAcceptsSQL(t *testi
 		t.Fatalf("unmounted preset call must be indistinguishable from an unknown method: %s", unmountedResponse.Body)
 	}
 	p := &governedTransportProbe{
-		hasPresets:    true,
-		presetCatalog: governedask.PresetCatalog{ConnectionID: "conn", DatabaseIdentity: "gm", Presets: []governedquery.PresetSummary{{ID: "contract-count", Version: "v1", Name: "Contract count", Description: "Current count", Phrases: []string{"check contracts"}, PresetHash: "sha256:preset"}}},
-		presetResult:  governedask.PresetRunResult{AttemptID: "attempt", Preset: governedquery.PresetSummary{ID: "contract-count", Version: "v1", PresetHash: "sha256:preset"}, ConnectionID: "conn", DataState: "LIVE_OBSERVATION", ResultDigest: "sha256:result"},
+		hasPresets: true,
+		presetCatalog: governedask.PresetCatalog{ConnectionID: "conn", DatabaseIdentity: "gm", Presets: []governedquery.PresetSummary{{
+			ID: "contract-count", Version: "v1", Name: "Contract count", Description: "Current count",
+			Phrases: []string{"check contracts"}, SourceAttemptID: "attempt", SQLHash: "sha256:sql",
+			ExposedSchemaRevision: 2, PresetHash: "sha256:preset"}}},
+		presetResult: governedask.PresetRunResult{AttemptID: "attempt", Preset: governedquery.PresetSummary{ID: "contract-count", Version: "v1", PresetHash: "sha256:preset"}, ConnectionID: "conn", DataState: "LIVE_OBSERVATION", ResultDigest: "sha256:result"},
 	}
 	h.handler.EnableGovernedQuery(p)
 	names := toolNames(t, h.handler.mcpTools(database.AccessContext{OrganizationID: "org_demo", PrincipalID: "agent", RequestID: "req", ActorKind: database.ActorKindService}))
@@ -145,13 +149,88 @@ func TestGovernedPresetMCPIsMountedOnlyWhenConfiguredAndNeverAcceptsSQL(t *testi
 		}
 	}
 
+	// The seeded catalogue must survive the MCP list round trip as one safe,
+	// SQL-free projection: both content[0].text and the raw structuredContent
+	// wire JSON carry exactly the allowlisted public keys and nothing else,
+	// checked against RawMessage so unknown wire keys stay visible.
+	previousCallsBeforeList := p.calls
+	listBody := `{"jsonrpc":"2.0","id":"list","method":"tools/call","params":{"name":"` + mcpToolQueriesList + `","arguments":{"workspace_id":"ws_alpha","connection_id":"conn"}}}`
+	listResponse := httptest.NewRecorder()
+	h.handler.ServeHTTP(listResponse, h.request(http.MethodPost, apiPrefix+"/mcp", listBody))
+	var listEnvelope struct {
+		Error  json.RawMessage `json:"error"`
+		Result struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			Structured governedask.PresetCatalog `json:"structuredContent"`
+			IsError    bool                      `json:"isError"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &listEnvelope); err != nil || len(listEnvelope.Result.Content) != 1 {
+		t.Fatalf("preset list MCP failed: %s", listResponse.Body)
+	}
+	var textCatalog governedask.PresetCatalog
+	if err := json.Unmarshal([]byte(listEnvelope.Result.Content[0].Text), &textCatalog); err != nil || !reflect.DeepEqual(textCatalog, listEnvelope.Result.Structured) {
+		t.Fatalf("preset list text and structuredContent disagree: %s", listResponse.Body)
+	}
+	if !reflect.DeepEqual(textCatalog, p.presetCatalog) {
+		t.Fatalf("preset list changed the catalogue: %s", listResponse.Body)
+	}
+	if len(textCatalog.Presets) != 1 {
+		t.Fatalf("preset list dropped presets: %s", listResponse.Body)
+	}
+	preset := textCatalog.Presets[0]
+	if preset.ID != "contract-count" || preset.Version != "v1" || preset.Name != "Contract count" || preset.Description != "Current count" ||
+		!reflect.DeepEqual(preset.Phrases, []string{"check contracts"}) || preset.SourceAttemptID != "attempt" ||
+		preset.SQLHash != "sha256:sql" || preset.ExposedSchemaRevision != 2 || preset.PresetHash != "sha256:preset" {
+		t.Fatalf("preset list lost a public preset field: %s", listResponse.Body)
+	}
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("preset list HTTP status: %d %s", listResponse.Code, listResponse.Body)
+	}
+	if len(listEnvelope.Error) != 0 && string(listEnvelope.Error) != "null" {
+		t.Fatalf("preset list carried a JSON-RPC error: %s", listResponse.Body)
+	}
+	if len(listEnvelope.Result.Content) != 1 || listEnvelope.Result.Content[0].Type != "text" {
+		t.Fatalf("preset list content shape: %s", listResponse.Body)
+	}
+	if listEnvelope.Result.IsError {
+		t.Fatalf("preset list result.isError must be false: %s", listResponse.Body)
+	}
+	if p.calls != previousCallsBeforeList+1 || p.workspace != "ws_alpha" || p.connection != "conn" {
+		t.Fatalf("preset list service call/forwarding: probe=%+v", p)
+	}
+	var rawEnvelope struct {
+		Result struct {
+			Structured json.RawMessage `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &rawEnvelope); err != nil || len(rawEnvelope.Result.Structured) == 0 {
+		t.Fatalf("preset list structuredContent missing: %s", listResponse.Body)
+	}
+	for _, raw := range []json.RawMessage{json.RawMessage(listEnvelope.Result.Content[0].Text), rawEnvelope.Result.Structured} {
+		if err := checkPresetCatalogWireShape(raw); err != nil {
+			t.Fatalf("preset list wire shape: %v: %s", err, raw)
+		}
+	}
+
+	previousCalls := p.calls
+	invalidList := h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"badlist","method":"tools/call","params":{"name":"`+mcpToolQueriesList+`","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","extra":"x"}}}`)
+	invalidResponse := httptest.NewRecorder()
+	h.handler.ServeHTTP(invalidResponse, invalidList)
+	if p.calls != previousCalls || !strings.Contains(invalidResponse.Body.String(), `"code":-32602`) {
+		t.Fatalf("invalid preset list argument reached the service: %s", invalidResponse.Body)
+	}
+
 	request := h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"run","method":"tools/call","params":{"name":"knowvault_query_run","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","preset_id":"contract-count"}}}`)
 	response := httptest.NewRecorder()
 	h.handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || p.presetID != "contract-count" || !strings.Contains(response.Body.String(), `"data_state":"LIVE_OBSERVATION"`) {
 		t.Fatalf("preset run failed: %d %s probe=%+v", response.Code, response.Body, p)
 	}
-	previousCalls := p.calls
+	previousCalls = p.calls
 	request = h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"inject","method":"tools/call","params":{"name":"knowvault_query_run","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","preset_id":"contract-count","sql":"SELECT secret FROM hidden"}}}`)
 	response = httptest.NewRecorder()
 	h.handler.ServeHTTP(response, request)
@@ -196,6 +275,74 @@ func TestGovernedPresetOnlyHidesAndRejectsAdHocMCPAsk(t *testing.T) {
 	if p.calls != before {
 		t.Fatalf("PRESET_ONLY direct ask reached governed-query service: calls %d -> %d", before, p.calls)
 	}
+}
+
+// checkPresetCatalogWireShape asserts the exact allowlisted JSON wire shape of a
+// preset catalogue: fixed catalogue keys, exactly one preset object with the
+// fixed public preset keys, and phrases as an array. RawMessage keeps every
+// unknown wire key visible; key order never matters. It deliberately says
+// nothing about legitimate string values.
+func checkPresetCatalogWireShape(raw json.RawMessage) error {
+	catalog, err := rawObject(raw)
+	if err != nil {
+		return err
+	}
+	if err := exactKeys(catalog, "connection_id", "database_identity", "presets"); err != nil {
+		return err
+	}
+	var presets []json.RawMessage
+	if err := json.Unmarshal(catalog["presets"], &presets); err != nil {
+		return fmt.Errorf("presets must be an array: %w", err)
+	}
+	if len(presets) != 1 {
+		return fmt.Errorf("want exactly one preset, got %d", len(presets))
+	}
+	preset, err := rawObject(presets[0])
+	if err != nil {
+		return err
+	}
+	if err := exactKeys(preset,
+		"id", "version", "name", "description", "phrases", "preset_hash",
+		"source_attempt_id", "sql_hash", "exposed_schema_revision"); err != nil {
+		return err
+	}
+	var phrases []json.RawMessage
+	if err := json.Unmarshal(preset["phrases"], &phrases); err != nil {
+		return fmt.Errorf("phrases must be an array: %w", err)
+	}
+	return nil
+}
+
+// rawObject decodes one raw JSON value into its member map so unknown wire keys
+// stay observable.
+func rawObject(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, fmt.Errorf("not a JSON object: %w", err)
+	}
+	if members == nil {
+		return nil, fmt.Errorf("not a JSON object")
+	}
+	return members, nil
+}
+
+// exactKeys fails on any extra or missing key, independent of key order.
+func exactKeys(members map[string]json.RawMessage, allow ...string) error {
+	allowed := make(map[string]struct{}, len(allow))
+	for _, key := range allow {
+		allowed[key] = struct{}{}
+	}
+	for key := range members {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unexpected wire key %q", key)
+		}
+	}
+	for _, key := range allow {
+		if _, ok := members[key]; !ok {
+			return fmt.Errorf("missing wire key %q", key)
+		}
+	}
+	return nil
 }
 
 // legacyGovernedQueryService is the pre-PRESET_ONLY capability shape: it
