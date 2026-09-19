@@ -81,7 +81,7 @@
       "mutations": [
         {
           "id": "cutover-deletes-live-revision-object",
-          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_CUTOVER_WEAKENING",
           "expected": "RED",
           "old": "       AND NOT EXISTS (SELECT 1 FROM public.source_object_scope AS m\n                       WHERE m.organization_id = o.organization_id AND m.source_object_id = o.id\n                         AND m.membership_state = 'ACTIVE')",
@@ -89,7 +89,7 @@
         },
         {
           "id": "cutover-membership-equivalent-set",
-          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "                         AND m.membership_state = 'ACTIVE')",
@@ -698,19 +698,19 @@
       "mutations": [
         {
           "id": "job-complete-ignores-fencing-epoch",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000100_stage2_durable_ingestion_lease_clock.sql",
           "kind": "SQL_LEASE_FENCING_WEAKENING",
           "expected": "RED",
-          "old": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;",
-          "new": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch IS NOT NULL\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;"
+          "old": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline, j.attempt_count\n    INTO status_value, owner_value, epoch_value, held_deadline, current_attempt\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value IS DISTINCT FROM lease_epoch_value\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = observed_at, last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline = held_deadline;",
+          "new": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline, j.attempt_count\n    INTO status_value, owner_value, epoch_value, held_deadline, current_attempt\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value IS NULL\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = observed_at, last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch IS NOT NULL\n      AND lease_deadline = held_deadline;"
         },
         {
           "id": "job-complete-epoch-additive-zero",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000100_stage2_durable_ingestion_lease_clock.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
-          "old": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;",
-          "new": "    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = transaction_timestamp(), last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value + 0\n      AND lease_deadline > transaction_timestamp()\n    RETURNING attempt_count INTO current_attempt;"
+          "old": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline, j.attempt_count\n    INTO status_value, owner_value, epoch_value, held_deadline, current_attempt\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value IS DISTINCT FROM lease_epoch_value\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = observed_at, last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline = held_deadline;",
+          "new": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline, j.attempt_count\n    INTO status_value, owner_value, epoch_value, held_deadline, current_attempt\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value + 0 IS DISTINCT FROM lease_epoch_value\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    UPDATE public.job\n    SET status = 'SUCCEEDED', lease_owner = NULL, lease_deadline = NULL,\n        completed_at = observed_at, last_error_code = NULL\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value + 0\n      AND lease_deadline = held_deadline;"
         }
       ]
     },
@@ -722,19 +722,19 @@
       "mutations": [
         {
           "id": "job-failure-budget-overrun",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000100_stage2_durable_ingestion_lease_clock.sql",
           "kind": "SQL_RETRY_BUDGET_WEAKENING",
           "expected": "RED",
-          "old": "    IF current_attempt < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value",
-          "new": "    IF current_attempt <= attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value"
+          "old": "    IF current_attempt < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = observed_at + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value",
+          "new": "    IF current_attempt <= attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = observed_at + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value"
         },
         {
           "id": "job-failure-budget-additive-zero",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000100_stage2_durable_ingestion_lease_clock.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
-          "old": "    IF current_attempt < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value",
-          "new": "    IF current_attempt + 0 < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = transaction_timestamp() + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value"
+          "old": "    IF current_attempt < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = observed_at + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value",
+          "new": "    IF current_attempt + 0 < attempt_ceiling THEN\n        resulting_status := 'PENDING';\n        UPDATE public.job\n        SET status = 'PENDING', lease_owner = NULL, lease_deadline = NULL,\n            available_at = observed_at + make_interval(secs => retry_after_seconds),\n            last_error_code = error_code_value"
         }
       ]
     },
@@ -746,7 +746,7 @@
       "mutations": [
         {
           "id": "job-enqueue-conflict-rewrites-identity",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000070_stage2_enqueue_job_id_idempotent.sql",
           "kind": "SQL_IDEMPOTENCY_WEAKENING",
           "expected": "RED",
           "old": "    ON CONFLICT (organization_id, idempotency_key) DO NOTHING\n    RETURNING id INTO existing_id;",
@@ -754,7 +754,7 @@
         },
         {
           "id": "job-enqueue-conflict-noop-update",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000070_stage2_enqueue_job_id_idempotent.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "    ON CONFLICT (organization_id, idempotency_key) DO NOTHING\n    RETURNING id INTO existing_id;",
@@ -770,19 +770,19 @@
       "mutations": [
         {
           "id": "job-heartbeat-ignores-fencing-epoch",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000100_stage2_durable_ingestion_lease_clock.sql",
           "kind": "SQL_LEASE_FENCING_WEAKENING",
           "expected": "RED",
-          "old": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp();",
-          "new": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch IS NOT NULL\n      AND lease_deadline > transaction_timestamp();"
+          "old": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline\n    INTO status_value, owner_value, epoch_value, held_deadline\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    -- One fresh instant is used for both the expiry guard and the new\n    -- deadline, after the row lock has been acquired.  A worker whose lease\n    -- expired or was reclaimed cannot revive it, even in an old transaction.\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value IS DISTINCT FROM lease_epoch_value\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n    new_deadline := observed_at + make_interval(secs => extend_seconds);\n    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline = held_deadline;",
+          "new": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline\n    INTO status_value, owner_value, epoch_value, held_deadline\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    -- One fresh instant is used for both the expiry guard and the new\n    -- deadline, after the row lock has been acquired.  A worker whose lease\n    -- expired or was reclaimed cannot revive it, even in an old transaction.\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value IS NULL\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n    new_deadline := observed_at + make_interval(secs => extend_seconds);\n    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch IS NOT NULL\n      AND lease_deadline = held_deadline;"
         },
         {
           "id": "job-heartbeat-epoch-additive-zero",
-          "target": "db/migrations/000013_stage2_durable_ingestion_jobs.sql",
+          "target": "db/migrations/000100_stage2_durable_ingestion_lease_clock.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
-          "old": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline > transaction_timestamp();",
-          "new": "    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value + 0\n      AND lease_deadline > transaction_timestamp();"
+          "old": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline\n    INTO status_value, owner_value, epoch_value, held_deadline\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    -- One fresh instant is used for both the expiry guard and the new\n    -- deadline, after the row lock has been acquired.  A worker whose lease\n    -- expired or was reclaimed cannot revive it, even in an old transaction.\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value IS DISTINCT FROM lease_epoch_value\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n    new_deadline := observed_at + make_interval(secs => extend_seconds);\n    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value\n      AND lease_deadline = held_deadline;",
+          "new": "    SELECT j.status, j.lease_owner, j.lease_epoch, j.lease_deadline\n    INTO status_value, owner_value, epoch_value, held_deadline\n    FROM public.job AS j\n    WHERE j.organization_id = organization_value\n      AND j.id = job_id_value\n    FOR UPDATE;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n\n    -- One fresh instant is used for both the expiry guard and the new\n    -- deadline, after the row lock has been acquired.  A worker whose lease\n    -- expired or was reclaimed cannot revive it, even in an old transaction.\n    observed_at := clock_timestamp();\n    IF status_value IS DISTINCT FROM 'RUNNING'\n       OR owner_value IS DISTINCT FROM worker_id_value\n       OR epoch_value + 0 IS DISTINCT FROM lease_epoch_value\n       OR held_deadline IS NULL\n       OR held_deadline <= observed_at THEN\n        RAISE EXCEPTION 'job lease is not held by this worker at this epoch' USING ERRCODE = '55000';\n    END IF;\n    new_deadline := observed_at + make_interval(secs => extend_seconds);\n    UPDATE public.job\n    SET lease_deadline = new_deadline\n    WHERE organization_id = organization_value\n      AND id = job_id_value\n      AND status = 'RUNNING'\n      AND lease_owner = worker_id_value\n      AND lease_epoch = lease_epoch_value + 0\n      AND lease_deadline = held_deadline;"
         }
       ]
     },
@@ -962,7 +962,7 @@
       "mutations": [
         {
           "id": "scope-cutover-revokes-candidate",
-          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_CUTOVER_WEAKENING",
           "expected": "RED",
           "old": "    UPDATE public.source_scope_activation\n       SET status = 'REVOKED', changed_at = now(), activated_at = now()\n     WHERE organization_id = org AND source_scope_id = p_scope_id\n       AND source_scope_revision < p_new_revision AND revision = 1\n       AND status IN ('READY', 'SYNCING');",
@@ -970,7 +970,7 @@
         },
         {
           "id": "scope-cutover-revocation-predicate-equivalent",
-          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "    UPDATE public.source_scope_activation\n       SET status = 'REVOKED', changed_at = now(), activated_at = now()\n     WHERE organization_id = org AND source_scope_id = p_scope_id\n       AND source_scope_revision < p_new_revision AND revision = 1\n       AND status IN ('READY', 'SYNCING');",
@@ -986,7 +986,7 @@
       "mutations": [
         {
           "id": "scope-cutover-ignores-complete-coverage",
-          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_COVERAGE_GATE_WEAKENING",
           "expected": "RED",
           "old": "    PERFORM 1 FROM public.sync_run\n     WHERE organization_id = org AND id = p_coverage_run_id\n       AND source_scope_id = p_scope_id AND source_scope_revision = p_new_revision\n       AND mode = 'FULL' AND status = 'SUCCEEDED' AND coverage_complete;",
@@ -994,7 +994,7 @@
         },
         {
           "id": "scope-cutover-complete-coverage-equals-true",
-          "target": "db/migrations/000016_stage2_source_scope_revision_cutover.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "    PERFORM 1 FROM public.sync_run\n     WHERE organization_id = org AND id = p_coverage_run_id\n       AND source_scope_id = p_scope_id AND source_scope_revision = p_new_revision\n       AND mode = 'FULL' AND status = 'SUCCEEDED' AND coverage_complete;",
@@ -1476,7 +1476,7 @@
       "mutations": [
         {
           "id": "extraction-publication-keeps-historical-active-pointer",
-          "target": "db/migrations/000014_stage2_catalog_extraction_evidence.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_EXTRACTION_LIFECYCLE_WEAKENING",
           "expected": "RED",
           "old": "    ON CONFLICT (organization_id, source_version_id) DO UPDATE\n        SET extraction_id = EXCLUDED.extraction_id,\n            activation_revision = public.source_version_active_extraction.activation_revision + 1,\n            activated_at = now();",
@@ -1484,7 +1484,7 @@
         },
         {
           "id": "extraction-publication-activation-revision-additive-zero",
-          "target": "db/migrations/000014_stage2_catalog_extraction_evidence.sql",
+          "target": "db/migrations/000107_stage2_source_observed_presence.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "    ON CONFLICT (organization_id, source_version_id) DO UPDATE\n        SET extraction_id = EXCLUDED.extraction_id,\n            activation_revision = public.source_version_active_extraction.activation_revision + 1,\n            activated_at = now();",
@@ -1912,7 +1912,7 @@
       "mutations": [
         {
           "id": "SRCH-007-version-retention-queryability-fence-dropped",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_RETENTION_FENCE_WEAKENING",
           "expected": "RED",
           "old": "          AND vr.state = 'ACTIVE' AND vr.queryable",
@@ -1920,7 +1920,7 @@
         },
         {
           "id": "SRCH-007-version-retention-queryability-fence-reorder",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "          AND vr.state = 'ACTIVE' AND vr.queryable",
@@ -2187,15 +2187,15 @@
       "mutations": [
         {
           "id": "readable-gate-opens-for-legacy-text",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_FAIL_CLOSED_WEAKENING",
           "expected": "RED",
-          "old": "        JOIN public.evidence_text_projection tp\n          ON tp.organization_id = f.organization_id AND tp.fragment_id = f.id\n         AND tp.text_hash = f.text_hash AND tp.digest_key_version = f.text_digest_key_version\n        JOIN public.source_version v\n          ON v.organization_id = f.organization_id AND v.id = f.source_version_id\n        JOIN public.source_object o\n          ON o.organization_id = v.organization_id AND o.id = v.source_object_id\n        JOIN public.source_version_retention vr\n          ON vr.organization_id = v.organization_id AND vr.source_version_id = v.id\n        JOIN public.source_extraction_retention er\n          ON er.organization_id = f.organization_id AND er.extraction_id = f.extraction_id\n        JOIN public.source_version_active_extraction ae\n          ON ae.organization_id = f.organization_id AND ae.source_version_id = f.source_version_id\n        JOIN public.source_object_scope os\n          ON os.organization_id = o.organization_id AND os.source_object_id = o.id\n        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id\n        JOIN public.workspace_member wm\n          ON wm.organization_id = w.organization_id AND wm.workspace_id = w.id\n         AND wm.principal_id = app.current_principal_id()\n         AND wm.valid_to_revision IS NULL AND wm.removed_at IS NULL\n        JOIN public.workspace_revision_source wrs\n          ON wrs.organization_id = w.organization_id AND wrs.workspace_id = w.id\n         AND wrs.workspace_revision = w.current_revision\n         AND wrs.source_scope_id = os.source_scope_id\n         AND wrs.source_scope_revision = os.source_scope_revision\n         AND wrs.enabled\n        JOIN public.workspace_managed_grant_confirmation c\n          ON c.organization_id = w.organization_id AND c.workspace_id = w.id\n         AND c.workspace_revision = w.current_revision\n         AND c.source_scope_id = os.source_scope_id\n         AND c.source_scope_revision = os.source_scope_revision\n         AND c.access_mode = 'WORKSPACE_MANAGED'\n        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id\n          AND f.anchor_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.anchor_hash, f.anchor_digest_key_version)\n          AND f.text_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)",
-          "new": "        LEFT JOIN public.evidence_text_projection tp\n          ON tp.organization_id = f.organization_id AND tp.fragment_id = f.id\n         AND tp.text_hash = f.text_hash AND tp.digest_key_version = f.text_digest_key_version\n        JOIN public.source_version v\n          ON v.organization_id = f.organization_id AND v.id = f.source_version_id\n        JOIN public.source_object o\n          ON o.organization_id = v.organization_id AND o.id = v.source_object_id\n        JOIN public.source_version_retention vr\n          ON vr.organization_id = v.organization_id AND vr.source_version_id = v.id\n        JOIN public.source_extraction_retention er\n          ON er.organization_id = f.organization_id AND er.extraction_id = f.extraction_id\n        JOIN public.source_version_active_extraction ae\n          ON ae.organization_id = f.organization_id AND ae.source_version_id = f.source_version_id\n        JOIN public.source_object_scope os\n          ON os.organization_id = o.organization_id AND os.source_object_id = o.id\n        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id\n        JOIN public.workspace_member wm\n          ON wm.organization_id = w.organization_id AND wm.workspace_id = w.id\n         AND wm.principal_id = app.current_principal_id()\n         AND wm.valid_to_revision IS NULL AND wm.removed_at IS NULL\n        JOIN public.workspace_revision_source wrs\n          ON wrs.organization_id = w.organization_id AND wrs.workspace_id = w.id\n         AND wrs.workspace_revision = w.current_revision\n         AND wrs.source_scope_id = os.source_scope_id\n         AND wrs.source_scope_revision = os.source_scope_revision\n         AND wrs.enabled\n        JOIN public.workspace_managed_grant_confirmation c\n          ON c.organization_id = w.organization_id AND c.workspace_id = w.id\n         AND c.workspace_revision = w.current_revision\n         AND c.source_scope_id = os.source_scope_id\n         AND c.source_scope_revision = os.source_scope_revision\n         AND c.access_mode = 'WORKSPACE_MANAGED'\n        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id\n          AND f.anchor_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.anchor_hash, f.anchor_digest_key_version)\n          AND TRUE\n          AND TRUE"
+          "old": "        JOIN public.evidence_text_projection tp\n          ON tp.organization_id = f.organization_id AND tp.fragment_id = f.id\n         AND tp.text_hash = f.text_hash AND tp.digest_key_version = f.text_digest_key_version\n        JOIN public.source_version v\n          ON v.organization_id = f.organization_id AND v.id = f.source_version_id\n        JOIN public.source_object o\n          ON o.organization_id = v.organization_id AND o.id = v.source_object_id\n        JOIN public.source_version_retention vr\n          ON vr.organization_id = v.organization_id AND vr.source_version_id = v.id\n        JOIN public.source_extraction_retention er\n          ON er.organization_id = f.organization_id AND er.extraction_id = f.extraction_id\n        JOIN public.source_version_active_extraction ae\n          ON ae.organization_id = f.organization_id AND ae.source_version_id = f.source_version_id\n        JOIN public.source_object_scope os\n          ON os.organization_id = o.organization_id AND os.source_object_id = o.id\n        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id\n        JOIN public.workspace_member wm\n          ON wm.organization_id = w.organization_id AND wm.workspace_id = w.id\n         AND wm.principal_id = app.current_principal_id()\n         AND wm.valid_to_revision IS NULL AND wm.removed_at IS NULL\n        JOIN public.workspace_revision_source wrs\n          ON wrs.organization_id = w.organization_id AND wrs.workspace_id = w.id\n         AND wrs.workspace_revision = w.current_revision\n         AND wrs.source_scope_id = os.source_scope_id\n         AND wrs.source_scope_revision = os.source_scope_revision\n         AND wrs.enabled\n        JOIN public.workspace_managed_grant_confirmation c\n          ON c.organization_id = w.organization_id AND c.workspace_id = w.id\n         AND c.workspace_source_id = wrs.workspace_source_id\n         AND c.source_scope_id = os.source_scope_id\n         AND c.source_scope_revision = os.source_scope_revision\n         AND c.scope_config_hash = wrs.scope_config_hash\n         AND c.access_mode = 'WORKSPACE_MANAGED'\n        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id\n          AND f.anchor_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.anchor_hash, f.anchor_digest_key_version)\n          AND f.text_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)",
+          "new": "        LEFT JOIN public.evidence_text_projection tp\n          ON tp.organization_id = f.organization_id AND tp.fragment_id = f.id\n         AND tp.text_hash = f.text_hash AND tp.digest_key_version = f.text_digest_key_version\n        JOIN public.source_version v\n          ON v.organization_id = f.organization_id AND v.id = f.source_version_id\n        JOIN public.source_object o\n          ON o.organization_id = v.organization_id AND o.id = v.source_object_id\n        JOIN public.source_version_retention vr\n          ON vr.organization_id = v.organization_id AND vr.source_version_id = v.id\n        JOIN public.source_extraction_retention er\n          ON er.organization_id = f.organization_id AND er.extraction_id = f.extraction_id\n        JOIN public.source_version_active_extraction ae\n          ON ae.organization_id = f.organization_id AND ae.source_version_id = f.source_version_id\n        JOIN public.source_object_scope os\n          ON os.organization_id = o.organization_id AND os.source_object_id = o.id\n        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id\n        JOIN public.workspace_member wm\n          ON wm.organization_id = w.organization_id AND wm.workspace_id = w.id\n         AND wm.principal_id = app.current_principal_id()\n         AND wm.valid_to_revision IS NULL AND wm.removed_at IS NULL\n        JOIN public.workspace_revision_source wrs\n          ON wrs.organization_id = w.organization_id AND wrs.workspace_id = w.id\n         AND wrs.workspace_revision = w.current_revision\n         AND wrs.source_scope_id = os.source_scope_id\n         AND wrs.source_scope_revision = os.source_scope_revision\n         AND wrs.enabled\n        JOIN public.workspace_managed_grant_confirmation c\n          ON c.organization_id = w.organization_id AND c.workspace_id = w.id\n         AND c.workspace_source_id = wrs.workspace_source_id\n         AND c.source_scope_id = os.source_scope_id\n         AND c.source_scope_revision = os.source_scope_revision\n         AND c.scope_config_hash = wrs.scope_config_hash\n         AND c.access_mode = 'WORKSPACE_MANAGED'\n        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id\n          AND f.anchor_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.anchor_hash, f.anchor_digest_key_version)\n          AND TRUE\n          AND TRUE"
         },
         {
           "id": "readable-gate-combined-conjunct",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "          AND f.text_digest_key_version IS NOT NULL\n          AND app.source_keyed_digest_matches_version(f.text_hash, f.text_digest_key_version)",
@@ -2235,19 +2235,19 @@
       "mutations": [
         {
           "id": "purge-keeps-text-projection",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000030_stage3_search_retention_cleanup.sql",
           "kind": "SQL_FAIL_CLOSED_WEAKENING",
           "expected": "RED",
-          "old": "    DELETE FROM public.evidence_text_projection pt\n     USING public.evidence_fragment f\n     WHERE pt.organization_id = f.organization_id AND pt.fragment_id = f.id\n       AND f.organization_id = p_organization_id AND f.source_version_id = p_version_id;",
+          "old": "    DELETE FROM public.evidence_text_projection AS projection\n     USING public.evidence_fragment AS fragment\n     WHERE projection.organization_id = fragment.organization_id\n       AND projection.fragment_id = fragment.id\n       AND fragment.organization_id = p_organization_id\n       AND fragment.source_version_id = p_version_id;",
           "new": "    DELETE FROM public.evidence_text_projection WHERE FALSE;"
         },
         {
           "id": "purge-projection-predicate-reordered",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000030_stage3_search_retention_cleanup.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
-          "old": "    DELETE FROM public.evidence_text_projection pt\n     USING public.evidence_fragment f\n     WHERE pt.organization_id = f.organization_id AND pt.fragment_id = f.id\n       AND f.organization_id = p_organization_id AND f.source_version_id = p_version_id;",
-          "new": "    DELETE FROM public.evidence_text_projection pt\n     USING public.evidence_fragment f\n     WHERE f.organization_id = p_organization_id AND f.source_version_id = p_version_id\n       AND pt.organization_id = f.organization_id AND pt.fragment_id = f.id;"
+          "old": "    DELETE FROM public.evidence_text_projection AS projection\n     USING public.evidence_fragment AS fragment\n     WHERE projection.organization_id = fragment.organization_id\n       AND projection.fragment_id = fragment.id\n       AND fragment.organization_id = p_organization_id\n       AND fragment.source_version_id = p_version_id;",
+          "new": "    DELETE FROM public.evidence_text_projection AS projection\n     USING public.evidence_fragment AS fragment\n     WHERE fragment.organization_id = p_organization_id\n       AND fragment.source_version_id = p_version_id\n       AND projection.organization_id = fragment.organization_id\n       AND projection.fragment_id = fragment.id;"
         }
       ]
     },
@@ -2990,7 +2990,7 @@
       "mutations": [
         {
           "id": "evidence-gate-workspace-scope-dropped",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_GATE_WEAKENING",
           "expected": "RED",
           "old": "        JOIN public.workspace w\n          ON w.organization_id = f.organization_id AND w.id = p_workspace_id",
@@ -2998,7 +2998,7 @@
         },
         {
           "id": "evidence-gate-tenant-scope-dropped",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_GATE_WEAKENING",
           "expected": "RED",
           "old": "        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id",
@@ -3006,7 +3006,7 @@
         },
         {
           "id": "evidence-gate-tenant-scope-reordered",
-          "target": "db/migrations/000020_stage2_keyed_text_digest.sql",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
           "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
           "old": "        WHERE f.organization_id = app.current_organization_id()\n          AND f.id = p_fragment_id",

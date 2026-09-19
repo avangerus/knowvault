@@ -852,7 +852,7 @@
     "tests/contracts/mutation-probes/r3a1-workspace-degraded-configuration-hash-repair.json": "0234c926b4a41583ee73a7b19ccb247f701cc9377ac6acb9b0ea9b321f5505c9",
     "tests/contracts/mutation-probes/s3-fused-hit-is-post-authorized.json": "945330b8a78a9c387f6d0d9c5ea7d13c5ce3e112caa5a691e4078f2e23563ded",
     "tests/contracts/mutation-probes/s3-search-scope-prefilter-is-server-built.json": "9a1cc794bea0bd9c69b763c73fe38806819cb8fc755354d7f6e5bb99bd6d412a",
-    "tests/contracts/mutation-registry.json": "bbf428175a81bebac583bf2c6522938378934f21211fac0168b716982f1ecfd9",
+    "tests/contracts/mutation-registry.json": "643e965f82f067fbb5d54ec70fcfbbe74dcce1f0de4d2b0818a38dd501cb3da6",
     "tests/contracts/mutation-runner/main.go": "c598063d4906d387e7cecfb9c533167cea17026a464c6a9a1e494a634928454d",
     "tests/contracts/package.json": "145c86feb60246398d23294d1e5261d298a772cc52f71a569b10ec8821757f67",
     "tests/contracts/pnpm-lock.yaml": "e9f92d8f24a82f982a1b84cb3d26eb26b17f315d78bb7e41bc5b15b3ff306533",
