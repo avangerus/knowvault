@@ -91,7 +91,9 @@ dataset or an existing report view with a stated time. Summing the top search
 results is not a valid substitute.
 
 The pilot does not promise arbitrary model-written joins or universal SQL
-analytics. A separate governed live-query capability requires explicit workspace
+analytics. The optional [governed SQL preset](GOVERNED-SQL-PRESETS.md) capability
+can repeat an already executed and reviewed live query by a versioned reference;
+it accepts no SQL or parameters from MCP. It requires explicit workspace
 configuration and is not needed for entity snapshots. Live-query results and
 their timestamps must not be presented as retained snapshot addresses.
 

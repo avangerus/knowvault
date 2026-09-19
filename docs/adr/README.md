@@ -131,6 +131,7 @@ ADR explains "why" and does not replace the contract or test. If the ADR and cod
 - [ADR-0092 — Absence in source and final deletion](0092-source-observed-presence-accepted.md) — accepted for the owner-approved fix for file and SQL disappearance and return; verification and deployment status are recorded separately in PLAN.md
 - [ADR-0093 — Migration comment translation compatibility](0093-migration-comment-translation-compatibility-accepted.md) — owner-approved compatibility for six exact legacy-to-English migration checksum pairs
 - [ADR-0094 — English source publication](0094-english-source-publication-accepted.md) — English publication under Apache-2.0, private preservation of originals, and a one-time freeze of reviewed English ADRs
+- [ADR-0095 — Reviewed governed-query presets for MCP](0095-reviewed-governed-query-presets-proposed.md) — `proposed`; owner-approved bounded F2/F3/F5 extension, activation pending CI and live customer proof
 
 ## What must be kept in sync
 

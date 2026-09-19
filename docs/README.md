@@ -12,6 +12,7 @@ The [pilot status](PILOT-STATUS.md) describes what is currently supported.
 | [Agent guide](MCP-CLIENT-GUIDE.md) | Read evidence, preserve source links and handle partial results. |
 | [MCP tools](MCP-TOOLS.md) | Tool inputs, addresses, permissions and pagination. |
 | [SQL snapshots](SQL-SNAPSHOTS.md) | Prepare versioned, searchable PostgreSQL entity records. |
+| [Governed SQL presets](GOVERNED-SQL-PRESETS.md) | Run reviewed live database checks through MCP without a SQL input surface. |
 | [Pilot acceptance](PILOT-ACCEPTANCE.md) | Evaluate retrieval, evidence, access and source updates. |
 | [Connector roadmap](CONNECTOR-ROADMAP.md) | Current integrations and future source/format coverage. |
 

@@ -2,6 +2,7 @@ package governedask
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -118,6 +119,86 @@ func TestValidOpaque(t *testing.T) {
 	for _, value := range []string{"", "has space", "semi;colon"} {
 		if validOpaque(value) {
 			t.Fatalf("expected %q to be rejected", value)
+		}
+	}
+}
+
+func TestAskOutputSchemaClosesEveryObjectLevel(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(askOutputSchema), &schema); err != nil {
+		t.Fatalf("askOutputSchema is not valid JSON: %v", err)
+	}
+
+	assertClosed := func(where string, object map[string]any) {
+		t.Helper()
+		if object["type"] != "object" {
+			t.Fatalf("%s: expected object schema, got type=%v", where, object["type"])
+		}
+		closed, ok := object["additionalProperties"].(bool)
+		if !ok || closed {
+			t.Fatalf("%s: expected additionalProperties=false, got %v", where, object["additionalProperties"])
+		}
+	}
+
+	assertClosed("top-level object", schema)
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema has no properties object")
+	}
+	claims, ok := properties["claims"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema has no properties.claims object")
+	}
+	claimItems, ok := claims["items"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema claims has no items object schema")
+	}
+	assertClosed("claim object", claimItems)
+
+	sections, ok := properties["sections"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema has no properties.sections object")
+	}
+	sectionItems, ok := sections["items"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema sections has no items object schema")
+	}
+	assertClosed("section object", sectionItems)
+}
+
+func TestAskInstructionsRequireExactTopLevelMembers(t *testing.T) {
+	lowered := strings.ToLower(askSystemInstructions)
+	for _, required := range []string{
+		"schema_version",
+		"claims",
+		"sections",
+		"additional",
+		"punctuation-named",
+		"top-level object contains exactly",
+	} {
+		if !strings.Contains(lowered, required) {
+			t.Fatalf("governed query instructions do not state the top-level member rule %q", required)
+		}
+	}
+}
+
+func TestAskSystemInstructionsStateClaimTextBoundary(t *testing.T) {
+	for _, required := range []string{
+		"single line",
+		"valid UTF-8",
+		"2000 UTF-8 bytes",
+		"newline",
+		"carriage return",
+		"tab",
+		"control character",
+		"leading/trailing whitespace",
+		"U+200E",
+		"U+200F",
+		"U+202A-U+202E",
+		"U+2066-U+2069",
+	} {
+		if !strings.Contains(askSystemInstructions, required) {
+			t.Fatalf("governed query instructions do not state the SQL text boundary %q", required)
 		}
 	}
 }

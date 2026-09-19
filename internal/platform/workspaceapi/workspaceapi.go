@@ -316,6 +316,15 @@ type Handler struct {
 	// SERVICE_UNAVAILABLE, mirroring the questions field's own
 	// capability-gated shape.
 	governedQuery GovernedQueryService
+	// governedPresets is the optional, model-independent MCP catalogue of
+	// administrator-mounted SQL presets. It is discovered from the same
+	// governed service but kept as a narrow interface so existing transports
+	// and test doubles do not gain new mandatory methods.
+	governedPresets GovernedQueryPresetService
+	// governedQueryModePolicy retains the optional mounted-policy authority so
+	// each MCP request observes its current decision. Its nil zero value
+	// preserves the legacy ad-hoc surface for existing service test doubles.
+	governedQueryModePolicy GovernedQueryModePolicy
 	// spanDigestKey is R3a-1's organization-scoped ADR-0077 span digest key
 	// (the same keyed HMAC family as evidence_fragment.text_hash). When it is
 	// wired through EnableSpanDigest every emitted kv1 address carries the
@@ -370,10 +379,25 @@ type GovernedQueryService interface {
 	Promote(ctx context.Context, access database.AccessContext, workspaceID, connectionID, attemptID, expectedSQLHash string) (governedquery.PromotionResult, error)
 }
 
+type GovernedQueryPresetService interface {
+	HasPresets() bool
+	ListPresets(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) (governedask.PresetCatalog, error)
+	RunPreset(ctx context.Context, access database.AccessContext, workspaceID, connectionID, presetID string) (governedask.PresetRunResult, error)
+	ResolvePresetPhrase(ctx context.Context, access database.AccessContext, workspaceID, phrase string) (governedquery.PresetSummary, bool, error)
+}
+
+// GovernedQueryModePolicy is the narrow optional policy projection exposed by
+// governedask.Service. Existing GovernedQueryService implementations need not
+// implement it and retain the legacy ad-hoc behavior.
+type GovernedQueryModePolicy interface {
+	PresetOnly() bool
+}
+
 // EnableGovernedQuery wires the ADR-0089 governed-query orchestration
-// service. Composition calls this only when a valid mounted connection and a
-// Model Gateway adapter both exist; omitting the call keeps every
-// governed-query-connections route a content-free SERVICE_UNAVAILABLE.
+// service. Composition calls this when a valid mounted connection exists.
+// Ad-hoc ask still requires a Model Gateway adapter; reviewed presets do not.
+// Omitting the call keeps every governed-query-connections route a content-free
+// SERVICE_UNAVAILABLE.
 // EnableSearchProfile wires the EMB-1 retrieval profile authority. Like every
 // other optional capability it is composed after a valid mount, never inferred
 // from a request.
@@ -389,6 +413,17 @@ func (handler *Handler) EnableGovernedQuery(service GovernedQueryService) {
 		return
 	}
 	handler.governedQuery = service
+	handler.governedQueryModePolicy = nil
+	if policy, ok := service.(GovernedQueryModePolicy); ok {
+		handler.governedQueryModePolicy = policy
+	}
+	if presets, ok := service.(GovernedQueryPresetService); ok && presets.HasPresets() {
+		handler.governedPresets = presets
+	}
+}
+
+func (handler *Handler) governedQueryIsPresetOnly() bool {
+	return handler != nil && handler.governedQueryModePolicy != nil && handler.governedQueryModePolicy.PresetOnly()
 }
 
 // EnableSpanDigest wires the organization-scoped ADR-0077 span digest key that
@@ -1990,8 +2025,8 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	// The connection id is the fixed, mounted ADR-0089 connection; this
 	// surface never accepts SQL, a DSN or a credential as input, only the
 	// operator's exposed-schema annotations, the live-queries flag, a natural
-	// -language question and, for promotion, the operator's own reviewed SQL
-	// text (never a model-composed one automatically).
+	// -language question and, for promotion, a server-owned attempt id plus its
+	// reviewed SQL hash. SQL text is never accepted by this transport.
 	if len(parts) == 3 && parts[1] == "governed-query-connections" && validOpaqueID(parts[0]) {
 		if strings.HasSuffix(parts[2], ":set-live-queries") {
 			connectionID := strings.TrimSuffix(parts[2], ":set-live-queries")
