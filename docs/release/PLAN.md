@@ -33,7 +33,7 @@ Current gate status and forecast, measured from an approved D1 start:
 | D1 | Complete | Exact configured local Qwen profile passed first-attempt 4/4 and repeated 20/20 strict structured-output qualification. | Done |
 | D2 | Complete | Four reviewed bindings active in `PRESET_ONLY`; human/SERVICE MCP 8/8, denials 6/6, revoked credential 401, authorization/audit verified. | Done |
 | D3 | Complete | Browser ran all four live checks with source identity, execution window and receipt; refresh did not rerun, evidence back preserved results, implicit catalogue discovery 4/4 and explicit mismatch denied. | Done |
-| D4 | In progress | Freeze exact release identity, publish operator runbook/demo script, and obtain second-operator acceptance. | 2–4 hours |
+| D4 | Acceptance complete; green release-head checks required | GitHub branch protection verifies the exact release head. | Automated gate |
 
 Only one gate-changing implementation slice is active at a time. DSH receives
 small contracts covering configuration, adapter behavior, qualification,
@@ -60,11 +60,11 @@ qualification, with no implicit fallback and unchanged strict ClaimPlan and SQL
 validation. Prompt shortening and manual insertion of governed attempts were
 not release paths.
 
-The fastest useful milestone is D2: an external MCP demonstration with four
-reviewed live checks. D3 adds a thin browser surface over the same preset
-contract through the existing MCP endpoint; it does not create a second REST
-or SQL path or a chat system. Free-form SQL generation, parameters and data
-write-back remain outside this release.
+D2 delivered the external MCP demonstration with four reviewed live checks. D3
+delivered a thin browser surface over the same preset contract through the
+existing MCP endpoint; it did not create a second REST or SQL path or a chat
+system. Free-form SQL generation, parameters and data write-back remain outside
+this release.
 
 ## Pilot outcomes
 
@@ -104,11 +104,12 @@ Product authorization, audit and evidence-integrity contracts remain in force.
 
 The owner authorized this F2/F3/F5 extension on 19.09.2026. A preset is a
 versioned reference to an already executed and reviewed governed-query attempt,
-not SQL text in UI, API, MCP or the operator mount. The first slice is complete
-when an external MCP client can list and run a preset, an unknown field or SQL
-field is refused before the service, workspace access and live-query opt-in are
-rechecked, the dedicated database role remains read-only and bounded, and the
-result carries live-state timestamps plus attempt, preset, SQL and result hashes.
+not SQL text in UI, API, MCP or the operator mount. The accepted first slice met
+those boundaries: an external MCP client could list and run a preset, an unknown
+field or SQL field was refused before the service, workspace access and
+live-query opt-in were rechecked, the dedicated database role remained read-only
+and bounded, and the result carried live-state timestamps plus attempt, preset,
+SQL and result hashes.
 
 This does not add arbitrary SQL analytics, parameters, schedules, automatic
 write-back, or a retained `kv1:` evidence address for live rows. Those remain

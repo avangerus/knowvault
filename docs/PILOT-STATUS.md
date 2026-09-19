@@ -64,6 +64,10 @@ Recent reviewed live-SQL and browser checks measured:
 - A browser walkthrough ran four live checks with safe refresh and evidence
   return: implicit catalogue discovery passed **4/4**, and a mismatched
   connection was denied.
+- A second operator rolled back to the recorded previous image and recovered
+  forward: after restore, MCP again passed **8/8** allowed calls with **6/6**
+  denials and catalogue discovery passed **4/4**. This proves the recorded
+  image-switch procedure, not host-reboot recovery or turnkey installation.
 
 ## Known limitations
 
