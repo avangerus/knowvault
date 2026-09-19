@@ -56,8 +56,8 @@ func TestS2bWorkerSwapMintsNewExtraction(t *testing.T) {
 	if len(firstFragments) == 0 {
 		t.Fatal("the first sync published no Evidence")
 	}
-	if got := s2aActiveRevision(t, ctx, admin, path); got != "docx-v1" {
-		t.Fatalf("parser_profile_revision = %q, want docx-v1", got)
+	if got := s2aActiveRevision(t, ctx, admin, path); got != "docx-v1-struct-layout-v1" {
+		t.Fatalf("parser_profile_revision = %q, want docx-v1-struct-layout-v1", got)
 	}
 
 	// Re-running the same production facade must not mint anything: the identity
@@ -77,7 +77,7 @@ func TestS2bWorkerSwapMintsNewExtraction(t *testing.T) {
 	if secondExtraction != firstExtraction {
 		t.Fatal("a fresh process with the same attested worker identity minted a new Extraction")
 	}
-	if got := s2aActiveRevision(t, ctx, admin, path); got != "docx-v1" {
+	if got := s2aActiveRevision(t, ctx, admin, path); got != "docx-v1-struct-layout-v1" {
 		t.Fatalf("the fresh worker changed parser_profile_revision to %q", got)
 	}
 	if swappedVersionID != versionID {

@@ -56,7 +56,7 @@
     {"id":"architecture.connector.folder-root-handle","phase":"STAGE_2","kind":"ARCHITECTURE_NEGATIVE","status":"EXECUTABLE","harness":"CHECK_ARCHITECTURE_SELF_TEST"},
     {"id":"architecture.connector.folder-stable-read","phase":"STAGE_2","kind":"ARCHITECTURE_NEGATIVE","status":"EXECUTABLE","harness":"CHECK_ARCHITECTURE_SELF_TEST"},
     {"id":"acceptance.source.folder-runtime-containment","phase":"STAGE_2","kind":"SECURITY_NEGATIVE","status":"EXECUTABLE","harness":"POSTGRES_INTEGRATION","test_names":["TestFolderConnectorRuntimeContainment"]},
-    {"id":"acceptance.source.folder-runtime-torn-read","phase":"STAGE_2","kind":"RACE_NEGATIVE","status":"EXECUTABLE","harness":"POSTGRES_INTEGRATION","mutation_corpus":"tests/contracts/mutation-registry.json","test_names":["TestFolderConnectorTornReadFailsClosed"]},
+    {"id":"acceptance.source.folder-runtime-torn-read","phase":"STAGE_2","kind":"RACE_NEGATIVE","status":"EXECUTABLE","harness":"GO_UNIT","mutation_corpus":"tests/contracts/mutation-registry.json","test_names":["TestFolderConnectorTornReadFailsClosed"]},
     {"id":"acceptance.source.folder-runtime-quarantine","phase":"STAGE_2","kind":"SECURITY_NEGATIVE","status":"EXECUTABLE","harness":"POSTGRES_INTEGRATION","test_names":["TestFolderConnectorRuntimeQuarantine"]},
     {"id":"acceptance.source.folder-runtime-glob-parity","phase":"STAGE_2","kind":"DATABASE_SCENARIO","status":"EXECUTABLE","harness":"POSTGRES_INTEGRATION","mutation_corpus":"tests/contracts/mutation-registry.json","test_names":["TestFolderConnectorGlobParityAndIsolation"]},
     {"id":"acceptance.parser.html-safe-extraction","phase":"STAGE_2","kind":"PARSER_SCENARIO","status":"EXECUTABLE","harness":"POSTGRES_INTEGRATION","test_names":["TestS2aHTMLFolderExtraction"]},

@@ -2440,6 +2440,8 @@ func collectProtectedPaths(root string) ([]string, []string) {
 		"deploy/manifests/sandbox-dispatcher.yaml",
 		".github/CODEOWNERS",
 		".github/workflows/architecture.yml",
+		".github/workflows/codeql.yml",
+		".github/workflows/dependency-review.yml",
 		"PRODUCT_CONSTITUTION.md",
 		"ARCHITECTURE.md",
 		"POKA_YOKE.md",
@@ -3876,6 +3878,15 @@ func checkVersionLock(root string) []string {
 		"go_build_tools.grype.image_digest":               "sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
 		"ci_actions.checkout.version":                     "v7.0.0",
 		"ci_actions.checkout.source_commit":               "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+		"ci_actions.codeql_init.repository":               "github/codeql-action/init",
+		"ci_actions.codeql_init.version":                  "v4.38.1",
+		"ci_actions.codeql_init.source_commit":            "1c5b675653bb5c22dbe9b12b556ec555138e09fd",
+		"ci_actions.codeql_analyze.repository":            "github/codeql-action/analyze",
+		"ci_actions.codeql_analyze.version":               "v4.38.1",
+		"ci_actions.codeql_analyze.source_commit":         "1c5b675653bb5c22dbe9b12b556ec555138e09fd",
+		"ci_actions.dependency_review.repository":         "actions/dependency-review-action",
+		"ci_actions.dependency_review.version":            "v5.0.0",
+		"ci_actions.dependency_review.source_commit":      "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
 		"data_services.postgresql.version":                "18.4",
 		"data_services.opensearch.version":                "3.7.0",
 		"application_images.server_runtime_base":          "scratch",
@@ -4019,6 +4030,9 @@ var reviewedVersionComponentFields = map[string][]string{
 	"go_build_tools.syft":                               {"module", "version", "source_commit", "release_checksum_manifest_sha256", "image", "image_digest", "scope", "license", "rule"},
 	"go_build_tools.grype":                              {"module", "version", "source_commit", "release_checksum_manifest_sha256", "image", "image_digest", "scope", "license", "rule"},
 	"ci_actions.checkout":                               {"repository", "version", "source_commit", "license", "scope"},
+	"ci_actions.codeql_init":                            {"repository", "version", "source_commit", "license", "scope"},
+	"ci_actions.codeql_analyze":                         {"repository", "version", "source_commit", "license", "scope"},
+	"ci_actions.dependency_review":                      {"repository", "version", "source_commit", "license", "scope"},
 	"ci_actions.powershell_probe_runner":                {"repository", "version", "source_commit", "release_artifact", "release_checksum_sha256", "license", "scope", "rule"},
 	"data_services.postgresql":                          {"version", "image", "license"},
 	"data_services.opensearch":                          {"version", "image", "license"},
@@ -4037,7 +4051,7 @@ var reviewedVersionGroups = map[string][]string{
 	"node_transitive_dependencies": {"fast_deep_equal", "fast_uri", "json_schema_traverse", "require_from_string", "scheduler", "csstype"},
 	"go_dependencies":              {"google_compute_metadata", "oidc", "go_jose", "pgx", "pgpassfile", "pgservicefile", "puddle", "x_oauth2", "x_sync", "x_sys", "x_text", "x_net"},
 	"go_build_tools":               {"oapi_codegen", "sqlc", "syft", "grype"},
-	"ci_actions":                   {"checkout", "powershell_probe_runner"},
+	"ci_actions":                   {"checkout", "powershell_probe_runner", "codeql_init", "codeql_analyze", "dependency_review"},
 	"data_services":                {"postgresql", "opensearch", "reverse_proxy", "built_in_idp", "embedding_runtime"},
 }
 
@@ -4570,7 +4584,7 @@ func validateComponentIntegrity(path string, component map[string]any, lock any)
 		required = map[string]*regexp.Regexp{"module_sum": h1Pattern, "go_mod_sum": h1Pattern, "source_commit": hex40Pattern}
 	case path == "go_build_tools.syft" || path == "go_build_tools.grype":
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern, "release_checksum_manifest_sha256": hex64Pattern, "image": regexp.MustCompile(`^[^\s:@]+(?:/[^\s:@]+)*:[^\s@]+@sha256:[0-9a-f]{64}$`), "image_digest": regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)}
-	case path == "ci_actions.checkout":
+	case path == "ci_actions.checkout" || path == "ci_actions.codeql_init" || path == "ci_actions.codeql_analyze" || path == "ci_actions.dependency_review":
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern}
 	case path == "ci_actions.powershell_probe_runner":
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern, "release_checksum_sha256": hex64Pattern}
@@ -4968,10 +4982,12 @@ func lockedImagesFromVersionLock(lock any) map[string]bool {
 
 func lockedActionsFromVersionLock(lock any) map[string]bool {
 	result := make(map[string]bool)
-	repository, repoOK := jsonValueAt(lock, "ci_actions.checkout.repository")
-	commit, commitOK := jsonValueAt(lock, "ci_actions.checkout.source_commit")
-	if repoOK && commitOK {
-		result[fmt.Sprint(repository)+"@"+fmt.Sprint(commit)] = true
+	for _, name := range []string{"checkout", "codeql_init", "codeql_analyze", "dependency_review"} {
+		repository, repoOK := jsonValueAt(lock, "ci_actions."+name+".repository")
+		commit, commitOK := jsonValueAt(lock, "ci_actions."+name+".source_commit")
+		if repoOK && commitOK {
+			result[fmt.Sprint(repository)+"@"+fmt.Sprint(commit)] = true
+		}
 	}
 	return result
 }
@@ -9608,8 +9624,8 @@ var requiredCiExecutableCommands = []string{
 	"corepack pnpm exec tsc --noEmit",
 	"corepack pnpm exec esbuild --version",
 	"go test -count=1 ./...",
-	"go test -mod=readonly -count=1 ./...",
-	"go test -mod=readonly -count=1 ./tests/integration/postgres",
+	`go test -mod=readonly -count=1 "${unit_packages[@]}" -timeout=10m`,
+	"go test -mod=readonly -count=1 -timeout=30m ./tests/integration/postgres",
 	"go test -mod=readonly -json -tags e2e ./tests/e2e -run=^TestE2ER3FullLoop$ -count=1 -timeout 30m 2>&1 | tee /tmp/knowvault-r3-go-test.json",
 	"go run ./scripts/check-architecture.go -verify-e2e-json /tmp/knowvault-r3-go-test.json -verify-e2e-package knowvault.local/verified-workspace/tests/e2e -verify-e2e-test TestE2ER3FullLoop",
 	"go run ./tests/contracts/mutation-runner -root /src",

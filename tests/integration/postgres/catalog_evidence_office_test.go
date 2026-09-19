@@ -122,9 +122,9 @@ func TestS2bOfficeFolderExtraction(t *testing.T) {
 
 	// The three valid documents ingested, each under its own extraction profile.
 	for path, revision := range map[string]string{
-		"projects/alpha/report.docx": "docx-v1",
-		"projects/alpha/deck.pptx":   "pptx-v1",
-		"projects/alpha/budget.xlsx": "xlsx-v1",
+		"projects/alpha/report.docx": "docx-v1-struct-layout-v1",
+		"projects/alpha/deck.pptx":   "pptx-v1-struct-layout-v1",
+		"projects/alpha/budget.xlsx": "xlsx-v1-struct-layout-v1",
 	} {
 		if got := s2aActiveRevision(t, ctx, admin, path); got != revision {
 			t.Fatalf("%s parser_profile_revision = %q, want %q", path, got, revision)
@@ -302,8 +302,8 @@ func TestS2bOfficeFolderExtraction(t *testing.T) {
 		if extractionCount != 2 {
 			t.Fatalf("profile upgrade produced %d extractions for one version, want 2", extractionCount)
 		}
-		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/report.docx"); got != "docx-v2" {
-			t.Fatalf("active profile revision = %q, want docx-v2", got)
+		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/report.docx"); got != "docx-v2-struct-layout-v1" {
+			t.Fatalf("active profile revision = %q, want docx-v2-struct-layout-v1", got)
 		}
 		// The historical Extraction and its Evidence are untouched.
 		after := officeFragments(t, ctx, admin, firstExtraction)
@@ -369,7 +369,7 @@ func TestS2bOfficeSandboxFailureAtomicity(t *testing.T) {
 		}
 		// The neighbouring object still ingested: one document's sandbox failure is
 		// a per-object quarantine, not a sync-run failure.
-		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1" {
+		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1-layout-v2" {
 			t.Fatalf("the sync run did not continue past the quarantine: notes.txt profile %q", got)
 		}
 		var fragments int

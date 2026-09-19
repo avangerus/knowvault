@@ -190,6 +190,22 @@ type inventoryGrepEvidence struct {
 	objects   EvidenceWholeObject
 }
 
+// Prefer the governed immutable-version reader; legacy compositions retain
+// their current reader and must still return exactly the inventory target.
+func (source inventoryGrepEvidence) readInventoryObject(ctx context.Context, access database.AccessContext, workspaceID string, item evidence.ObjectInventoryItem, exactVersion bool) (evidence.WholeObject, error) {
+	var object evidence.WholeObject
+	var err error
+	if exact, ok := source.objects.(EvidenceWholeObjectExactVersion); exactVersion && ok {
+		object, err = exact.ReadObjectExactVersion(ctx, access, workspaceID, item.FirstFragmentID, item.SourceVersionID)
+	} else {
+		object, err = source.objects.ReadObject(ctx, access, workspaceID, item.FirstFragmentID)
+	}
+	if err != nil || object.Fragment.FragmentID != item.FirstFragmentID || object.Fragment.SourceVersionID != item.SourceVersionID || object.Fragment.SourceObjectID != item.SourceObjectID {
+		return evidence.WholeObject{}, evidence.ErrNotFound
+	}
+	return object, nil
+}
+
 // The compile-time assertion is the wiring proof: the adapter the capability
 // resolver builds is a real EvidenceGrep and a real EvidenceGrepRef.
 var (
@@ -399,18 +415,41 @@ func mcpGrepAddressSelector(raw string) (address.Address, error) {
 }
 
 // mcpGrepAtAddress runs a regex against exactly one object version selected by
-// a canonical address. It deliberately calls ReadObject directly: an address
-// already names the authorized fragment anchor, so a workspace inventory walk
-// would add latency and could accidentally turn an exact version request into
-// a broader search. The returned ref is only non-empty when the address used a
-// Git immutable external-version identity, preserving the existing projection
-// shape for ref-scoped hits.
+// a canonical address. Immutable version IDs use the governed exact reader;
+// Git refs first resolve to a version through authorized inventory metadata.
+// Legacy compositions retain their current reader and full address validation.
+// The returned ref preserves the existing projection for ref-scoped hits.
 func (handler *Handler) mcpGrepAtAddress(ctx context.Context, access database.AccessContext, workspaceID string, selector address.Address, pattern string, offset, limit int64) (GrepPage, string, error) {
 	objects, ok := handler.evidenceWholeObjectCapability()
 	if !ok {
 		return GrepPage{}, "", errMCPGrepWholeObjectUnavailable
 	}
-	object, err := objects.ReadObject(ctx, access, workspaceID, selector.Object)
+	var object evidence.WholeObject
+	var err error
+	if _, exact := handler.evidence.(EvidenceWholeObjectExactVersion); exact {
+		refVersionID := ""
+		if !strings.HasPrefix(selector.Version, "version_") {
+			resolution := handler.mcpReadAddressResolution(ctx, access, workspaceID, selector)
+			if !resolution.Available || !resolution.VersionKnown || !resolution.ObjectSeen {
+				return GrepPage{}, "", evidence.ErrNotFound
+			}
+			refVersionID = resolution.RefVersionID
+		}
+		object, err = handler.readEvidenceObjectSelection(ctx, access, workspaceID, selector.Object, &selector, refVersionID)
+		if err != nil && strings.HasPrefix(selector.Version, "version_") {
+			// Preserve the invalid-selector refusal only when a current,
+			// authorized read proves that this fragment belongs to another
+			// version. Denied or retired fragments remain content-free not
+			// found; the fallback never supplies bytes to the grep result.
+			fragment, readErr := handler.evidence.Read(ctx, access, workspaceID, selector.Object)
+			if readErr == nil && fragment.FragmentID == selector.Object &&
+				fragment.SourceObjectID == selector.Source && fragment.SourceVersionID != selector.Version {
+				return GrepPage{}, "", errMCPGrepInvalidAddress
+			}
+		}
+	} else {
+		object, err = objects.ReadObject(ctx, access, workspaceID, selector.Object)
+	}
 	if err != nil || object.Fragment.FragmentID == "" {
 		return GrepPage{}, "", evidence.ErrNotFound
 	}
@@ -621,7 +660,7 @@ func (source inventoryGrepEvidence) GrepFragments(ctx context.Context, access da
 			if item.FirstFragmentID == "" {
 				continue
 			}
-			object, err := source.objects.ReadObject(ctx, access, workspaceID, item.FirstFragmentID)
+			object, err := source.readInventoryObject(ctx, access, workspaceID, item, allVersions)
 			if err != nil || object.Fragment.FragmentID == "" {
 				return GrepPage{}, evidence.ErrNotFound
 			}
@@ -708,7 +747,7 @@ func (source inventoryGrepEvidence) GrepFragmentsAtRef(ctx context.Context, acce
 		if item.FirstFragmentID == "" {
 			continue
 		}
-		object, err := source.objects.ReadObject(ctx, access, workspaceID, item.FirstFragmentID)
+		object, err := source.readInventoryObject(ctx, access, workspaceID, item, true)
 		if err != nil || object.Fragment.FragmentID == "" {
 			return GrepPage{}, evidence.ErrNotFound
 		}

@@ -205,7 +205,7 @@ func certificateFile() string { return os.Getenv("SSL_CERT_FILE") }
 // prepareSourceMount lays out the pinned source mount for the worker exactly
 // as the deployment document prescribes: the manifest at the mount root, one
 // entry directory per source root, the corpus below the registered relative
-// root, everything owned by root:65532 with group-readable modes and no
+// root, everything owned by root:65530 with group-readable modes and no
 // group/world write bits (the worker mount loader rejects those). The mount
 // root is the caller-provided worker chroot path: the worker sees it at
 // /run/knowvault/sources inside its own container-equivalent filesystem.
@@ -224,7 +224,7 @@ func prepareSourceMount(ctx context.Context, cfg config, mountRoot string) error
 	if err := os.WriteFile(manifestPath, rawManifest, 0o440); err != nil {
 		return fmt.Errorf("write source manifest: %w", err)
 	}
-	if err := syscall.Chown(manifestPath, 0, runtimeGID); err != nil {
+	if err := syscall.Chown(manifestPath, 0, workerRuntimeGID); err != nil {
 		return fmt.Errorf("chown source manifest: %w", err)
 	}
 
@@ -248,17 +248,17 @@ func prepareSourceMount(ctx context.Context, cfg config, mountRoot string) error
 		if err := os.WriteFile(target, content, 0o640); err != nil {
 			return fmt.Errorf("write corpus %s: %w", entry.Name(), err)
 		}
-		if err := syscall.Chown(target, 0, runtimeGID); err != nil {
+		if err := syscall.Chown(target, 0, workerRuntimeGID); err != nil {
 			return fmt.Errorf("chown corpus %s: %w", entry.Name(), err)
 		}
 	}
 	// The directory chain below the mount root is created by the harness, so
-	// it must carry the same 0:65532 ownership as the image-provided root.
+	// it must carry the same 0:65530 ownership as the image-provided root.
 	for _, dir := range []string{
 		filepath.Join(mountRoot, "corpus"),
 		inbox,
 	} {
-		if err := syscall.Chown(dir, 0, runtimeGID); err != nil {
+		if err := syscall.Chown(dir, 0, workerRuntimeGID); err != nil {
 			return fmt.Errorf("chown %s: %w", dir, err)
 		}
 	}

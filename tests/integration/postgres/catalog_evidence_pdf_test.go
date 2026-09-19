@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"knowvault.local/verified-workspace/internal/ingestion"
 	"knowvault.local/verified-workspace/internal/jobs"
+	"knowvault.local/verified-workspace/internal/sandboxdispatch"
 	"knowvault.local/verified-workspace/internal/source/canon"
 	"knowvault.local/verified-workspace/internal/source/dispatchparser"
 	"knowvault.local/verified-workspace/internal/source/ids"
@@ -18,6 +20,15 @@ import (
 )
 
 const pdfEvidenceCanary = "KNOWVAULT_PDF_CANARY_20260828"
+
+// Bound the missing-capacity wait while keeping sync/database context live.
+type shortWaitPDFExtractor struct{ inner ingestion.PDFExtractor }
+
+func (extractor shortWaitPDFExtractor) Extract(ctx context.Context, format string, document []byte) (*pdfparser.Result, error) {
+	bounded, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	return extractor.inner.Extract(bounded, format, document)
+}
 
 // buildPDF emits a real, xref-correct PDF without adding a PDF library to the Go
 // product. The bytes cross the actual Docker/PDFBox boundary in this test.
@@ -105,15 +116,15 @@ func TestS2cPDFFolderExtraction(t *testing.T) {
 		WithPDFExtractor(runtime.pdf)
 	runSync(t, ctx, handler, queue, workerAccess(t, s1dOrg), "pdf-sync")
 
-	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "pdf-v1" {
-		t.Fatalf("valid PDF profile = %q, want pdf-v1", got)
+	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "pdf-v1-struct-layout-v1" {
+		t.Fatalf("valid PDF profile = %q, want pdf-v1-struct-layout-v1", got)
 	}
 	for _, name := range []string{"scanned.pdf", "mixed.pdf", "active.pdf", "fake.pdf"} {
 		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/"+name); got != "" {
 			t.Fatalf("hostile %s published extraction %q", name, got)
 		}
 	}
-	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1" {
+	if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1-layout-v2" {
 		t.Fatalf("neighbouring text did not continue after PDF quarantines: %q", got)
 	}
 
@@ -191,12 +202,32 @@ func TestS2cPDFMissingOrWrongWorkerIdentityQuarantines(t *testing.T) {
 		}
 		handler := ingestion.NewHandler(workerStore, queue, mustRepo(t), codec,
 			ingestion.Digester{Key: s1dDigestKey, KeyVersion: 1}, s1dMounts{root: root}, s1dWorkerID, time.Now, ids.New).
-			WithPDFExtractor(missingPDF)
-		runSync(t, ctx, handler, queue, workerAccess(t, s1dOrg), "pdf-failure")
+			WithPDFExtractor(shortWaitPDFExtractor{inner: missingPDF})
+		access := workerAccess(t, s1dOrg)
+		jobID := mustID(t, "job")
+		if _, err := queue.Enqueue(ctx, access, jobs.Spec{JobID: jobID, Type: jobs.TypeSourceScopeSync,
+			Payload: jobs.Payload{"source_scope_id": s1dScopeID}, IdempotencyKey: "pdf-failure-" + jobID,
+			Priority: 100, MaxAttempts: 3, AvailableAfter: 0}); err != nil {
+			t.Fatal(err)
+		}
+		claimed, ok, err := queue.Claim(ctx, access, s1dWorkerID, 60)
+		if err != nil || !ok {
+			t.Fatalf("claim missing-dispatcher job: %v ok=%v", err, ok)
+		}
+		if err := handler.Handle(ctx, access, claimed); ingestion.CodeOf(err) != "INGEST_PARSER_UNAVAILABLE" || !errors.Is(err, sandboxdispatch.ErrRetryBeforeTransfer) {
+			t.Fatalf("missing dispatcher must remain retryable before transfer: %v", err)
+		}
+		var status, retryCode string
+		if err := admin.QueryRow(ctx, `SELECT status,last_error_code FROM public.job WHERE organization_id=$1 AND id=$2`, s1dOrg, jobID).Scan(&status, &retryCode); err != nil {
+			t.Fatal(err)
+		}
+		if status != "PENDING" || retryCode != "INGEST_PARSER_UNAVAILABLE" {
+			t.Fatalf("missing capacity must preserve a durable retry: status=%s code=%s", status, retryCode)
+		}
 		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "" {
 			t.Fatalf("failed PDF worker published %q", got)
 		}
-		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1" {
+		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1-layout-v2" {
 			t.Fatalf("neighbour did not continue: %q", got)
 		}
 	})
@@ -227,7 +258,7 @@ func TestS2cPDFMissingOrWrongWorkerIdentityQuarantines(t *testing.T) {
 		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/waste.pdf"); got != "" {
 			t.Fatalf("expired PDF worker published %q", got)
 		}
-		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1" {
+		if got := s2aActiveRevision(t, ctx, admin, "projects/alpha/notes.txt"); got != "text-v1-layout-v2" {
 			t.Fatalf("neighbour did not continue: %q", got)
 		}
 	})

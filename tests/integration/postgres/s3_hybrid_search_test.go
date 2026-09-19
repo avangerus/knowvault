@@ -97,9 +97,11 @@ func (transport s3EmbeddingTransport) RoundTrip(request *http.Request) (*http.Re
 // filters exclude is never scored, so a control that expects a foreign
 // workspace's passage to be absent is proving the filter, not the fake.
 type s3IndexTransport struct {
-	mutex     sync.Mutex
-	t         *testing.T
-	documents map[string]map[string]any
+	mutex            sync.Mutex
+	t                *testing.T
+	documents        map[string]map[string]any
+	afterSearch      func()
+	lastSearchHitIDs []string
 }
 
 func (transport *s3IndexTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -132,7 +134,13 @@ func (transport *s3IndexTransport) RoundTrip(request *http.Request) (*http.Respo
 		return s3Response(http.StatusOK, `{}`), nil
 	case request.Method == http.MethodPost && strings.HasSuffix(path, "/_search"):
 		raw, _ := io.ReadAll(request.Body)
-		return transport.search(raw)
+		response, err := transport.search(raw)
+		afterSearch := transport.afterSearch
+		transport.afterSearch = nil
+		if afterSearch != nil {
+			afterSearch()
+		}
+		return response, err
 	}
 	return s3Response(http.StatusNotFound, `{}`), nil
 }
@@ -170,6 +178,7 @@ func (transport *s3IndexTransport) search(raw []byte) (*http.Response, error) {
 		}
 	}
 	hits := make([]any, 0, len(transport.documents))
+	transport.lastSearchHitIDs = transport.lastSearchHitIDs[:0]
 	for id, document := range transport.documents {
 		if !s3DocumentMatches(document, body.Query.Bool.Filter) {
 			continue
@@ -196,6 +205,9 @@ func (transport *s3IndexTransport) search(raw []byte) (*http.Response, error) {
 			}
 		}
 		hits = append(hits, map[string]any{"_id": id, "_score": score, "_source": document})
+		if fragmentID, _ := document["evidence_fragment_id"].(string); fragmentID != "" {
+			transport.lastSearchHitIDs = append(transport.lastSearchHitIDs, fragmentID)
+		}
 	}
 	response, _ := json.Marshal(map[string]any{
 		"hits": map[string]any{
@@ -588,6 +600,82 @@ func TestS3HybridWorkspaceSearchNegativeControls(t *testing.T) {
 			if strings.Contains(string(hit.Fragment.Text), "\u0435\u0436\u0435\u0434\u043d\u0435\u0432\u043d\u043e \u043f\u043e \u0433\u0440\u0430\u0444\u0438\u043a\u0443") &&
 				hit.VersionState != search.VersionStateSuperseded {
 				t.Fatalf("a superseded hit was returned without being labelled old: %+v", hit)
+			}
+		}
+	})
+
+	t.Run("an object removed after indexing is rejected while the workspace stays active", func(t *testing.T) {
+		var removedFragmentID string
+		for _, document := range index.documents {
+			text, _ := document["text"].(string)
+			if !strings.Contains(text, "\u0432\u044b\u0432\u043e\u0437 \u043c\u0443\u0441\u043e\u0440\u0430") {
+				continue
+			}
+			removedFragmentID, _ = document["evidence_fragment_id"].(string)
+			break
+		}
+		if removedFragmentID == "" {
+			t.Fatal("the indexed waste passage has no evidence fragment id")
+		}
+		// Remove the object after the external index has selected the candidate
+		// but before SearchWorkspace re-resolves it. This is the exact stale-index
+		// race the post-authorization gate must make safe.
+		removedDuringSearch := false
+		index.afterSearch = func() {
+			if err := os.Remove(filepath.Join(directory, "waste.txt")); err != nil {
+				t.Fatalf("remove indexed file: %v", err)
+			}
+			runSync(t, ctx, handler, queue, workerAccess(t, s1dOrg), "s3-remove-after-index")
+			removedDuringSearch = true
+		}
+		vectorPage, err := executor.SearchWorkspace(ctx, access, s1dWorkspace, synonymQuestion,
+			retrieval.WorkspaceSearchOptions{Mode: retrieval.SearchModeVector, Limit: 20})
+		if err != nil {
+			t.Fatalf("vector mode refused an otherwise active workspace after one object was removed: %v", err)
+		}
+		if !removedDuringSearch {
+			t.Fatal("the object was not removed between external retrieval and live authorization")
+		}
+		selectedByIndex := false
+		for _, fragmentID := range index.lastSearchHitIDs {
+			if fragmentID == removedFragmentID {
+				selectedByIndex = true
+				break
+			}
+		}
+		if !selectedByIndex {
+			t.Fatal("the external index did not return the soon-to-be-removed fragment before live authorization")
+		}
+
+		// The fake external index deliberately receives no delete.
+		stillIndexed := false
+		for _, document := range index.documents {
+			fragmentID, _ := document["evidence_fragment_id"].(string)
+			if fragmentID == removedFragmentID {
+				stillIndexed = true
+				break
+			}
+		}
+		if !stillIndexed {
+			t.Fatal("the external index lost the removed fragment, so the stale-index control proves nothing")
+		}
+		if _, err := viewer.Read(ctx, access, s1dWorkspace, removedFragmentID); err == nil {
+			t.Fatal("the live evidence gate still admitted the removed fragment")
+		}
+		pages := map[retrieval.SearchMode]retrieval.WorkspaceSearchPage{
+			retrieval.SearchModeVector: vectorPage,
+		}
+		hybridPage, err := executor.SearchWorkspace(ctx, access, s1dWorkspace, synonymQuestion,
+			retrieval.WorkspaceSearchOptions{Mode: retrieval.SearchModeHybrid, Limit: 20})
+		if err != nil {
+			t.Fatalf("hybrid mode refused an otherwise active workspace after one object was removed: %v", err)
+		}
+		pages[retrieval.SearchModeHybrid] = hybridPage
+		for mode, page := range pages {
+			for _, hit := range page.Hits {
+				if hit.Fragment.FragmentID == removedFragmentID {
+					t.Fatalf("%s mode returned the removed fragment retained by the stale index", mode)
+				}
 			}
 		}
 	})

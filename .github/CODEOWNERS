@@ -40,3 +40,5 @@
 /tests/contracts/** @avangerus
 /.github/CODEOWNERS @avangerus
 /.github/workflows/architecture.yml @avangerus
+/.github/workflows/codeql.yml @avangerus
+/.github/workflows/dependency-review.yml @avangerus

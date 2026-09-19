@@ -72,10 +72,10 @@ func TestS2aFormatAwareExtraction(t *testing.T) {
 
 	// Each valid format carries its own immutable parser-profile revision.
 	for _, c := range []struct{ path, revision string }{
-		{"projects/alpha/data.json", "json-v1"},
-		{"projects/alpha/doc.xml", "xml-v1"},
-		{"projects/alpha/table.csv", "csv-v1"},
-		{"projects/alpha/notes.txt", "text-v1"},
+		{"projects/alpha/data.json", "json-v1-layout-v2"},
+		{"projects/alpha/doc.xml", "xml-v1-layout-v2"},
+		{"projects/alpha/table.csv", "csv-v1-layout-v2"},
+		{"projects/alpha/notes.txt", "text-v1-layout-v2"},
 	} {
 		if got := s2aActiveRevision(t, ctx, admin, c.path); got != c.revision {
 			t.Fatalf("%s parser_profile_revision = %q, want %q", c.path, got, c.revision)

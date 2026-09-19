@@ -12,12 +12,29 @@ jobs:
   anti-drift:
     name: architecture / anti-drift
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # The registry includes full PostgreSQL and real Docker/cgroup parser
+    # proofs before image smoke tests. A cold public runner can legitimately
+    # exceed one hour; the individual test and command deadlines remain the
+    # fail-closed bounds.
+    timeout-minutes: 120
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: Enable OCI-compatible Docker image store
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import json, pathlib
+          path = pathlib.Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          config.setdefault('features', {})['containerd-snapshotter'] = True
+          path.write_text(json.dumps(config) + '\n')
+          PY
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | python3 -c 'import json,sys; assert any(k == "driver-type" and v == "io.containerd.snapshotter.v1" for k,v in json.load(sys.stdin)), "OCI-compatible Docker image store is required"'
       - name: Verify architecture baseline in pinned Go builder
         env:
           GO_IMAGE: golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669
@@ -69,7 +86,10 @@ jobs:
           node_stage=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-mutation-node.XXXXXX")
           scan_stage=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-parser-scan.XXXXXX")
           grype_cache=$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/kv-grype-db.XXXXXX")
-          trap 'docker rm -f "$container" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; docker image rm -f "$office_image" "$qualification_image" >/dev/null 2>&1 || true; rm -rf "$node_stage" "$scan_stage" "$grype_cache"' EXIT
+          # Initialize tracking before the trap, including early failure paths.
+          office_builder="knowvault-office-oci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          office_builder_created=false
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; docker image rm -f "$office_image" "$qualification_image" >/dev/null 2>&1 || true; rm -rf "$node_stage" "$scan_stage" "$grype_cache"; if [ "$office_builder_created" = "true" ]; then docker buildx rm "$office_builder" >/dev/null 2>&1 || true; fi' EXIT
           # The Go image intentionally has no Node runtime. Build a complete,
           # frozen contract-test runtime with the already-pinned Node image so
           # mutation-runner can execute schema-tests.mjs against each mutated
@@ -96,7 +116,12 @@ jobs:
               test -f /out/contracts/node_modules/ajv/package.json
               test "$(/out/bin/node --version)" = "v24.18.0"
             '
-          bash tests/integration/postgres/prepare-office-worker.sh "$office_image" "$scan_stage/parser.oci.tar"
+          # The canonical OCI exporter requires the docker-container driver.
+          # Select it only for this build; leave other builders unchanged.
+          docker buildx create --name "$office_builder" --driver docker-container >/dev/null
+          office_builder_created=true
+          docker buildx inspect --bootstrap "$office_builder" >/dev/null
+          BUILDX_BUILDER="$office_builder" bash tests/integration/postgres/prepare-office-worker.sh "$office_image" "$scan_stage/parser.oci.tar"
           # Build the real OCR qualification image before the integration
           # package runs. It is evidence-only and intentionally absent from
           # production composition, but the live DispatcherV2 test must never
@@ -106,6 +131,7 @@ jobs:
           # These scanners have no Docker socket or network access, and the
           # Grype scans consume only the imported, hash-validated database.
           docker run --rm --network none --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 512m --cpus 1 --pids-limit 64 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             -e HOME=/tmp \
@@ -117,6 +143,7 @@ jobs:
             "$SYFT_IMAGE" oci-archive:/scan/parser.oci.tar -o syft-json=/scan/syft.json
           grype_db_url='https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-09-15T00:33:48Z_1789453896.tar.zst?checksum=sha256%3Ada59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60'
           docker run --rm --network bridge --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 4g \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777 \
             -e HOME=/tmp \
@@ -124,6 +151,7 @@ jobs:
             -v "$grype_cache:/cache" \
             "$GRYPE_IMAGE" db import "$grype_db_url"
           docker run --rm --network none --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 64 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             -e HOME=/tmp \
@@ -136,6 +164,7 @@ jobs:
             -v "$scan_stage/parser.oci.tar:/scan/parser.oci.tar:ro" \
             "$GRYPE_IMAGE" oci-archive:/scan/parser.oci.tar -o json --file /scan/grype.json
           docker run --rm --network none --read-only --cap-drop ALL \
+            --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 64 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777 \
             -e HOME=/tmp \
@@ -162,11 +191,11 @@ jobs:
           docker run -d --rm --name "$container" --network "$network" -e POSTGRES_DB=knowvault_test -e POSTGRES_PASSWORD="$postgres_password" "$POSTGRES_IMAGE" >/dev/null
           timeout 30s bash -c 'until docker exec "$1" pg_isready -U postgres -d knowvault_test >/dev/null 2>&1; do sleep 1; done' _ "$container"
           docker exec "$container" pg_isready -U postgres -d knowvault_test >/dev/null
+          # The full PostgreSQL suite runs once in the mandatory privileged proof below.
           docker run --rm --network "$network" \
             -e GOTOOLCHAIN=local \
             -e GOEXPERIMENT=jsonv2 \
             -e REPO_ROOT=/src \
-            -e KNOWVAULT_TEST_POSTGRES_URL="postgres://postgres:${postgres_password}@${container}:5432/knowvault_test?sslmode=disable" \
             -e KNOWVAULT_TEST_OFFICE_WORKER_IMAGE="$office_image" \
             -e KNOWVAULT_TEST_OCR_WORKER_IMAGE="$qualification_image" \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -174,7 +203,12 @@ jobs:
             -v "$PWD:/src:ro" \
             -w /src \
             "$GO_IMAGE" \
-            go test -mod=readonly -count=1 ./...
+            bash -ceu '
+              package_list=$(go list -buildvcs=false -mod=readonly ./...)
+              mapfile -t unit_packages < <(printf "%s\n" "$package_list" | awk "\$0 != \"knowvault.local/verified-workspace/tests/integration/postgres\"")
+              test "${#unit_packages[@]}" -gt 0
+              go test -mod=readonly -count=1 "${unit_packages[@]}" -timeout=10m
+            '
           # The ordinary suite remains developer-friendly on hosts without a
           # writable unified cgroup or CLONE_NEWPID. This dedicated invocation
           # is the non-skippable Linux proof: real pidfds, SCM_RIGHTS,
@@ -206,7 +240,7 @@ jobs:
             -v "$PWD:/src:ro" \
             -w /src \
             "$GO_IMAGE" \
-            go test -mod=readonly -count=1 ./tests/integration/postgres
+            go test -mod=readonly -count=1 -timeout=30m ./tests/integration/postgres
           # Mutation registry includes the Office parser's real-v2 harness.
           # Keep this invocation non-skippable: without a writable cgroup-v2,
           # PID namespace and Docker socket the harness must fail rather than

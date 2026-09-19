@@ -422,7 +422,8 @@ func (arguments mcpManagedConfirmationRevokeArguments) valid() bool {
 }
 
 func (handler *Handler) mcp(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID string) {
-	if handler.questions == nil && handler.conversations == nil {
+	// Source and evidence tools are independent of optional question services.
+	if handler.questions == nil && handler.conversations == nil && handler.sources == nil && handler.evidence == nil {
 		writeMCP(writer, mcpResponse{JSONRPC: "2.0", ID: jsontext.Value("null"), Error: &mcpError{Code: -32000, Message: "service unavailable"}})
 		return
 	}
