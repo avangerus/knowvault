@@ -64,10 +64,13 @@ type mountedLabConfig struct {
 	// ThinkingMode is required in a mounted config so the provider request is
 	// explicit and reproducible; an omitted value is allowed only for direct
 	// local generic-lab LabAdapterConfig callers.
-	ThinkingMode                ThinkingMode     `json:"thinking_mode"`
-	InsecureLabMode             bool             `json:"insecure_lab_mode"`
-	ExternalRuntimeWorkspaceIDs []string         `json:"external_runtime_workspace_ids,omitempty"`
-	ToolLoop                    *ToolLoopProfile `json:"tool_loop,omitempty"`
+	ThinkingMode ThinkingMode `json:"thinking_mode"`
+	// StructuredOutputMode is optional (D1/A1). Omission is valid and stays the
+	// zero value, whose effective behavior is json_object.
+	StructuredOutputMode        StructuredOutputMode `json:"structured_output_mode,omitempty"`
+	InsecureLabMode             bool                 `json:"insecure_lab_mode"`
+	ExternalRuntimeWorkspaceIDs []string             `json:"external_runtime_workspace_ids,omitempty"`
+	ToolLoop                    *ToolLoopProfile     `json:"tool_loop,omitempty"`
 }
 
 // LoadLabMountedConfig loads the GEN-1 adapter's non-secret configuration from
@@ -129,6 +132,7 @@ func parseLabMountedConfig(rootPath string, raw []byte, strictFiles bool) (LabAd
 		SchemaVersion: mounted.SchemaVersion, Endpoint: mounted.Endpoint, ModelID: mounted.ModelID,
 		APIKey: apiKey, Timeout: time.Duration(mounted.TimeoutSeconds) * time.Second,
 		MaxOutputTokens: mounted.MaxOutputTokens, ThinkingMode: mounted.ThinkingMode, InsecureLabMode: mounted.InsecureLabMode,
+		StructuredOutputMode:        mounted.StructuredOutputMode,
 		ExternalRuntimeWorkspaceIDs: mounted.ExternalRuntimeWorkspaceIDs, TrustRoots: trustRoots,
 		ToolLoop: mounted.ToolLoop,
 	}

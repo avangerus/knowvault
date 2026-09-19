@@ -78,6 +78,9 @@ func TestLoadLabMountedConfigValid(t *testing.T) {
 	if config.ModelID != "m" || !config.InsecureLabMode || config.Timeout.Seconds() != 5 || config.ThinkingMode != ThinkingModeDisabled {
 		t.Fatalf("unexpected config: %+v", config)
 	}
+	if config.StructuredOutputMode != "" || config.StructuredOutputMode.effective() != StructuredOutputJSONObject {
+		t.Fatalf("omitted structured_output_mode should default to effective json_object: %+v", config)
+	}
 	if _, err := NewLabAdapter(config); err != nil {
 		t.Fatalf("mounted config should build a valid adapter: %v", err)
 	}
@@ -195,6 +198,42 @@ func TestLoadLabMountedConfigRejectsUnknownThinkingMode(t *testing.T) {
 	_, err := LoadLabMountedConfigAt(dir)
 	if err == nil || CodeOf(err) != CodeLabMountInvalid {
 		t.Fatalf("expected CodeLabMountInvalid for unknown thinking_mode, got %v", err)
+	}
+}
+
+func TestLoadLabMountedConfigStructuredOutputMode(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mode      string
+		effective StructuredOutputMode
+		bad       bool
+	}{
+		{name: "omitted", mode: "", effective: StructuredOutputJSONObject},
+		{name: "json_object", mode: "json_object", effective: StructuredOutputJSONObject},
+		{name: "json_schema", mode: "json_schema", effective: StructuredOutputJSONSchema},
+		{name: "bad", mode: "yaml_document", bad: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			field := ""
+			if test.mode != "" {
+				field = fmt.Sprintf(`,"structured_output_mode":%q`, test.mode)
+			}
+			writeLabConfig(t, dir, fmt.Sprintf(`{"schema_version":"model-gateway-lab-adapter-v1","endpoint":"http://127.0.0.1:8080","model_id":"m","timeout_seconds":5,"max_output_tokens":128,"thinking_mode":"disabled"%s,"insecure_lab_mode":true}`, field))
+			config, err := LoadLabMountedConfigAt(dir)
+			if test.bad {
+				if err == nil || CodeOf(err) != CodeLabMountInvalid {
+					t.Fatalf("expected CodeLabMountInvalid for %q, got %v", test.mode, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadLabMountedConfigAt: %v", err)
+			}
+			if config.StructuredOutputMode.effective() != test.effective {
+				t.Fatalf("effective mode = %q, want %q", config.StructuredOutputMode.effective(), test.effective)
+			}
+		})
 	}
 }
 

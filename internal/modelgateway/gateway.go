@@ -595,7 +595,19 @@ type completionThinking struct {
 }
 
 type completionResponseFormat struct {
-	Type string `json:"type"`
+	Type       string                        `json:"type"`
+	JSONSchema *completionResponseJSONSchema `json:"json_schema,omitempty"`
+}
+
+// completionResponseJSONSchema is the lab-only nested json_schema payload
+// carried by the strict structured-output mode. Strict is a fixed true value
+// and schema is the exact caller-supplied JSON Schema bytes. It is populated
+// only by LabAdapter; production Client.Generate leaves ResponseFormat nil and
+// must never reach this type.
+type completionResponseJSONSchema struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 type completionResponse struct {
 	Model   string `json:"model"`

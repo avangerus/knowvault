@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,8 +144,178 @@ func TestLabAdapterRequestUsesConfiguredThinkingAndJSONResponseFormat(t *testing
 		t.Fatalf("decode request fields: %v", err)
 	}
 	if fields.Model != modelID || fields.Temperature != 0 || fields.MaxTokens != 128 || fields.Stream ||
-		fields.Thinking.Type != string(ThinkingModeDisabled) || fields.ResponseFormat.Type != "json_object" {
+		fields.Thinking.Type != string(ThinkingModeDisabled) || fields.ResponseFormat.Type != "json_object" || fields.ResponseFormat.JSONSchema != nil {
 		t.Fatalf("unexpected request fields: %+v", fields)
+	}
+}
+
+func TestLabAdapterRequestUsesStrictJSONSchemaResponseFormat(t *testing.T) {
+	const modelID = "test-model"
+	outputSchema := []byte(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`)
+	var calls int
+	var captured completionResponseFormat
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var request struct {
+			ResponseFormat completionResponseFormat `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		captured = request.ResponseFormat
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": modelID,
+			"choices": []map[string]any{{
+				"finish_reason": "stop",
+				"message":       map[string]any{"content": validLabPlanJSON()},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	config := newLabConfig(t, server, modelID)
+	config.StructuredOutputMode = StructuredOutputJSONSchema
+	adapter, err := NewLabAdapter(config)
+	if err != nil {
+		t.Fatalf("NewLabAdapter: %v", err)
+	}
+	defer adapter.Close()
+
+	if _, _, err := adapter.Generate(context.Background(), "What is AIS?", "Answer using only cited Evidence.", outputSchema, labTestEvidence(), 128); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("request count=%d, want 1", calls)
+	}
+	if captured.Type != string(StructuredOutputJSONSchema) || captured.JSONSchema == nil ||
+		captured.JSONSchema.Name != "knowvault_claim_plan" || !captured.JSONSchema.Strict {
+		t.Fatalf("unexpected response_format: %+v", captured)
+	}
+	var gotSchema, wantSchema any
+	if err := json.Unmarshal(captured.JSONSchema.Schema, &gotSchema); err != nil {
+		t.Fatalf("decode captured schema: %v", err)
+	}
+	if err := json.Unmarshal(outputSchema, &wantSchema); err != nil {
+		t.Fatalf("decode expected schema: %v", err)
+	}
+	if !reflect.DeepEqual(gotSchema, wantSchema) {
+		t.Fatalf("schema mismatch: got %s want %s", captured.JSONSchema.Schema, outputSchema)
+	}
+}
+
+func TestLabAdapterJSONSchemaRejectsInvalidSchemaBeforeRequest(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		schema []byte
+	}{
+		{name: "malformed", schema: []byte(`{"type":`)},
+		{name: "array", schema: []byte(`["object"]`)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				calls++
+			}))
+			defer server.Close()
+
+			config := newLabConfig(t, server, "test-model")
+			config.StructuredOutputMode = StructuredOutputJSONSchema
+			adapter, err := NewLabAdapter(config)
+			if err != nil {
+				t.Fatalf("NewLabAdapter: %v", err)
+			}
+			defer adapter.Close()
+
+			_, result, err := adapter.Generate(context.Background(), "What is AIS?", "Answer using only cited Evidence.", test.schema, labTestEvidence(), 128)
+			if err == nil || CodeOf(err) != CodeInvalid {
+				t.Fatalf("expected CodeInvalid, got err=%v result=%+v", err, result)
+			}
+			if calls != 0 {
+				t.Fatalf("handler calls=%d, want 0", calls)
+			}
+		})
+	}
+}
+
+func TestLabAdapterJSONSchemaRejectionDoesNotFallback(t *testing.T) {
+	var responseFormats []completionResponseFormat
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ResponseFormat completionResponseFormat `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		responseFormats = append(responseFormats, request.ResponseFormat)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	config := newLabConfig(t, server, "test-model")
+	config.StructuredOutputMode = StructuredOutputJSONSchema
+	adapter, err := NewLabAdapter(config)
+	if err != nil {
+		t.Fatalf("NewLabAdapter: %v", err)
+	}
+	defer adapter.Close()
+
+	var attempts []AttemptResult
+	_, err = adapter.GenerateBounded(context.Background(), "What is AIS?", "Answer using only cited Evidence.", []byte(`{"type":"object"}`), labTestEvidence(), 128, func(result AttemptResult) {
+		attempts = append(attempts, result)
+	})
+	if err == nil || CodeOf(err) != CodeRejected {
+		t.Fatalf("expected CodeRejected, got %v", err)
+	}
+	if len(responseFormats) != 1 || len(attempts) != 1 {
+		t.Fatalf("expected one request and one attempt, got requests=%d attempts=%d", len(responseFormats), len(attempts))
+	}
+	if responseFormats[0].Type != string(StructuredOutputJSONSchema) || responseFormats[0].JSONSchema == nil {
+		t.Fatalf("unexpected response_format: %+v", responseFormats[0])
+	}
+}
+
+func TestLabAdapterJSONSchemaResponseRetryDoesNotFallback(t *testing.T) {
+	outputSchema := []byte(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+	var responseFormats []completionResponseFormat
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ResponseFormat completionResponseFormat `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		responseFormats = append(responseFormats, request.ResponseFormat)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "test-model",
+			"choices": []map[string]any{{"finish_reason": "stop", "message": map[string]any{"content": "{invalid-json"}}},
+		})
+	}))
+	defer server.Close()
+
+	config := newLabConfig(t, server, "test-model")
+	config.StructuredOutputMode = StructuredOutputJSONSchema
+	adapter, err := NewLabAdapter(config)
+	if err != nil {
+		t.Fatalf("NewLabAdapter: %v", err)
+	}
+	defer adapter.Close()
+
+	var attempts []AttemptResult
+	_, err = adapter.GenerateBounded(context.Background(), "What is AIS?", "Answer using only cited Evidence.", outputSchema, labTestEvidence(), 128, func(result AttemptResult) {
+		attempts = append(attempts, result)
+	})
+	if err == nil || CodeOf(err) != CodeResponse {
+		t.Fatalf("expected terminal CodeResponse, got %v", err)
+	}
+	if len(responseFormats) != labMaxAttemptsPerCall || len(attempts) != labMaxAttemptsPerCall {
+		t.Fatalf("expected %d requests and attempts, got requests=%d attempts=%d", labMaxAttemptsPerCall, len(responseFormats), len(attempts))
+	}
+	for index, format := range responseFormats {
+		if format.Type != string(StructuredOutputJSONSchema) || format.JSONSchema == nil ||
+			format.JSONSchema.Name != "knowvault_claim_plan" || !format.JSONSchema.Strict ||
+			!json.Valid(format.JSONSchema.Schema) || string(format.JSONSchema.Schema) != string(outputSchema) {
+			t.Fatalf("attempt %d used unexpected response_format: %+v", index+1, format)
+		}
 	}
 }
 
@@ -304,6 +475,16 @@ func TestLabAdapterConfigRejectsPublicEndpoint(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected a public IP endpoint to be rejected")
+	}
+}
+
+func TestLabAdapterConfigRejectsInvalidStructuredOutputMode(t *testing.T) {
+	_, err := NewLabAdapter(LabAdapterConfig{
+		SchemaVersion: LabAdapterSchemaVersion, Endpoint: "http://127.0.0.1:8080", ModelID: "m",
+		MaxOutputTokens: 128, InsecureLabMode: true, StructuredOutputMode: "yaml_document",
+	})
+	if err == nil || CodeOf(err) != CodeProfile {
+		t.Fatalf("expected CodeProfile for an invalid structured_output_mode, got %v", err)
 	}
 }
 
