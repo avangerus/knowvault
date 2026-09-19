@@ -853,7 +853,7 @@
     "tests/contracts/mutation-probes/s3-fused-hit-is-post-authorized.json": "fabcaff926f87c725fdf0416e6a855984b8ffd57f0a46829d24cd64b060d7c52",
     "tests/contracts/mutation-probes/s3-search-scope-prefilter-is-server-built.json": "9a1cc794bea0bd9c69b763c73fe38806819cb8fc755354d7f6e5bb99bd6d412a",
     "tests/contracts/mutation-registry.json": "9c1c8f81ae9c7cec118448239f44b456c6c51c1db395222a2eeab3ed681dd05d",
-    "tests/contracts/mutation-runner/main.go": "a326186aa1c691da5d1476fc20288f4828924084fcbee6d820f0ed31f432903a",
+    "tests/contracts/mutation-runner/main.go": "cc03502b72a9ffb385f2615cd5e8686abf90851a8c6b47fc5fcab482f0b5647f",
     "tests/contracts/package.json": "145c86feb60246398d23294d1e5261d298a772cc52f71a569b10ec8821757f67",
     "tests/contracts/pnpm-lock.yaml": "e9f92d8f24a82f982a1b84cb3d26eb26b17f315d78bb7e41bc5b15b3ff306533",
     "tests/contracts/run.ps1": "1830f3320868d719fb01ff4491734a6cec4b5d77c1544216488f29f8600579e1",

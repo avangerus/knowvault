@@ -310,13 +310,19 @@ func copyFile(source, destination string) error {
 	return output.Close()
 }
 
+// postgresIntegrationTimeout bounds each independent PostgreSQL integration
+// invocation (baseline and every mutant) with its own finite deadline.
+const postgresIntegrationTimeout = 15 * time.Minute
+
 func runIntegrationTest(root, testName string, environment []string) (bool, string, error) {
 	// The real Office parser proof repeatedly crosses Docker, PID namespace and
-	// cgroup boundaries. A qualified run takes about four minutes on the release
-	// host and can exceed five on a cold hosted runner. Eight minutes keeps the
-	// mutation bounded without turning ordinary startup variance into a false
-	// architecture failure.
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	// cgroup boundaries. A successful cold baseline was measured at 7m49.693s on
+	// the hosted CI runner, which left the previous eight-minute deadline too
+	// tight: the following mutant could be killed at the same hard deadline
+	// without ever producing a verdict. Each independent invocation now receives
+	// its own finite fifteen-minute deadline, which still fails closed when the
+	// proof genuinely hangs or stalls.
+	ctx, cancel := context.WithTimeout(context.Background(), postgresIntegrationTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-mod=readonly", "-count=1", "./tests/integration/postgres", "-run", "^"+testName+"$")
 	command.Dir = root
