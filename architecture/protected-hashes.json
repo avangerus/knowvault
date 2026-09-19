@@ -633,7 +633,7 @@
     "internal/workspace/workspace_test.go": "91ca914a80b859af8e3039cfa737adbf8acd66efa8eebbe8a62d2d8063d151c7",
     "scripts/check-architecture.go": "0e577068555d7cc8af280a4c6128934e778bef88953e698dd367e9b71ff24a7b",
     "scripts/check-architecture.ps1": "6d82b8381ce390ce63ef54a793d58290bbbf959577501530700db336765a5ca1",
-    "scripts/check_architecture_test.go": "6ae78c2cab2211bffcdf19d3385b85fd12b681b26022cdb58ab502d99be23758",
+    "scripts/check_architecture_test.go": "fa3a9b4f122f300d05f26395bfbb7dd94ad0270e8014292d098709cf9a07ec26",
     "scripts/parser_scan_identity_test.go": "9207998d3d82570288730c8e560ccceb6f03953238359c8a375d93ec8ab12e84",
     "scripts/run-install-smoke.ps1": "8c56b78f868c410f3e23c558f1fd53d4e2a9b95cbc0b8cee586113f8cd1302de",
     "scripts/runtime_identity_test.go": "598c96b5d85d915421d328ff10623fca9beed01bf0276fd5cc1b200fd0624f9d",
