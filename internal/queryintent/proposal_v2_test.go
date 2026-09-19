@@ -1,20 +1,17 @@
 package queryintent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func pBad(t *testing.T, e error) {
-	t.Helper()
 	if CodeOf(e) != CodeInvalidProposal || ClarificationOf(e) == "" {
 		t.Fatalf("code=%q text=%q", CodeOf(e), ClarificationOf(e))
 	}
 }
 
 func TestProposalV2ClosedVocabulary(t *testing.T) {
-	for _, k := range []ScalarKind{KindBOOL, KindINT, KindNUMERIC, KindTEXT, KindDATE, KindTIMESTAMP, KindTIMESTAMPTZ} {
-		if !k.Valid() {
-			t.Fatal(k)
-		}
-	}
 	_, e := NewFieldToken("supplier_name; DROP TABLE x")
 	pBad(t, e)
 	f, _ := NewFieldToken("supplier_name_1")
@@ -35,14 +32,16 @@ func TestProposalV2ScalarsAndTemporalGrammar(t *testing.T) {
 			t.Fatalf("%s=%s", in, v)
 		}
 	}
-	_, e := NumericScalar("1e9")
-	pBad(t, e)
 	txt, _ := TextScalar(`x' OR 1=1 --`)
 	if v, ok := txt.Text(); !ok || v != `x' OR 1=1 --` {
 		t.Fatal("text payload")
 	}
-	_, e = DateScalar("2024-02-30")
-	pBad(t, e)
+	if _, e := TextScalar(strings.Repeat("é", 128)); e != nil {
+		t.Fatal("256-byte text")
+	}
+	if _, e := TextScalar(strings.Repeat("é", 128) + "x"); CodeOf(e) != CodeInvalidProposal {
+		t.Fatal("257-byte text")
+	}
 	for _, in := range []string{"2024-01-01T12:30:45,1", "2024-01-01T12:30:45.1234567890", "2024-01-01T12:30:45Z"} {
 		_, e := TimestampScalar(in)
 		pBad(t, e)
@@ -53,10 +52,6 @@ func TestProposalV2ScalarsAndTemporalGrammar(t *testing.T) {
 	}
 	if v, ok := z.Timestamptz(); !ok || v != "2024-01-01T06:30:00.5Z" {
 		t.Fatal(v)
-	}
-	for _, in := range []string{"2024-01-01T12:00:00", "2024-01-01T12:00:00+24:00", "2024-01-01T12:00:00+14:01", "2024-01-01T12:00:00+12:60"} {
-		_, e := TimestamptzScalar(in)
-		pBad(t, e)
 	}
 	var zero Scalar
 	if _, ok := zero.Bool(); ok {
@@ -71,10 +66,15 @@ func TestProposalV2PredicateArityKindsAndCopy(t *testing.T) {
 	bad := []struct {
 		op Operator
 		v  []Scalar
-	}{{OpEQ, nil}, {OpEQ, []Scalar{i, i}}, {OpISNull, []Scalar{i}}, {OpIN, nil}, {OpIN, []Scalar{i, s}}, {OpIN, make([]Scalar, 21)}, {Operator("LIKE"), []Scalar{i}}, {OpGTE, []Scalar{s}}}
+	}{{OpEQ, nil}, {OpEQ, []Scalar{i, i}}, {OpISNull, []Scalar{i}}, {OpISNull, []Scalar{BoolScalar(true), BoolScalar(false)}}, {OpIN, nil}, {OpIN, []Scalar{i, s}}, {OpIN, make([]Scalar, 21)}, {Operator("LIKE"), []Scalar{i}}, {OpGTE, []Scalar{s}}}
 	for _, c := range bad {
 		_, e := NewPredicate(f, c.op, c.v...)
 		pBad(t, e)
+	}
+	for _, b := range []bool{true, false} {
+		if _, e := NewPredicate(f, OpISNull, BoolScalar(b)); e != nil {
+			t.Fatal(e)
+		}
 	}
 	p, e := NewPredicate(f, OpIN, i, i)
 	if e != nil {

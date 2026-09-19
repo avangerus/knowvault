@@ -23,7 +23,7 @@ func (k ScalarKind) Valid() bool {
 }
 
 const (
-	MaxScalarText   = 512
+	MaxScalarText   = 256
 	maxNumericBytes = 128
 	maxInMembers    = 20
 )
@@ -209,7 +209,7 @@ func NewPredicate(field FieldToken, op Operator, values ...Scalar) (Predicate, e
 	if !field.Valid() || !op.Valid() || !validArity(op, len(values)) {
 		return Predicate{}, newRefusal(CodeInvalidProposal)
 	}
-	if len(values) > 0 && (!values[0].kind.Valid() || (op == OpGTE || op == OpLTE) && !orderable(values[0].kind)) {
+	if len(values) > 0 && (!values[0].kind.Valid() || op == OpISNull && values[0].kind != KindBOOL || (op == OpGTE || op == OpLTE) && !orderable(values[0].kind)) {
 		return Predicate{}, newRefusal(CodeInvalidProposal)
 	}
 	for _, v := range values[1:] {
@@ -221,7 +221,7 @@ func NewPredicate(field FieldToken, op Operator, values ...Scalar) (Predicate, e
 }
 
 func validArity(op Operator, n int) bool {
-	return (op == OpISNull && n == 0) || (op == OpEQ || op == OpGTE || op == OpLTE) && n == 1 || op == OpIN && n >= 1 && n <= maxInMembers
+	return (op == OpISNull && n == 1) || (op == OpEQ || op == OpGTE || op == OpLTE) && n == 1 || op == OpIN && n >= 1 && n <= maxInMembers
 }
 func orderable(k ScalarKind) bool {
 	return k == KindINT || k == KindNUMERIC || k == KindDATE || k == KindTIMESTAMP || k == KindTIMESTAMPTZ
