@@ -3,6 +3,7 @@ import type { ComponentType, CSSProperties, FormEvent, KeyboardEvent as ReactKey
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
+import { GovernedPresetPanel } from "./governed-presets";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -2105,6 +2106,7 @@ function App() {
               key={`${selectedWorkspaceID}:${searchResetEpoch}`}
               onOpenEvidence={openEvidence}
               onOpenSources={() => { dismissFootnoteTooltip(); setSection("sources"); }}
+              onSessionExpired={expireSession}
               requestedWorkspaceID={selectedWorkspaceID}
               state={data}
             />
@@ -3702,9 +3704,10 @@ type PilotSearchPage = {
 
 // The pilot presents independent searches. It never sends a conversation ID
 // or loads conversation history; source results do not wait for generation.
-function SearchView({ onOpenSources, onOpenEvidence, state, requestedWorkspaceID, active }: {
+function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, requestedWorkspaceID, active }: {
   onOpenSources: () => void;
   onOpenEvidence: (hash: string) => void;
+  onSessionExpired: () => void;
   state: WorkspaceDataState;
   requestedWorkspaceID: string | null;
   active: boolean;
@@ -3866,6 +3869,11 @@ function SearchView({ onOpenSources, onOpenEvidence, state, requestedWorkspaceID
         </select>}
         <button className="text-button" onClick={onOpenSources} type="button">Sources</button>
       </div>
+      {/* D3B: the administrator-approved live database checks are a separate,
+          secondary surface on the Search screen. They are keyed by workspace so
+          a workspace change discards the whole catalogue and result, and they
+          never touch ordinary document search or the AI answer. */}
+      <GovernedPresetPanel key={workspaceID} onSessionExpired={onSessionExpired} workspaceID={workspaceID} />
       {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
       {visible && (answerPending || answer) && (
         <section aria-label="AI answer" className="search-pilot-answer">
