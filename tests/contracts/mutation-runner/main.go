@@ -311,7 +311,12 @@ func copyFile(source, destination string) error {
 }
 
 func runIntegrationTest(root, testName string, environment []string) (bool, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// The real Office parser proof repeatedly crosses Docker, PID namespace and
+	// cgroup boundaries. A qualified run takes about four minutes on the release
+	// host and can exceed five on a cold hosted runner. Eight minutes keeps the
+	// mutation bounded without turning ordinary startup variance into a false
+	// architecture failure.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-mod=readonly", "-count=1", "./tests/integration/postgres", "-run", "^"+testName+"$")
 	command.Dir = root

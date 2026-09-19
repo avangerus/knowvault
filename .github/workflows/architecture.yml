@@ -12,7 +12,11 @@ jobs:
   anti-drift:
     name: architecture / anti-drift
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # The registry includes full PostgreSQL and real Docker/cgroup parser
+    # proofs before image smoke tests. A cold public runner can legitimately
+    # exceed one hour; the individual test and command deadlines remain the
+    # fail-closed bounds.
+    timeout-minutes: 120
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
