@@ -107,6 +107,18 @@ type Config struct {
 	// Presets are immutable administrator-mounted references to already
 	// executed, reviewed attempts. They never contain SQL text.
 	Presets []Preset
+	// PresetOnly is the mounted closed-mode decision (PRESET_ONLY
+	// compatibility). Its zero value (false) is the legacy/ad hoc default: a
+	// mount with no presets_file, or a mount that declares ADHOC, leaves it
+	// false and the model-composed ad hoc ask stays advertised and
+	// dispatchable. It is true only for a manifest that carries a presets_file
+	// AND declares mode=PRESET_ONLY, where the ad hoc ask must neither be
+	// advertised nor dispatched. The polarity is chosen for the safe zero
+	// value: a Config built directly in Go (never through the mount) can only
+	// ever mean "ad hoc allowed", so a forgotten field can never silently
+	// close a capability. It is set from the mount manifest, never from a
+	// request.
+	PresetOnly bool
 }
 
 func (config Config) Validate() error {

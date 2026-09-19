@@ -34,12 +34,18 @@ directory mode `0750` and file mode `0440`:
   "dsn_file": "dsn",
   "trust_bundle_file": "trust.pem",
   "presets_file": "presets.json",
+  "mode": "PRESET_ONLY",
   "statement_timeout_seconds": 5,
   "max_rows": 1000,
   "max_result_bytes": 1048576,
   "max_cost_estimate": 1000
 }
 ```
+
+A mount with `presets_file` must declare its mode. Use `PRESET_ONLY` for a
+closed catalogue: MCP advertises only preset list/run and rejects the ad-hoc
+model-authored SQL tool as unknown. `ADHOC` keeps both surfaces for an explicitly
+approved compatibility deployment. A missing or unknown mode fails startup.
 
 Example `presets.json`:
 

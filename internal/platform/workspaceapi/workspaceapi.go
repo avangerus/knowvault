@@ -321,6 +321,10 @@ type Handler struct {
 	// governed service but kept as a narrow interface so existing transports
 	// and test doubles do not gain new mandatory methods.
 	governedPresets GovernedQueryPresetService
+	// governedQueryModePolicy retains the optional mounted-policy authority so
+	// each MCP request observes its current decision. Its nil zero value
+	// preserves the legacy ad-hoc surface for existing service test doubles.
+	governedQueryModePolicy GovernedQueryModePolicy
 	// spanDigestKey is R3a-1's organization-scoped ADR-0077 span digest key
 	// (the same keyed HMAC family as evidence_fragment.text_hash). When it is
 	// wired through EnableSpanDigest every emitted kv1 address carries the
@@ -382,6 +386,13 @@ type GovernedQueryPresetService interface {
 	ResolvePresetPhrase(ctx context.Context, access database.AccessContext, workspaceID, phrase string) (governedquery.PresetSummary, bool, error)
 }
 
+// GovernedQueryModePolicy is the narrow optional policy projection exposed by
+// governedask.Service. Existing GovernedQueryService implementations need not
+// implement it and retain the legacy ad-hoc behavior.
+type GovernedQueryModePolicy interface {
+	PresetOnly() bool
+}
+
 // EnableGovernedQuery wires the ADR-0089 governed-query orchestration
 // service. Composition calls this when a valid mounted connection exists.
 // Ad-hoc ask still requires a Model Gateway adapter; reviewed presets do not.
@@ -402,9 +413,17 @@ func (handler *Handler) EnableGovernedQuery(service GovernedQueryService) {
 		return
 	}
 	handler.governedQuery = service
+	handler.governedQueryModePolicy = nil
+	if policy, ok := service.(GovernedQueryModePolicy); ok {
+		handler.governedQueryModePolicy = policy
+	}
 	if presets, ok := service.(GovernedQueryPresetService); ok && presets.HasPresets() {
 		handler.governedPresets = presets
 	}
+}
+
+func (handler *Handler) governedQueryIsPresetOnly() bool {
+	return handler != nil && handler.governedQueryModePolicy != nil && handler.governedQueryModePolicy.PresetOnly()
 }
 
 // EnableSpanDigest wires the organization-scoped ADR-0077 span digest key that

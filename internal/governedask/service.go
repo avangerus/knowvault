@@ -203,6 +203,14 @@ func (service *Service) EnableGovernedQueryConfig(config governedquery.Config) {
 	service.enabled = true
 }
 
+// PresetOnly reports the operator-mounted policy for the MCP transport. The
+// service remains the authority for this decision: request data cannot turn
+// an ad-hoc query back on. A service that has not accepted a valid mount keeps
+// the legacy false value and exposes no closed-mode claim.
+func (service *Service) PresetOnly() bool {
+	return service != nil && service.enabled && service.config.PresetOnly
+}
+
 // AskResult is the user-facing, non-content-free answer ADR-0089 §4 requires:
 // the exact SQL executed and its result table are shown to the user alongside
 // the model's answer.

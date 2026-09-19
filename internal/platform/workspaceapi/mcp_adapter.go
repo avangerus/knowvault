@@ -484,6 +484,16 @@ func (handler *Handler) mcp(writer http.ResponseWriter, request *http.Request, a
 // workspacetools permits and no administrative tool.
 func (handler *Handler) mcpTools(access database.AccessContext) []any {
 	tools := mcpToolCatalog(access)
+	if handler.governedQueryIsPresetOnly() {
+		filtered := make([]any, 0, len(tools))
+		for _, entry := range tools {
+			tool, ok := entry.(map[string]any)
+			if !ok || tool["name"] != mcpToolGovernedQueryAsk {
+				filtered = append(filtered, entry)
+			}
+		}
+		tools = filtered
+	}
 	if handler.governedPresets != nil && handler.governedPresets.HasPresets() {
 		tools = append(tools, mcpGovernedPresetToolDefinitions()...)
 	}
@@ -696,6 +706,10 @@ func (handler *Handler) mcpToolCall(writer http.ResponseWriter, request *http.Re
 	}
 	if (params.Name == mcpToolQueriesList || params.Name == mcpToolQueryRun) &&
 		(handler.governedPresets == nil || !handler.governedPresets.HasPresets()) {
+		writeMCPError(writer, envelope.ID, -32601, "method not found")
+		return
+	}
+	if params.Name == mcpToolGovernedQueryAsk && handler.governedQueryIsPresetOnly() {
 		writeMCPError(writer, envelope.ID, -32601, "method not found")
 		return
 	}

@@ -21,6 +21,7 @@ type governedTransportProbe struct {
 	calls                           int
 	result                          governedask.AskResult
 	hasPresets                      bool
+	presetOnly                      bool
 	presetID                        string
 	presetCatalog                   governedask.PresetCatalog
 	presetResult                    governedask.PresetRunResult
@@ -47,6 +48,7 @@ func (p *governedTransportProbe) Promote(_ context.Context, _ database.AccessCon
 	return governedquery.PromotionResult{}, nil
 }
 func (p *governedTransportProbe) HasPresets() bool { return p.hasPresets }
+func (p *governedTransportProbe) PresetOnly() bool { return p.presetOnly }
 func (p *governedTransportProbe) ListPresets(_ context.Context, _ database.AccessContext, w, c string) (governedask.PresetCatalog, error) {
 	p.workspace, p.connection = w, c
 	p.calls++
@@ -155,5 +157,43 @@ func TestGovernedPresetMCPIsMountedOnlyWhenConfiguredAndNeverAcceptsSQL(t *testi
 	h.handler.ServeHTTP(response, request)
 	if p.calls != previousCalls || !strings.Contains(response.Body.String(), `"code":-32602`) || strings.Contains(response.Body.String(), "SELECT secret") {
 		t.Fatalf("SQL injection argument reached the service or leaked: %s", response.Body)
+	}
+}
+
+func TestGovernedPresetOnlyHidesAndRejectsAdHocMCPAsk(t *testing.T) {
+	h := newTestHarness(t)
+	p := &governedTransportProbe{hasPresets: true}
+	h.handler.EnableGovernedQuery(p)
+	beforePolicyChange := toolNames(t, h.handler.mcpTools(database.AccessContext{
+		OrganizationID: "org_demo", PrincipalID: "caller", RequestID: "req", ActorKind: database.ActorKindHuman,
+	}))
+	if !slices.Contains(beforePolicyChange, mcpToolGovernedQueryAsk) {
+		t.Fatalf("ADHOC mode did not advertise ad-hoc ask before policy change: %v", beforePolicyChange)
+	}
+	p.presetOnly = true
+
+	for _, actorKind := range []database.ActorKind{database.ActorKindHuman, database.ActorKindService} {
+		names := toolNames(t, h.handler.mcpTools(database.AccessContext{
+			OrganizationID: "org_demo", PrincipalID: "caller", RequestID: "req", ActorKind: actorKind,
+		}))
+		if slices.Contains(names, mcpToolGovernedQueryAsk) {
+			t.Fatalf("PRESET_ONLY advertised ad-hoc ask to %s: %v", actorKind, names)
+		}
+		for _, wanted := range []string{mcpToolQueriesList, mcpToolQueryRun} {
+			if !slices.Contains(names, wanted) {
+				t.Fatalf("PRESET_ONLY hid preset tool %q from %s: %v", wanted, actorKind, names)
+			}
+		}
+	}
+
+	before := p.calls
+	request := h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"closed","method":"tools/call","params":{"name":"knowvault_governed_query_ask","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","question":"show everything"}}}`)
+	response := httptest.NewRecorder()
+	h.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"code":-32601`) {
+		t.Fatalf("PRESET_ONLY direct ask was not hidden as an unknown method: %d %s", response.Code, response.Body)
+	}
+	if p.calls != before {
+		t.Fatalf("PRESET_ONLY direct ask reached governed-query service: calls %d -> %d", before, p.calls)
 	}
 }

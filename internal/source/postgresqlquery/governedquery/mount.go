@@ -17,6 +17,19 @@ import (
 	"time"
 )
 
+// Governed-query mount modes. A mount without a presets_file is the legacy
+// ad-hoc shape and needs no mode member. A mount that carries a closed
+// administrator-approved preset catalogue MUST declare its mode explicitly so
+// an operator can never believe a closed capability still serves ad hoc SQL.
+const (
+	// ModeAbsent is the explicit legacy value: ad hoc ask is served.
+	ModeAbsent = ""
+	// ModeAdHoc serves both ad hoc ask and the mounted preset catalogue.
+	ModeAdHoc = "ADHOC"
+	// ModePresetOnly serves the mounted preset catalogue and no ad hoc ask.
+	ModePresetOnly = "PRESET_ONLY"
+)
+
 const (
 	// DefaultMountRoot is deliberately distinct from every other mount root in
 	// the system so an operator inspecting mounts can never confuse this
@@ -38,6 +51,7 @@ type mountedConfig struct {
 	DSNFile              string  `json:"dsn_file"`
 	TrustBundleFile      string  `json:"trust_bundle_file"`
 	PresetsFile          string  `json:"presets_file,omitempty"`
+	Mode                 string  `json:"mode,omitempty"`
 	StatementTimeoutSecs int     `json:"statement_timeout_seconds"`
 	MaxRows              int     `json:"max_rows"`
 	MaxResultBytes       int     `json:"max_result_bytes"`
@@ -113,7 +127,32 @@ func loadMountedConfig(rootPath string) (Config, error) {
 			MaxRows:          mounted.MaxRows, MaxResultBytes: mounted.MaxResultBytes, MaxCostEstimate: mounted.MaxCostEstimate,
 		},
 	}
-	if mounted.PresetsFile != "" {
+	// Closed-mode validation (PRESET_ONLY compatibility decision). The
+	// capability a mount declares must match the files it carries:
+	//   * no presets_file -> the legacy ad hoc shape; mode must be absent (or
+	//     an explicit ADHOC), never PRESET_ONLY with nothing to run.
+	//   * presets_file present -> a closed mode is REQUIRED: only ADHOC or
+	//     PRESET_ONLY are accepted, and an unknown/missing/inconsistent value
+	//     fails the mount so a closed capability can never silently degrade
+	//     into an ad hoc one.
+	closedCapability := mounted.PresetsFile != ""
+	switch mounted.Mode {
+	case ModeAbsent, ModeAdHoc:
+		config.PresetOnly = false
+	case ModePresetOnly:
+		config.PresetOnly = true
+	default:
+		return Config{}, &Error{code: CodeMountInvalid}
+	}
+	if closedCapability && mounted.Mode == ModeAbsent {
+		// A mount that carries a preset catalogue must say so explicitly.
+		return Config{}, &Error{code: CodeMountInvalid}
+	}
+	if !closedCapability && mounted.Mode == ModePresetOnly {
+		// PRESET_ONLY with no catalogue would advertise nothing at all.
+		return Config{}, &Error{code: CodeMountInvalid}
+	}
+	if closedCapability {
 		presets, presetErr := loadMountedPresets(rootPath, mounted.PresetsFile)
 		if presetErr != nil {
 			return Config{}, presetErr
