@@ -49,7 +49,13 @@ func (service *Service) ListPresets(ctx context.Context, access database.AccessC
 	if service == nil || !service.enabled || !service.config.HasPresets() {
 		return PresetCatalog{}, &Error{code: CodeUnavailable}
 	}
-	if ctx == nil || access.Validate() != nil || !validOpaque(workspaceID) || connectionID != service.config.ConnectionID {
+	if ctx == nil || access.Validate() != nil || !validOpaque(workspaceID) {
+		return PresetCatalog{}, &Error{code: CodeRequestInvalid}
+	}
+	if connectionID == "" {
+		connectionID = service.config.ConnectionID
+	}
+	if connectionID != service.config.ConnectionID {
 		return PresetCatalog{}, &Error{code: CodeRequestInvalid}
 	}
 	if err := service.authorize(ctx, access, workspaceID, policy.OperationWorkspaceAsk); err != nil {

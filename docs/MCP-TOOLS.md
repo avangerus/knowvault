@@ -154,9 +154,11 @@ SERVICE attempts are attributed to the service actor, not a human.
 ## `knowvault_queries_list` and `knowvault_query_run`
 
 These optional tools implement the narrower, deterministic preset path. List
-accepts `workspace_id` and `connection_id`. Run additionally requires
-`preset_id`. Both schemas are closed: SQL, parameters and unknown fields are
-invalid.
+requires `workspace_id` and may optionally pin `connection_id`; omitting it
+selects the single administrator-mounted preset connection, while an explicit
+`connection_id` that does not match that mount fails closed. Run requires all
+three fields `workspace_id`, `connection_id` and `preset_id`. Both schemas are
+closed: SQL, parameters and unknown fields are invalid.
 
 The catalogue contains a preset id, version, name, description, exact phrases,
 source attempt id, reviewed SQL hash, exposed-schema revision and preset hash;

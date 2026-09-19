@@ -1843,7 +1843,7 @@ func mcpGovernedPresetToolDefinitions() []any {
 		map[string]any{
 			"name":        mcpToolQueriesList,
 			"description": "List the administrator-approved live SQL query presets available for this workspace. Match an exact configured phrase or choose a preset by its description. SQL text and database credentials are never returned.",
-			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id", "connection_id"}, "properties": map[string]any{
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id"}, "properties": map[string]any{
 				"workspace_id": map[string]any{"type": "string"}, "connection_id": map[string]any{"type": "string"},
 			}},
 		},
@@ -1864,7 +1864,7 @@ func (handler *Handler) mcpGovernedPresetToolCall(writer http.ResponseWriter, re
 	}
 	if params.Name == mcpToolQueriesList {
 		var arguments mcpQueriesListArguments
-		if err := jsonv2.Unmarshal(params.Arguments, &arguments, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil || arguments.WorkspaceID == "" || arguments.ConnectionID == "" {
+		if err := jsonv2.Unmarshal(params.Arguments, &arguments, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil || arguments.WorkspaceID == "" {
 			writeMCPError(writer, envelope.ID, -32602, "invalid query preset list arguments")
 			return
 		}

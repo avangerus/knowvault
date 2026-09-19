@@ -51,6 +51,17 @@ func (p *governedTransportProbe) Promote(_ context.Context, _ database.AccessCon
 func (p *governedTransportProbe) HasPresets() bool { return p.hasPresets }
 func (p *governedTransportProbe) PresetOnly() bool { return p.presetOnly }
 func (p *governedTransportProbe) ListPresets(_ context.Context, _ database.AccessContext, w, c string) (governedask.PresetCatalog, error) {
+	// Mirror the production service: a blank connection_id selects the single
+	// administrator-mounted preset connection, while an explicit mismatch fails
+	// closed before any catalogue is disclosed.
+	if c == "" {
+		c = p.presetCatalog.ConnectionID
+	}
+	if c != p.presetCatalog.ConnectionID {
+		p.workspace, p.connection = w, c
+		p.calls++
+		return governedask.PresetCatalog{}, fmt.Errorf("connection unavailable")
+	}
 	p.workspace, p.connection = w, c
 	p.calls++
 	return p.presetCatalog, nil
