@@ -3702,19 +3702,19 @@
       "mutations": [
         {
           "id": "s3-fused-hit-trusts-the-index",
-          "target": "internal/retrieval/workspacesearch.go",
-          "kind": "GO_RETRIEVAL_POSTAUTHORIZATION_WEAKENING",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
+          "kind": "SQL_RETRIEVAL_POSTAUTHORIZATION_WEAKENING",
           "expected": "RED",
-          "old": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; !authorizedNow {",
-          "new": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; false && !authorizedNow {"
+          "old": "          AND o.lifecycle_state = 'ACTIVE'\n          AND o.current_version_id = v.id\n          AND v.state = 'CURRENT'\n          AND vr.state = 'ACTIVE' AND vr.queryable\n          AND er.state = 'ACTIVE' AND er.queryable\n          AND ae.extraction_id = f.extraction_id\n          AND os.membership_state = 'ACTIVE'\n          AND wrs.access_mode = 'WORKSPACE_MANAGED'",
+          "new": "          AND TRUE"
         },
         {
           "id": "s3-fused-hit-postauthorization-boundary",
-          "target": "internal/retrieval/workspacesearch.go",
-          "kind": "GO_SEMANTIC_PRESERVING",
+          "target": "db/migrations/000077_stage2_evidence_fragment_readable_per_scope.sql",
+          "kind": "SQL_SEMANTIC_PRESERVING",
           "expected": "GREEN",
-          "old": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; !authorizedNow {",
-          "new": "\t\tif _, authorizedNow := live[hit.EvidenceFragmentID]; authorizedNow != true {"
+          "old": "          AND o.lifecycle_state = 'ACTIVE'\n          AND o.current_version_id = v.id\n          AND v.state = 'CURRENT'\n          AND vr.state = 'ACTIVE' AND vr.queryable\n          AND er.state = 'ACTIVE' AND er.queryable\n          AND ae.extraction_id = f.extraction_id\n          AND os.membership_state = 'ACTIVE'\n          AND wrs.access_mode = 'WORKSPACE_MANAGED'",
+          "new": "          AND wrs.access_mode = 'WORKSPACE_MANAGED'\n          AND os.membership_state = 'ACTIVE'\n          AND ae.extraction_id = f.extraction_id\n          AND er.state = 'ACTIVE' AND er.queryable\n          AND vr.state = 'ACTIVE' AND vr.queryable\n          AND v.state = 'CURRENT'\n          AND o.current_version_id = v.id\n          AND o.lifecycle_state = 'ACTIVE'"
         }
       ]
     }
