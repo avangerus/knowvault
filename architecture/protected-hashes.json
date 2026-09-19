@@ -163,7 +163,7 @@
     "db/migrations/000107_stage2_source_observed_presence.sql": "4f70ebf2de8e6468fc7e1bfa86d23ff35377ad2645de2871d843b23b0e2fbcbd",
     "db/migrations/000108_stage3_source_freshness_completeness.sql": "30e2194a9e0ced2db8e9cf6bd5233dbeffa109365c6ec87a5217a9b037713d93",
     "db/queries/system_health.sql": "2986ef10d56d2e7bbaa82fb8593379d79d717b828cf853148fe63f54558ec10e",
-    "deploy/compose/compose.yaml": "2e131a96b7fdb1dcc9682aaa83fa0ae58488d41dd373b02d957eca9915d9caeb",
+    "deploy/compose/compose.yaml": "d10a02f2e31dce09aed6c84af0130e4242c535436c86d49ceedefed897def486",
     "deploy/compose/native-ingest.yaml": "3e78c108a72c7bde7ce15174481a050df00357a6f92f85f0b3d16f0556761081",
     "deploy/images/Dockerfile.connector": "02d6faa00c8e0dde9c4932d1b64f2e34d3a062b22aae9c8185aeaec9fb21eeb0",
     "deploy/images/Dockerfile.dispatcher": "604a560c9e8b1aa47f046be5256fb50e753e85414e7a67e839bce082ee507957",

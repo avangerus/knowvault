@@ -224,6 +224,7 @@ services:
       - ./mounts/server/trust:/run/knowvault/trust:ro
       - ./mounts/server/search:/run/knowvault/search:ro
       - ./mounts/server/embedding:/run/knowvault/embedding:ro
+      - ./mounts/server/governedquery:/run/knowvault/governedquery:ro
     networks:
       default:
         aliases: [knowvault-server]

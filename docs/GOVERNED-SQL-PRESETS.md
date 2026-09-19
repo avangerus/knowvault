@@ -19,7 +19,11 @@ mount.
    closed on a malformed or ambiguous catalogue.
 
 `config.json` may name an optional `presets_file` beside the existing DSN and
-trust-bundle files:
+trust-bundle files. The standard Compose deployment mounts
+`deploy/compose/mounts/server/governedquery` read-only at
+`/run/knowvault/governedquery`. Leave that directory empty to keep the
+capability absent. When enabling it, install every file as `root:65532` with
+directory mode `0750` and file mode `0440`:
 
 ```json
 {
