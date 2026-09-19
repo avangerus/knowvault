@@ -625,6 +625,14 @@ func rejectSymlinkComponents(root *os.Root, canonical string) (*QuarantineNotice
 // verification read that catches a same-size in-place rewrite mtime resolution
 // could hide, and signature/UTF-8 gating.
 func readObject(root *os.Root, canonical string, scope *Scope) (*QuarantineNotice, ReadResult, error) {
+	return readObjectWithCheckpoint(root, canonical, scope, nil)
+}
+
+// readObjectWithCheckpoint keeps the production path deterministic under unit
+// test without exposing a runtime hook. Production always passes nil through
+// readObject; a package test can mutate the object after the first stable read
+// and before the independent verification read.
+func readObjectWithCheckpoint(root *os.Root, canonical string, scope *Scope, afterFirstRead func() error) (*QuarantineNotice, ReadResult, error) {
 	if notice, err := rejectSymlinkComponents(root, canonical); err != nil || notice != nil {
 		return notice, ReadResult{}, err
 	}
@@ -700,6 +708,11 @@ func readObject(root *os.Root, canonical string, scope *Scope) (*QuarantineNotic
 	}
 
 	digest := sha256.Sum256(content)
+	if afterFirstRead != nil {
+		if err := afterFirstRead(); err != nil {
+			return nil, ReadResult{}, newError(CodeReadFailed, err)
+		}
+	}
 	// Second independent read: a same-size in-place rewrite that leaves size and
 	// mtime unchanged (coarse SMB/FAT mtime granularity, or a deliberate mtime
 	// reset) would pass the fstat gate above; two full reads that disagree prove

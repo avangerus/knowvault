@@ -1029,8 +1029,9 @@
     {
       "invariant_id": "acceptance.source.folder-runtime-torn-read",
       "critical_invariant_ids": ["SRC-012"],
-      "harness": "POSTGRES_INTEGRATION",
+      "harness": "GO_UNIT",
       "test_name": "TestFolderConnectorTornReadFailsClosed",
+      "test_package": "./internal/connector/folder",
       "mutations": [
         {
           "id": "folder-second-read-bypassed",
@@ -1038,7 +1039,7 @@
           "kind": "GO_STABLE_READ_WEAKENING",
           "expected": "RED",
           "old": "\tif notice, verifyErr := verifyStableSecondRead(root, canonical, before, digest, scope.maxFileBytes); verifyErr != nil || notice != nil {",
-          "new": "\tif false {"
+          "new": "\tif notice, verifyErr := (*QuarantineNotice)(nil), error(nil); verifyErr != nil || notice != nil {"
         },
         {
           "id": "folder-second-read-condition-equivalent",

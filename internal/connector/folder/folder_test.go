@@ -246,6 +246,51 @@ func TestDiscoverReportsCompleteCoverage(t *testing.T) {
 	}
 }
 
+// TestFolderConnectorTornReadFailsClosed proves SRC-012 through the complete
+// readObject path without relying on scheduler timing. The checkpoint mutates
+// the same inode after the first stable snapshot and immediately before the
+// independent verification read.
+func TestFolderConnectorTornReadFailsClosed(t *testing.T) {
+	rootPath := t.TempDir()
+	const relativePath = "document.txt"
+	target := filepath.Join(rootPath, relativePath)
+	firstContent := []byte("first stable snapshot")
+	changedContent := []byte("other stable snapshot")
+	if len(firstContent) != len(changedContent) {
+		t.Fatal("test snapshots must have identical size")
+	}
+	if err := os.WriteFile(target, firstContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := NewScope(ScopeParams{
+		RootPath: rootPath, Platform: hostPlatformForTest(), Access: AccessWorkspaceManaged,
+		Recursive: true, MaxFileBytes: 1 << 20, Formats: []Format{FormatTXT},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+
+	notice, result, err := readObjectWithCheckpoint(root, relativePath, scope, func() error {
+		return os.WriteFile(target, changedContent, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("read changed object: %v", err)
+	}
+	if notice == nil || notice.Code != QuarantineTornRead || notice.RelativePath != relativePath {
+		t.Fatalf("changed second read was not quarantined as torn: %+v", notice)
+	}
+	if result.RelativePath != "" || result.MediaFamily != "" || result.MediaType != "" ||
+		result.SizeBytes != 0 || result.ContentSHA256 != "" || result.NativeVersionToken != "" || len(result.Content) != 0 {
+		t.Fatalf("torn read surfaced a result: size=%d content=%d", result.SizeBytes, len(result.Content))
+	}
+}
+
 // TestDiscoverPartialOnMissingRelativeRoot proves that a scope whose relative_root
 // subtree cannot be resolved yields a PARTIAL scan (Complete=false) with no
 // objects — the authoritative-absence boundary: nothing may be inferred deleted.
