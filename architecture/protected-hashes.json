@@ -272,7 +272,7 @@
     "docs/adr/0094-english-source-publication-accepted.md": "0f940cd417d17bd34f81f2852cb98e6e8161890fd30e5004d3d618e9b5eea307",
     "docs/adr/README.md": "f28a0a76217f0dba35474d4b6e216a42f05b9abbaeeff1f43f38839701cd88bc",
     "docs/qualification-s2b-document-parser.md": "800468bf23de3a9ed71fe1fa83345da27ca2c0063562867a24c3345064377633",
-    "docs/release/PLAN.md": "8643327694ceb317f0b6fbd785d2478f1e674592d7edea24cdd397d85b8660f8",
+    "docs/release/PLAN.md": "ba7dbe223cd0ff59ed1f248d81492dd98b9e0e60d9b6352898e87af9cba68930",
     "go.mod": "aa670ec2d08137fe462865435a600ac289c3dfc1261d19c9590ee59efacc1012",
     "go.sum": "cffcc2c0e61f4bd5d6ee0ded3e51b665faa11c02f5a369e394d7eaa22839a7dd",
     "internal/artifact/repository/repository.go": "0298778eb771d9f9842d12ba5fab0544be2a2035b2a1197089c80f8992619330",
