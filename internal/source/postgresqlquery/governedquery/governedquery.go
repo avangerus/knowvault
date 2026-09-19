@@ -1,7 +1,8 @@
-// Package governedquery is the single owner of ADR-0089's "governed
-// model-authored SQL" execution path. It is the only code in the repository
+// Package governedquery is the single owner of ADR-0089's governed SQL
+// execution path, including model-authored asks and reviewed presets. It is the
+// only code in the repository
 // that may hold the dedicated, least-privilege database role's connection
-// capability and pass model-authored SQL text to that connection. No other
+// capability and pass SQL text to that connection. No other
 // package may construct or forward that text to a database call.
 //
 // The security boundary this package enforces is the external PostgreSQL
@@ -37,11 +38,11 @@ import (
 type ErrorCode string
 
 const (
-	CodeInvalid          ErrorCode = "GOVERNED_QUERY_REQUEST_INVALID"
-	CodeMountUnavailable ErrorCode = "GOVERNED_QUERY_MOUNT_UNAVAILABLE"
-	CodeMountInvalid     ErrorCode = "GOVERNED_QUERY_MOUNT_INVALID"
+	CodeInvalid           ErrorCode = "GOVERNED_QUERY_REQUEST_INVALID"
+	CodeMountUnavailable  ErrorCode = "GOVERNED_QUERY_MOUNT_UNAVAILABLE"
+	CodeMountInvalid      ErrorCode = "GOVERNED_QUERY_MOUNT_INVALID"
 	CodeSchemaUnavailable ErrorCode = "GOVERNED_QUERY_SCHEMA_UNAVAILABLE"
-	CodeExternalFailure  ErrorCode = "GOVERNED_QUERY_EXTERNAL_FAILURE"
+	CodeExternalFailure   ErrorCode = "GOVERNED_QUERY_EXTERNAL_FAILURE"
 )
 
 type Error struct {
@@ -103,6 +104,9 @@ type Config struct {
 	DSN        string
 	TrustRoots *x509.CertPool
 	Limits     Limits
+	// Presets are immutable administrator-mounted references to already
+	// executed, reviewed attempts. They never contain SQL text.
+	Presets []Preset
 }
 
 func (config Config) Validate() error {
@@ -111,6 +115,9 @@ func (config Config) Validate() error {
 		return &Error{code: CodeInvalid}
 	}
 	if err := validateDSN([]byte(config.DSN)); err != nil {
+		return &Error{code: CodeInvalid, cause: err}
+	}
+	if err := validatePresets(config.Presets); err != nil {
 		return &Error{code: CodeInvalid, cause: err}
 	}
 	return nil
@@ -174,7 +181,7 @@ func validDNSHost(host string) bool {
 
 // dial opens one physical connection to the dedicated governed-execution
 // role. It is the only function in the repository that turns a Config into a
-// live external PostgreSQL connection for model-authored SQL.
+// live external PostgreSQL connection for governed SQL.
 func dial(ctx context.Context, config Config) (*pgx.Conn, error) {
 	if ctx == nil || config.Validate() != nil {
 		return nil, &Error{code: CodeInvalid}

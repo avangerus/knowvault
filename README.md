@@ -60,6 +60,23 @@ The evidence address identifies the saved version. Source modification and obser
 
 </details>
 
+### Run an approved live database check
+
+**You:** “Check contract status.”
+
+**Agent action:** The MCP client matches an administrator-approved phrase, calls
+`knowvault_query_run` with the versioned preset id and receives the current rows
+plus an execution receipt. The call contains no SQL.
+
+**Example answer:** “The live contract-status check returned 18 active contracts
+and 2 awaiting approval at 09:42 UTC. This is a live observation, receipt
+`gqat_…`; it is not a retained document citation.”
+
+The preset is bound to a reviewed attempt, SQL hash and exposed-schema revision.
+KnowVault repeats the query only through the dedicated read-only database role
+with timeout, cost, row and byte limits, and records the attempt in the audit
+journal. [How governed presets work](docs/GOVERNED-SQL-PRESETS.md).
+
 ### Recognize when the evidence is missing
 
 **You:** “Did the customer approve the revised delivery date?”

@@ -157,10 +157,10 @@ type auditAppender interface {
 	Append(ctx context.Context, access database.AccessContext, input audit.EventInput) (audit.Event, error)
 }
 
-// Service is capability-gated: EnableGovernedQuery must be called with a
-// valid mounted Config before Ask/RegisterExposedSchema/SetLiveQueries do
-// anything but return CodeUnavailable, mirroring question.Service's
-// EnableGeneration "capability absent by default" shape (ADR-0088/ADR-0089 §6).
+// Service is capability-gated: EnableGovernedQueryConfig must receive a valid
+// mounted Config before preset and administration methods expose behavior.
+// Ask additionally requires the model adapter wired by EnableGovernedQuery,
+// mirroring question.Service's capability-absent-by-default shape.
 type Service struct {
 	db      *database.Store
 	auditor auditAppender
@@ -189,6 +189,18 @@ func (service *Service) EnableGovernedQuery(config governedquery.Config, adapter
 	service.config = config
 	service.enabled = true
 	service.adapter = adapter
+}
+
+// EnableGovernedQueryConfig mounts the database capability without requiring
+// a text-generation model. This is sufficient for administrator-approved SQL
+// presets, whose statement is selected by id and never composed during a run.
+// EnableGovernedQuery may subsequently add the optional ad-hoc ask adapter.
+func (service *Service) EnableGovernedQueryConfig(config governedquery.Config) {
+	if service == nil || config.Validate() != nil {
+		return
+	}
+	service.config = config
+	service.enabled = true
 }
 
 // AskResult is the user-facing, non-content-free answer ADR-0089 §4 requires:
@@ -220,7 +232,7 @@ type AskResult struct {
 // query. It fails closed before any model call when the connection is
 // unknown, live queries are disabled, or no exposed schema is registered.
 func (service *Service) Ask(ctx context.Context, access database.AccessContext, workspaceID, connectionID, question string) (AskResult, error) {
-	if service == nil || !service.enabled {
+	if service == nil || !service.enabled || service.adapter == nil {
 		return AskResult{}, &Error{code: CodeUnavailable}
 	}
 	// AGG-2: the connection's mounted config.WorkspaceID is no longer the

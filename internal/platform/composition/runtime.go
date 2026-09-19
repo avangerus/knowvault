@@ -407,8 +407,11 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		if governedquery.CodeOf(governedQueryMountErr) != governedquery.CodeMountUnavailable {
 			return fail(StartupStageGovernedQueryMount)
 		}
-	} else if generationAdapter != nil {
-		governedAskService.EnableGovernedQuery(governedQueryConfig, generationAdapter)
+	} else {
+		governedAskService.EnableGovernedQueryConfig(governedQueryConfig)
+		if generationAdapter != nil {
+			governedAskService.EnableGovernedQuery(governedQueryConfig, generationAdapter)
+		}
 	}
 	conversations, err := conversation.New(databaseStore, auditStore)
 	if err != nil {

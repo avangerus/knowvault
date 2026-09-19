@@ -7,6 +7,8 @@ complete source reads and inspectable evidence pages.
 ## Pilot outcomes
 
 - Connect supported text documents and prepared SQL entity snapshots.
+- Let an external MCP agent discover and run administrator-approved live SQL
+  presets by id, with no SQL input surface and with a versioned execution receipt.
 - Let an external MCP client search and read within its workspace permissions.
 - Open a citation at its saved source version and inspect its metadata.
 - Track source updates, disappearance and return without silently replacing evidence.
@@ -35,3 +37,17 @@ Applied database migrations remain immutable. The narrowly bounded legacy
 comment-checksum exception is recorded in [ADR-0093](../adr/0093-migration-comment-translation-compatibility-accepted.md).
 Source-publication provenance is recorded in [ADR-0094](../adr/0094-english-source-publication-accepted.md).
 Product authorization, audit and evidence-integrity contracts remain in force.
+
+## Current authorized extension: governed SQL presets
+
+The owner authorized this F2/F3/F5 extension on 19.09.2026. A preset is a
+versioned reference to an already executed and reviewed governed-query attempt,
+not SQL text in UI, API, MCP or the operator mount. The first slice is complete
+when an external MCP client can list and run a preset, an unknown field or SQL
+field is refused before the service, workspace access and live-query opt-in are
+rechecked, the dedicated database role remains read-only and bounded, and the
+result carries live-state timestamps plus attempt, preset, SQL and result hashes.
+
+This does not add arbitrary SQL analytics, parameters, schedules, automatic
+write-back, or a retained `kv1:` evidence address for live rows. Those remain
+outside the pilot unless separately approved.

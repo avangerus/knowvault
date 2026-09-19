@@ -240,10 +240,26 @@ const (
 // execution guarantees are unchanged from the REST path.
 const mcpToolGovernedQueryAsk = "knowvault_governed_query_ask"
 
+const (
+	mcpToolQueriesList = "knowvault_queries_list"
+	mcpToolQueryRun    = "knowvault_query_run"
+)
+
 type mcpGovernedQueryAskArguments struct {
 	WorkspaceID  string `json:"workspace_id"`
 	ConnectionID string `json:"connection_id"`
 	Question     string `json:"question"`
+}
+
+type mcpQueriesListArguments struct {
+	WorkspaceID  string `json:"workspace_id"`
+	ConnectionID string `json:"connection_id"`
+}
+
+type mcpQueryRunArguments struct {
+	WorkspaceID  string `json:"workspace_id"`
+	ConnectionID string `json:"connection_id"`
+	PresetID     string `json:"preset_id"`
 }
 
 // mcpToolSourcesList is the additive, read-only MCP equivalent of the REST
@@ -468,6 +484,9 @@ func (handler *Handler) mcp(writer http.ResponseWriter, request *http.Request, a
 // workspacetools permits and no administrative tool.
 func (handler *Handler) mcpTools(access database.AccessContext) []any {
 	tools := mcpToolCatalog(access)
+	if handler.governedPresets != nil && handler.governedPresets.HasPresets() {
+		tools = append(tools, mcpGovernedPresetToolDefinitions()...)
+	}
 	_, searchAvailable := handler.evidenceSearchCapability()
 	_, relatedAvailable := handler.evidenceRelatedCapability()
 	_, grepAvailable := handler.mcpGrepCapability()
@@ -505,7 +524,8 @@ func (handler *Handler) mcpTools(access database.AccessContext) []any {
 // read-only SQL ask; workspace opt-in, current membership and database grants
 // remain mandatory. SQL administration is not added to the agent surface.
 func mcpServiceKnowledgeTool(name string) bool {
-	if name == mcpToolQuestion || name == mcpToolEvidenceGet || name == mcpToolGovernedQueryAsk {
+	if name == mcpToolQuestion || name == mcpToolEvidenceGet || name == mcpToolGovernedQueryAsk ||
+		name == mcpToolQueriesList || name == mcpToolQueryRun {
 		return true
 	}
 	return workspacetools.KnowledgeTools().ServiceKnowledge(name)
@@ -674,6 +694,11 @@ func (handler *Handler) mcpToolCall(writer http.ResponseWriter, request *http.Re
 		writeMCPError(writer, envelope.ID, -32602, "invalid tool call")
 		return
 	}
+	if (params.Name == mcpToolQueriesList || params.Name == mcpToolQueryRun) &&
+		(handler.governedPresets == nil || !handler.governedPresets.HasPresets()) {
+		writeMCPError(writer, envelope.ID, -32601, "method not found")
+		return
+	}
 	// V1-C / R3a-1 Outcome 3: a SERVICE (agent access-code) principal may
 	// invoke the workspace knowledge tools — question, evidence read, read by
 	// address, inventory, search, related, grep and sources — through the same
@@ -728,6 +753,10 @@ func (handler *Handler) mcpToolCall(writer http.ResponseWriter, request *http.Re
 	}
 	if params.Name == mcpToolGovernedQueryAsk {
 		handler.mcpGovernedQueryAskToolCall(writer, request, access, envelope, params)
+		return
+	}
+	if params.Name == mcpToolQueriesList || params.Name == mcpToolQueryRun {
+		handler.mcpGovernedPresetToolCall(writer, request, access, envelope, params)
 		return
 	}
 	if params.Name == mcpToolMetricDefinitionsList || params.Name == mcpToolMetricDefinitionGet {
@@ -1792,6 +1821,70 @@ func (handler *Handler) mcpGovernedQueryAskToolCall(writer http.ResponseWriter, 
 		"content":           []any{map[string]any{"type": "text", "text": string(textResult)}},
 		"structuredContent": result,
 		"isError":           false,
+	}})
+}
+
+func mcpGovernedPresetToolDefinitions() []any {
+	return []any{
+		map[string]any{
+			"name":        mcpToolQueriesList,
+			"description": "List the administrator-approved live SQL query presets available for this workspace. Match an exact configured phrase or choose a preset by its description. SQL text and database credentials are never returned.",
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id", "connection_id"}, "properties": map[string]any{
+				"workspace_id": map[string]any{"type": "string"}, "connection_id": map[string]any{"type": "string"},
+			}},
+		},
+		map[string]any{
+			"name":        mcpToolQueryRun,
+			"description": "Run one administrator-approved live SQL query preset by id in the dedicated read-only role. The server enforces workspace access, opt-in, statement timeout, EXPLAIN cost, row and byte limits, and returns a versioned audit receipt. This tool never accepts SQL.",
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id", "connection_id", "preset_id"}, "properties": map[string]any{
+				"workspace_id": map[string]any{"type": "string"}, "connection_id": map[string]any{"type": "string"}, "preset_id": map[string]any{"type": "string"},
+			}},
+		},
+	}
+}
+
+func (handler *Handler) mcpGovernedPresetToolCall(writer http.ResponseWriter, request *http.Request, access database.AccessContext, envelope mcpRequest, params mcpToolCallParams) {
+	if handler.governedPresets == nil || !handler.governedPresets.HasPresets() {
+		writeMCPError(writer, envelope.ID, -32000, "query preset service unavailable")
+		return
+	}
+	if params.Name == mcpToolQueriesList {
+		var arguments mcpQueriesListArguments
+		if err := jsonv2.Unmarshal(params.Arguments, &arguments, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil || arguments.WorkspaceID == "" || arguments.ConnectionID == "" {
+			writeMCPError(writer, envelope.ID, -32602, "invalid query preset list arguments")
+			return
+		}
+		result, err := handler.governedPresets.ListPresets(request.Context(), access, arguments.WorkspaceID, arguments.ConnectionID)
+		if err != nil {
+			logGovernedAskFailure("mcp-preset-list", err, access.RequestID)
+			writeMCPError(writer, envelope.ID, -32000, "query presets unavailable")
+			return
+		}
+		writeMCPGovernedPresetResult(writer, envelope, result)
+		return
+	}
+	var arguments mcpQueryRunArguments
+	if err := jsonv2.Unmarshal(params.Arguments, &arguments, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil || arguments.WorkspaceID == "" || arguments.ConnectionID == "" || arguments.PresetID == "" {
+		writeMCPError(writer, envelope.ID, -32602, "invalid query preset run arguments")
+		return
+	}
+	result, err := handler.governedPresets.RunPreset(request.Context(), access, arguments.WorkspaceID, arguments.ConnectionID, arguments.PresetID)
+	if err != nil {
+		logGovernedAskFailure("mcp-preset-run", err, access.RequestID)
+		writeMCPError(writer, envelope.ID, -32000, "query preset unavailable")
+		return
+	}
+	writeMCPGovernedPresetResult(writer, envelope, result)
+}
+
+func writeMCPGovernedPresetResult(writer http.ResponseWriter, envelope mcpRequest, result any) {
+	textResult, err := jsonv2.Marshal(result)
+	if err != nil {
+		writeMCPError(writer, envelope.ID, -32000, "query preset unavailable")
+		return
+	}
+	writeMCP(writer, mcpResponse{JSONRPC: "2.0", ID: envelope.ID, Result: map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": string(textResult)}}, "structuredContent": result, "isError": false,
 	}})
 }
 

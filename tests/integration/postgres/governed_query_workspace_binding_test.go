@@ -46,6 +46,7 @@ import (
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/source/canon"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	"knowvault.local/verified-workspace/internal/workspace"
 )
@@ -161,6 +162,11 @@ func newGovernedBindingService(t *testing.T, appStore *database.Store, auditStor
 		Limits: governedquery.Limits{
 			StatementTimeout: 5 * time.Second, MaxRows: 1000, MaxResultBytes: 1 << 20, MaxCostEstimate: 1000,
 		},
+		Presets: []governedquery.Preset{{
+			ID: "contract-count", Version: "v1", Name: "Contract count", Description: "Current contract count.",
+			Phrases: []string{"check contracts"}, WorkspaceID: govBindWorkspaceA, SourceAttemptID: "gqat_reviewed",
+			SQLHash: canon.Hash([]byte("SELECT count(*) FROM gm.contracts")), ExposedSchemaRevision: 2,
+		}},
 	}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("mounted config invalid: %v", err)
@@ -295,5 +301,44 @@ func TestGovernedQueryWorkspaceBindingIsPerWorkspaceNotPerConnection(t *testing.
 	}
 	if !enabledA || enabledB {
 		t.Fatalf("binding rows enabledA=%v enabledB=%v, want true/false", enabledA, enabledB)
+	}
+
+	// The optional preset catalogue is visible only after ordinary workspace
+	// authorization and opt-in. Its reference is deliberately pinned to schema
+	// revision 2 while the current exposed schema below is revision 1. The run
+	// must refuse before dialling the intentionally unreachable external host.
+	objects := []governedquery.ExposedObject{{
+		SchemaName: "gm", TableName: "contracts", Description: "Contracts",
+		Columns: []governedquery.ExposedColumn{{Name: "id", DataType: "text", Description: "Contract identifier"}},
+	}}
+	objectsJSON, err := canon.CanonicalJSON(objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO public.governed_query_exposed_schema
+		(organization_id, connection_id, revision, objects_json, revision_hash, created_by)
+		VALUES ($1,$2,1,$3::jsonb,$4,$5)`, govBindOrg, govBindConnection, string(objectsJSON), canon.Hash(objectsJSON), govBindOwner); err != nil {
+		t.Fatalf("seed preset schema: %v", err)
+	}
+	presetSQL := "SELECT count(*) FROM gm.contracts"
+	if _, err := admin.Exec(ctx, `INSERT INTO public.governed_query_attempt
+		(organization_id, id, connection_id, workspace_id, exposed_schema_revision, sql_hash, sql_text, row_count, executed_by)
+		VALUES ($1,$2,$3,$4,2,$5,$6,1,$7)`, govBindOrg, "gqat_reviewed", govBindConnection,
+		govBindWorkspaceA, canon.Hash([]byte(presetSQL)), presetSQL, govBindOwner); err != nil {
+		t.Fatalf("seed reviewed preset attempt: %v", err)
+	}
+	catalog, err := service.ListPresets(ctx, access("req_gb_preset_list"), govBindWorkspaceA, govBindConnection)
+	if err != nil || len(catalog.Presets) != 1 || catalog.Presets[0].ID != "contract-count" {
+		t.Fatalf("list governed presets: catalog=%+v err=%v", catalog, err)
+	}
+	if err := service.SetLiveQueries(ctx, access("req_gb_reenable_b_for_catalog"), govBindWorkspaceB, govBindConnection, true); err != nil {
+		t.Fatalf("re-enable workspace B for catalogue isolation proof: %v", err)
+	}
+	otherCatalog, err := service.ListPresets(ctx, access("req_gb_preset_list_b"), govBindWorkspaceB, govBindConnection)
+	if err != nil || len(otherCatalog.Presets) != 0 {
+		t.Fatalf("preset metadata leaked across workspaces: catalog=%+v err=%v", otherCatalog, err)
+	}
+	if _, err := service.RunPreset(ctx, access("req_gb_preset_stale"), govBindWorkspaceA, govBindConnection, "contract-count"); governedask.CodeOf(err) != governedask.CodeRequestInvalid {
+		t.Fatalf("stale preset revision must fail before external dial: code=%s err=%v", governedask.CodeOf(err), err)
 	}
 }

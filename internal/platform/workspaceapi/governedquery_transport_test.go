@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +20,10 @@ type governedTransportProbe struct {
 	workspace, connection, question string
 	calls                           int
 	result                          governedask.AskResult
+	hasPresets                      bool
+	presetID                        string
+	presetCatalog                   governedask.PresetCatalog
+	presetResult                    governedask.PresetRunResult
 }
 
 func (p *governedTransportProbe) SetLiveQueries(_ context.Context, _ database.AccessContext, w, c string, _ bool) error {
@@ -39,6 +45,20 @@ func (p *governedTransportProbe) Promote(_ context.Context, _ database.AccessCon
 	p.workspace, p.connection = w, c
 	p.calls++
 	return governedquery.PromotionResult{}, nil
+}
+func (p *governedTransportProbe) HasPresets() bool { return p.hasPresets }
+func (p *governedTransportProbe) ListPresets(_ context.Context, _ database.AccessContext, w, c string) (governedask.PresetCatalog, error) {
+	p.workspace, p.connection = w, c
+	p.calls++
+	return p.presetCatalog, nil
+}
+func (p *governedTransportProbe) RunPreset(_ context.Context, _ database.AccessContext, w, c, id string) (governedask.PresetRunResult, error) {
+	p.workspace, p.connection, p.presetID = w, c, id
+	p.calls++
+	return p.presetResult, nil
+}
+func (p *governedTransportProbe) ResolvePresetPhrase(_ context.Context, _ database.AccessContext, _ string, _ string) (governedquery.PresetSummary, bool, error) {
+	return governedquery.PresetSummary{}, false, nil
 }
 
 func TestGovernedQueryTransportsPreserveConnectionAndCompleteResult(t *testing.T) {
@@ -93,5 +113,47 @@ func TestGovernedQueryTransportsPreserveConnectionAndCompleteResult(t *testing.T
 	var textResult governedask.AskResult
 	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &textResult); err != nil || !reflect.DeepEqual(textResult, p.result) || !reflect.DeepEqual(envelope.Result.Structured, p.result) {
 		t.Fatalf("MCP lost SQL table/provenance: %s", rr.Body)
+	}
+}
+
+func TestGovernedPresetMCPIsMountedOnlyWhenConfiguredAndNeverAcceptsSQL(t *testing.T) {
+	h := newTestHarness(t)
+	unmountedNames := toolNames(t, h.handler.mcpTools(database.AccessContext{OrganizationID: "org_demo", PrincipalID: "agent", RequestID: "req", ActorKind: database.ActorKindService}))
+	for _, absent := range []string{mcpToolQueriesList, mcpToolQueryRun} {
+		if slices.Contains(unmountedNames, absent) {
+			t.Fatalf("unmounted preset tool %q was advertised: %v", absent, unmountedNames)
+		}
+	}
+	unmountedCall := h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"absent","method":"tools/call","params":{"name":"knowvault_query_run","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","preset_id":"contract-count"}}}`)
+	unmountedResponse := httptest.NewRecorder()
+	h.handler.ServeHTTP(unmountedResponse, unmountedCall)
+	if !strings.Contains(unmountedResponse.Body.String(), `"code":-32601`) {
+		t.Fatalf("unmounted preset call must be indistinguishable from an unknown method: %s", unmountedResponse.Body)
+	}
+	p := &governedTransportProbe{
+		hasPresets:    true,
+		presetCatalog: governedask.PresetCatalog{ConnectionID: "conn", DatabaseIdentity: "gm", Presets: []governedquery.PresetSummary{{ID: "contract-count", Version: "v1", Name: "Contract count", Description: "Current count", Phrases: []string{"check contracts"}, PresetHash: "sha256:preset"}}},
+		presetResult:  governedask.PresetRunResult{AttemptID: "attempt", Preset: governedquery.PresetSummary{ID: "contract-count", Version: "v1", PresetHash: "sha256:preset"}, ConnectionID: "conn", DataState: "LIVE_OBSERVATION", ResultDigest: "sha256:result"},
+	}
+	h.handler.EnableGovernedQuery(p)
+	names := toolNames(t, h.handler.mcpTools(database.AccessContext{OrganizationID: "org_demo", PrincipalID: "agent", RequestID: "req", ActorKind: database.ActorKindService}))
+	for _, wanted := range []string{mcpToolQueriesList, mcpToolQueryRun} {
+		if !slices.Contains(names, wanted) {
+			t.Fatalf("configured preset tool %q missing from agent catalogue: %v", wanted, names)
+		}
+	}
+
+	request := h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"run","method":"tools/call","params":{"name":"knowvault_query_run","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","preset_id":"contract-count"}}}`)
+	response := httptest.NewRecorder()
+	h.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || p.presetID != "contract-count" || !strings.Contains(response.Body.String(), `"data_state":"LIVE_OBSERVATION"`) {
+		t.Fatalf("preset run failed: %d %s probe=%+v", response.Code, response.Body, p)
+	}
+	previousCalls := p.calls
+	request = h.request(http.MethodPost, apiPrefix+"/mcp", `{"jsonrpc":"2.0","id":"inject","method":"tools/call","params":{"name":"knowvault_query_run","arguments":{"workspace_id":"ws_alpha","connection_id":"conn","preset_id":"contract-count","sql":"SELECT secret FROM hidden"}}}`)
+	response = httptest.NewRecorder()
+	h.handler.ServeHTTP(response, request)
+	if p.calls != previousCalls || !strings.Contains(response.Body.String(), `"code":-32602`) || strings.Contains(response.Body.String(), "SELECT secret") {
+		t.Fatalf("SQL injection argument reached the service or leaked: %s", response.Body)
 	}
 }

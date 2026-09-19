@@ -27,6 +27,32 @@ func TestLoadMountedConfigValid(t *testing.T) {
 	}
 }
 
+func TestLoadMountedConfigWithPresets(t *testing.T) {
+	root := t.TempDir()
+	writeMount(t, root, `{"schema_version":"governed-query-mount-v1","connection_id":"demo-ops-govquery","database_identity":"demo_ops","workspace_id":"tko-operations","dsn_file":"dsn","trust_bundle_file":"trust.pem","presets_file":"presets.json","statement_timeout_seconds":5,"max_rows":1000,"max_result_bytes":1048576,"max_cost_estimate":1000}`,
+		"postgres://demo_ops_govquery:secret@knowvault-acc-postgres:5432/demo_ops?sslmode=verify-full", testCACertPEM)
+	if err := os.WriteFile(filepath.Join(root, "presets.json"), []byte(`{"schema_version":"governed-query-presets-v1","presets":[{"id":"contract-count","version":"v1","name":"Contract count","description":"Current contract count.","phrases":["check contracts"],"workspace_id":"tko-operations","source_attempt_id":"gqat_reviewed","sql_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","exposed_schema_revision":3}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadMountedConfigAt(root)
+	if err != nil || !config.HasPresets() || len(config.PresetSummaries("tko-operations")) != 1 || len(config.PresetSummaries("another-workspace")) != 0 {
+		t.Fatalf("preset mount failed: config=%+v err=%v", config, err)
+	}
+}
+
+func TestLoadMountedConfigRejectsSQLTextInPreset(t *testing.T) {
+	root := t.TempDir()
+	writeMount(t, root, `{"schema_version":"governed-query-mount-v1","connection_id":"demo-ops-govquery","database_identity":"demo_ops","workspace_id":"tko-operations","dsn_file":"dsn","trust_bundle_file":"trust.pem","presets_file":"presets.json","statement_timeout_seconds":5,"max_rows":1000,"max_result_bytes":1048576,"max_cost_estimate":1000}`,
+		"postgres://demo_ops_govquery:secret@knowvault-acc-postgres:5432/demo_ops?sslmode=verify-full", testCACertPEM)
+	if err := os.WriteFile(filepath.Join(root, "presets.json"), []byte(`{"schema_version":"governed-query-presets-v1","presets":[{"id":"unsafe","version":"v1","name":"Unsafe","description":"Must fail.","phrases":["do it"],"workspace_id":"tko-operations","source_attempt_id":"gqat_reviewed","sql_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","exposed_schema_revision":3,"sql":"UPDATE gm.contracts SET active = false"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadMountedConfigAt(root)
+	if CodeOf(err) != CodeMountInvalid {
+		t.Fatalf("a preset carrying SQL text must make the mount invalid, got %v", err)
+	}
+}
+
 func TestLoadMountedConfigInvalidIsNeverAbsent(t *testing.T) {
 	root := t.TempDir()
 	// insecure_lab_mode-equivalent guard: a malformed schema_version must be a
