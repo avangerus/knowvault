@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -317,8 +318,16 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 	// exhausting the attempts returns exactly the last typed failure.
 	var lastErr error
 	for attemptNumber := 1; attemptNumber <= askMaxAttempts; attemptNumber++ {
+		// outerAttempt is this bounded-loop iteration; innerAttempt counts each
+		// GenerateBounded callback invocation (the model step's own bounded
+		// retries). Both are 1-based so a log line reads as "attempt N".
+		outerAttempt := attemptNumber
+		innerAttempt := 0
 		plan, genErr := service.adapter.GenerateBounded(ctx, question, askSystemInstructions, []byte(askOutputSchema),
-			evidence, askMaxOutputTokens, func(modelgateway.AttemptResult) {})
+			evidence, askMaxOutputTokens, func(result modelgateway.AttemptResult) {
+				innerAttempt++
+				service.logModelAttempt(outerAttempt, innerAttempt, result)
+			})
 		if genErr != nil {
 			service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
 			lastErr = &Error{code: CodeGenerationFailed, cause: genErr}
@@ -438,6 +447,19 @@ func (service *Service) discloseExecutedAttempt(ctx context.Context, access data
 		ExposedSchemaRevision: revision, ResultFormat: "postgres-text-table-v1", ResultDigest: attempt.ResultDigest,
 		ExecutionStartedAt: result.ExecutionStartedAt, ExecutionCompletedAt: result.ExecutionCompletedAt,
 	}, nil
+}
+
+// logModelAttempt emits one structured, content-free line per model-step
+// callback. It is the operator's view of the otherwise-silent bounded retry:
+// compose_attempt is the compose-and-execute loop iteration (1..askMaxAttempts)
+// and model_attempt is the invocation of the GenerateBounded callback within
+// that iteration (the model step's own bounded retries). The fixed attribute
+// set carries only transport status and the closed ResponseDiagnostic/
+// FailureCode vocabularies AttemptResult already guarantees are content-free
+// (modelgateway.AttemptResult): no question text, evidence text, prompt or
+// response bytes, SQL text, schema name, DSN or row ever reaches a log line.
+func (service *Service) logModelAttempt(outerAttempt, innerAttempt int, result modelgateway.AttemptResult) {
+	slog.Info("governed model attempt completed", "component", "knowvault-server", "operation", "governed-query-compose", "compose_attempt", outerAttempt, "model_attempt", innerAttempt, "model_id", result.ModelID, "status_code", result.StatusCode, "response_stage", string(result.ResponseStage), "response_diagnostic", result.ResponseDiagnostic.ReasonCode(), "succeeded", result.Succeeded, "request_bytes", result.RequestBytes, "response_bytes", result.ResponseBytes, "failure_code", string(result.FailureCode))
 }
 
 func candidateSQL(plan modelgateway.ClaimPlan) (string, bool) {
