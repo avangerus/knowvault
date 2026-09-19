@@ -197,3 +197,82 @@ func TestGovernedPresetOnlyHidesAndRejectsAdHocMCPAsk(t *testing.T) {
 		t.Fatalf("PRESET_ONLY direct ask reached governed-query service: calls %d -> %d", before, p.calls)
 	}
 }
+
+// legacyGovernedQueryService is the pre-PRESET_ONLY capability shape: it
+// projects GovernedQueryService and nothing else, so Handler's optional
+// GovernedQueryModePolicy stays nil exactly as it does for every service
+// double that predates the mounted mode.
+type legacyGovernedQueryService struct{ GovernedQueryService }
+
+// TestGovernedPresetOnlyClosesRESTAdHocAskBeforeAnyServiceCall is the REST half
+// of the mounted-mode contract the MCP tool already enforces. While the live
+// mounted policy reports PRESET_ONLY the human :ask action must not reach
+// GovernedQueryService.Ask -- and through it the Model Gateway or the dedicated
+// database role -- while the ADHOC, unmounted and legacy (policy-less) shapes
+// keep their existing behavior. The refusal is the content-free NOT_FOUND an
+// unknown connection already returns.
+func TestGovernedPresetOnlyClosesRESTAdHocAskBeforeAnyServiceCall(t *testing.T) {
+	ask := func(harness *testHarness, question string) *httptest.ResponseRecorder {
+		request := harness.request(http.MethodPost, apiPrefix+"/workspaces/ws_alpha/governed-query-connections/conn_requested:ask", `{"question":"`+question+`"}`)
+		harness.mutationHeaders(request, harness.hash)
+		request.Header.Del("If-Match")
+		response := httptest.NewRecorder()
+		harness.handler.ServeHTTP(response, request)
+		return response
+	}
+
+	// Legacy no-mount: the route keeps its capability-absent shape.
+	unmounted := ask(newTestHarness(t), "unmounted?")
+	if unmounted.Code != http.StatusServiceUnavailable || !strings.Contains(unmounted.Body.String(), `"code":"SERVICE_UNAVAILABLE"`) {
+		t.Fatalf("unmounted REST ask changed shape: %d %s", unmounted.Code, unmounted.Body)
+	}
+
+	// Legacy service double without the optional policy projection: ad-hoc ask
+	// stays callable, exactly as before PRESET_ONLY existed.
+	legacy := newTestHarness(t)
+	legacyProbe := &governedTransportProbe{}
+	legacy.handler.EnableGovernedQuery(legacyGovernedQueryService{GovernedQueryService: legacyProbe})
+	if response := ask(legacy, "legacy?"); response.Code != http.StatusOK || legacyProbe.calls != 1 || legacyProbe.question != "legacy?" {
+		t.Fatalf("legacy REST ask was closed: %d %s probe=%+v", response.Code, response.Body, legacyProbe)
+	}
+
+	// ADHOC (the mounted policy's zero value): the human REST ask reaches the
+	// governed service with its connection, workspace and question intact.
+	harness := newTestHarness(t)
+	probe := &governedTransportProbe{hasPresets: true}
+	harness.handler.EnableGovernedQuery(probe)
+	if response := ask(harness, "how many?"); response.Code != http.StatusOK || probe.calls != 1 || probe.question != "how many?" {
+		t.Fatalf("ADHOC REST ask did not reach the governed service: %d %s probe=%+v", response.Code, response.Body, probe)
+	}
+
+	// The decision is read live per request: flipping the mounted policy after
+	// the handler was wired closes the already-mounted route before any
+	// service, model or database work.
+	probe.presetOnly = true
+	blocked := ask(harness, "show everything")
+	requestID := blocked.Header().Get("X-Request-ID")
+	if blocked.Code != http.StatusNotFound || requestID == "" ||
+		blocked.Body.String() != `{"error":{"code":"NOT_FOUND","request_id":"`+requestID+`"}}` {
+		t.Fatalf("PRESET_ONLY REST ask was not closed content-free: %d %s", blocked.Code, blocked.Body)
+	}
+	if probe.calls != 1 || probe.question != "how many?" {
+		t.Fatalf("PRESET_ONLY REST ask reached the governed service: calls=%d question=%q", probe.calls, probe.question)
+	}
+
+	// Only :ask is closed. The operator surfaces that maintain the reviewed
+	// catalogue stay reachable in the same mode.
+	for _, tc := range []struct{ suffix, body string }{
+		{":set-live-queries", `{"enabled":true}`},
+		{"/exposed-schema", `{"objects":[{"schema_name":"example","table_name":"items","description":"Items","columns":[]}]}`},
+		{":promote", `{"attempt_id":"attempt","sql_hash":"sha256:result"}`},
+	} {
+		request := harness.request(http.MethodPost, apiPrefix+"/workspaces/ws_alpha/governed-query-connections/conn_requested"+tc.suffix, tc.body)
+		harness.mutationHeaders(request, harness.hash)
+		request.Header.Del("If-Match")
+		response := httptest.NewRecorder()
+		harness.handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("PRESET_ONLY closed %s: %d %s", tc.suffix, response.Code, response.Body)
+		}
+	}
+}

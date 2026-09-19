@@ -113,6 +113,20 @@ func (handler *Handler) governedQueryAsk(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return
 	}
+	// PRESET_ONLY closes model-authored SQL on every transport, not only the
+	// MCP tool. The mounted policy is consulted per request -- the same live
+	// read mcpTools and mcpToolCall already perform -- so this route can never
+	// keep dispatching against a decision captured when the handler was
+	// wired. The refusal is the content-free NOT_FOUND an unknown or
+	// unauthorized connection already produces, so it discloses nothing about
+	// a connection, exposed schema, model or query, and it happens before the
+	// mutation-header/body checks, the governed service, the Model Gateway and
+	// the dedicated database role. The nil-service case above and a service
+	// that does not project the optional policy keep their existing shapes.
+	if handler.governedQueryIsPresetOnly() {
+		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
+		return
+	}
 	if _, _, code, fields := mutationHeaders(request, false); code != "" {
 		writeValidationError(writer, request, requestID, code, fields)
 		return

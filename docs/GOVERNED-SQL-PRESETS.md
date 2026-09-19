@@ -44,8 +44,10 @@ directory mode `0750` and file mode `0440`:
 
 A mount with `presets_file` must declare its mode. Use `PRESET_ONLY` for a
 closed catalogue: MCP advertises only preset list/run and rejects the ad-hoc
-model-authored SQL tool as unknown. `ADHOC` keeps both surfaces for an explicitly
-approved compatibility deployment. A missing or unknown mode fails startup.
+model-authored SQL tool as unknown, and the REST ad-hoc `:ask` action fails
+closed with the same content-free not-found shape as an unknown connection.
+`ADHOC` keeps both surfaces for an explicitly approved compatibility deployment.
+A missing or unknown mode fails startup.
 
 Example `presets.json`:
 
