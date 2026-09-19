@@ -183,12 +183,19 @@ async function main(): Promise<void> {
     current += 1;
     const stamp = current;
     let recorded = false;
-    const continuation = new Promise<void>((resolve) => {
-      if (governedRequestAccepted(stamp, current, alive)) recorded = true;
-      resolve();
+    // The run's result arrives later, so its completion is deferred until we
+    // explicitly release it below.
+    let resolveDeferred!: () => void;
+    const deferred = new Promise<void>((resolve) => {
+      resolveDeferred = resolve;
     });
-    // The user changes to preset B / a different workspace: the epoch moves on.
+    const continuation = deferred.then(() => {
+      if (governedRequestAccepted(stamp, current, alive)) recorded = true;
+    });
+    // The user changes to preset B / a different workspace: the epoch moves on
+    // and supersedes the stamp A is still holding.
     current += 1;
+    resolveDeferred();
     await continuation;
     check(recorded === false, "a continuation that was superseded before it ran records nothing");
 
