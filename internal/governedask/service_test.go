@@ -181,3 +181,24 @@ func TestAskInstructionsRequireExactTopLevelMembers(t *testing.T) {
 		}
 	}
 }
+
+func TestAskSystemInstructionsStateClaimTextBoundary(t *testing.T) {
+	for _, required := range []string{
+		"single line",
+		"valid UTF-8",
+		"2000 UTF-8 bytes",
+		"newline",
+		"carriage return",
+		"tab",
+		"control character",
+		"leading/trailing whitespace",
+		"U+200E",
+		"U+200F",
+		"U+202A-U+202E",
+		"U+2066-U+2069",
+	} {
+		if !strings.Contains(askSystemInstructions, required) {
+			t.Fatalf("governed query instructions do not state the SQL text boundary %q", required)
+		}
+	}
+}

@@ -126,6 +126,10 @@ const (
 		"claim_id=\"C1\", sections is an array of exactly one section with section_id=\"S1\", title=null, and " +
 		"ordered_claim_ids=[\"C1\"]. Claim field rules by kind: " +
 		"FACT: text is the exact SQL query text (a nonempty string without markdown or explanation), " +
+		"SQL text must be a single line, valid UTF-8, at most 2000 UTF-8 bytes, with no newline, " +
+		"carriage return, tab, other control character, or leading/trailing whitespace. " +
+		"The SQL text must not contain bidirectional-control characters: " +
+		"U+200E, U+200F, U+202A-U+202E, or U+2066-U+2069. " +
 		"unknown_reason is exactly null, evidence_ids is a nonempty array of identifiers for the schema fragments used, " +
 		"supporting_claim_ids is exactly []; " +
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
