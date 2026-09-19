@@ -440,6 +440,12 @@ func TestLabAdapterInvalidClaimPlanRetainsHTTPStatus(t *testing.T) {
 	if err == nil || CodeOf(err) != CodeResponse || result.FailureCode != CodeResponse || result.StatusCode != http.StatusOK || result.ResponseStage != ResponseStageClaim {
 		t.Fatalf("expected invalid plan classification, err=%v result=%+v", err, result)
 	}
+	if result.ResponseDiagnostic != ResponseClaimPlanEnvelopeInvalid {
+		t.Fatalf("invalid plan diagnostic=%q, want %s", result.ResponseDiagnostic, ResponseClaimPlanEnvelopeInvalid)
+	}
+	if got := result.ResponseDiagnostic.ReasonCode(); got != string(ResponseClaimPlanEnvelopeInvalid) {
+		t.Fatalf("invalid plan ReasonCode()=%q, want %q", got, string(ResponseClaimPlanEnvelopeInvalid))
+	}
 	var gatewayErr *Error
 	if !errors.As(err, &gatewayErr) || gatewayErr.StatusCode() != http.StatusOK {
 		status := 0

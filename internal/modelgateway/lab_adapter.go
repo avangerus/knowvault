@@ -400,6 +400,15 @@ const (
 	ResponseToolNameInvalid      ResponseDiagnostic = "MODEL_RESPONSE_TOOL_NAME_INVALID"
 	ResponseArgumentsTooLarge    ResponseDiagnostic = "MODEL_RESPONSE_ARGUMENTS_TOO_LARGE"
 	ResponseArgumentsJSONInvalid ResponseDiagnostic = "MODEL_RESPONSE_ARGUMENTS_JSON_INVALID"
+
+	ResponseClaimPlanEnvelopeInvalid  ResponseDiagnostic = "MODEL_CLAIM_PLAN_ENVELOPE_INVALID"
+	ResponseClaimIdentityInvalid      ResponseDiagnostic = "MODEL_CLAIM_IDENTITY_INVALID"
+	ResponseClaimTextInvalid          ResponseDiagnostic = "MODEL_CLAIM_TEXT_INVALID"
+	ResponseClaimUnknownReasonInvalid ResponseDiagnostic = "MODEL_CLAIM_UNKNOWN_REASON_INVALID"
+	ResponseClaimShapeInvalid         ResponseDiagnostic = "MODEL_CLAIM_SHAPE_INVALID"
+	ResponseClaimEvidenceInvalid      ResponseDiagnostic = "MODEL_CLAIM_EVIDENCE_INVALID"
+	ResponseClaimSupportInvalid       ResponseDiagnostic = "MODEL_CLAIM_SUPPORT_INVALID"
+	ResponseClaimSectionInvalid       ResponseDiagnostic = "MODEL_CLAIM_SECTION_INVALID"
 )
 
 // ReasonCode returns only a code minted by this package's fixed vocabulary.
@@ -411,7 +420,10 @@ func (diagnostic ResponseDiagnostic) ReasonCode() string {
 		ResponseProviderAborted, ResponseProviderFiltered, ResponseOutputLimit,
 		ResponseToolCountExceeded, ResponseToolIDInvalid, ResponseToolIDDuplicate,
 		ResponseToolTypeInvalid, ResponseToolNameInvalid, ResponseArgumentsTooLarge,
-		ResponseArgumentsJSONInvalid:
+		ResponseArgumentsJSONInvalid,
+		ResponseClaimPlanEnvelopeInvalid, ResponseClaimIdentityInvalid, ResponseClaimTextInvalid,
+		ResponseClaimUnknownReasonInvalid, ResponseClaimShapeInvalid, ResponseClaimEvidenceInvalid,
+		ResponseClaimSupportInvalid, ResponseClaimSectionInvalid:
 		return string(diagnostic)
 	default:
 		return ""
@@ -537,7 +549,8 @@ func (adapter *LabAdapter) Generate(ctx context.Context, question, systemInstruc
 		return ClaimPlan{}, result, &Error{code: CodeResponse, cause: err, status: response.StatusCode}
 	}
 	result.ResponseStage = ResponseStageClaim
-	if err := plan.Validate(evidence); err != nil {
+	if diagnostic, err := plan.validate(evidence); err != nil {
+		result.ResponseDiagnostic = diagnostic
 		result.FailureCode = CodeResponse
 		return ClaimPlan{}, result, &Error{code: CodeResponse, cause: err, status: response.StatusCode}
 	}

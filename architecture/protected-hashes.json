@@ -334,7 +334,7 @@
     "internal/jobs/jobs_test.go": "0c4a1d947dfa7fc72d14a4e2250331bd7c90e9a683001cb3129eae1395445045",
     "internal/modelgateway/converse.go": "136a3dacd9a45b989ea024d7b695fb2f6bb070a0948a24332a39b867c5f58c68",
     "internal/modelgateway/converse_diagnostics_test.go": "cdbb9d3344447579ac52e1276638db82c6fe4400c5e78f54873a661f5ac5a5fd",
-    "internal/modelgateway/lab_adapter.go": "5bcfdd3da547d3e77f36de691fd5241ce4d349971a25cf6dca951660885ea208",
+    "internal/modelgateway/lab_adapter.go": "b90830f4b401ea26c6bb90fedd08e77cbe5013b8d0e05a3e78eebbfadc33ecb6",
     "internal/modelgateway/mount_lab.go": "b0b1be1e1f02b5dbd5bfbbda67d0bec38810b2448bb76826745bc0c5a6436462",
     "internal/modelgateway/mount_profiles.go": "f40e6aed55a5fe4b0d172c66b89ea00b8ad8ecfa0340442218ce19f41b80b659",
     "internal/modelgateway/mount_profiles_test.go": "36d2bd9e9606ffb38ff10ee92ca94d82200aa5c9f7f4eb9bdf9a0393598ebaa5",
