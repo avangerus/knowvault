@@ -84,7 +84,7 @@ func TestProposalV2PredicateArityKindsAndCopy(t *testing.T) {
 	bad := []struct {
 		op Operator
 		v  []Scalar
-	}{{OpEQ, nil}, {OpEQ, []Scalar{i, i}}, {OpISNull, []Scalar{i}}, {OpISNull, []Scalar{BoolScalar(true), BoolScalar(false)}}, {OpIN, nil}, {OpIN, []Scalar{i, s}}, {OpIN, make([]Scalar, 21)}, {Operator("LIKE"), []Scalar{i}}, {OpGTE, []Scalar{s}}}
+	}{{OpEQ, nil}, {OpEQ, []Scalar{i, i}}, {OpISNull, nil}, {OpISNull, []Scalar{i}}, {OpISNull, []Scalar{BoolScalar(true), BoolScalar(false)}}, {OpIN, nil}, {OpIN, []Scalar{i, s}}, {OpIN, make([]Scalar, 21)}, {Operator("LIKE"), []Scalar{i}}, {OpGTE, []Scalar{s}}}
 	for _, c := range bad {
 		_, e := NewPredicate(f, c.op, c.v...)
 		pBad(t, e)
