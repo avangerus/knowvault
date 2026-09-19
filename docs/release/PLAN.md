@@ -30,10 +30,10 @@ Current gate status and forecast, measured from an approved D1 start:
 | Gate | Status on 19 September 2026 | Remaining work | Forecast |
 | --- | --- | --- | --- |
 | D0 | Complete | Preserve the recorded image and private deployment receipt. | Done |
-| D1 | Decision required | Add the profile-scoped structured-output capability, qualify the exact Qwen profile, execute and review four control questions. | 6–10 engineering hours |
-| D2 | Ready after D1 | Bind the reviewed attempts, switch to `PRESET_ONLY`, run MCP parity, denial and audit checks. | 2–4 hours |
-| D3 | Designed; ready after D2 | Add a thin preset list/run view over the existing `/api/v1/mcp` session and CSRF path, then perform the pilot-environment walkthrough. | 5–8 hours |
-| D4 | Pending | Freeze the release identity and complete operator startup, verification, demonstration and rollback evidence. | 3–5 hours |
+| D1 | Complete | Exact configured local Qwen profile passed first-attempt 4/4 and repeated 20/20 strict structured-output qualification. | Done |
+| D2 | Complete | Four reviewed bindings active in `PRESET_ONLY`; human/SERVICE MCP 8/8, denials 6/6, revoked credential 401, authorization/audit verified. | Done |
+| D3 | Complete | Browser ran all four live checks with source identity, execution window and receipt; refresh did not rerun, evidence back preserved results, implicit catalogue discovery 4/4 and explicit mismatch denied. | Done |
+| D4 | In progress | Freeze exact release identity, publish operator runbook/demo script, and obtain second-operator acceptance. | 2–4 hours |
 
 Only one gate-changing implementation slice is active at a time. DSH receives
 small contracts covering configuration, adapter behavior, qualification,
@@ -53,18 +53,12 @@ not duplicate the implementation worker. Heavy builds and test workloads run
 on the remote build worker. The pilot environment receives only a committed,
 reviewed image and is used for live acceptance, not development.
 
-The critical technical branch for D1 is an explicit, mounted structured-output
-capability. Existing OpenAI-compatible profiles retain `json_object`; the
-qualified Qwen profile may opt in to strict `json_schema` and its documented
-thinking control. There is no implicit fallback and strict ClaimPlan and SQL
-validation remain unchanged. Prompt shortening and manual insertion of
-governed attempts are not release paths. If the exact Qwen profile does not
-pass 4/4 first attempts and then 20/20 qualification calls, D1 stays closed.
-This branch is estimated at 6–10 engineering hours and therefore remains an
-owner decision gate under the release scope rule. The release lead recommends
-approving it: the alternative that preserves the current trust contract is a
-3–5 day DBA-view preset design, while a manual attempt insert would forge
-provenance and is prohibited.
+The explicit, mounted structured-output capability on the exact configured
+Qwen profile was accepted and measured as described in the status table above:
+first-attempt 4/4 followed by repeated 20/20 strict structured-output
+qualification, with no implicit fallback and unchanged strict ClaimPlan and SQL
+validation. Prompt shortening and manual insertion of governed attempts were
+not release paths.
 
 The fastest useful milestone is D2: an external MCP demonstration with four
 reviewed live checks. D3 adds a thin browser surface over the same preset
