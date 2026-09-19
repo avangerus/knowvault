@@ -230,6 +230,14 @@ export function governedReceiptRows(result: GovernedPresetRunResult): { label: s
   ];
 }
 
+/** True only when the continuation that produced a result still belongs to
+ * the current epoch and the panel is still mounted. A stale continuation (an
+ * earlier workspace load or a superseded preset selection) returns false and
+ * its result is discarded. */
+export function governedRequestAccepted(stamp: number, current: number, alive: boolean): boolean {
+  return alive && stamp === current;
+}
+
 // ---------------------------------------------------------------------------
 // Panel.
 // ---------------------------------------------------------------------------
@@ -273,7 +281,7 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
     setRunState({ phase: "idle" });
     const outcome = await governedMCPCall<GovernedPresetCatalog>(
       fetch, GOVERNED_QUERIES_LIST_TOOL, governedPresetListArguments(workspaceID));
-    if (!alive.current || epoch.current !== current) return;
+    if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
     if (outcome.kind === "sessionExpired") { onSessionExpired(); return; }
     if (outcome.kind !== "ok") { setCatalogState({ phase: "unavailable" }); return; }
     const presets = outcome.value.presets ?? [];
@@ -302,7 +310,7 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
     setRunState({ phase: "pending" });
     const outcome = await governedMCPCall<GovernedPresetRunResult>(
       fetch, GOVERNED_QUERY_RUN_TOOL, governedPresetRunArguments(workspaceID, catalog, chosen.id));
-    if (!alive.current || epoch.current !== current) return;
+    if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
     if (outcome.kind === "sessionExpired") { onSessionExpired(); return; }
     setRunState(outcome.kind === "ok" ? { phase: "done", result: outcome.value } : { phase: "failed" });
   }
@@ -325,8 +333,12 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
       {catalog && (
         <div className="governed-presets-picker">
           <label className="sr-only" htmlFor="governed-preset-select">Live database check</label>
-          <select className="governed-preset-select" id="governed-preset-select" value={presetID}
+          <select className="governed-preset-select" id="governed-preset-select" value={presetID} disabled={pending}
             onChange={(event) => {
+              // Selecting a different check supersedes any run in flight: the
+              // epoch is bumped first, so that run's continuation is rejected
+              // even if it resolves before the new preset settles.
+              epoch.current++;
               // The previously rendered rows belong to the previously chosen
               // check. They are discarded before the selection changes, so a
               // result is never shown under a newly selected check.

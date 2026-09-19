@@ -30,13 +30,16 @@ import {
   GOVERNED_NO_ROWS,
   GOVERNED_NULL_CELL,
   GOVERNED_PRESETS_UNAVAILABLE,
+  GOVERNED_QUERY_RUN_TOOL,
   GOVERNED_RECEIPT_NOTE,
   GOVERNED_RESULT_RUN_UNAVAILABLE,
   GOVERNED_RESULT_UNKNOWN_PRESET,
   GovernedPresetResultView,
   governedCellText,
+  governedMCPCall,
   governedPresetListArguments,
   governedPresetRunArguments,
+  governedRequestAccepted,
   type GovernedPresetRunResult,
 } from "./governed-presets";
 
@@ -170,6 +173,43 @@ async function main(): Promise<void> {
   check(!GOVERNED_RESULT_RUN_UNAVAILABLE.includes("SELECT ") && !GOVERNED_RESULT_RUN_UNAVAILABLE.includes("kv1:")
     && !GOVERNED_RESULT_RUN_UNAVAILABLE.includes("connection-2"),
     "the run-failure copy leaks no server content");
+
+  // --- 6. stale continuation is discarded --------------------------------
+  // A run that was started for one selection must not record its result once
+  // the user has moved on. The helper is the single gate for that decision.
+  {
+    let current = 0;
+    const alive = true;
+    current += 1;
+    const stamp = current;
+    let recorded = false;
+    const continuation = new Promise<void>((resolve) => {
+      if (governedRequestAccepted(stamp, current, alive)) recorded = true;
+      resolve();
+    });
+    // The user changes to preset B / a different workspace: the epoch moves on.
+    current += 1;
+    await continuation;
+    check(recorded === false, "a continuation that was superseded before it ran records nothing");
+
+    current += 1;
+    const freshStamp = current;
+    check(governedRequestAccepted(freshStamp, current, alive), "a fresh stamp is accepted");
+    check(!governedRequestAccepted(freshStamp, current, false), "an unmounted panel rejects even a fresh stamp");
+  }
+
+  // --- 7. CSRF 401 is sessionExpired, with no MCP POST --------------------
+  {
+    const calls: string[] = [];
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response("", { status: 401 });
+    };
+    const outcome = await governedMCPCall<GovernedPresetRunResult>(
+      fakeFetch, GOVERNED_QUERY_RUN_TOOL, governedPresetRunArguments("workspace-7", { connection_id: "connection-2" }, "preset-9"));
+    check(outcome.kind === "sessionExpired", "an HTTP 401 on the CSRF GET is reported as sessionExpired");
+    check(calls.length === 1 && calls[0] === "/api/v1/session/csrf", "the 401 short-circuits before any MCP POST");
+  }
 
   if (failures !== 0) throw new Error(`${failures} governed-preset assertion(s) failed`);
   console.log("governed preset UI probe: PASS");
