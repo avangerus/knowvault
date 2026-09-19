@@ -53,6 +53,28 @@ profiles require an explicit trusted CA bundle and the operator-owned
 `external_runtime_workspace_ids` allowlist. A question cannot supply or expand
 that list. Keep credentials outside Git and public logs.
 
+### Structured output
+
+The mounted provider configuration may optionally select a structured-output mode
+using the enum values `json_object` or `json_schema`. When the setting is omitted,
+the adapter preserves the existing `json_object` mode. Selection is
+administrator-only: a question cannot supply or change it. With `json_schema`,
+the adapter uses the strict `ClaimPlan` schema and the existing local validation
+is unchanged. There is no fallback or retry to a different mode on failure. These
+statements qualify the exact endpoint and model identity bound by the provider
+configuration; they do not generalize to other endpoints or models.
+
+The fragment below is an incomplete, non-secret illustration. It omits required
+and provider-specific fields and is not a complete provider configuration:
+
+```json
+{
+  "schema_version": "model-gateway-lab-adapter-v1",
+  "thinking_mode": "disabled",
+  "structured_output_mode": "json_schema"
+}
+```
+
 The current adapter uses the interim `model-gateway-lab-adapter-v1` contract and
 requires its explicit `insecure_lab_mode` acknowledgement. This does not qualify
 it as the separate production model boundary defined by ADR-0080. Consult the

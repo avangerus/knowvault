@@ -368,45 +368,55 @@ func decodeKnown(raw []byte, target any, _ ...string) error {
 }
 
 func (plan ClaimPlan) Validate(allowedEvidence []Evidence) error {
+	_, err := plan.validate(allowedEvidence)
+	return err
+}
+
+// validate is the single implementation behind Validate. It returns the closed
+// content-free ResponseDiagnostic naming WHICH validation family rejected the
+// plan, alongside the unchanged &Error{code: CodeResponse}. The public Validate
+// discards the diagnostic; LabAdapter.Generate records it. Rule set, ordering
+// and limits are identical to the previous inline body.
+func (plan ClaimPlan) validate(allowedEvidence []Evidence) (ResponseDiagnostic, error) {
 	if plan.SchemaVersion != ModelAnswerVersion || len(plan.Claims) == 0 || len(plan.Claims) > MaxClaims ||
 		len(plan.Sections) == 0 || len(plan.Sections) > MaxSections {
-		return &Error{code: CodeResponse}
+		return ResponseClaimPlanEnvelopeInvalid, &Error{code: CodeResponse}
 	}
 	allowed := make(map[string]struct{}, len(allowedEvidence))
 	for _, evidence := range allowedEvidence {
 		if err := evidence.Validate(); err != nil {
-			return &Error{code: CodeResponse}
+			return ResponseClaimPlanEnvelopeInvalid, &Error{code: CodeResponse}
 		}
 		allowed[evidence.ID] = struct{}{}
 	}
 	claims := make(map[string]struct{}, len(plan.Claims))
 	for _, claim := range plan.Claims {
 		if !validClaimID(claim.ID) || len(claim.EvidenceIDs) > MaxEvidencePerClaim || len(claim.SupportingClaimIDs) > MaxSupportingClaims {
-			return &Error{code: CodeResponse}
+			return ResponseClaimIdentityInvalid, &Error{code: CodeResponse}
 		}
 		if _, duplicate := claims[claim.ID]; duplicate {
-			return &Error{code: CodeResponse}
+			return ResponseClaimIdentityInvalid, &Error{code: CodeResponse}
 		}
 		claims[claim.ID] = struct{}{}
 		if claim.Text != nil && (!validText(*claim.Text, 2000) || strings.TrimSpace(*claim.Text) != *claim.Text) {
-			return &Error{code: CodeResponse}
+			return ResponseClaimTextInvalid, &Error{code: CodeResponse}
 		}
 		if claim.UnknownReason != nil && !validUnknownReason(*claim.UnknownReason) {
-			return &Error{code: CodeResponse}
+			return ResponseClaimUnknownReasonInvalid, &Error{code: CodeResponse}
 		}
 		if !validClaimShape(claim) || !uniqueStrings(claim.EvidenceIDs) || !uniqueStrings(claim.SupportingClaimIDs) {
-			return &Error{code: CodeResponse}
+			return ResponseClaimShapeInvalid, &Error{code: CodeResponse}
 		}
 		for _, evidenceID := range claim.EvidenceIDs {
 			if _, ok := allowed[evidenceID]; !ok {
-				return &Error{code: CodeResponse}
+				return ResponseClaimEvidenceInvalid, &Error{code: CodeResponse}
 			}
 		}
 	}
 	for _, claim := range plan.Claims {
 		for _, supporting := range claim.SupportingClaimIDs {
 			if _, ok := claims[supporting]; !ok || supporting == claim.ID {
-				return &Error{code: CodeResponse}
+				return ResponseClaimSupportInvalid, &Error{code: CodeResponse}
 			}
 		}
 	}
@@ -438,33 +448,33 @@ func (plan ClaimPlan) Validate(allowedEvidence []Evidence) error {
 	}
 	for id := range claims {
 		if !visit(id) {
-			return &Error{code: CodeResponse}
+			return ResponseClaimSupportInvalid, &Error{code: CodeResponse}
 		}
 	}
 	sections := make(map[string]struct{}, len(plan.Sections))
 	seenClaimInSection := make(map[string]struct{}, len(plan.Claims))
 	for _, section := range plan.Sections {
 		if !validSectionID(section.ID) || len(section.OrderedClaimIDs) == 0 || len(section.OrderedClaimIDs) > MaxClaims || !uniqueStrings(section.OrderedClaimIDs) {
-			return &Error{code: CodeResponse}
+			return ResponseClaimSectionInvalid, &Error{code: CodeResponse}
 		}
 		if _, duplicate := sections[section.ID]; duplicate {
-			return &Error{code: CodeResponse}
+			return ResponseClaimSectionInvalid, &Error{code: CodeResponse}
 		}
 		sections[section.ID] = struct{}{}
 		if section.Title != nil && (!validText(*section.Title, 512) || strings.TrimSpace(*section.Title) != *section.Title) {
-			return &Error{code: CodeResponse}
+			return ResponseClaimSectionInvalid, &Error{code: CodeResponse}
 		}
 		for _, claimID := range section.OrderedClaimIDs {
 			if _, ok := claims[claimID]; !ok {
-				return &Error{code: CodeResponse}
+				return ResponseClaimSectionInvalid, &Error{code: CodeResponse}
 			}
 			seenClaimInSection[claimID] = struct{}{}
 		}
 	}
 	if len(seenClaimInSection) != len(claims) {
-		return &Error{code: CodeResponse}
+		return ResponseClaimSectionInvalid, &Error{code: CodeResponse}
 	}
-	return nil
+	return "", nil
 }
 
 // Client is an immutable, purpose-bound mTLS transport. It has no public
@@ -595,7 +605,19 @@ type completionThinking struct {
 }
 
 type completionResponseFormat struct {
-	Type string `json:"type"`
+	Type       string                        `json:"type"`
+	JSONSchema *completionResponseJSONSchema `json:"json_schema,omitempty"`
+}
+
+// completionResponseJSONSchema is the lab-only nested json_schema payload
+// carried by the strict structured-output mode. Strict is a fixed true value
+// and schema is the exact caller-supplied JSON Schema bytes. It is populated
+// only by LabAdapter; production Client.Generate leaves ResponseFormat nil and
+// must never reach this type.
+type completionResponseJSONSchema struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 type completionResponse struct {
 	Model   string `json:"model"`

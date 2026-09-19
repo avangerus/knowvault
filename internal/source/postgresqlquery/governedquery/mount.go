@@ -17,29 +17,62 @@ import (
 	"time"
 )
 
+// Governed-query mount modes. A mount without a presets_file is the legacy
+// ad-hoc shape and needs no mode member. A mount that carries a closed
+// administrator-approved preset catalogue MUST declare its mode explicitly so
+// an operator can never believe a closed capability still serves ad hoc SQL.
+const (
+	// ModeAbsent is the explicit legacy value: ad hoc ask is served.
+	ModeAbsent = ""
+	// ModeAdHoc serves both ad hoc ask and the mounted preset catalogue.
+	ModeAdHoc = "ADHOC"
+	// ModePresetOnly serves the mounted preset catalogue and no ad hoc ask.
+	ModePresetOnly = "PRESET_ONLY"
+)
+
 const (
 	// DefaultMountRoot is deliberately distinct from every other mount root in
 	// the system so an operator inspecting mounts can never confuse this
 	// dedicated, least-privilege ad hoc query capability with the ADR-0078
 	// ingestion connection, the embedding channel or the GEN-1/GEN-2 adapter.
-	DefaultMountRoot       = "/run/knowvault/governedquery"
-	mountConfigFilename    = "config.json"
-	maxMountConfigBytes    = 16 << 10
-	maxMountDSNFileBytes   = 4 << 10
+	DefaultMountRoot         = "/run/knowvault/governedquery"
+	mountConfigFilename      = "config.json"
+	maxMountConfigBytes      = 16 << 10
+	maxMountDSNFileBytes     = 4 << 10
 	maxMountTrustBundleBytes = 1 << 20
+	maxMountPresetBytes      = 128 << 10
 )
 
 type mountedConfig struct {
-	SchemaVersion        string `json:"schema_version"`
-	ConnectionID         string `json:"connection_id"`
-	DatabaseIdentity     string `json:"database_identity"`
-	WorkspaceID          string `json:"workspace_id"`
-	DSNFile              string `json:"dsn_file"`
-	TrustBundleFile      string `json:"trust_bundle_file"`
-	StatementTimeoutSecs int    `json:"statement_timeout_seconds"`
-	MaxRows              int    `json:"max_rows"`
-	MaxResultBytes        int   `json:"max_result_bytes"`
-	MaxCostEstimate       float64 `json:"max_cost_estimate"`
+	SchemaVersion        string  `json:"schema_version"`
+	ConnectionID         string  `json:"connection_id"`
+	DatabaseIdentity     string  `json:"database_identity"`
+	WorkspaceID          string  `json:"workspace_id"`
+	DSNFile              string  `json:"dsn_file"`
+	TrustBundleFile      string  `json:"trust_bundle_file"`
+	PresetsFile          string  `json:"presets_file,omitempty"`
+	Mode                 string  `json:"mode,omitempty"`
+	StatementTimeoutSecs int     `json:"statement_timeout_seconds"`
+	MaxRows              int     `json:"max_rows"`
+	MaxResultBytes       int     `json:"max_result_bytes"`
+	MaxCostEstimate      float64 `json:"max_cost_estimate"`
+}
+
+type mountedPresetFile struct {
+	SchemaVersion string          `json:"schema_version"`
+	Presets       []mountedPreset `json:"presets"`
+}
+
+type mountedPreset struct {
+	ID                    string   `json:"id"`
+	Version               string   `json:"version"`
+	Name                  string   `json:"name"`
+	Description           string   `json:"description"`
+	Phrases               []string `json:"phrases"`
+	WorkspaceID           string   `json:"workspace_id"`
+	SourceAttemptID       string   `json:"source_attempt_id"`
+	SQLHash               string   `json:"sql_hash"`
+	ExposedSchemaRevision int64    `json:"exposed_schema_revision"`
 }
 
 // LoadMountedConfig loads the ADR-0089 governed-execution capability from the
@@ -94,10 +127,65 @@ func loadMountedConfig(rootPath string) (Config, error) {
 			MaxRows:          mounted.MaxRows, MaxResultBytes: mounted.MaxResultBytes, MaxCostEstimate: mounted.MaxCostEstimate,
 		},
 	}
+	// Closed-mode validation (PRESET_ONLY compatibility decision). The
+	// capability a mount declares must match the files it carries:
+	//   * no presets_file -> the legacy ad hoc shape; mode must be absent (or
+	//     an explicit ADHOC), never PRESET_ONLY with nothing to run.
+	//   * presets_file present -> a closed mode is REQUIRED: only ADHOC or
+	//     PRESET_ONLY are accepted, and an unknown/missing/inconsistent value
+	//     fails the mount so a closed capability can never silently degrade
+	//     into an ad hoc one.
+	closedCapability := mounted.PresetsFile != ""
+	switch mounted.Mode {
+	case ModeAbsent, ModeAdHoc:
+		config.PresetOnly = false
+	case ModePresetOnly:
+		config.PresetOnly = true
+	default:
+		return Config{}, &Error{code: CodeMountInvalid}
+	}
+	if closedCapability && mounted.Mode == ModeAbsent {
+		// A mount that carries a preset catalogue must say so explicitly.
+		return Config{}, &Error{code: CodeMountInvalid}
+	}
+	if !closedCapability && mounted.Mode == ModePresetOnly {
+		// PRESET_ONLY with no catalogue would advertise nothing at all.
+		return Config{}, &Error{code: CodeMountInvalid}
+	}
+	if closedCapability {
+		presets, presetErr := loadMountedPresets(rootPath, mounted.PresetsFile)
+		if presetErr != nil {
+			return Config{}, presetErr
+		}
+		config.Presets = presets
+	}
 	if err := config.Validate(); err != nil {
 		return Config{}, &Error{code: CodeMountInvalid, cause: err}
 	}
 	return config, nil
+}
+
+func loadMountedPresets(rootPath, filename string) ([]Preset, error) {
+	raw, err := loadMountFile(rootPath, filename, maxMountPresetBytes)
+	if err != nil {
+		return nil, err
+	}
+	var mounted mountedPresetFile
+	if err := jsonv2.Unmarshal([]byte(raw), &mounted, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil || mounted.SchemaVersion != "governed-query-presets-v1" {
+		return nil, &Error{code: CodeMountInvalid, cause: err}
+	}
+	presets := make([]Preset, 0, len(mounted.Presets))
+	for _, entry := range mounted.Presets {
+		presets = append(presets, Preset{
+			ID: entry.ID, Version: entry.Version, Name: entry.Name, Description: entry.Description,
+			Phrases: append([]string(nil), entry.Phrases...), WorkspaceID: entry.WorkspaceID, SourceAttemptID: entry.SourceAttemptID,
+			SQLHash: entry.SQLHash, ExposedSchemaRevision: entry.ExposedSchemaRevision,
+		})
+	}
+	if err := validatePresets(presets); err != nil {
+		return nil, &Error{code: CodeMountInvalid, cause: err}
+	}
+	return presets, nil
 }
 
 func loadMountFile(rootPath, filename string, maxBytes int) (string, error) {

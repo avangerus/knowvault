@@ -81,6 +81,31 @@ func (mode ThinkingMode) valid() bool {
 	return mode == ThinkingModeDisabled || mode == ThinkingModeEnabled
 }
 
+// StructuredOutputMode selects how the lab adapter asks the provider for a
+// structured (machine-parseable) completion. It is a typed, closed set: the
+// zero value is valid and maps to StructuredOutputJSONObject, exactly as
+// omission in a mounted config does (D1/A1).
+type StructuredOutputMode string
+
+const (
+	StructuredOutputJSONObject StructuredOutputMode = "json_object"
+	StructuredOutputJSONSchema StructuredOutputMode = "json_schema"
+)
+
+// valid accepts only the empty/default value and the two explicit modes.
+func (mode StructuredOutputMode) valid() bool {
+	return mode == "" || mode == StructuredOutputJSONObject || mode == StructuredOutputJSONSchema
+}
+
+// effective maps the empty/default value to StructuredOutputJSONObject and
+// otherwise returns the mode unchanged.
+func (mode StructuredOutputMode) effective() StructuredOutputMode {
+	if mode == "" {
+		return StructuredOutputJSONObject
+	}
+	return mode
+}
+
 // LabAdapterConfig is the non-production, explicitly-acknowledged transport
 // configuration for the interim GEN-1 adapter. It is deliberately distinct
 // from Profile: it does not assert an artifact/tokenizer/runtime hash and must
@@ -97,6 +122,9 @@ type LabAdapterConfig struct {
 	// not implement DeepSeek's thinking control; the mounted deployment config
 	// rejects omission and sets this explicitly.
 	ThinkingMode ThinkingMode `json:"thinking_mode,omitempty"`
+	// StructuredOutputMode is optional (D1/A1). Omission is valid and stays the
+	// zero value, whose effective behavior is StructuredOutputJSONObject.
+	StructuredOutputMode StructuredOutputMode `json:"structured_output_mode,omitempty"`
 	// InsecureLabMode must be explicitly true. It exists so a mounted config
 	// file cannot silently activate this non-mTLS path; the field name itself
 	// documents, at the point of use, that this is not the ADR-0080 boundary.
@@ -129,6 +157,9 @@ func (config LabAdapterConfig) Validate() error {
 		return &Error{code: CodeProfile}
 	}
 	if config.ThinkingMode != "" && !config.ThinkingMode.valid() {
+		return &Error{code: CodeProfile}
+	}
+	if !config.StructuredOutputMode.valid() {
 		return &Error{code: CodeProfile}
 	}
 	if config.ModelID == "" || len(config.ModelID) > labMaxModelIDBytes || !validOpaque(config.ModelID) {
@@ -369,6 +400,15 @@ const (
 	ResponseToolNameInvalid      ResponseDiagnostic = "MODEL_RESPONSE_TOOL_NAME_INVALID"
 	ResponseArgumentsTooLarge    ResponseDiagnostic = "MODEL_RESPONSE_ARGUMENTS_TOO_LARGE"
 	ResponseArgumentsJSONInvalid ResponseDiagnostic = "MODEL_RESPONSE_ARGUMENTS_JSON_INVALID"
+
+	ResponseClaimPlanEnvelopeInvalid  ResponseDiagnostic = "MODEL_CLAIM_PLAN_ENVELOPE_INVALID"
+	ResponseClaimIdentityInvalid      ResponseDiagnostic = "MODEL_CLAIM_IDENTITY_INVALID"
+	ResponseClaimTextInvalid          ResponseDiagnostic = "MODEL_CLAIM_TEXT_INVALID"
+	ResponseClaimUnknownReasonInvalid ResponseDiagnostic = "MODEL_CLAIM_UNKNOWN_REASON_INVALID"
+	ResponseClaimShapeInvalid         ResponseDiagnostic = "MODEL_CLAIM_SHAPE_INVALID"
+	ResponseClaimEvidenceInvalid      ResponseDiagnostic = "MODEL_CLAIM_EVIDENCE_INVALID"
+	ResponseClaimSupportInvalid       ResponseDiagnostic = "MODEL_CLAIM_SUPPORT_INVALID"
+	ResponseClaimSectionInvalid       ResponseDiagnostic = "MODEL_CLAIM_SECTION_INVALID"
 )
 
 // ReasonCode returns only a code minted by this package's fixed vocabulary.
@@ -380,7 +420,10 @@ func (diagnostic ResponseDiagnostic) ReasonCode() string {
 		ResponseProviderAborted, ResponseProviderFiltered, ResponseOutputLimit,
 		ResponseToolCountExceeded, ResponseToolIDInvalid, ResponseToolIDDuplicate,
 		ResponseToolTypeInvalid, ResponseToolNameInvalid, ResponseArgumentsTooLarge,
-		ResponseArgumentsJSONInvalid:
+		ResponseArgumentsJSONInvalid,
+		ResponseClaimPlanEnvelopeInvalid, ResponseClaimIdentityInvalid, ResponseClaimTextInvalid,
+		ResponseClaimUnknownReasonInvalid, ResponseClaimShapeInvalid, ResponseClaimEvidenceInvalid,
+		ResponseClaimSupportInvalid, ResponseClaimSectionInvalid:
 		return string(diagnostic)
 	default:
 		return ""
@@ -400,6 +443,29 @@ const (
 
 func (stage ResponseStage) valid() bool {
 	return stage == ResponseStageWire || stage == ResponseStageJSON || stage == ResponseStageClaim
+}
+
+// responseFormat builds the lab-only provider response_format for the exact
+// StructuredOutputMode. It copies outputSchema into a private RawMessage (never
+// sharing the caller's mutable bytes), and rejects malformed or non-object
+// top-level schemas before any HTTP call. The default mode is json_object, so
+// the omitempty field on completionResponseFormat stays absent.
+func (mode StructuredOutputMode) responseFormat(outputSchema []byte) (*completionResponseFormat, error) {
+	switch mode {
+	case StructuredOutputJSONObject:
+		return &completionResponseFormat{Type: string(StructuredOutputJSONObject)}, nil
+	case StructuredOutputJSONSchema:
+		schema := json.RawMessage(bytes.Clone(outputSchema))
+		var object map[string]json.RawMessage
+		if err := strictJSON(schema, &object); err != nil || object == nil {
+			return nil, &Error{code: CodeInvalid, cause: err}
+		}
+		return &completionResponseFormat{Type: string(StructuredOutputJSONSchema), JSONSchema: &completionResponseJSONSchema{
+			Name: "knowvault_claim_plan", Strict: true, Schema: schema,
+		}}, nil
+	default:
+		return nil, &Error{code: CodeInvalid}
+	}
 }
 
 // Generate performs at most one bounded HTTP attempt and returns both the
@@ -425,11 +491,15 @@ func (adapter *LabAdapter) Generate(ctx context.Context, question, systemInstruc
 		}
 		content = append(content, map[string]string{"evidence_id": item.ID, "text": item.Text, "text_hash": item.TextHash, "anchor_hash": item.AnchorHash})
 	}
+	responseFormat, err := adapter.config.StructuredOutputMode.effective().responseFormat(outputSchema)
+	if err != nil {
+		return ClaimPlan{}, result, err
+	}
 	payload := completionRequest{Model: adapter.config.ModelID, Messages: []completionMessage{
 		{Role: "system", Content: systemInstructions},
 		{Role: "user", Content: marshalContext(question, outputSchema, content)},
 	}, Temperature: 0, MaxTokens: maxOutputTokens, Stream: false,
-		ResponseFormat: &completionResponseFormat{Type: "json_object"}}
+		ResponseFormat: responseFormat}
 	if adapter.config.ThinkingMode != "" {
 		payload.Thinking = &completionThinking{Type: string(adapter.config.ThinkingMode)}
 	}
@@ -479,7 +549,8 @@ func (adapter *LabAdapter) Generate(ctx context.Context, question, systemInstruc
 		return ClaimPlan{}, result, &Error{code: CodeResponse, cause: err, status: response.StatusCode}
 	}
 	result.ResponseStage = ResponseStageClaim
-	if err := plan.Validate(evidence); err != nil {
+	if diagnostic, err := plan.validate(evidence); err != nil {
+		result.ResponseDiagnostic = diagnostic
 		result.FailureCode = CodeResponse
 		return ClaimPlan{}, result, &Error{code: CodeResponse, cause: err, status: response.StatusCode}
 	}

@@ -976,6 +976,35 @@ ul.answer-keys li:last-child { border-bottom: none; }
 }
 .search-pilot-citations { display: flex; flex-wrap: wrap; gap: 8px 18px; list-style: none; padding: 0; font-size: 13px; }
 .search-pilot-results { margin-top: 28px; }
+
+/* D3B: live database checks sit beneath the Search options and stay visually
+   secondary to the primary search surface. The table is the only element that
+   scrolls horizontally, so a wide live row never widens the page. */
+.governed-presets { margin: 18px 0 26px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.governed-presets-heading { font-size: var(--fs-meta); font-weight: 650; margin: 0 0 10px; color: var(--ink-secondary); }
+.governed-presets-note { margin: 8px 0 0; font-size: var(--fs-meta); color: var(--ink-secondary); }
+.governed-presets-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.governed-preset-select { flex: 1 1 260px; min-width: 0; max-width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink); background: var(--surface); font: inherit; }
+.governed-preset-select:disabled { opacity: .55; }
+.governed-result { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.governed-result h3 { font-size: var(--fs-body-lg); margin: 0 0 8px; }
+.governed-result-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 4px; font-size: var(--fs-meta); color: var(--ink-secondary); }
+.governed-badge { display: inline-block; padding: 2px 8px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-strong); font-size: var(--fs-caption); font-weight: 650; letter-spacing: .02em; }
+.governed-badge-muted { background: var(--warning-tint); color: var(--warning); }
+.governed-result-source { overflow-wrap: anywhere; }
+.governed-result-window { margin: 0 0 10px; font-size: var(--fs-caption); color: var(--ink-secondary); overflow-wrap: anywhere; }
+.governed-result-table-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }
+.governed-result-table { border-collapse: collapse; width: 100%; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-caption); }
+.governed-result-table th, .governed-result-table td { padding: 6px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line-soft); }
+.governed-result-table th { position: sticky; top: 0; background: var(--surface-2); font-weight: 650; }
+.governed-null, .governed-result-table td .governed-null { color: var(--ink-tertiary); font-style: italic; }
+.governed-result-count { margin: 8px 0 0; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.governed-receipt { margin: 12px 0 0; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.governed-receipt summary { cursor: pointer; padding: 4px 0; }
+.governed-receipt dl { margin: 4px 0 0; display: grid; gap: 2px; }
+.governed-receipt-row { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.governed-receipt-row dt { flex: 0 0 170px; color: var(--ink-tertiary); }
+.governed-receipt-row dd { margin: 0; flex: 1 1 200px; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
 .search-pilot-hit { margin: 0 0 24px; }
 .search-pilot-hit > a { font-size: var(--fs-body-lg); color: var(--accent); overflow-wrap: anywhere; }
 .search-pilot-path { font-size: var(--fs-caption); color: var(--ink-secondary); overflow-wrap: anywhere; margin: 5px 0; }
@@ -987,4 +1016,5 @@ ul.answer-keys li:last-child { border-bottom: none; }
   .search-pilot h1 { font-size: 22px; }
   .search-pilot-form { flex-wrap: wrap; }
   .search-pilot-form > input { flex-basis: 100%; }
+  .governed-receipt-row dt { flex-basis: 100%; }
 }

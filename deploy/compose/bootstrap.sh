@@ -103,9 +103,10 @@ fi
 # Public bind-mounted files must be readable after restrictive archive unpacking.
 chmod 0644 postgres-init-keycloak-db.sh proxy/nginx.conf proxy/embedding.conf
 install -d -m 0700 secrets pki/platform pki/keycloak pki/proxy pki/search pki/embedding keycloak \
-  mounts/server/secrets mounts/server/trust mounts/server/search mounts/server/embedding \
+  mounts/server/secrets mounts/server/trust mounts/server/search mounts/server/embedding mounts/server/governedquery \
   mounts/worker/secrets mounts/worker/trust mounts/worker/source-trust mounts/worker/source mounts/worker/search mounts/worker/embedding
 install -d -o 0 -g 65532 -m 0750 mounts/server/secrets
+install -d -o 0 -g 65532 -m 0750 mounts/server/governedquery
 install -d -o 0 -g 65530 -m 0750 mounts/worker/secrets
 install -d -m 0755 mounts/worker/source/inbox
 

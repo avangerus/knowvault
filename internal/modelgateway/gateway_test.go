@@ -121,7 +121,13 @@ func TestClaimPlanRequiresEvidenceAndAcyclicSupport(t *testing.T) {
 	if err := plan.Validate(evidence); err != nil {
 		t.Fatal(err)
 	}
+	if diagnostic, err := plan.validate(evidence); err != nil || diagnostic != "" {
+		t.Fatalf("valid plan produced diagnostic=%q err=%v, want empty/nil", diagnostic, err)
+	}
 	plan.Claims[0].EvidenceIDs = []string{"ev_missing"}
+	if diagnostic, err := plan.validate(evidence); err == nil || diagnostic != ResponseClaimEvidenceInvalid || CodeOf(err) != CodeResponse {
+		t.Fatalf("unknown evidence reference diagnostic=%q err=%v, want %s/CodeResponse", diagnostic, err, ResponseClaimEvidenceInvalid)
+	}
 	if CodeOf(plan.Validate(evidence)) != CodeResponse {
 		t.Fatal("unknown evidence reference was accepted")
 	}
@@ -138,6 +144,9 @@ func TestClaimPlanRequiresEvidenceAndAcyclicSupport(t *testing.T) {
 	plan.Claims[0].Kind = "INFERENCE"
 	plan.Claims[0].EvidenceIDs = []string{}
 	plan.Claims[0].SupportingClaimIDs = []string{"C2"}
+	if diagnostic, err := plan.validate(evidence); err == nil || diagnostic != ResponseClaimSupportInvalid || CodeOf(err) != CodeResponse {
+		t.Fatalf("cyclic unsupported claims diagnostic=%q err=%v, want %s/CodeResponse", diagnostic, err, ResponseClaimSupportInvalid)
+	}
 	if CodeOf(plan.Validate(evidence)) != CodeResponse {
 		t.Fatal("cyclic unsupported claims were accepted")
 	}

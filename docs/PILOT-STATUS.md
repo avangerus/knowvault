@@ -1,7 +1,7 @@
 # Pilot status
 
 Status: **MCP pilot; built-in model answers are preliminary.**
-This public snapshot is dated September 16, 2026.
+This public snapshot is dated September 19, 2026.
 The [pilot release](https://github.com/avangerus/knowvault/releases/tag/v0.1.0-pilot.1)
 describes the initial release scope.
 
@@ -18,6 +18,7 @@ and connectors are implemented. Deployment is operator-assisted.
 | Documents | Approved server folders; Markdown/plain text and supported DOCX/text-PDF extraction without OCR. |
 | PostgreSQL | Prepared views become versioned entity snapshots with typed values, timestamps, and provenance. |
 | External agents | Workspace-scoped HTTP MCP, expiring and revocable service access codes, search, inventory, and complete paginated reads. |
+| Reviewed live SQL | Administrators mount versioned reviewed PostgreSQL query presets; authorized browser users and external MCP agents can list and run them. Callers receive exact text-valued rows plus database identity, execution interval, and hashes, and cannot supply SQL or parameters. |
 | Evidence | Retained version addresses, readable source pages, byte-level evidence metadata, and authorization checks at read time. |
 | Source lifecycle | Synchronization status, visible skips, and recovery when an observed file or SQL entity disappears and returns. |
 | Identity and access | Keycloak/OIDC sign-in, organizations and workspace membership, service identities, and revocable agent credentials. |
@@ -53,6 +54,21 @@ These are bounded checks against synthetic data. They do not verify every
 document format, source policy, or customer dataset, and they are not a full
 acceptance rerun on every later server revision.
 
+Recent reviewed live-SQL and browser checks measured:
+
+- Local Qwen structured-output qualification passed **4/4** first attempts and
+  **20/20** repeated calls.
+- MCP PRESET_ONLY parity matched **8/8** allowed calls and denied **6/6** for a
+  human and a SERVICE identity; a revoked credential returned **401** and the
+  denial was attributed in the audit journal.
+- A browser walkthrough ran four live checks with safe refresh and evidence
+  return: implicit catalogue discovery passed **4/4**, and a mismatched
+  connection was denied.
+- A second operator rolled back to the recorded previous image and recovered
+  forward: after restore, MCP again passed **8/8** allowed calls with **6/6**
+  denials and catalogue discovery passed **4/4**. This proves the recorded
+  image-switch procedure, not host-reboot recovery or turnkey installation.
+
 ## Known limitations
 
 - **Answer quality:** a recent broad-list model answer returned readable citations
@@ -69,10 +85,12 @@ acceptance rerun on every later server revision.
 - **Scale:** company-wide performance at millions of files has not been
   established by the pilot checks.
 
-OCR/VLM, Excel analysis, arbitrary SQL analytics, long-running conversations,
-and general-purpose knowledge graphs are outside the current pilot scope.
-Existing code or design documents for those directions do not make them release
-commitments.
+The built-in model's free-form answers remain preliminary. Arbitrary SQL analytics,
+parameterized presets, customer-wide scale, and turnkey installation are outside
+the current pilot scope, as are OCR/VLM, Excel analysis, long-running
+conversations, and general-purpose knowledge graphs. Existing code or design
+documents for those directions do not make them release commitments, and the
+pilot checks above do not establish production readiness.
 
 ## Evaluate it on your work
 

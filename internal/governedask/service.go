@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -119,22 +120,28 @@ const (
 		"described in the supplied Evidence fragments. Fully qualify every table or view " +
 		"as schema_name.table_name exactly as given in Evidence; unqualified object names are prohibited. " +
 		"The response must be strictly a ClaimPlan JSON object without any " +
-		"other text or markdown: schema_version=\"1.4\", claims is an array of exactly one claim with " +
+		"other text or markdown: the top-level object contains exactly schema_version, claims and sections, " +
+		"and no additional or punctuation-named members are allowed (for example a member named \".\"); " +
+		"schema_version=\"1.4\", claims is an array of exactly one claim with " +
 		"claim_id=\"C1\", sections is an array of exactly one section with section_id=\"S1\", title=null, and " +
 		"ordered_claim_ids=[\"C1\"]. Claim field rules by kind: " +
 		"FACT: text is the exact SQL query text (a nonempty string without markdown or explanation), " +
+		"SQL text must be a single line, valid UTF-8, at most 2000 UTF-8 bytes, with no newline, " +
+		"carriage return, tab, other control character, or leading/trailing whitespace. " +
+		"The SQL text must not contain bidirectional-control characters: " +
+		"U+200E, U+200F, U+202A-U+202E, or U+2066-U+2069. " +
 		"unknown_reason is exactly null, evidence_ids is a nonempty array of identifiers for the schema fragments used, " +
 		"supporting_claim_ids is exactly []; " +
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
 		"evidence_ids is exactly [], and supporting_claim_ids is exactly []. " +
 		"If the question requires a table or column outside the supplied schema, return a claim with kind=UNKNOWN."
-	askOutputSchema = `{"type":"object","required":["schema_version","claims","sections"],"properties":{` +
+	askOutputSchema = `{"type":"object","additionalProperties":false,"required":["schema_version","claims","sections"],"properties":{` +
 		`"schema_version":{"const":"1.4"},` +
-		`"claims":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["claim_id","text","kind","unknown_reason","evidence_ids","supporting_claim_ids"],` +
+		`"claims":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","additionalProperties":false,"required":["claim_id","text","kind","unknown_reason","evidence_ids","supporting_claim_ids"],` +
 		`"properties":{"claim_id":{"type":"string","pattern":"^C[1-9][0-9]*$"},"text":{"type":["string","null"]},"kind":{"enum":["FACT","UNKNOWN"]},` +
 		`"unknown_reason":{"type":["string","null"],"enum":[null,"NO_RELEVANT_EVIDENCE"]},` +
 		`"evidence_ids":{"type":"array","items":{"type":"string"}},"supporting_claim_ids":{"type":"array","items":{"type":"string"}}}}},` +
-		`"sections":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["section_id","title","ordered_claim_ids"],` +
+		`"sections":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","additionalProperties":false,"required":["section_id","title","ordered_claim_ids"],` +
 		`"properties":{"section_id":{"type":"string","pattern":"^S[1-9][0-9]*$"},"title":{"type":["string","null"]},"ordered_claim_ids":{"type":"array","items":{"type":"string"}}}}}}}`
 	askMaxOutputTokens = 4096
 	// askMaxAttempts bounds how many times one question may be re-composed when
@@ -157,10 +164,10 @@ type auditAppender interface {
 	Append(ctx context.Context, access database.AccessContext, input audit.EventInput) (audit.Event, error)
 }
 
-// Service is capability-gated: EnableGovernedQuery must be called with a
-// valid mounted Config before Ask/RegisterExposedSchema/SetLiveQueries do
-// anything but return CodeUnavailable, mirroring question.Service's
-// EnableGeneration "capability absent by default" shape (ADR-0088/ADR-0089 §6).
+// Service is capability-gated: EnableGovernedQueryConfig must receive a valid
+// mounted Config before preset and administration methods expose behavior.
+// Ask additionally requires the model adapter wired by EnableGovernedQuery,
+// mirroring question.Service's capability-absent-by-default shape.
 type Service struct {
 	db      *database.Store
 	auditor auditAppender
@@ -189,6 +196,26 @@ func (service *Service) EnableGovernedQuery(config governedquery.Config, adapter
 	service.config = config
 	service.enabled = true
 	service.adapter = adapter
+}
+
+// EnableGovernedQueryConfig mounts the database capability without requiring
+// a text-generation model. This is sufficient for administrator-approved SQL
+// presets, whose statement is selected by id and never composed during a run.
+// EnableGovernedQuery may subsequently add the optional ad-hoc ask adapter.
+func (service *Service) EnableGovernedQueryConfig(config governedquery.Config) {
+	if service == nil || config.Validate() != nil {
+		return
+	}
+	service.config = config
+	service.enabled = true
+}
+
+// PresetOnly reports the operator-mounted policy for the MCP transport. The
+// service remains the authority for this decision: request data cannot turn
+// an ad-hoc query back on. A service that has not accepted a valid mount keeps
+// the legacy false value and exposes no closed-mode claim.
+func (service *Service) PresetOnly() bool {
+	return service != nil && service.enabled && service.config.PresetOnly
 }
 
 // AskResult is the user-facing, non-content-free answer ADR-0089 §4 requires:
@@ -220,7 +247,7 @@ type AskResult struct {
 // query. It fails closed before any model call when the connection is
 // unknown, live queries are disabled, or no exposed schema is registered.
 func (service *Service) Ask(ctx context.Context, access database.AccessContext, workspaceID, connectionID, question string) (AskResult, error) {
-	if service == nil || !service.enabled {
+	if service == nil || !service.enabled || service.adapter == nil {
 		return AskResult{}, &Error{code: CodeUnavailable}
 	}
 	// AGG-2: the connection's mounted config.WorkspaceID is no longer the
@@ -295,8 +322,16 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 	// exhausting the attempts returns exactly the last typed failure.
 	var lastErr error
 	for attemptNumber := 1; attemptNumber <= askMaxAttempts; attemptNumber++ {
+		// outerAttempt is this bounded-loop iteration; innerAttempt counts each
+		// GenerateBounded callback invocation (the model step's own bounded
+		// retries). Both are 1-based so a log line reads as "attempt N".
+		outerAttempt := attemptNumber
+		innerAttempt := 0
 		plan, genErr := service.adapter.GenerateBounded(ctx, question, askSystemInstructions, []byte(askOutputSchema),
-			evidence, askMaxOutputTokens, func(modelgateway.AttemptResult) {})
+			evidence, askMaxOutputTokens, func(result modelgateway.AttemptResult) {
+				innerAttempt++
+				service.logModelAttempt(outerAttempt, innerAttempt, result)
+			})
 		if genErr != nil {
 			service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
 			lastErr = &Error{code: CodeGenerationFailed, cause: genErr}
@@ -416,6 +451,19 @@ func (service *Service) discloseExecutedAttempt(ctx context.Context, access data
 		ExposedSchemaRevision: revision, ResultFormat: "postgres-text-table-v1", ResultDigest: attempt.ResultDigest,
 		ExecutionStartedAt: result.ExecutionStartedAt, ExecutionCompletedAt: result.ExecutionCompletedAt,
 	}, nil
+}
+
+// logModelAttempt emits one structured, content-free line per model-step
+// callback. It is the operator's view of the otherwise-silent bounded retry:
+// compose_attempt is the compose-and-execute loop iteration (1..askMaxAttempts)
+// and model_attempt is the invocation of the GenerateBounded callback within
+// that iteration (the model step's own bounded retries). The fixed attribute
+// set carries only transport status and the closed ResponseDiagnostic/
+// FailureCode vocabularies AttemptResult already guarantees are content-free
+// (modelgateway.AttemptResult): no question text, evidence text, prompt or
+// response bytes, SQL text, schema name, DSN or row ever reaches a log line.
+func (service *Service) logModelAttempt(outerAttempt, innerAttempt int, result modelgateway.AttemptResult) {
+	slog.Info("governed model attempt completed", "component", "knowvault-server", "operation", "governed-query-compose", "compose_attempt", outerAttempt, "model_attempt", innerAttempt, "model_id", result.ModelID, "status_code", result.StatusCode, "response_stage", string(result.ResponseStage), "response_diagnostic", result.ResponseDiagnostic.ReasonCode(), "succeeded", result.Succeeded, "request_bytes", result.RequestBytes, "response_bytes", result.ResponseBytes, "failure_code", string(result.FailureCode))
 }
 
 func candidateSQL(plan modelgateway.ClaimPlan) (string, bool) {

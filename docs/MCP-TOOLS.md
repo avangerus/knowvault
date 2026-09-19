@@ -67,6 +67,11 @@ stay closed to it: conversation management, the confirmation/authority tools,
 metric-definition reads (owner decision 12.09.2026, design item 4(5)). Every
 other tool below is shown to and callable by a non-SERVICE (human/operator)
 principal.
+
+When an administrator mounts at least one governed SQL preset, SERVICE and human
+principals additionally see `knowvault_queries_list` and
+`knowvault_query_run`. Both disappear from `tools/list` when no preset is
+mounted. They accept no SQL and are described below.
 The tool set is KnowVault's own: no wiki-rag tool name (`wiki_search`,
 `wiki_get_page`, `wiki_list_pages`, `wiki_find_related`, `code_search`,
 `code_get_file`) is advertised in `tools/list` or dispatched by `tools/call`
@@ -106,6 +111,8 @@ existing parameters and result shapes.
 | `knowvault_source_enable` | Bind or re-enable a source scope. |
 | `knowvault_source_sync` | Request a full refresh for a source scope. |
 | `knowvault_governed_query_ask` | Governed read-only SQL ask over an exposed schema. |
+| `knowvault_queries_list` | List versioned, reviewed live-query presets without SQL text. |
+| `knowvault_query_run` | Run one reviewed preset by id and return a live execution receipt. |
 | `knowvault_metric_definitions_list` | List issued metric-definition versions. |
 | `knowvault_metric_definition_get` | Read one exact metric-definition version. |
 | `knowvault_sources` *R3a-1* | Source inventory, schedule and confirmation context (former name `knowvault_sources_list` still accepted). |
@@ -143,6 +150,26 @@ record do not store the returned rows, and the attempt ID is not a `kv1:` source
 page address. Use ingested SQL snapshots and their existing read addresses when
 a retained citation is required. A later live query can return newer data.
 SERVICE attempts are attributed to the service actor, not a human.
+
+## `knowvault_queries_list` and `knowvault_query_run`
+
+These optional tools implement the narrower, deterministic preset path. List
+requires `workspace_id` and may optionally pin `connection_id`; omitting it
+selects the single administrator-mounted preset connection, while an explicit
+`connection_id` that does not match that mount fails closed. Run requires all
+three fields `workspace_id`, `connection_id` and `preset_id`. Both schemas are
+closed: SQL, parameters and unknown fields are invalid.
+
+The catalogue contains a preset id, version, name, description, exact phrases,
+source attempt id, reviewed SQL hash, exposed-schema revision and preset hash;
+it never contains SQL or credentials. Run reloads the source attempt from the
+server, verifies the attempt id, SQL hash and exposed-schema revision against
+the current workspace, then uses the same dedicated read-only transaction,
+timeout, EXPLAIN cost, row and byte limits as governed ask.
+
+The run result has `data_state=LIVE_OBSERVATION`, exact PostgreSQL text cells,
+execution times and content-free receipt hashes. It is not retained Evidence
+and has no `kv1:` address. See [Governed SQL presets](GOVERNED-SQL-PRESETS.md).
 
 ## `knowvault_read`
 
