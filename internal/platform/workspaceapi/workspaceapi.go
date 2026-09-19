@@ -2006,8 +2006,8 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	// The connection id is the fixed, mounted ADR-0089 connection; this
 	// surface never accepts SQL, a DSN or a credential as input, only the
 	// operator's exposed-schema annotations, the live-queries flag, a natural
-	// -language question and, for promotion, the operator's own reviewed SQL
-	// text (never a model-composed one automatically).
+	// -language question and, for promotion, a server-owned attempt id plus its
+	// reviewed SQL hash. SQL text is never accepted by this transport.
 	if len(parts) == 3 && parts[1] == "governed-query-connections" && validOpaqueID(parts[0]) {
 		if strings.HasSuffix(parts[2], ":set-live-queries") {
 			connectionID := strings.TrimSuffix(parts[2], ":set-live-queries")

@@ -5,7 +5,8 @@ package workspaceapi
 // database read/write and the sole call into
 // internal/source/postgresqlquery/governedquery lives in
 // internal/governedask.Service. No SQL, DSN or credential is ever accepted
-// as a request field here; the model composes SQL, never a human caller
+// as a request field here. Ad-hoc ask lets the model compose SQL; preset run
+// resolves only a previously reviewed server-owned attempt
 // (PRODUCT_CONSTITUTION.md §7's carve-out is exactly this ADR's scope).
 
 import (
