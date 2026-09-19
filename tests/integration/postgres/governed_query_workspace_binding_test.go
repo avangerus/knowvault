@@ -165,7 +165,7 @@ func newGovernedBindingService(t *testing.T, appStore *database.Store, auditStor
 		Presets: []governedquery.Preset{{
 			ID: "contract-count", Version: "v1", Name: "Contract count", Description: "Current contract count.",
 			Phrases: []string{"check contracts"}, WorkspaceID: govBindWorkspaceA, SourceAttemptID: "gqat_reviewed",
-			SQLHash: canon.Hash([]byte("SELECT count(*) FROM gm.contracts")), ExposedSchemaRevision: 2,
+			SQLHash: canon.Hash([]byte("SELECT count(*) FROM reporting.contracts")), ExposedSchemaRevision: 2,
 		}},
 	}
 	if err := config.Validate(); err != nil {
@@ -308,7 +308,7 @@ func TestGovernedQueryWorkspaceBindingIsPerWorkspaceNotPerConnection(t *testing.
 	// revision 2 while the current exposed schema below is revision 1. The run
 	// must refuse before dialling the intentionally unreachable external host.
 	objects := []governedquery.ExposedObject{{
-		SchemaName: "gm", TableName: "contracts", Description: "Contracts",
+		SchemaName: "reporting", TableName: "contracts", Description: "Contracts",
 		Columns: []governedquery.ExposedColumn{{Name: "id", DataType: "text", Description: "Contract identifier"}},
 	}}
 	objectsJSON, err := canon.CanonicalJSON(objects)
@@ -320,7 +320,7 @@ func TestGovernedQueryWorkspaceBindingIsPerWorkspaceNotPerConnection(t *testing.
 		VALUES ($1,$2,1,$3::jsonb,$4,$5)`, govBindOrg, govBindConnection, string(objectsJSON), canon.Hash(objectsJSON), govBindOwner); err != nil {
 		t.Fatalf("seed preset schema: %v", err)
 	}
-	presetSQL := "SELECT count(*) FROM gm.contracts"
+	presetSQL := "SELECT count(*) FROM reporting.contracts"
 	if _, err := admin.Exec(ctx, `INSERT INTO public.governed_query_attempt
 		(organization_id, id, connection_id, workspace_id, exposed_schema_revision, sql_hash, sql_text, row_count, executed_by)
 		VALUES ($1,$2,$3,$4,2,$5,$6,1,$7)`, govBindOrg, "gqat_reviewed", govBindConnection,

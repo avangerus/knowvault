@@ -146,7 +146,7 @@ func TestGovernedPresetMCPIsMountedOnlyWhenConfiguredAndNeverAcceptsSQL(t *testi
 	}
 	p := &governedTransportProbe{
 		hasPresets: true,
-		presetCatalog: governedask.PresetCatalog{ConnectionID: "conn", DatabaseIdentity: "gm", Presets: []governedquery.PresetSummary{{
+		presetCatalog: governedask.PresetCatalog{ConnectionID: "conn", DatabaseIdentity: "fixture", Presets: []governedquery.PresetSummary{{
 			ID: "contract-count", Version: "v1", Name: "Contract count", Description: "Current count",
 			Phrases: []string{"check contracts"}, SourceAttemptID: "attempt", SQLHash: "sha256:sql",
 			ExposedSchemaRevision: 2, PresetHash: "sha256:preset"}}},

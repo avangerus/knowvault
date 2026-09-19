@@ -76,17 +76,17 @@ func TestPresetIdentifiersAndPhrasesMayRepeatOnlyAcrossWorkspaces(t *testing.T) 
 
 func TestPresetBindingRederivesStoredSQLHash(t *testing.T) {
 	preset := validPreset()
-	sqlText := "SELECT count(*) FROM gm.contracts"
+	sqlText := "SELECT count(*) FROM reporting.contracts"
 	preset.SQLHash = sha256Hex(sqlText)
 	attempt := ExecutedAttempt{AttemptID: preset.SourceAttemptID, ExposedSchemaRevision: preset.ExposedSchemaRevision, SQLHash: preset.SQLHash, SQLText: sqlText}
 	if !preset.Binds(attempt) {
 		t.Fatal("exact reviewed attempt should bind")
 	}
-	attempt.SQLText = "SELECT secret FROM gm.hidden"
+	attempt.SQLText = "SELECT secret FROM reporting.hidden"
 	if preset.Binds(attempt) {
 		t.Fatal("stored SQL text that does not match the reviewed hash must be refused")
 	}
-	attempt.SQLText = "DELETE FROM gm.contracts"
+	attempt.SQLText = "DELETE FROM reporting.contracts"
 	attempt.SQLHash = sha256Hex(attempt.SQLText)
 	preset.SQLHash = attempt.SQLHash
 	if preset.Binds(attempt) {

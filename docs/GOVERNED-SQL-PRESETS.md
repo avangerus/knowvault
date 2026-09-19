@@ -28,9 +28,9 @@ directory mode `0750` and file mode `0440`:
 ```json
 {
   "schema_version": "governed-query-mount-v1",
-  "connection_id": "customer-gm-live",
-  "database_identity": "gm",
-  "workspace_id": "customer-pilot",
+  "connection_id": "reporting-readonly",
+  "database_identity": "business-reporting",
+  "workspace_id": "workspace-example",
   "dsn_file": "dsn",
   "trust_bundle_file": "trust.pem",
   "presets_file": "presets.json",
@@ -61,7 +61,7 @@ Example `presets.json`:
       "name": "Current contract status",
       "description": "Returns the approved current contract status view.",
       "phrases": ["check contract status", "show contract health"],
-      "workspace_id": "customer-pilot",
+      "workspace_id": "workspace-example",
       "source_attempt_id": "gqat_...",
       "sql_hash": "sha256:...",
       "exposed_schema_revision": 3
