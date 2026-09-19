@@ -119,7 +119,9 @@ const (
 		"described in the supplied Evidence fragments. Fully qualify every table or view " +
 		"as schema_name.table_name exactly as given in Evidence; unqualified object names are prohibited. " +
 		"The response must be strictly a ClaimPlan JSON object without any " +
-		"other text or markdown: schema_version=\"1.4\", claims is an array of exactly one claim with " +
+		"other text or markdown: the top-level object contains exactly schema_version, claims and sections, " +
+		"and no additional or punctuation-named members are allowed (for example a member named \".\"); " +
+		"schema_version=\"1.4\", claims is an array of exactly one claim with " +
 		"claim_id=\"C1\", sections is an array of exactly one section with section_id=\"S1\", title=null, and " +
 		"ordered_claim_ids=[\"C1\"]. Claim field rules by kind: " +
 		"FACT: text is the exact SQL query text (a nonempty string without markdown or explanation), " +
@@ -128,13 +130,13 @@ const (
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
 		"evidence_ids is exactly [], and supporting_claim_ids is exactly []. " +
 		"If the question requires a table or column outside the supplied schema, return a claim with kind=UNKNOWN."
-	askOutputSchema = `{"type":"object","required":["schema_version","claims","sections"],"properties":{` +
+	askOutputSchema = `{"type":"object","additionalProperties":false,"required":["schema_version","claims","sections"],"properties":{` +
 		`"schema_version":{"const":"1.4"},` +
-		`"claims":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["claim_id","text","kind","unknown_reason","evidence_ids","supporting_claim_ids"],` +
+		`"claims":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","additionalProperties":false,"required":["claim_id","text","kind","unknown_reason","evidence_ids","supporting_claim_ids"],` +
 		`"properties":{"claim_id":{"type":"string","pattern":"^C[1-9][0-9]*$"},"text":{"type":["string","null"]},"kind":{"enum":["FACT","UNKNOWN"]},` +
 		`"unknown_reason":{"type":["string","null"],"enum":[null,"NO_RELEVANT_EVIDENCE"]},` +
 		`"evidence_ids":{"type":"array","items":{"type":"string"}},"supporting_claim_ids":{"type":"array","items":{"type":"string"}}}}},` +
-		`"sections":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["section_id","title","ordered_claim_ids"],` +
+		`"sections":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","additionalProperties":false,"required":["section_id","title","ordered_claim_ids"],` +
 		`"properties":{"section_id":{"type":"string","pattern":"^S[1-9][0-9]*$"},"title":{"type":["string","null"]},"ordered_claim_ids":{"type":"array","items":{"type":"string"}}}}}}}`
 	askMaxOutputTokens = 4096
 	// askMaxAttempts bounds how many times one question may be re-composed when

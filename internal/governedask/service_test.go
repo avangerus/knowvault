@@ -2,6 +2,7 @@ package governedask
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -118,6 +119,65 @@ func TestValidOpaque(t *testing.T) {
 	for _, value := range []string{"", "has space", "semi;colon"} {
 		if validOpaque(value) {
 			t.Fatalf("expected %q to be rejected", value)
+		}
+	}
+}
+
+func TestAskOutputSchemaClosesEveryObjectLevel(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(askOutputSchema), &schema); err != nil {
+		t.Fatalf("askOutputSchema is not valid JSON: %v", err)
+	}
+
+	assertClosed := func(where string, object map[string]any) {
+		t.Helper()
+		if object["type"] != "object" {
+			t.Fatalf("%s: expected object schema, got type=%v", where, object["type"])
+		}
+		closed, ok := object["additionalProperties"].(bool)
+		if !ok || closed {
+			t.Fatalf("%s: expected additionalProperties=false, got %v", where, object["additionalProperties"])
+		}
+	}
+
+	assertClosed("top-level object", schema)
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema has no properties object")
+	}
+	claims, ok := properties["claims"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema has no properties.claims object")
+	}
+	claimItems, ok := claims["items"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema claims has no items object schema")
+	}
+	assertClosed("claim object", claimItems)
+
+	sections, ok := properties["sections"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema has no properties.sections object")
+	}
+	sectionItems, ok := sections["items"].(map[string]any)
+	if !ok {
+		t.Fatal("askOutputSchema sections has no items object schema")
+	}
+	assertClosed("section object", sectionItems)
+}
+
+func TestAskInstructionsRequireExactTopLevelMembers(t *testing.T) {
+	lowered := strings.ToLower(askSystemInstructions)
+	for _, required := range []string{
+		"schema_version",
+		"claims",
+		"sections",
+		"additional",
+		"punctuation-named",
+		"top-level object contains exactly",
+	} {
+		if !strings.Contains(lowered, required) {
+			t.Fatalf("governed query instructions do not state the top-level member rule %q", required)
 		}
 	}
 }
