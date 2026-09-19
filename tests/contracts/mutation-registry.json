@@ -3659,8 +3659,8 @@
           "target": "internal/platform/workspaceapi/mcp_search.go",
           "kind": "GO_MCP_CONTENT_TEXT_CHANNEL_WEAKENING",
           "expected": "RED",
-          "old": "\tencoded, err := json.Marshal(address)",
-          "new": "\tencoded, err := json.Marshal(nil)"
+          "old": "\t\tbuilder.WriteString(canonical)",
+          "new": "\t\tbuilder.WriteString(\"\")"
         }
       ]
     },
