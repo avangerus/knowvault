@@ -6,12 +6,18 @@ import (
 )
 
 func pBad(t *testing.T, e error) {
+	t.Helper()
 	if CodeOf(e) != CodeInvalidProposal || ClarificationOf(e) == "" {
 		t.Fatalf("code=%q text=%q", CodeOf(e), ClarificationOf(e))
 	}
 }
 
 func TestProposalV2ClosedVocabulary(t *testing.T) {
+	for _, k := range []ScalarKind{KindBOOL, KindINT, KindNUMERIC, KindTEXT, KindDATE, KindTIMESTAMP, KindTIMESTAMPTZ} {
+		if !k.Valid() {
+			t.Fatal(k)
+		}
+	}
 	_, e := NewFieldToken("supplier_name; DROP TABLE x")
 	pBad(t, e)
 	f, _ := NewFieldToken("supplier_name_1")
@@ -32,6 +38,10 @@ func TestProposalV2ScalarsAndTemporalGrammar(t *testing.T) {
 			t.Fatalf("%s=%s", in, v)
 		}
 	}
+	for _, in := range []string{"+1", "1e9", "NaN", "Inf", ".1", "1.", "1.2.3"} {
+		_, e := NumericScalar(in)
+		pBad(t, e)
+	}
 	txt, _ := TextScalar(`x' OR 1=1 --`)
 	if v, ok := txt.Text(); !ok || v != `x' OR 1=1 --` {
 		t.Fatal("text payload")
@@ -41,6 +51,10 @@ func TestProposalV2ScalarsAndTemporalGrammar(t *testing.T) {
 	}
 	if _, e := TextScalar(strings.Repeat("é", 128) + "x"); CodeOf(e) != CodeInvalidProposal {
 		t.Fatal("257-byte text")
+	}
+	for _, in := range []string{"2024-02-30", "2023-02-29", "0000-01-01"} {
+		_, e := DateScalar(in)
+		pBad(t, e)
 	}
 	for _, in := range []string{"2024-01-01T12:30:45,1", "2024-01-01T12:30:45.1234567890", "2024-01-01T12:30:45Z"} {
 		_, e := TimestampScalar(in)
@@ -52,6 +66,10 @@ func TestProposalV2ScalarsAndTemporalGrammar(t *testing.T) {
 	}
 	if v, ok := z.Timestamptz(); !ok || v != "2024-01-01T06:30:00.5Z" {
 		t.Fatal(v)
+	}
+	for _, in := range []string{"2024-01-01T12:00:00", "2024-01-01T12:00:00+24:00", "2024-01-01T12:00:00+14:01", "2024-01-01T12:00:00+12:60"} {
+		_, e := TimestamptzScalar(in)
+		pBad(t, e)
 	}
 	var zero Scalar
 	if _, ok := zero.Bool(); ok {
