@@ -273,7 +273,7 @@
     "docs/adr/0096-read-only-conversational-analytics-authority-accepted.md": "61a78a7bb2bbc65cc8c75a1bf9100987716d5521548e6a319070c71c65f3c942",
     "docs/adr/README.md": "f28a0a76217f0dba35474d4b6e216a42f05b9abbaeeff1f43f38839701cd88bc",
     "docs/qualification-s2b-document-parser.md": "98c8d5b7d17530e38209c95ac1ef55f2095e7a1a37eec7fb6ed0d69a3ed3e0f4",
-    "docs/release/PLAN.md": "262efc45fd19201db52d8e5bca5e2def48d52473e0ab4ecaf6514d72d04d936b",
+    "docs/release/PLAN.md": "5a30498fde2c3e014b488e0ba0e8e9b5ad58a9de9c6e3888442fdbf74c470e2c",
     "go.mod": "aa670ec2d08137fe462865435a600ac289c3dfc1261d19c9590ee59efacc1012",
     "go.sum": "cffcc2c0e61f4bd5d6ee0ded3e51b665faa11c02f5a369e394d7eaa22839a7dd",
     "internal/artifact/repository/repository.go": "0298778eb771d9f9842d12ba5fab0544be2a2035b2a1197089c80f8992619330",
