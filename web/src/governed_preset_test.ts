@@ -35,11 +35,13 @@ import {
   GOVERNED_RESULT_RUN_UNAVAILABLE,
   GOVERNED_RESULT_UNKNOWN_PRESET,
   GovernedPresetResultView,
+  governedAsk,
   governedCellText,
   governedMCPCall,
   governedPresetListArguments,
   governedPresetRunArguments,
   governedRequestAccepted,
+  type GovernedAskResult,
   type GovernedPresetRunResult,
 } from "./governed-presets";
 
@@ -56,6 +58,28 @@ function check(condition: boolean, message: string): void {
 const PRECISE_DECIMAL = "9007199254740993.123456789";
 const STARTED_AT = "2026-09-15T10:30:00.123456789Z";
 const COMPLETED_AT = "2026-09-15T10:30:00.987654321Z";
+
+const ASK_CSRF_TOKEN = "csrf-token-ask-1";
+
+function askResultFixture(connectionID = "connection-2"): GovernedAskResult {
+  return {
+    attempt_id: "attempt-ask-4",
+    sql: "SELECT amount FROM ledger",
+    sql_hash: "hmac-sha256:k7:" + "d".repeat(64),
+    columns: ["amount", "note", "memo"],
+    rows: [[PRECISE_DECIMAL, null, ""]],
+    row_count: 1,
+    cost_estimate: 4.5,
+    answer: "The latest ledger amount is the precise value shown.",
+    connection_id: connectionID,
+    database_identity: "db-identity-1",
+    exposed_schema_revision: 12,
+    result_format: "json_rows",
+    result_digest: "hmac-sha256:k8:" + "e".repeat(64),
+    execution_started_at: STARTED_AT,
+    execution_completed_at: COMPLETED_AT,
+  };
+}
 
 async function main(): Promise<void> {
   // --- 1. exact tools/call arguments -------------------------------------
@@ -216,6 +240,284 @@ async function main(): Promise<void> {
       fakeFetch, GOVERNED_QUERY_RUN_TOOL, governedPresetRunArguments("workspace-7", { connection_id: "connection-2" }, "preset-9"));
     check(outcome.kind === "sessionExpired", "an HTTP 401 on the CSRF GET is reported as sessionExpired");
     check(calls.length === 1 && calls[0] === "/api/v1/session/csrf", "the 401 short-circuits before any MCP POST");
+  }
+
+  // --- 8. governedAsk success: exact request and unchanged result ---------
+  // The transport must fetch a CSRF token, POST the connection-scoped :ask
+  // path with exactly the ask headers, send exactly { question } and return
+  // the server's result untouched -- precise decimal, NULL and empty string
+  // all preserved verbatim.
+  {
+    const encodedWorkspaceID = "workspace/7 ?";
+    const encodedConnectionID = "connection/2 ?";
+    const expectedResult = askResultFixture(encodedConnectionID);
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    let step = 0;
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      step += 1;
+      if (step === 1) {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ connection_id: encodedConnectionID, result: expectedResult }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const outcome = await governedAsk(
+      fakeFetch,
+      encodedWorkspaceID,
+      { connection_id: encodedConnectionID },
+      "What is the latest ledger amount?",
+    );
+
+    check(calls.length === 2, "governedAsk makes exactly two calls");
+
+    const csrfCall = calls[0];
+    check(csrfCall.url === "/api/v1/session/csrf", "governedAsk first GETs the CSRF endpoint");
+    check(
+      (csrfCall.init?.method ?? "GET") === "GET",
+      "the CSRF call is a GET with no method override",
+    );
+
+    const askCall = calls[1];
+    check(
+      askCall.url
+        === "/api/v1/workspaces/workspace%2F7%20%3F/governed-query-connections/connection%2F2%20%3F:ask",
+      "governedAsk encodes both identities in the workspace- and connection-scoped :ask path",
+    );
+    check(askCall.init?.method === "POST", "the ask call is a POST");
+
+    const headers = new Headers(askCall.init?.headers);
+    check(headers.get("Accept") === "application/json", "the ask Accept header is exact");
+    check(headers.get("Content-Type") === "application/json", "the ask Content-Type header is exact");
+    check(headers.get("X-KnowVault-CSRF") === ASK_CSRF_TOKEN, "the ask CSRF header is exact");
+    const idempotencyKey = headers.get("Idempotency-Key") ?? "";
+    check(idempotencyKey.length === 43, "the generated ask Idempotency-Key is exactly 43 characters");
+    check(/^[A-Za-z0-9_-]{43}$/.test(idempotencyKey), "the generated ask Idempotency-Key is unpadded base64url");
+    check(!headers.has("If-Match"), "the ask call sends no If-Match header");
+
+    const body = JSON.parse(String(askCall.init?.body)) as Record<string, unknown>;
+    check(Object.keys(body).length === 1 && body.question === "What is the latest ledger amount?",
+      "the ask body is exactly { question } with the exact text");
+
+    check(outcome.kind === "ok", "a well-formed ask response is an ok outcome");
+    if (outcome.kind === "ok") {
+      const value = outcome.value;
+      check(JSON.stringify(value) === JSON.stringify(expectedResult), "the complete ask result JSON is returned unchanged");
+      check(value.rows[0][0] === PRECISE_DECIMAL, "the ask precise decimal is preserved exactly");
+      check(value.rows[0][1] === null, "the ask NULL cell is preserved as null");
+      check(value.rows[0][2] === "", "the ask empty-string cell is preserved as an empty string");
+      check(value.answer === expectedResult.answer, "the ask answer text is unchanged");
+      check(value.attempt_id === expectedResult.attempt_id, "the ask attempt identity is unchanged");
+      check(value.connection_id === expectedResult.connection_id
+        && value.database_identity === expectedResult.database_identity,
+        "the ask identity fields are unchanged");
+      check(value.execution_started_at === STARTED_AT && value.execution_completed_at === COMPLETED_AT,
+        "the ask read-window timestamps are unchanged");
+      check(value.sql_hash === expectedResult.sql_hash
+        && value.result_digest === expectedResult.result_digest
+        && value.result_format === expectedResult.result_format
+        && value.exposed_schema_revision === expectedResult.exposed_schema_revision,
+        "the ask receipt fields are unchanged");
+    }
+  }
+
+  // --- 9. every invocation owns a fresh idempotency key ------------------
+  {
+    const keys: string[] = [];
+    let call = 0;
+    const fakeFetch: typeof fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      call += 1;
+      if (call % 2 === 1) {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const key = new Headers(init?.headers).get("Idempotency-Key") ?? "";
+      keys.push(key);
+      return new Response(JSON.stringify({ connection_id: "connection-2", result: askResultFixture() }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const first = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "First question");
+    const second = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "Second question");
+    check(first.kind === "ok" && second.kind === "ok", "two independent governedAsk invocations both complete");
+    check(keys.length === 2, "two governedAsk invocations each POST exactly once");
+    check(keys.every((key) => /^[A-Za-z0-9_-]{43}$/.test(key)), "each invocation generates a valid 43-character key");
+    check(keys[0] !== keys[1], "separate governedAsk invocations never reuse an idempotency key");
+  }
+
+  // --- 10. governedAsk CSRF 401 is sessionExpired, with no POST -----------
+  {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response("", { status: 401 });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "sessionExpired", "an HTTP 401 on the ask CSRF GET is reported as sessionExpired");
+    check(calls.length === 1, "the ask 401 makes exactly one call");
+    check(calls[0].url === "/api/v1/session/csrf", "the ask 401 short-circuits on the CSRF GET");
+    check(calls.every((call) => (call.init?.method ?? "GET") !== "POST"), "the ask 401 makes no POST");
+  }
+
+  // --- 11. governedAsk POST 401 is sessionExpired -------------------------
+  {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      if (calls.length === 1) {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("", { status: 401 });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "sessionExpired", "an HTTP 401 on the ask POST is reported as sessionExpired");
+    check(calls.length === 2 && calls[1].init?.method === "POST", "the POST 401 follows exactly one CSRF request");
+  }
+
+  // --- 12. a non-2xx response never exposes server detail ----------------
+  {
+    const secretDetail = "secret database topology and operator token";
+    let call = 0;
+    const fakeFetch: typeof fetch = async () => {
+      call += 1;
+      if (call === 1) {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ detail: secretDetail }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(JSON.stringify(outcome) === '{"kind":"error"}', "a non-2xx ask response becomes only the generic error outcome");
+    check(!JSON.stringify(outcome).includes(secretDetail), "a non-2xx ask response exposes none of the server detail");
+  }
+
+  // --- 13. governedAsk rejects a mismatched envelope connection ----------
+  // The answer is only ever the connection the user is looking at: a result
+  // for a different connection is a content-free error, not a result.
+  {
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/session/csrf") {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ connection_id: "connection-9", result: askResultFixture() }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "error", "a response envelope for a different connection_id is an error");
+  }
+
+  // --- 14. governedAsk rejects a mismatched result connection ------------
+  {
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/session/csrf") {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        connection_id: "connection-2",
+        result: askResultFixture("connection-9"),
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "error", "a result that names a different connection_id is an error");
+  }
+
+  // --- 15. governedAsk rejects a malformed partial result ----------------
+  {
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/session/csrf") {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        connection_id: "connection-2",
+        result: { connection_id: "connection-2", attempt_id: "partial-attempt" },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "error", "a partial ask result that omits receipt and row fields is an error");
+  }
+
+  // --- 16. governedAsk rejects result fields outside the allow-list ------
+  {
+    const secretExtra = "TOP_SECRET";
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/session/csrf") {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        connection_id: "connection-2",
+        result: { ...askResultFixture(), secret_extra: secretExtra },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "error", "an otherwise valid ask result with an unapproved field is an error");
+    check(!JSON.stringify(outcome).includes(secretExtra), "an unapproved result field never reaches the serialized outcome");
+  }
+
+  // --- 17. malformed CSRF tokens fail before the ask POST ----------------
+  for (const csrfToken of [17, ""] as const) {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ csrf_token: csrfToken }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    const outcome = await governedAsk(
+      fakeFetch, "workspace-7", { connection_id: "connection-2" }, "What is the latest ledger amount?");
+    check(outcome.kind === "error", `a ${typeof csrfToken === "number" ? "numeric" : "blank"} CSRF token is an error`);
+    check(calls.length === 1, "a malformed CSRF token makes exactly one request");
+    check(calls.every((call) => (call.init?.method ?? "GET") !== "POST"), "a malformed CSRF token makes no POST");
   }
 
   if (failures !== 0) throw new Error(`${failures} governed-preset assertion(s) failed`);

@@ -421,3 +421,200 @@ export function GovernedPresetResultView({ result }: { result: GovernedPresetRun
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Governed ask transport (no UI yet).
+// ---------------------------------------------------------------------------
+
+/** governedask.AskResult — one ad hoc governed answer plus its receipt, the
+ * exact server allow-list. Rows reuse the preset row shape: one nullable
+ * string per cell, so NULL stays distinct from "". */
+export type GovernedAskResult = {
+  attempt_id: string;
+  sql: string;
+  sql_hash: string;
+  columns: string[];
+  rows: GovernedRows;
+  row_count: number;
+  cost_estimate: number;
+  answer: string;
+  connection_id: string;
+  database_identity: string;
+  exposed_schema_revision: number;
+  result_format: string;
+  result_digest: string;
+  execution_started_at: string;
+  execution_completed_at: string;
+};
+
+/** One idempotency key: 32 crypto-random bytes, base64url, no padding.
+ * Identical to main.tsx's newIdempotencyKey so both transports agree. */
+export function newGovernedIdempotencyKey(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  bytes.forEach((value) => { binary += String.fromCharCode(value); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The ask csrf_token is accepted only as a nonempty string: a missing, empty
+ * or non-string token is a failure, never a header value. */
+function governedCsrfToken(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/** The exact key allow-list of governedask.AskResult (service.go: attempt_id
+ * through execution_completed_at — the same 15 exposed fields the mirror type
+ * declares), in server order. A result is accepted only when Object.keys names
+ * exactly these and nothing else. */
+const GOVERNED_ASK_RESULT_KEYS = [
+  "attempt_id",
+  "sql",
+  "sql_hash",
+  "columns",
+  "rows",
+  "row_count",
+  "cost_estimate",
+  "answer",
+  "connection_id",
+  "database_identity",
+  "exposed_schema_revision",
+  "result_format",
+  "result_digest",
+  "execution_started_at",
+  "execution_completed_at",
+] as const;
+
+/** Structural check for one AskResult. It is deliberately strict: an array, a
+ * partial or a malformed object is rejected rather than coerced into a row.
+ * Every string field must be a string, every numeric field a finite number,
+ * columns a string[] and rows an array of arrays whose cells are string|null.
+ * The result's own connection_id must equal the catalog's, so no answer can
+ * describe a connection the user is not looking at. Only a value that passes
+ * this guard is ever returned as `ok`. */
+function isGovernedAskResult(
+  value: unknown,
+  catalogConnectionID: string,
+): value is GovernedAskResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+
+  // The result carries exactly the server's allow-listed keys: a different
+  // key count, or any name outside this set (e.g. a smuggled `secret_extra`),
+  // is rejected before any field is read, so an undeclared member can never be
+  // returned as part of an `ok` value.
+  const keys = Object.keys(r);
+  if (keys.length !== GOVERNED_ASK_RESULT_KEYS.length) return false;
+  for (const key of keys) {
+    if (!GOVERNED_ASK_RESULT_KEYS.includes(key as (typeof GOVERNED_ASK_RESULT_KEYS)[number])) return false;
+  }
+
+  const stringFields = [
+    "attempt_id",
+    "sql",
+    "sql_hash",
+    "answer",
+    "connection_id",
+    "database_identity",
+    "result_format",
+    "result_digest",
+    "execution_started_at",
+    "execution_completed_at",
+  ] as const;
+  for (const field of stringFields) {
+    if (typeof r[field] !== "string") return false;
+  }
+  if (r.connection_id !== catalogConnectionID) return false;
+
+  if (typeof r.row_count !== "number" || !Number.isFinite(r.row_count)) return false;
+  if (typeof r.cost_estimate !== "number" || !Number.isFinite(r.cost_estimate)) return false;
+  if (typeof r.exposed_schema_revision !== "number" || !Number.isFinite(r.exposed_schema_revision)) return false;
+
+  if (!Array.isArray(r.columns)) return false;
+  for (const column of r.columns) {
+    if (typeof column !== "string") return false;
+  }
+
+  if (!Array.isArray(r.rows)) return false;
+  for (const row of r.rows) {
+    if (!Array.isArray(row)) return false;
+    for (const cell of row) {
+      if (cell !== null && typeof cell !== "string") return false;
+    }
+  }
+
+  return true;
+}
+
+/** The governed ask call: GET /api/v1/session/csrf, then POST the :ask
+ * endpoint with Accept, Content-Type, X-KnowVault-CSRF and Idempotency-Key
+ * and deliberately no If-Match. The body is exactly { question } — no SQL,
+ * no connection id, no free-text beyond the one question. The idempotency key
+ * is owned here: exactly one is minted per invocation, after CSRF succeeds and
+ * before the POST, so a CSRF 401 creates neither a key nor a POST. A 401 is the
+ * transport's sessionExpired answer; every other network failure, non-2xx
+ * status, unparsable body, invalid CSRF token, missing/malformed result,
+ * mismatched envelope connection or mismatched result connection becomes a
+ * content-free `error`, and server error text is never returned. */
+export async function governedAsk(
+  fetchImpl: GovernedFetch,
+  workspaceID: string,
+  catalog: { readonly connection_id: string },
+  question: string,
+): Promise<GovernedCallOutcome<GovernedAskResult>> {
+  let csrf: Response;
+  try {
+    csrf = await fetchImpl("/api/v1/session/csrf", { cache: "no-store", headers: { Accept: "application/json" } });
+  } catch {
+    return { kind: "error" };
+  }
+  if (csrf.status === 401) return { kind: "sessionExpired" };
+  if (!csrf.ok) return { kind: "error" };
+  let token: string | null = null;
+  try {
+    token = governedCsrfToken(((await csrf.json()) as { csrf_token?: unknown }).csrf_token);
+  } catch {
+    return { kind: "error" };
+  }
+  if (token === null) return { kind: "error" };
+
+  // CSRF succeeded, so the POST will carry a fresh single-use key. The key is
+  // minted here — after CSRF, before the POST — so a 401 above never creates
+  // one and this invocation never reuses another's.
+  const idempotencyKey = newGovernedIdempotencyKey();
+
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/governed-query-connections/${encodeURIComponent(catalog.connection_id)}:ask`,
+      {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-KnowVault-CSRF": token,
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ question }),
+      },
+    );
+  } catch {
+    return { kind: "error" };
+  }
+  if (response.status === 401) return { kind: "sessionExpired" };
+  if (!response.ok) return { kind: "error" };
+  let envelope: { connection_id?: unknown; result?: unknown };
+  try {
+    envelope = (await response.json()) as typeof envelope;
+  } catch {
+    return { kind: "error" };
+  }
+  // The envelope must still name the connection the user is looking at: a
+  // mismatched (or absent) connection id is a failure, not a result.
+  if (envelope.connection_id !== catalog.connection_id) return { kind: "error" };
+  // The result itself must be structurally sound and must repeat the same
+  // connection. Only then is it returned as `ok`.
+  if (!isGovernedAskResult(envelope.result, catalog.connection_id)) return { kind: "error" };
+  return { kind: "ok", value: envelope.result };
+}
