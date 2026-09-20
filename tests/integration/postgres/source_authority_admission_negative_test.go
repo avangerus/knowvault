@@ -19,11 +19,13 @@ import (
 // used by the identity/precondition negative tests. Every caller creates it
 // after resetStage1Database, so a failed case cannot alter the next one.
 type admittedAuthorityFixture struct {
-	admin   *pgxpool.Pool
-	store   *workspacerepository.Store
-	access  database.AccessContext
-	request workspacerepository.PostgreSQLAuthorityRequest
-	binding authorityOpsFixture
+	admin        *pgxpool.Pool
+	store        *workspacerepository.Store
+	access       database.AccessContext
+	request      workspacerepository.PostgreSQLAuthorityRequest
+	binding      authorityOpsFixture
+	grant        workspacerepository.AuthorityResult
+	confirmation workspacerepository.AuthorityResult
 }
 
 func newAdmittedAuthorityFixture(t *testing.T) admittedAuthorityFixture {
@@ -52,9 +54,10 @@ func newAdmittedAuthorityFixture(t *testing.T) admittedAuthorityFixture {
 
 	runtime := newAuthorityRuntime(t, ctx)
 	grant := issueRuntimeGrant(t, ctx, runtime, binding, "negative-admission-grant")
-	if _, err := runtime.ConfirmManagedSource(ctx,
+	confirmation, err := runtime.ConfirmManagedSource(ctx,
 		authorityAccess(binding, regOwner, "req_negative_confirm"),
-		confirmRuntimeRequest(binding, grant, "negative-admission-confirm")); err != nil {
+		confirmRuntimeRequest(binding, grant, "negative-admission-confirm"))
+	if err != nil {
 		t.Fatalf("confirm negative-test source: %v", err)
 	}
 
@@ -90,6 +93,7 @@ func newAdmittedAuthorityFixture(t *testing.T) admittedAuthorityFixture {
 		admin: admin, store: store,
 		access:  authorityAccess(binding, regOwner, "req_negative_resolve"),
 		request: authorityRequest, binding: binding,
+		grant: grant, confirmation: confirmation,
 	}
 }
 
@@ -357,6 +361,102 @@ func TestPostgreSQLSourceAuthorityCurrentStatePreconditions(t *testing.T) {
 				}
 				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
 				assertAuthorityPersistence(t, result, err)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, newAdmittedAuthorityFixture(t))
+		})
+	}
+}
+
+func TestPostgreSQLSourceAuthorityRevocationAndPolicyPreconditions(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, admittedAuthorityFixture)
+	}{
+		{
+			name: "managed confirmation revoked",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				confirmationID, confirmationHash := loadLiveManagedConfirmation(t, ctx, fixture.admin, fixture.binding)
+				if confirmationID != fixture.confirmation.ResultID || confirmationHash != fixture.confirmation.ResultHash {
+					t.Fatalf("live confirmation identity = %s/%s, want issued result %s/%s",
+						confirmationID, confirmationHash, fixture.confirmation.ResultID, fixture.confirmation.ResultHash)
+				}
+				if _, err := fixture.store.RevokeManagedConfirmation(ctx,
+					authorityAccess(fixture.binding, regOwner, "req_negative_revoke_confirmation"),
+					workspacerepository.RevokeConfirmationRequest{
+						IdempotencyKey:         authorityIdempotencyKey("negative-revoke-confirmation"),
+						OrganizationID:         regOrg,
+						WorkspaceID:            fixture.binding.workspaceID,
+						ConfirmationID:         confirmationID,
+						ConfirmationHash:       confirmationHash,
+						ExpectedPolicyRevision: fixture.binding.policyID,
+					}); err != nil {
+					t.Fatalf("revoke managed confirmation: %v", err)
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "confirmation grant revoked",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				if _, err := fixture.store.RevokeConfirmationGrant(ctx,
+					authorityAccess(fixture.binding, regOwner, "req_negative_revoke_grant"),
+					workspacerepository.RevokeGrantRequest{
+						IdempotencyKey:         authorityIdempotencyKey("negative-revoke-grant"),
+						OrganizationID:         regOrg,
+						WorkspaceID:            fixture.binding.workspaceID,
+						GrantID:                fixture.grant.ResultID,
+						GrantRevision:          1,
+						GrantHash:              fixture.grant.ResultHash,
+						ExpectedPolicyRevision: fixture.binding.policyID,
+					}); err != nil {
+					t.Fatalf("revoke confirmation grant: %v", err)
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "organization policy drift",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				clock := fetchAuthorityClock(t, ctx, fixture.admin)
+				insertPolicyRegistryRow(t, ctx, fixture.admin, regOrg, 2,
+					"policy-registration-01ARZ3NDEKTSV4RRFFQ69G5FAW",
+					authoritySha256('q'), regOwner, clock.now)
+				tag, err := fixture.admin.Exec(ctx,
+					`UPDATE public.organization SET policy_revision = 2 WHERE id = $1 AND policy_revision = 1`, regOrg)
+				if err != nil {
+					t.Fatalf("advance organization policy revision: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("advance organization policy revision affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "warning contract drift",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				dropWarningImmutabilityGuard(t, ctx, fixture.admin)
+				tag, err := fixture.admin.Exec(ctx, warningAdvanceSQL, warningAdvanceBytes)
+				if err != nil {
+					t.Fatalf("advance warning contract: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("advance warning contract affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
 			},
 		},
 	}
