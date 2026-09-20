@@ -43,6 +43,8 @@ import {
   governedPresetListArguments,
   governedPresetRunArguments,
   governedRequestAccepted,
+  reserveGovernedAskSubmission,
+  reserveGovernedRunSubmission,
   type GovernedAskResult,
   type GovernedPresetRunResult,
 } from "./governed-presets";
@@ -614,12 +616,119 @@ async function main(): Promise<void> {
     check(askMarkup.includes("SELECT &#x27;&lt;img src=x onerror=alert(4)&gt;&#x27;"),
       "the exact SQL is present as escaped text");
 
+    // The source is labelled explicitly: the two identity values are named
+    // `database_identity` and `connection_id`, so a reader can tell which
+    // string is which without inferring it from position.
+    check(askMarkup.includes("database_identity"), "the ask source labels the database identity");
+    check(askMarkup.includes("connection_id"), "the ask source labels the connection id");
+    const askIdentityLabel = askMarkup.indexOf("database_identity");
+    const askConnectionLabel = askMarkup.indexOf("connection_id");
+    check(askIdentityLabel !== -1 && askConnectionLabel !== -1 && askIdentityLabel < askConnectionLabel,
+      "the ask source labels the database identity before the connection id");
+
     // Empty rowset is stated.
     const askEmptyMarkup = renderToStaticMarkup(createElement(GovernedAskResultView, {
       result: { ...askResult, rows: [], row_count: 0 },
       submittedQuestion: ASK_QUESTION,
     }));
     check(askEmptyMarkup.includes(GOVERNED_NO_ROWS), "an empty ask rowset is stated, not left blank");
+  }
+
+  // --- 19. reserveGovernedAskSubmission is the one-submission gate ---------
+  // The form calls this synchronously on submit. It must admit exactly the
+  // first submission in a burst, admit any nonempty original question (trim is
+  // used ONLY to test emptiness, never to alter the submitted text) and refuse
+  // a blank one. A refused call must not consume the reservation.
+  {
+    // First call flips the ref and is admitted; the same-tick second call is
+    // refused while the first is still in flight.
+    const ref = { current: false };
+    const first = reserveGovernedAskSubmission(ref, { question: "How many rows?" });
+    const second = reserveGovernedAskSubmission(ref, { question: "How many rows?" });
+    check(first === true, "the first ask submission is admitted");
+    check(second === false, "a same-tick second ask submission is refused");
+    check(ref.current === true, "the first submission leaves the guard reserved");
+
+    // A nonempty original question is admitted unchanged: leading/trailing
+    // whitespace and interior spacing survive, because the helper trims only
+    // to decide emptiness. The reserved text is returned to the caller, not
+    // rewritten by the helper.
+    const spaced = { current: false };
+    const original = "  total spend   by team?  ";
+    check(reserveGovernedAskSubmission(spaced, { question: original }) === true,
+      "a nonempty original question is admitted");
+    check(original.trim().length > 0 && original === "  total spend   by team?  ",
+      "the admitted question is the original text, not a trimmed copy");
+
+    // A blank question is refused and does not consume the reservation: a
+    // later real question in the same burst is still admitted.
+    const blank = { current: false };
+    check(reserveGovernedAskSubmission(blank, { question: "   \t  " }) === false,
+      "a whitespace-only question is refused");
+    check(blank.current === false, "a refused blank submission does not reserve the guard");
+    check(reserveGovernedAskSubmission(blank, { question: "real?" }) === true,
+      "a real question after a refused blank one is still admitted");
+
+    // A missing ref fails closed rather than minting an unguarded POST.
+    check(reserveGovernedAskSubmission(null, { question: "real?" }) === false,
+      "a missing guard ref fails closed");
+  }
+
+  // --- 20. reserveGovernedRunSubmission serializes a run and an ask --------
+  // The run guard is the sibling of the ask guard and the second half of the
+  // mutual exclusion: a run is admitted only when no ask and no run is in
+  // flight, and each reservation must be visible synchronously so a same-tick
+  // ask sees it. Every refusal must leave BOTH refs untouched.
+  {
+    // First run is admitted and flips the run ref; the same-tick second run is
+    // refused while the first is still in flight.
+    const runRef = { current: false };
+    const idleAsk = { current: false };
+    const first = reserveGovernedRunSubmission(runRef, idleAsk);
+    const second = reserveGovernedRunSubmission(runRef, idleAsk);
+    check(first === true, "the first run submission is admitted");
+    check(second === false, "a same-tick second run submission is refused");
+    check(runRef.current === true, "the first run leaves the run guard reserved");
+
+    // A run is refused while an ask is in flight, and the refusal consumes
+    // nothing: the run ref stays clear, so a later run is admitted once the
+    // ask releases its guard.
+    const busyAskRunRef = { current: false };
+    const busyAsk = { current: true };
+    check(reserveGovernedRunSubmission(busyAskRunRef, busyAsk) === false,
+      "a run is refused while an ask is busy");
+    check(busyAskRunRef.current === false,
+      "a refused run does not reserve the run guard while an ask is busy");
+    check(busyAsk.current === true,
+      "a refused run does not disturb the in-flight ask guard");
+    busyAsk.current = false;
+    check(reserveGovernedRunSubmission(busyAskRunRef, busyAsk) === true,
+      "a run is admitted once the ask releases its guard");
+
+    // The mirror, at the level the panel enforces it: while a run holds its
+    // guard, the ask path is refused and reserves nothing. The panel checks the
+    // run guard before calling reserveGovernedAskSubmission (which knows only
+    // its own ref), so a busy run leaves the ask ref clear.
+    const busyRun = { current: true };
+    const askWhileRunRef = { current: false };
+    const askAdmittedWhileRun = busyRun.current
+      ? false
+      : reserveGovernedAskSubmission(askWhileRunRef, { question: "How many rows?" });
+    check(askAdmittedWhileRun === false,
+      "an ask reservation remains blocked while a run is busy");
+    check(askWhileRunRef.current === false,
+      "the blocked ask leaves the ask guard unreserved");
+    check(busyRun.current === true, "the blocked ask leaves the run guard untouched");
+
+    // Missing refs fail closed.
+    check(reserveGovernedRunSubmission(null, { current: false }) === false,
+      "a missing run guard fails closed");
+    check(reserveGovernedRunSubmission({ current: false }, null) === false,
+      "a missing ask guard fails closed");
+    const untouchedRunRef = { current: false };
+    check(reserveGovernedRunSubmission(untouchedRunRef, undefined) === false
+        && untouchedRunRef.current === false,
+      "a missing ask guard fails closed without consuming the run guard");
   }
 
   if (failures !== 0) throw new Error(`${failures} governed-preset assertion(s) failed`);

@@ -3873,7 +3873,7 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
           secondary surface on the Search screen. They are keyed by workspace so
           a workspace change discards the whole catalogue and result, and they
           never touch ordinary document search or the AI answer. */}
-      <GovernedPresetPanel key={workspaceID} onSessionExpired={onSessionExpired} workspaceID={workspaceID} />
+      {active && <GovernedPresetPanel key={workspaceID} onSessionExpired={onSessionExpired} workspaceID={workspaceID} />}
       {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
       {visible && (answerPending || answer) && (
         <section aria-label="AI answer" className="search-pilot-answer">

@@ -242,6 +242,58 @@ export function governedRequestAccepted(stamp: number, current: number, alive: b
 // Panel.
 // ---------------------------------------------------------------------------
 
+/** Copy for the ad hoc ask form. Content-free: a failed ask never shows the
+ * server's message, only this generic sentence, and every non-401 failure
+ * (transport error, non-2xx, unparsable or mismatched payload) collapses to
+ * it. The pending line is a state, not progress the server reported. */
+export const GOVERNED_ASK_UNAVAILABLE = "Database answer unavailable.";
+export const GOVERNED_ASK_PENDING = "Asking the live database…";
+
+/** Reserve one governed-ask submission: the single gate that makes at most one
+ * `governedAsk` call per user submit. The component holds a boolean ref; the
+ * first call in a synchronous burst flips it true and returns true, and any
+ * same-tick second call returns false. Correctness depends on this being
+ * synchronous and immediate: the flip happens in this call, before the caller
+ * has a chance to await, so a double submit or a form submitted twice cannot
+ * mint two POSTs. A missing ref is treated as already reserved (fail closed).
+ *
+ * The function is deliberately question-agnostic: the caller must submit the
+ * ORIGINAL question text, never a trimmed copy. The guard inspects the
+ * question only to refuse a blank one — whitespace is not a question. */
+export function reserveGovernedAskSubmission(
+  ref: { current: boolean } | null | undefined,
+  submission: { question: string },
+): boolean {
+  if (!ref) return false;
+  if (submission.question.trim().length === 0) return false;
+  if (ref.current) return false;
+  ref.current = true;
+  return true;
+}
+
+/** Reserve one governed-run submission: the sibling of the ask guard, and the
+ * gate that serializes a preset run against an in-flight ask (and vice versa).
+ * A run is admitted only when NEITHER guard is held; it then holds the run
+ * guard and refuses every later reservation until its own continuation
+ * releases it. Correctness depends on this being synchronous: both refs are
+ * inspected and the run ref is set before the caller can await, so an ask that
+ * starts in the same tick as a run cannot slip through.
+ *
+ * A missing ref fails closed (a caller without a guard mints nothing), as does
+ * a held ask guard. The order of the checks is deliberate: the fail-closed
+ * input check, then the ask guard (already-busy), then the run guard — so a
+ * refused call never consumes the reservation. */
+export function reserveGovernedRunSubmission(
+  runRef: { current: boolean } | null | undefined,
+  askRef: { current: boolean } | null | undefined,
+): boolean {
+  if (!runRef || !askRef) return false;
+  if (askRef.current) return false;
+  if (runRef.current) return false;
+  runRef.current = true;
+  return true;
+}
+
 type CatalogState =
   | { phase: "loading" }
   | { phase: "unavailable" }
@@ -253,6 +305,14 @@ type RunState =
   | { phase: "pending" }
   | { phase: "failed" }
   | { phase: "done"; result: GovernedPresetRunResult };
+
+/** The governed-ask form's state: a result is only ever shown together with
+ * the exact question text that produced it, so the two can never drift apart. */
+type AskState =
+  | { phase: "idle" }
+  | { phase: "pending" }
+  | { phase: "failed" }
+  | { phase: "done"; result: GovernedAskResult; submittedQuestion: string };
 
 export type GovernedPresetPanelProps = {
   /** The workspace whose catalogue is shown. The panel is keyed by it: a
@@ -269,16 +329,44 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
   const [catalogState, setCatalogState] = useState<CatalogState>({ phase: "loading" });
   const [presetID, setPresetID] = useState("");
   const [runState, setRunState] = useState<RunState>({ phase: "idle" });
+  const [question, setQuestion] = useState("");
+  const [askState, setAskState] = useState<AskState>({ phase: "idle" });
   // Every async continuation is stamped with the epoch that started it and
   // checks "alive" after awaiting, so a response for a previous workspace (or
   // for an unmounted panel) can never restore a catalogue or rows.
   const epoch = useRef(0);
   const alive = useRef(true);
+  // The ask owns its own epoch: a catalogue reload, a preset run or a remount
+  // must be able to supersede an in-flight ask without disturbing the run
+  // epoch (and vice versa). An ask continuation is accepted only when BOTH the
+  // panel is alive and its stamp still equals this ref, so a stale, unmounted
+  // or workspace-switched answer is discarded rather than rendered.
+  const askEpoch = useRef(0);
+  // The one-submission guard (see reserveGovernedAskSubmission). It is a ref
+  // so it flips synchronously, and it is released only by the continuation of
+  // the request that reserved it — never by a superseded one.
+  const askPendingRef = useRef(false);
+  // The run guard (see reserveGovernedRunSubmission). A run holds it from the
+  // synchronous reservation until its own continuation releases it, and an ask
+  // reservation is refused while it is held — so no ask can start while a run
+  // is in flight and no run can start while an ask is in flight.
+  const runPendingRef = useRef(false);
 
   const loadCatalog = useCallback(async () => {
     const current = ++epoch.current;
     setCatalogState({ phase: "loading" });
     setRunState({ phase: "idle" });
+    // A catalogue reload replaces the connection the form would ask, so any
+    // answer still in flight belongs to a catalogue that no longer exists: its
+    // epoch is bumped (its continuation is now rejected), the form is dropped
+    // back to idle and the guards are released for the new catalogue. A reset
+    // only ever runs from a live panel with no accepted continuation pending,
+    // so clearing the refs here cannot race an in-flight release; reloading the
+    // catalogue never itself sends an ask.
+    askEpoch.current++;
+    askPendingRef.current = false;
+    runPendingRef.current = false;
+    setAskState({ phase: "idle" });
     const outcome = await governedMCPCall<GovernedPresetCatalog>(
       fetch, GOVERNED_QUERIES_LIST_TOOL, governedPresetListArguments(workspaceID));
     if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
@@ -297,27 +385,115 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
     // starts from a clean catalogue.
     alive.current = true;
     void loadCatalog();
-    return () => { alive.current = false; epoch.current++; };
+    return () => {
+      alive.current = false;
+      epoch.current++;
+      // Unmount invalidates every ask epoch too: no answer may resolve into a
+      // component that is no longer mounted.
+      askEpoch.current++;
+    };
   }, [loadCatalog]);
 
   async function run(catalog: GovernedPresetCatalog) {
-    if (runState.phase === "pending") return;
-    const chosen = catalog.presets.find((preset) => preset.id === presetID);
-    if (!chosen) { setRunState({ phase: "failed" }); return; }
+    // The synchronous reservation is the FIRST thing a run does: no work — not
+    // even the "selection is missing" failure — happens before the run guard
+    // is held. It is admitted only when no ask and no run is in flight (see
+    // reserveGovernedRunSubmission), which is what makes a run and an ask
+    // mutually exclusive.
+    if (!reserveGovernedRunSubmission(runPendingRef, askPendingRef)) return;
+    // The epoch this run owns is minted exactly once, immediately after the
+    // synchronous reservation and before any await: it is the stamp both the
+    // accepted path and the catch path compare against, so a stale rejection
+    // can never release a newer run's guard or set its state.
     const current = ++epoch.current;
-    // A new run clears the previous result before it starts, so a failure (or
-    // an unauthorized response) can never leave stale rows on screen.
-    setRunState({ phase: "pending" });
-    const outcome = await governedMCPCall<GovernedPresetRunResult>(
-      fetch, GOVERNED_QUERY_RUN_TOOL, governedPresetRunArguments(workspaceID, catalog, chosen.id));
-    if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
-    if (outcome.kind === "sessionExpired") { onSessionExpired(); return; }
-    setRunState(outcome.kind === "ok" ? { phase: "done", result: outcome.value } : { phase: "failed" });
+    try {
+      const chosen = catalog.presets.find((preset) => preset.id === presetID);
+      // A reservation that names no runnable preset consumes nothing: the
+      // guard is released again before this early return.
+      if (!chosen) { runPendingRef.current = false; setRunState({ phase: "failed" }); return; }
+      // A new run clears the previous result before it starts, so a failure
+      // (or an unauthorized response) can never leave stale rows on screen.
+      setRunState({ phase: "pending" });
+      const outcome = await governedMCPCall<GovernedPresetRunResult>(
+        fetch, GOVERNED_QUERY_RUN_TOOL, governedPresetRunArguments(workspaceID, catalog, chosen.id));
+      // A superseded or unmounted run (a catalogue reset, a remount, a preset
+      // change) releases the guard to its new owner and touches no state.
+      if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
+      // The current run — and only it — releases the guard, on every accepted
+      // outcome including sessionExpired.
+      runPendingRef.current = false;
+      if (outcome.kind === "sessionExpired") { onSessionExpired(); return; }
+      setRunState(outcome.kind === "ok" ? { phase: "done", result: outcome.value } : { phase: "failed" });
+    } catch (failure) {
+      // The reservation must never leak into the UI as a rejected promise. A
+      // throw from the transport is not a run outcome, so the guard is
+      // released only for the continuation that still owns it.
+      if (governedRequestAccepted(current, epoch.current, alive.current)) {
+        runPendingRef.current = false;
+        setRunState({ phase: "failed" });
+      }
+    }
+  }
+
+  /** The governed-ask submit. This is the ONLY path that calls governedAsk.
+   * It is reached exclusively from the form's explicit onSubmit — no effect,
+   * no timer, no storage or history listener ever asks on the user's behalf.
+   * The question is the ORIGINAL text from the input (never trimmed): the
+   * helper trims only to decide emptiness, so what the server receives is
+   * exactly what the user typed (minus nothing), and the result view repeats
+   * that same string. */
+  function ask(catalog: GovernedPresetCatalog) {
+    // A run in flight owns the slot: an ask is refused here, before it reserves
+    // anything, so the run guard is never disturbed and no ask starts while a
+    // run is pending. The reverse is enforced inside reserveGovernedRunSubmission.
+    if (runPendingRef.current) return;
+    // The single-submission guard: a second synchronous submit (a double
+    // click, an Enter plus a click) returns false here and produces no POST.
+    if (!reserveGovernedAskSubmission(askPendingRef, { question })) return;
+    const submittedQuestion = question;
+    const current = ++askEpoch.current;
+    // A new ask clears the previous answer before it leaves, so a failure can
+    // never leave stale rows or a stale question on screen.
+    setAskState({ phase: "pending" });
+    // governedAsk resolves for every transport outcome, but it is a promise
+    // and the panel must survive a rejection as well: a rejection for the
+    // CURRENT alive ask releases the guard and shows the same generic failed
+    // state as any other failure, while a stale or unmounted rejection changes
+    // nothing (the guard already belongs to whoever superseded it).
+    governedAsk(fetch, workspaceID, catalog, submittedQuestion).then((outcome) => {
+      // The answer only lands when the panel is still mounted and this is
+      // still the newest ask; otherwise it is discarded and the guard is left
+      // to its rightful owner.
+      if (!governedRequestAccepted(current, askEpoch.current, alive.current)) return;
+      // This continuation is the current ask, so it — and only it — releases
+      // the guard, whether it succeeded or failed.
+      askPendingRef.current = false;
+      if (outcome.kind === "sessionExpired") { onSessionExpired(); return; }
+      setAskState(outcome.kind === "ok"
+        ? { phase: "done", result: outcome.value, submittedQuestion }
+        : { phase: "failed" });
+    }, () => {
+      // A rejected ask is a failure, not a crash: the current alive ask
+      // releases its guard and shows the generic content-free state.
+      if (!governedRequestAccepted(current, askEpoch.current, alive.current)) return;
+      askPendingRef.current = false;
+      setAskState({ phase: "failed" });
+    });
   }
 
   const catalog = catalogState.phase === "ready" ? catalogState.catalog : null;
   const chosenPreset = catalog?.presets.find((preset) => preset.id === presetID) ?? null;
   const pending = runState.phase === "pending";
+  // The ask form exists only once the server's catalogue is ready, because
+  // only then is there a connection_id to ask against. It is never built from
+  // client state.
+  const askPending = askState.phase === "pending";
+  // The ask, the run and the picker are mutually exclusive surfaces: while an
+  // ask is in flight the whole picker (select and Run) is disabled, and while
+  // a run is in flight the Ask control is. The Ask button is additionally
+  // disabled for a blank question, which is not a question.
+  const askDisabled = askPending || pending || question.trim().length === 0;
+  const runDisabled = askPending;
 
   return (
     <section aria-labelledby="governed-presets-heading" className="governed-presets">
@@ -331,9 +507,40 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
         </p>
       )}
       {catalog && (
+        <form className="governed-ask-form" onSubmit={(event) => { event.preventDefault(); ask(catalog); }}>
+          <h3 className="governed-ask-form-heading">Ask live database</h3>
+          <div className="governed-ask-form-row">
+            <label className="sr-only" htmlFor="governed-ask-input">Ask a question about live company data</label>
+            <input
+              className="governed-ask-input"
+              id="governed-ask-input"
+              type="text"
+              placeholder="Ask a question about live company data"
+              autoComplete="off"
+              value={question}
+              disabled={askPending}
+              onChange={(event) => { setQuestion(event.target.value); }}
+            />
+            <button className="secondary-button" disabled={askDisabled} type="submit">
+              {askPending ? "Asking…" : "Ask"}
+            </button>
+          </div>
+          {askPending && <p className="governed-presets-note" role="status">{GOVERNED_ASK_PENDING}</p>}
+          {askState.phase === "failed" && (
+            <p className="governed-presets-note" role="status">{GOVERNED_ASK_UNAVAILABLE}</p>
+          )}
+          {askState.phase === "done" && (
+            <GovernedAskResultView result={askState.result} submittedQuestion={askState.submittedQuestion} />
+          )}
+        </form>
+      )}
+      {catalog && (
+        <p className="governed-presets-subheading">Reviewed checks</p>
+      )}
+      {catalog && (
         <div className="governed-presets-picker">
           <label className="sr-only" htmlFor="governed-preset-select">Live database check</label>
-          <select className="governed-preset-select" id="governed-preset-select" value={presetID} disabled={pending}
+          <select className="governed-preset-select" id="governed-preset-select" value={presetID} disabled={pending || runDisabled}
             onChange={(event) => {
               // Selecting a different check supersedes any run in flight: the
               // epoch is bumped first, so that run's continuation is rejected
@@ -352,7 +559,7 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
               </option>
             ))}
           </select>
-          <button className="secondary-button" disabled={pending || !chosenPreset}
+          <button className="secondary-button" disabled={pending || runDisabled || !chosenPreset}
             onClick={() => { if (catalog) void run(catalog); }} type="button">
             {pending ? "Running…" : "Run"}
           </button>
@@ -461,9 +668,9 @@ export function GovernedAskResultView(
       <p className="governed-ask-question">Question: {submittedQuestion}</p>
       <p className="governed-ask-answer">{result.answer}</p>
       <p className="governed-ask-source">
-        <span className="governed-ask-source-database">{result.database_identity}</span>
+        database_identity <span className="governed-ask-source-database">{result.database_identity}</span>
         {" · "}
-        <span className="governed-ask-source-connection">{result.connection_id}</span>
+        connection_id <span className="governed-ask-source-connection">{result.connection_id}</span>
       </p>
       <p className="governed-ask-window">
         Read window {governedTimestampText(result.execution_started_at)} – {governedTimestampText(result.execution_completed_at)}
@@ -662,13 +869,16 @@ export async function governedAsk(
 
   // CSRF succeeded, so the POST will carry a fresh single-use key. The key is
   // minted here — after CSRF, before the POST — so a 401 above never creates
-  // one and this invocation never reuses another's.
-  const idempotencyKey = newGovernedIdempotencyKey();
-
+  // one and this invocation never reuses another's. The key mint and the
+  // encoded :ask path are built inside this try so that a crypto or encoding
+  // failure becomes a content-free `error` rather than a rejected promise: the
+  // only outcome this function ever produces is a GovernedCallOutcome.
   let response: Response;
   try {
+    const idempotencyKey = newGovernedIdempotencyKey();
+    const askPath = `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/governed-query-connections/${encodeURIComponent(catalog.connection_id)}:ask`;
     response = await fetchImpl(
-      `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/governed-query-connections/${encodeURIComponent(catalog.connection_id)}:ask`,
+      askPath,
       {
         method: "POST",
         cache: "no-store",
