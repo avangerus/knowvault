@@ -104,3 +104,174 @@ func TestProposalV2PredicateArityKindsAndCopy(t *testing.T) {
 		t.Fatal("mutable values")
 	}
 }
+
+func TestProposalV2DimensionsBoundsDuplicatesAndCopies(t *testing.T) {
+	if MaxDimensions != 2 {
+		t.Fatal(MaxDimensions)
+	}
+	a, _ := NewFieldToken("a")
+	b, _ := NewFieldToken("b")
+	c, _ := NewFieldToken("c")
+	upper, _ := NewFieldToken("A")
+
+	var zero Dimensions
+	if zero.Valid() {
+		t.Fatal("zero dimensions valid")
+	}
+	if fields, ok := zero.Fields(); ok || fields != nil {
+		t.Fatal("zero dimensions readable")
+	}
+	empty, e := NewDimensions()
+	if e != nil || !empty.Valid() {
+		t.Fatal(e)
+	}
+	if fields, ok := empty.Fields(); !ok || fields == nil || len(fields) != 0 {
+		t.Fatal("constructed empty dimensions invalid")
+	}
+	for _, fields := range [][]FieldToken{{a}, {a, b}} {
+		d, e := NewDimensions(fields...)
+		if e != nil || !d.Valid() {
+			t.Fatal(e)
+		}
+	}
+	for _, fields := range [][]FieldToken{{a, b, c}, {FieldToken{}}, {a, a}} {
+		_, e := NewDimensions(fields...)
+		pBad(t, e)
+	}
+	if _, e := NewDimensions(a, upper); e != nil {
+		t.Fatal("case-folded duplicate")
+	}
+
+	input := []FieldToken{a, b}
+	d, _ := NewDimensions(input...)
+	input[0] = c
+	first, _ := d.Fields()
+	first[0] = c
+	second, _ := d.Fields()
+	if second[0] != a || second[1] != b {
+		t.Fatal("dimensions alias input or accessor")
+	}
+}
+
+func TestProposalV2SortDirectionAndKeyClosedVocabulary(t *testing.T) {
+	if !SortASC.Valid() || !SortDESC.Valid() {
+		t.Fatal("declared sort direction invalid")
+	}
+	for _, direction := range []SortDirection{"", "asc", "DESCENDING"} {
+		if direction.Valid() {
+			t.Fatal(direction)
+		}
+	}
+	field, _ := NewFieldToken("created_at")
+	for _, candidate := range []struct {
+		field     FieldToken
+		direction SortDirection
+	}{{FieldToken{}, SortASC}, {field, "asc"}} {
+		_, e := NewSortKey(candidate.field, candidate.direction)
+		pBad(t, e)
+	}
+
+	var zero SortKey
+	if zero.Valid() {
+		t.Fatal("zero sort key valid")
+	}
+	if _, ok := zero.Field(); ok {
+		t.Fatal("zero sort field readable")
+	}
+	if _, ok := zero.Direction(); ok {
+		t.Fatal("zero sort direction readable")
+	}
+	key, e := NewSortKey(field, SortDESC)
+	if e != nil || !key.Valid() {
+		t.Fatal(e)
+	}
+	if got, ok := key.Field(); !ok || got != field {
+		t.Fatal(got)
+	}
+	if got, ok := key.Direction(); !ok || got != SortDESC {
+		t.Fatal(got)
+	}
+}
+
+func TestProposalV2SortKeysBoundsDuplicatesAndCopies(t *testing.T) {
+	if MaxSortKeys != 2 {
+		t.Fatal(MaxSortKeys)
+	}
+	a, _ := NewFieldToken("a")
+	b, _ := NewFieldToken("b")
+	c, _ := NewFieldToken("c")
+	ascA, _ := NewSortKey(a, SortASC)
+	descA, _ := NewSortKey(a, SortDESC)
+	descB, _ := NewSortKey(b, SortDESC)
+	ascC, _ := NewSortKey(c, SortASC)
+
+	var zero SortKeys
+	if zero.Valid() {
+		t.Fatal("zero sort keys valid")
+	}
+	if values, ok := zero.Values(); ok || values != nil {
+		t.Fatal("zero sort keys readable")
+	}
+	empty, e := NewSortKeys()
+	if e != nil || !empty.Valid() {
+		t.Fatal(e)
+	}
+	if values, ok := empty.Values(); !ok || values == nil || len(values) != 0 {
+		t.Fatal("constructed empty sort keys invalid")
+	}
+	for _, keys := range [][]SortKey{{ascA}, {ascA, descB}} {
+		s, e := NewSortKeys(keys...)
+		if e != nil || !s.Valid() {
+			t.Fatal(e)
+		}
+	}
+	for _, keys := range [][]SortKey{{ascA, descB, ascC}, {SortKey{}}, {ascA, descA}} {
+		_, e := NewSortKeys(keys...)
+		pBad(t, e)
+	}
+	if _, e := NewDimensions(a); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := NewSortKeys(ascA); e != nil {
+		t.Fatal("dimension/sort overlap rejected")
+	}
+
+	input := []SortKey{ascA, descB}
+	s, _ := NewSortKeys(input...)
+	input[0] = ascC
+	first, _ := s.Values()
+	first[0] = ascC
+	second, _ := s.Values()
+	if second[0] != ascA || second[1] != descB {
+		t.Fatal("sort keys alias input or accessor")
+	}
+}
+
+func TestProposalV2LimitBoundsDefaultAndZero(t *testing.T) {
+	if MinLimit != 1 || MaxLimit != 100 || DefaultLimitValue != 20 {
+		t.Fatal(MinLimit, MaxLimit, DefaultLimitValue)
+	}
+	var zero Limit
+	if zero.Valid() {
+		t.Fatal("zero limit valid")
+	}
+	if _, ok := zero.Value(); ok {
+		t.Fatal("zero limit readable")
+	}
+	for _, value := range []int{-1, 0, 101} {
+		_, e := NewLimit(value)
+		pBad(t, e)
+	}
+	for _, value := range []int{1, 20, 100} {
+		limit, e := NewLimit(value)
+		if e != nil || !limit.Valid() {
+			t.Fatal(value, e)
+		}
+		if got, ok := limit.Value(); !ok || got != value {
+			t.Fatal(got)
+		}
+	}
+	if got, ok := DefaultLimit().Value(); !ok || got != DefaultLimitValue {
+		t.Fatal(got)
+	}
+}

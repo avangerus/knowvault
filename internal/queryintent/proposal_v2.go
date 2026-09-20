@@ -185,6 +185,187 @@ func NewFieldToken(v string) (FieldToken, error) {
 	return FieldToken{name: v}, nil
 }
 
+const (
+	MaxDimensions     = 2
+	MaxSortKeys       = 2
+	MinLimit          = 1
+	MaxLimit          = 100
+	DefaultLimitValue = 20
+)
+
+type SortDirection string
+
+const (
+	SortASC  SortDirection = "ASC"
+	SortDESC SortDirection = "DESC"
+)
+
+func (d SortDirection) Valid() bool { return d == SortASC || d == SortDESC }
+
+type Dimensions struct {
+	fields      [MaxDimensions]FieldToken
+	count       uint8
+	initialized bool
+}
+
+func NewDimensions(fields ...FieldToken) (Dimensions, error) {
+	if len(fields) > MaxDimensions {
+		return Dimensions{}, newRefusal(CodeInvalidProposal)
+	}
+	var dimensions Dimensions
+	for i, field := range fields {
+		if !field.Valid() || duplicateField(fields[:i], field) {
+			return Dimensions{}, newRefusal(CodeInvalidProposal)
+		}
+		dimensions.fields[i] = field
+	}
+	dimensions.count = uint8(len(fields))
+	dimensions.initialized = true
+	return dimensions, nil
+}
+
+func (d Dimensions) Valid() bool {
+	if !d.initialized || int(d.count) > MaxDimensions {
+		return false
+	}
+	for i := 0; i < int(d.count); i++ {
+		if !d.fields[i].Valid() || duplicateField(d.fields[:i], d.fields[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (d Dimensions) Fields() ([]FieldToken, bool) {
+	if !d.Valid() {
+		return nil, false
+	}
+	fields := make([]FieldToken, int(d.count))
+	copy(fields, d.fields[:d.count])
+	return fields, true
+}
+
+func duplicateField(fields []FieldToken, candidate FieldToken) bool {
+	name, _ := candidate.Value()
+	for _, field := range fields {
+		other, _ := field.Value()
+		if other == name {
+			return true
+		}
+	}
+	return false
+}
+
+type SortKey struct {
+	field     FieldToken
+	direction SortDirection
+}
+
+func NewSortKey(field FieldToken, direction SortDirection) (SortKey, error) {
+	if !field.Valid() || !direction.Valid() {
+		return SortKey{}, newRefusal(CodeInvalidProposal)
+	}
+	return SortKey{field: field, direction: direction}, nil
+}
+
+func (k SortKey) Valid() bool { return k.field.Valid() && k.direction.Valid() }
+
+func (k SortKey) Field() (FieldToken, bool) {
+	if !k.Valid() {
+		return FieldToken{}, false
+	}
+	return k.field, true
+}
+
+func (k SortKey) Direction() (SortDirection, bool) {
+	if !k.Valid() {
+		return "", false
+	}
+	return k.direction, true
+}
+
+type SortKeys struct {
+	keys        [MaxSortKeys]SortKey
+	count       uint8
+	initialized bool
+}
+
+func NewSortKeys(keys ...SortKey) (SortKeys, error) {
+	if len(keys) > MaxSortKeys {
+		return SortKeys{}, newRefusal(CodeInvalidProposal)
+	}
+	var sortKeys SortKeys
+	for i, key := range keys {
+		if !key.Valid() || duplicateSortField(keys[:i], key) {
+			return SortKeys{}, newRefusal(CodeInvalidProposal)
+		}
+		sortKeys.keys[i] = key
+	}
+	sortKeys.count = uint8(len(keys))
+	sortKeys.initialized = true
+	return sortKeys, nil
+}
+
+func (s SortKeys) Valid() bool {
+	if !s.initialized || int(s.count) > MaxSortKeys {
+		return false
+	}
+	for i := 0; i < int(s.count); i++ {
+		if !s.keys[i].Valid() || duplicateSortField(s.keys[:i], s.keys[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s SortKeys) Values() ([]SortKey, bool) {
+	if !s.Valid() {
+		return nil, false
+	}
+	keys := make([]SortKey, int(s.count))
+	copy(keys, s.keys[:s.count])
+	return keys, true
+}
+
+func duplicateSortField(keys []SortKey, candidate SortKey) bool {
+	field, _ := candidate.Field()
+	for _, key := range keys {
+		other, _ := key.Field()
+		if other == field {
+			return true
+		}
+	}
+	return false
+}
+
+type Limit struct {
+	value       uint8
+	initialized bool
+}
+
+func NewLimit(value int) (Limit, error) {
+	if value < MinLimit || value > MaxLimit {
+		return Limit{}, newRefusal(CodeInvalidProposal)
+	}
+	return Limit{value: uint8(value), initialized: true}, nil
+}
+
+func DefaultLimit() Limit {
+	limit, _ := NewLimit(DefaultLimitValue)
+	return limit
+}
+
+func (l Limit) Valid() bool {
+	return l.initialized && int(l.value) >= MinLimit && int(l.value) <= MaxLimit
+}
+
+func (l Limit) Value() (int, bool) {
+	if !l.Valid() {
+		return 0, false
+	}
+	return int(l.value), true
+}
+
 type Operator string
 
 const (
