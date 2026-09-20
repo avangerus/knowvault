@@ -102,3 +102,48 @@ func TestDatasetProfileSealHasNoExportedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestDatasetProfileSealNestedValues(t *testing.T) {
+	spec := validDatasetProfileSpec(t)
+	profile, err := NewDatasetProfile(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(profile.Semantics().Values(), spec.Semantics.Values()) ||
+		!reflect.DeepEqual(profile.Grain().Values(), spec.Grain.Values()) {
+		t.Fatal("nested accessors changed value")
+	}
+	detached := profile.Spec()
+	if !reflect.DeepEqual(detached.Semantics.Values(), spec.Semantics.Values()) ||
+		!reflect.DeepEqual(detached.Grain.Values(), spec.Grain.Values()) {
+		t.Fatal("Spec omitted or changed nested values")
+	}
+	roundTrip, err := NewDatasetProfile(profile.Spec())
+	if err != nil || !roundTrip.Valid() || roundTrip.Hash() != profile.Hash() {
+		t.Fatalf("Spec round trip changed seal: valid=%v err=%v", roundTrip.Valid(), err)
+	}
+
+	hash := profile.Hash()
+	semantics := profile.Semantics().Values()
+	semantics.Fields[0].Aliases = append(semantics.Fields[0].Aliases, "changed")
+	grain := profile.Grain().Values()
+	grain.KeyFields[0] = "changed"
+	specSemantics := detached.Semantics.Values()
+	specSemantics.Fields[0].Aliases = append(specSemantics.Fields[0].Aliases, "changed again")
+	specGrain := detached.Grain.Values()
+	specGrain.KeyFields[0] = "changed again"
+	if !profile.Valid() || profile.Hash() != hash {
+		t.Fatal("nested accessor mutation changed sealed profile")
+	}
+
+	forgedSemantics := profile
+	forgedSemantics.semantics = ProfileSemantics{}
+	if forgedSemantics.Valid() {
+		t.Fatal("forged semantics member retained validity")
+	}
+	forgedGrain := profile
+	forgedGrain.grain = DatasetGrain{}
+	if forgedGrain.Valid() {
+		t.Fatal("forged grain member retained validity")
+	}
+}

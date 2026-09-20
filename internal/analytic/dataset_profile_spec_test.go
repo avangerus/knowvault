@@ -99,6 +99,9 @@ func TestDatasetProfileSpecRejectsMeasureFailures(t *testing.T) {
 	}
 	valid := validDatasetProfileSpec(t)
 	valid.Measures = []MeasureSpec{profileMeasure(t, MeasureSpecInput{ID: "distinct", Reducer: ReducerCountDistinct, DistinctField: "object_id", Unit: "items", NullPolicy: NullExcludeAndReport, Eligibility: EligibilityAllRows})}
+	semantics := valid.Semantics.Values()
+	semantics.Measures = []MeasureSemanticsInput{{ID: "distinct", Label: "Distinct objects", Description: "Number of distinct objects"}}
+	valid.Semantics = mustCanonicalSemantics(t, semantics)
 	if _, err := normalizeDatasetProfileSpec(valid); err != nil {
 		t.Fatalf("distinct over non-numeric field rejected: %v", err)
 	}
@@ -186,7 +189,44 @@ func validDatasetProfileSpec(t *testing.T) DatasetProfileSpec {
 			profileMeasure(t, MeasureSpecInput{ID: "amount", Reducer: ReducerSum, NumeratorField: "amount", Unit: "units", NullPolicy: NullExcludeAndReport, Eligibility: EligibilityAllRows}),
 		},
 		Time: timePolicy, Coverage: CoverageUnknown, Limits: limits,
+		Semantics: profileSemantics(t), Grain: profileGrain(t),
 	}
+}
+
+func profileSemantics(t *testing.T) ProfileSemantics {
+	t.Helper()
+	value, err := NewProfileSemantics(ProfileSemanticsInput{
+		DatasetLabel:       "Operations",
+		DatasetDescription: "Business operations records",
+		Fields: []FieldSemanticsInput{
+			{Token: "zoned_at", Label: "Zoned at", Description: "Zoned timestamp", NullMeaning: "Not recorded"},
+			{Token: "object_id", Label: "Object id", Description: "Object identifier", NullMeaning: "Not assigned"},
+			{Token: "local_at", Label: "Local at", Description: "Local timestamp", NullMeaning: "Not recorded"},
+			{Token: "amount", Label: "Amount", Description: "Measured amount", NullMeaning: "Not measured"},
+			{Token: "business_day", Label: "Business day", Description: "Business date", NullMeaning: "Not recorded"},
+		},
+		Measures: []MeasureSemanticsInput{
+			{ID: "rows", Label: "Rows", Description: "Number of rows"},
+			{ID: "amount", Label: "Amount", Description: "Sum of amount"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func profileGrain(t *testing.T) DatasetGrain {
+	t.Helper()
+	value, err := NewDatasetGrain(DatasetGrainInput{
+		Description:     "One row per object per business day",
+		KeyFields:       []string{"object_id", "business_day"},
+		DuplicatePolicy: DuplicateReject,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func profileField(t *testing.T, token, physical string, ordinal int, kind ScalarType, output bool) FieldSpec {

@@ -2,7 +2,7 @@ package analytic
 
 import "knowvault.local/verified-workspace/internal/source/canon"
 
-const datasetProfileSchemaVersion = "knowvault-dataset-profile-v1"
+const datasetProfileSchemaVersion = "knowvault-dataset-profile-v2"
 
 type canonicalProfileField struct {
 	Token         string              `json:"token"`
@@ -27,6 +27,70 @@ type canonicalProfileMeasure struct {
 	Unit             string      `json:"unit"`
 	NullPolicy       NullPolicy  `json:"null_policy"`
 	Eligibility      Eligibility `json:"eligibility"`
+}
+
+type canonicalProfileFieldSemantics struct {
+	Token       string   `json:"token"`
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	NullMeaning string   `json:"null_meaning"`
+	Aliases     []string `json:"aliases"`
+}
+
+type canonicalProfileMeasureSemantics struct {
+	ID          string   `json:"id"`
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases"`
+}
+
+type canonicalProfileSemantics struct {
+	DatasetLabel       string                             `json:"dataset_label"`
+	DatasetDescription string                             `json:"dataset_description"`
+	Fields             []canonicalProfileFieldSemantics   `json:"fields"`
+	Measures           []canonicalProfileMeasureSemantics `json:"measures"`
+}
+
+type canonicalProfileGrain struct {
+	Description     string          `json:"description"`
+	KeyFields       []string        `json:"key_fields"`
+	DuplicatePolicy DuplicatePolicy `json:"duplicate_policy"`
+}
+
+func cloneCanonicalStrings(values []string) []string {
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
+}
+
+func canonicalProfileSemanticsValue(value ProfileSemantics) canonicalProfileSemantics {
+	input := value.Values()
+	fields := make([]canonicalProfileFieldSemantics, len(input.Fields))
+	for index, field := range input.Fields {
+		fields[index] = canonicalProfileFieldSemantics{
+			Token: field.Token, Label: field.Label, Description: field.Description,
+			NullMeaning: field.NullMeaning, Aliases: cloneCanonicalStrings(field.Aliases),
+		}
+	}
+	measures := make([]canonicalProfileMeasureSemantics, len(input.Measures))
+	for index, measure := range input.Measures {
+		measures[index] = canonicalProfileMeasureSemantics{
+			ID: measure.ID, Label: measure.Label, Description: measure.Description,
+			Aliases: cloneCanonicalStrings(measure.Aliases),
+		}
+	}
+	return canonicalProfileSemantics{
+		DatasetLabel: input.DatasetLabel, DatasetDescription: input.DatasetDescription,
+		Fields: fields, Measures: measures,
+	}
+}
+
+func canonicalProfileGrainValue(value DatasetGrain) canonicalProfileGrain {
+	input := value.Values()
+	return canonicalProfileGrain{
+		Description: input.Description, KeyFields: cloneCanonicalStrings(input.KeyFields),
+		DuplicatePolicy: input.DuplicatePolicy,
+	}
 }
 
 // canonicalDatasetProfile projects one already-normalized profile into the
@@ -76,9 +140,11 @@ func canonicalDatasetProfile(value normalizedDatasetProfileSpec) ([]byte, string
 			RelationName           string       `json:"relation_name"`
 			RelationKind           RelationKind `json:"relation_kind"`
 		} `json:"source"`
-		Fields   []canonicalProfileField   `json:"fields"`
-		Measures []canonicalProfileMeasure `json:"measures"`
-		Time     struct {
+		Fields    []canonicalProfileField   `json:"fields"`
+		Measures  []canonicalProfileMeasure `json:"measures"`
+		Semantics canonicalProfileSemantics `json:"semantics"`
+		Grain     canonicalProfileGrain     `json:"grain"`
+		Time      struct {
 			Kind              TimeKind `json:"kind"`
 			FieldToken        string   `json:"field_token"`
 			ReportingTimezone string   `json:"reporting_timezone"`
@@ -93,7 +159,9 @@ func canonicalDatasetProfile(value normalizedDatasetProfileSpec) ([]byte, string
 			MaxResultBytes     int64 `json:"max_result_bytes"`
 			StatementTimeoutMS int64 `json:"statement_timeout_ms"`
 		} `json:"limits"`
-	}{SchemaVersion: datasetProfileSchemaVersion, Mode: value.mode, Fields: fields, Measures: measures, Coverage: value.coverage}
+	}{SchemaVersion: datasetProfileSchemaVersion, Mode: value.mode, Fields: fields,
+		Measures: measures, Semantics: canonicalProfileSemanticsValue(value.semantics),
+		Grain: canonicalProfileGrainValue(value.grain), Coverage: value.coverage}
 	projection.Key.DatasetID, projection.Key.Version = value.key.DatasetID(), value.key.Version()
 	projection.Source.SourceScopeID, projection.Source.ConnectionID = source.SourceScopeID, source.ConnectionID
 	projection.Source.DatabaseIdentity, projection.Source.ProjectionLineageID = source.DatabaseIdentity, source.ProjectionLineageID

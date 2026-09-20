@@ -23,7 +23,7 @@ func TestDatasetProfileCanonicalNormalizesOrderAndIsDeterministic(t *testing.T) 
 	if !bytes.Equal(leftBytes, againBytes) || leftHash != againHash {
 		t.Fatal("canonical identity is not deterministic")
 	}
-	if !bytes.Contains(leftBytes, []byte(`"schema_version":"knowvault-dataset-profile-v1"`)) {
+	if !bytes.Contains(leftBytes, []byte(`"schema_version":"knowvault-dataset-profile-v2"`)) {
 		t.Fatalf("schema version missing: %s", leftBytes)
 	}
 	if bytes.Contains(leftBytes, []byte(":null")) {
@@ -92,6 +92,8 @@ func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 		},
 		"field token": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateField(t, spec, "object_id", func(v *FieldSpecInput) { v.Token = "record_id" })
+			mutateCanonicalSemanticFieldToken(t, spec, "object_id", "record_id")
+			mutateCanonicalGrainKey(t, spec, "object_id", "record_id")
 		},
 		"physical field name": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.PhysicalName = "amount_total" })
@@ -122,6 +124,7 @@ func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 		},
 		"measure id": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateMeasure(t, spec, "amount", func(v *MeasureSpecInput) { v.ID = "amount_total" })
+			mutateCanonicalSemanticMeasureID(t, spec, "amount", "amount_total")
 		},
 		"unit": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateMeasure(t, spec, "amount", func(v *MeasureSpecInput) { v.Unit = "currency" })
@@ -172,6 +175,9 @@ func TestDatasetProfileCanonicalMeasureOperandChangesHash(t *testing.T) {
 	right := validDatasetProfileSpec(t)
 	for _, spec := range []*DatasetProfileSpec{&left, &right} {
 		spec.Fields = append(spec.Fields, profileField(t, "amount_net", "amount_net", 6, ScalarNumeric, true))
+		addCanonicalSemanticField(t, spec, FieldSemanticsInput{
+			Token: "amount_net", Label: "Net amount", Description: "Net measured amount", NullMeaning: "Not measured",
+		})
 	}
 	mutateMeasure(t, &right, "amount", func(value *MeasureSpecInput) { value.NumeratorField = "amount_net" })
 	_, leftHash := canonicalProfileForTest(t, left)
@@ -238,6 +244,62 @@ func mutateMeasure(t *testing.T, spec *DatasetProfileSpec, id string, mutate fun
 		}
 	}
 	t.Fatalf("measure %q not found", id)
+}
+func mutateCanonicalSemanticFieldToken(t *testing.T, spec *DatasetProfileSpec, oldToken, newToken string) {
+	t.Helper()
+	value := spec.Semantics.Values()
+	for index := range value.Fields {
+		if value.Fields[index].Token == oldToken {
+			value.Fields[index].Token = newToken
+			spec.Semantics = mustCanonicalSemantics(t, value)
+			return
+		}
+	}
+	t.Fatalf("semantic field %q not found", oldToken)
+}
+func mutateCanonicalSemanticMeasureID(t *testing.T, spec *DatasetProfileSpec, oldID, newID string) {
+	t.Helper()
+	value := spec.Semantics.Values()
+	for index := range value.Measures {
+		if value.Measures[index].ID == oldID {
+			value.Measures[index].ID = newID
+			spec.Semantics = mustCanonicalSemantics(t, value)
+			return
+		}
+	}
+	t.Fatalf("semantic measure %q not found", oldID)
+}
+func addCanonicalSemanticField(t *testing.T, spec *DatasetProfileSpec, field FieldSemanticsInput) {
+	t.Helper()
+	value := spec.Semantics.Values()
+	value.Fields = append(value.Fields, field)
+	spec.Semantics = mustCanonicalSemantics(t, value)
+}
+func mutateCanonicalGrainKey(t *testing.T, spec *DatasetProfileSpec, oldToken, newToken string) {
+	t.Helper()
+	value := spec.Grain.Values()
+	for index := range value.KeyFields {
+		if value.KeyFields[index] == oldToken {
+			value.KeyFields[index] = newToken
+			spec.Grain = mustCanonicalGrain(t, value)
+			return
+		}
+	}
+	t.Fatalf("grain key %q not found", oldToken)
+}
+func addCanonicalSemanticMeasure(t *testing.T, spec *DatasetProfileSpec, measure MeasureSemanticsInput) {
+	t.Helper()
+	value := spec.Semantics.Values()
+	value.Measures = append(value.Measures, measure)
+	spec.Semantics = mustCanonicalSemantics(t, value)
+}
+func mustCanonicalSemantics(t *testing.T, value ProfileSemanticsInput) ProfileSemantics {
+	t.Helper()
+	result, err := NewProfileSemantics(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 func mutateLimits(t *testing.T, spec *DatasetProfileSpec, mutate func(*ProfileLimitsInput)) {
 	t.Helper()

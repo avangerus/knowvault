@@ -4,31 +4,36 @@ import "sort"
 
 // DatasetProfileSpec is the constructor DTO for one approved dataset profile.
 type DatasetProfileSpec struct {
-	Key      ProfileKey
-	Mode     ExecutionMode
-	Source   SourceProjectionSpec
-	Fields   []FieldSpec
-	Measures []MeasureSpec
-	Time     TimePolicy
-	Coverage CoveragePolicy
-	Limits   ProfileLimits
+	Key       ProfileKey
+	Mode      ExecutionMode
+	Source    SourceProjectionSpec
+	Fields    []FieldSpec
+	Measures  []MeasureSpec
+	Semantics ProfileSemantics
+	Grain     DatasetGrain
+	Time      TimePolicy
+	Coverage  CoveragePolicy
+	Limits    ProfileLimits
 }
 
 // normalizedDatasetProfileSpec is the validated, deterministic representation
 // consumed by profile construction. Its slices never alias caller-owned slices.
 type normalizedDatasetProfileSpec struct {
-	key      ProfileKey
-	mode     ExecutionMode
-	source   SourceProjectionSpec
-	fields   []FieldSpec
-	measures []MeasureSpec
-	time     TimePolicy
-	coverage CoveragePolicy
-	limits   ProfileLimits
+	key       ProfileKey
+	mode      ExecutionMode
+	source    SourceProjectionSpec
+	fields    []FieldSpec
+	measures  []MeasureSpec
+	semantics ProfileSemantics
+	grain     DatasetGrain
+	time      TimePolicy
+	coverage  CoveragePolicy
+	limits    ProfileLimits
 }
 
 func normalizeDatasetProfileSpec(spec DatasetProfileSpec) (normalizedDatasetProfileSpec, error) {
 	if !spec.Key.Valid() || spec.Mode != ExecutionLive || !spec.Source.Valid() ||
+		!spec.Semantics.Valid() || !spec.Grain.Valid() ||
 		!spec.Time.Valid() || !spec.Coverage.Valid() || !spec.Limits.Valid() ||
 		len(spec.Fields) == 0 || len(spec.Measures) == 0 {
 		return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
@@ -43,7 +48,18 @@ func normalizeDatasetProfileSpec(spec DatasetProfileSpec) (normalizedDatasetProf
 		return measures[left].Values().ID < measures[right].Values().ID
 	})
 
+	semantics := spec.Semantics.Values()
+	semanticFieldTokens := make(map[string]struct{}, len(semantics.Fields))
+	for _, field := range semantics.Fields {
+		semanticFieldTokens[field.Token] = struct{}{}
+	}
+	semanticMeasureIDs := make(map[string]struct{}, len(semantics.Measures))
+	for _, measure := range semantics.Measures {
+		semanticMeasureIDs[measure.ID] = struct{}{}
+	}
+
 	fieldByToken := make(map[string]ScalarType, len(fields))
+	fieldNullability := make(map[string]bool, len(fields))
 	physicalNames := make(map[string]struct{}, len(fields))
 	hasOutput := false
 	for index, field := range fields {
@@ -61,6 +77,7 @@ func normalizeDatasetProfileSpec(spec DatasetProfileSpec) (normalizedDatasetProf
 			return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
 		}
 		fieldByToken[value.Token] = value.LogicalType
+		fieldNullability[value.Token] = value.Nullable
 		physicalNames[value.PhysicalName] = struct{}{}
 		hasOutput = hasOutput || value.OutputAllowed
 	}
@@ -81,13 +98,37 @@ func normalizeDatasetProfileSpec(spec DatasetProfileSpec) (normalizedDatasetProf
 		}
 	}
 
+	if len(semanticFieldTokens) != len(fieldByToken) {
+		return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
+	}
+	for token := range fieldByToken {
+		if _, found := semanticFieldTokens[token]; !found {
+			return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
+		}
+	}
+	if len(semanticMeasureIDs) != len(measures) {
+		return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
+	}
+	for _, measure := range measures {
+		if _, found := semanticMeasureIDs[measure.Values().ID]; !found {
+			return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
+		}
+	}
+
+	for _, token := range spec.Grain.Values().KeyFields {
+		nullable, found := fieldNullability[token]
+		if !found || nullable {
+			return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
+		}
+	}
+
 	if !timeFieldValid(spec.Time.Values(), fieldByToken) {
 		return normalizedDatasetProfileSpec{}, invalidDatasetProfileSpec()
 	}
 	return normalizedDatasetProfileSpec{
 		key: spec.Key, mode: spec.Mode, source: spec.Source,
-		fields: fields, measures: measures, time: spec.Time,
-		coverage: spec.Coverage, limits: spec.Limits,
+		fields: fields, measures: measures, semantics: spec.Semantics, grain: spec.Grain,
+		time: spec.Time, coverage: spec.Coverage, limits: spec.Limits,
 	}, nil
 }
 

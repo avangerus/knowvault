@@ -44,6 +44,11 @@ func canonicalDistinctFieldPair(t *testing.T) (DatasetProfileSpec, DatasetProfil
 	left.Measures = append(left.Measures, profileMeasure(t, measure))
 	measure.DistinctField = "business_day"
 	right.Measures = append(right.Measures, profileMeasure(t, measure))
+	for _, spec := range []*DatasetProfileSpec{&left, &right} {
+		addCanonicalSemanticMeasure(t, spec, MeasureSemanticsInput{
+			ID: "objects", Label: "Objects", Description: "Distinct objects",
+		})
+	}
 	return left, right
 }
 
@@ -51,6 +56,9 @@ func canonicalDenominatorFieldPair(t *testing.T) (DatasetProfileSpec, DatasetPro
 	left, right := canonicalValueProfilePair(t)
 	for _, spec := range []*DatasetProfileSpec{&left, &right} {
 		spec.Fields = append(spec.Fields, profileField(t, "amount_net", "amount_net", 6, ScalarNumeric, true))
+		addCanonicalSemanticField(t, spec, FieldSemanticsInput{
+			Token: "amount_net", Label: "Net amount", Description: "Net measured amount", NullMeaning: "Not measured",
+		})
 	}
 	measure := MeasureSpecInput{
 		ID: "amount_ratio", Reducer: ReducerRatioOfSums,
@@ -60,6 +68,11 @@ func canonicalDenominatorFieldPair(t *testing.T) (DatasetProfileSpec, DatasetPro
 	left.Measures = append(left.Measures, profileMeasure(t, measure))
 	measure.DenominatorField = "amount_net"
 	right.Measures = append(right.Measures, profileMeasure(t, measure))
+	for _, spec := range []*DatasetProfileSpec{&left, &right} {
+		addCanonicalSemanticMeasure(t, spec, MeasureSemanticsInput{
+			ID: "amount_ratio", Label: "Amount ratio", Description: "Ratio of amounts",
+		})
+	}
 	return left, right
 }
 
