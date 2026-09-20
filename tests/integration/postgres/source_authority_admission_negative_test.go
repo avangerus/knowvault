@@ -12,6 +12,7 @@ import (
 	"knowvault.local/verified-workspace/internal/jobs"
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery"
+	"knowvault.local/verified-workspace/internal/workspace"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
 )
 
@@ -50,7 +51,8 @@ func newAdmittedAuthorityFixture(t *testing.T) admittedAuthorityFixture {
 	}
 	verifyIsolationTrust(t, ctx, admin, registered.ConnectionID)
 	binding := seedRegistrationWorkspaceBinding(t, ctx, admin,
-		registered.SourceScopeID, registered.ScopeConfigHash, "binding_01ARZ3NDEKTSV4RRFFQ69G5FAD")
+		registered.SourceScopeID, registered.ScopeConfigHash,
+		agg2StableWorkspaceSourceID(regOrg, regWorkspace, registered.SourceScopeID))
 
 	runtime := newAuthorityRuntime(t, ctx)
 	grant := issueRuntimeGrant(t, ctx, runtime, binding, "negative-admission-grant")
@@ -456,6 +458,132 @@ func TestPostgreSQLSourceAuthorityRevocationAndPolicyPreconditions(t *testing.T)
 					t.Fatalf("advance warning contract affected %d rows, want 1", tag.RowsAffected())
 				}
 				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, newAdmittedAuthorityFixture(t))
+		})
+	}
+}
+
+func TestPostgreSQLSourceAuthorityLifecyclePreconditions(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, admittedAuthorityFixture)
+	}{
+		{
+			name: "organization suspended",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				tag, err := fixture.admin.Exec(ctx, `
+					UPDATE public.organization
+					SET status = 'SUSPENDED'
+					WHERE id = $1 AND status = 'ACTIVE'`, fixture.binding.organizationID)
+				if err != nil {
+					t.Fatalf("suspend organization blocker: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("suspend organization affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "workspace archived",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				archived, err := fixture.store.Archive(ctx,
+					authorityAccess(fixture.binding, regOwner, "req_negative_archive"),
+					workspacerepository.ArchiveRequest{
+						IdempotencyKey:            workspaceIdempotencyKey("negative-archive"),
+						WorkspaceID:               fixture.binding.workspaceID,
+						ExpectedConfigurationHash: fixture.binding.workspaceConfHash,
+					})
+				if err != nil {
+					t.Fatalf("archive workspace: %v", err)
+				}
+				if archived.Status != workspace.StatusArchived || archived.Revision != fixture.binding.workspaceRevision+1 {
+					t.Fatalf("archive result = status %q revision %d, want ARCHIVED revision %d",
+						archived.Status, archived.Revision, fixture.binding.workspaceRevision+1)
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "source removed",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				removed, err := fixture.store.RemoveSource(ctx,
+					authorityAccess(fixture.binding, regOwner, "req_negative_remove_source"),
+					workspacerepository.RemoveSourceRequest{
+						IdempotencyKey:            workspaceIdempotencyKey("negative-remove-source"),
+						WorkspaceID:               fixture.binding.workspaceID,
+						ExpectedWorkspaceRevision: fixture.binding.workspaceRevision,
+						ExpectedConfigurationHash: fixture.binding.workspaceConfHash,
+						WorkspaceSourceID:         fixture.binding.workspaceSourceID,
+						SourceScopeID:             fixture.binding.sourceScopeID,
+						SourceScopeRevision:       fixture.binding.sourceScopeRevision,
+						ScopeConfigHash:           fixture.binding.scopeConfigHash,
+						AccessMode:                workspacerepository.SourceAccessWorkspaceManaged,
+					})
+				if err != nil {
+					t.Fatalf("remove source: %v", err)
+				}
+				if removed.Revision != fixture.binding.workspaceRevision+1 {
+					t.Fatalf("remove source revision = %d, want %d", removed.Revision, fixture.binding.workspaceRevision+1)
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "auditor cannot resolve authority",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				changed, err := fixture.store.ChangeMemberRole(ctx,
+					authorityAccess(fixture.binding, regOwner, "req_negative_change_viewer_auditor"),
+					workspacerepository.ChangeMemberRoleRequest{
+						IdempotencyKey:            workspaceIdempotencyKey("negative-change-viewer-auditor"),
+						WorkspaceID:               fixture.binding.workspaceID,
+						ExpectedConfigurationHash: fixture.binding.workspaceConfHash,
+						PrincipalID:               regViewer,
+						Role:                      workspace.RoleAuditor,
+					})
+				if err != nil {
+					t.Fatalf("change viewer role to auditor: %v", err)
+				}
+				if changed.Revision != fixture.binding.workspaceRevision+1 {
+					t.Fatalf("auditor role change revision = %d, want %d", changed.Revision, fixture.binding.workspaceRevision+1)
+				}
+				foundAuditor := false
+				for _, member := range changed.Members {
+					if member.PrincipalID == regViewer && member.Role == workspace.RoleAuditor {
+						foundAuditor = true
+						break
+					}
+				}
+				if !foundAuditor {
+					t.Fatalf("changed snapshot has no AUDITOR membership for %s", regViewer)
+				}
+
+				updated := fixture.binding
+				updated.workspaceRevision = changed.Revision
+				updated.workspaceConfHash = mustWorkspaceHash(t, changed)
+				grant := issueRuntimeGrant(t, ctx, fixture.store, updated, "negative-auditor-grant")
+				if _, err := fixture.store.ConfirmManagedSource(ctx,
+					authorityAccess(updated, regOwner, "req_negative_auditor_confirm"),
+					confirmRuntimeRequest(updated, grant, "negative-auditor-confirm")); err != nil {
+					t.Fatalf("confirm exact source at auditor revision: %v", err)
+				}
+
+				auditorAccess := authorityAccess(updated, regViewer, "req_negative_auditor_resolve")
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, auditorAccess, fixture.request)
 				assertAuthorityNotFound(t, result, err)
 			},
 		},
