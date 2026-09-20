@@ -4,14 +4,20 @@ import (
 	"context"
 	"sort"
 
+	"github.com/jackc/pgx/v5"
+
 	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/platform/database"
 )
 
+type toolLoopDisclosureQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 // A trace contains every retrieved result, including evidence not cited in
 // the final answer. The legacy citation gate alone cannot authorize it.
 // Recheck the full footprint in the same transaction as run disclosure.
-func toolLoopDisclosure(ctx context.Context, tx database.Transaction, access database.AccessContext, run Run) error {
+func toolLoopDisclosure(ctx context.Context, tx toolLoopDisclosureQueryer, access database.AccessContext, run Run) error {
 	if run.AnswerMode != AnswerModeToolLoop {
 		return nil
 	}

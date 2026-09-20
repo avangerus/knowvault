@@ -3514,7 +3514,7 @@ func (service *Service) loadScopeBindings(ctx context.Context, tx database.Trans
 // An unrelated workspace mutation must not hide history when the complete
 // source tuple set is unchanged. Source changes still close this conservative
 // guard; every observed fragment is separately reauthorized at disclosure.
-func currentToolLoopScope(ctx context.Context, tx database.Transaction, access database.AccessContext, run Run) (bool, error) {
+func currentToolLoopScope(ctx context.Context, tx toolLoopDisclosureQueryer, access database.AccessContext, run Run) (bool, error) {
 	var current bool
 	err := tx.QueryRow(ctx, `WITH current_workspace AS (
 		SELECT current_revision FROM public.workspace WHERE organization_id=$1 AND id=$2
