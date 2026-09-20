@@ -2,12 +2,30 @@ package repository
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"time"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/policy"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery"
 	"knowvault.local/verified-workspace/internal/workspace"
 )
+
+// authorityColumn is the private wire shape of one entry in the persisted
+// columns_json document. It exists only to decode already-trusted server
+// contract bytes inside the read transaction; it is never returned.
+type authorityColumn struct {
+	Ordinal         int                         `json:"ordinal"`
+	Name            string                      `json:"name"`
+	TypeFingerprint string                      `json:"type_fingerprint"`
+	LogicalType     postgresqlquery.LogicalType `json:"logical_type"`
+	Roles           []postgresqlquery.Role      `json:"roles"`
+	Nullable        bool                        `json:"nullable"`
+	Precision       int                         `json:"precision"`
+	Scale           int                         `json:"scale"`
+	MaxBytes        int                         `json:"max_bytes"`
+}
 
 // PostgreSQLAuthorityRequest carries the immutable identity of one workspace
 // source scope revision for which an authority decision is requested.
@@ -96,6 +114,8 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 	denied := false
 	notFound := false
 	persistence := false
+	resolved := false
+	result := PostgreSQLAuthorityResult{}
 	readErr := store.database.Read(ctx, access, func(transactionContext context.Context, transaction database.Transaction) error {
 		subject, organization, found, actorErr := currentActor(transactionContext, transaction, access, false)
 		if actorErr != nil {
@@ -137,9 +157,189 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			persistence = true
 			return nil
 		}
-		// The exact source query is added by the next card; until then this
-		// method stays fail-closed rather than returning an admitted result.
-		notFound = true
+		var (
+			scannedWorkspaceSourceID  string
+			scannedSourceScopeID      string
+			scannedScopeRevision      int64
+			scannedAccessMode         string
+			scannedScopeConfigHash    string
+			scannedConnectionID       string
+			scannedDatabaseIdentity   string
+			scannedLineageID          string
+			scannedProjectionRevision int64
+			scannedContractHash       string
+			scannedSchemaName         string
+			scannedRelationName       string
+			scannedRelationKind       string
+			scannedColumnsRaw         string
+			scannedEmptyPolicy        string
+			scannedMaxRows            int64
+			scannedMaxColumns         int
+			scannedMaxFieldBytes      int64
+			scannedMaxRowBytes        int64
+			scannedMaxTotalBytes      int64
+			scannedTimeoutMS          int64
+		)
+		scanErr := transaction.QueryRow(transactionContext, `
+			SELECT status.workspace_source_id, status.source_scope_id,
+			       status.source_scope_revision, status.access_mode, status.scope_config_hash,
+			       status.connection_id,
+			       projection.database_identity, projection.lineage_id,
+			       projection.projection_revision, projection.contract_hash,
+			       projection.schema_name, projection.relation_name,
+			       projection.relation_kind, projection.columns_json,
+			       projection.empty_snapshot_policy,
+			       projection.max_rows, projection.max_columns,
+			       projection.max_field_bytes, projection.max_row_bytes,
+			       projection.max_total_bytes, projection.statement_timeout_ms
+			  FROM app.workspace_source_status_v3($1) AS status
+			  JOIN public.workspace AS current_workspace
+			    ON current_workspace.organization_id=$2 AND current_workspace.id=$1
+			   AND current_workspace.current_revision=$9
+			  JOIN public.workspace_revision AS current_revision
+			    ON current_revision.organization_id=current_workspace.organization_id
+			   AND current_revision.workspace_id=current_workspace.id
+			   AND current_revision.revision=current_workspace.current_revision
+			   AND current_revision.configuration_hash=$8
+			  JOIN public.workspace_revision_source AS binding
+			    ON binding.organization_id=current_workspace.organization_id
+			   AND binding.workspace_id=current_workspace.id
+			   AND binding.workspace_revision=current_workspace.current_revision
+			   AND binding.workspace_source_id=status.workspace_source_id
+			   AND binding.source_scope_id=status.source_scope_id
+			   AND binding.source_scope_revision=status.source_scope_revision
+			   AND binding.scope_config_hash=status.scope_config_hash
+			   AND binding.access_mode=status.access_mode
+			   AND binding.workspace_configuration_hash=current_revision.configuration_hash
+			   AND binding.enabled
+			  JOIN public.source_scope AS scope
+			    ON scope.organization_id=$2 AND scope.id=status.source_scope_id
+			   AND scope.active_revision=status.source_scope_revision
+			  JOIN public.source_scope_revision AS scope_revision
+			    ON scope_revision.organization_id=$2
+			   AND scope_revision.source_scope_id=status.source_scope_id
+			   AND scope_revision.revision=status.source_scope_revision
+			   AND scope_revision.connection_id=status.connection_id
+			   AND scope_revision.scope_config_hash=status.scope_config_hash
+			  JOIN public.source_scope_activation AS activation
+			    ON activation.organization_id=$2
+			   AND activation.source_scope_id=status.source_scope_id
+			   AND activation.source_scope_revision=status.source_scope_revision
+			   AND activation.revision=1
+			  JOIN public.postgresql_query_projection AS projection
+			    ON projection.organization_id=$2
+			   AND projection.source_scope_id=status.source_scope_id
+			   AND projection.source_scope_revision=status.source_scope_revision
+			   AND projection.connection_id=status.connection_id
+			 WHERE status.workspace_source_id=$3
+			   AND status.source_scope_id=$4
+			   AND status.source_scope_revision=$5
+			   AND status.scope_config_hash=$6
+			   AND status.access_mode=$7
+			   AND status.enabled
+			   AND status.activation_status='READY'
+			   AND status.trust_verified
+			   AND scope_revision.source_type='POSTGRESQL_QUERY'
+			   AND scope_revision.scope_contract_version='postgresql-query-v1'
+			   AND activation.status='READY'
+			   AND projection.status='ACTIVE'
+			   AND projection.contract_version='postgresql-query-value-v1'
+			   AND app.workspace_source_confirmation_live($1,$3,$4,$5,$6,$7)`,
+			request.WorkspaceID, access.OrganizationID, request.WorkspaceSourceID,
+			request.SourceScopeID, request.SourceScopeRevision, request.ScopeConfigHash,
+			request.AccessMode, storedHash, snapshot.Revision,
+		).Scan(
+			&scannedWorkspaceSourceID, &scannedSourceScopeID,
+			&scannedScopeRevision, &scannedAccessMode, &scannedScopeConfigHash,
+			&scannedConnectionID,
+			&scannedDatabaseIdentity, &scannedLineageID,
+			&scannedProjectionRevision, &scannedContractHash,
+			&scannedSchemaName, &scannedRelationName,
+			&scannedRelationKind, &scannedColumnsRaw,
+			&scannedEmptyPolicy,
+			&scannedMaxRows, &scannedMaxColumns,
+			&scannedMaxFieldBytes, &scannedMaxRowBytes,
+			&scannedMaxTotalBytes, &scannedTimeoutMS,
+		)
+		if database.IsNotFound(scanErr) {
+			notFound = true
+			return nil
+		}
+		if scanErr != nil {
+			return scanErr
+		}
+		if scannedWorkspaceSourceID != request.WorkspaceSourceID ||
+			scannedSourceScopeID != request.SourceScopeID ||
+			scannedScopeRevision != request.SourceScopeRevision ||
+			scannedScopeConfigHash != request.ScopeConfigHash ||
+			scannedAccessMode != request.AccessMode {
+			notFound = true
+			return nil
+		}
+		var decoded []authorityColumn
+		if decodeErr := jsonv2.Unmarshal(jsontext.Value(scannedColumnsRaw), &decoded,
+			jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); decodeErr != nil {
+			persistence = true
+			return nil
+		}
+		columns := make([]postgresqlquery.Column, len(decoded))
+		for i, entry := range decoded {
+			roles := make([]postgresqlquery.Role, len(entry.Roles))
+			copy(roles, entry.Roles)
+			columns[i] = postgresqlquery.Column{
+				Ordinal:         entry.Ordinal,
+				Name:            entry.Name,
+				TypeFingerprint: entry.TypeFingerprint,
+				LogicalType:     entry.LogicalType,
+				Roles:           roles,
+				Nullable:        entry.Nullable,
+				Precision:       entry.Precision,
+				Scale:           entry.Scale,
+				MaxBytes:        entry.MaxBytes,
+			}
+		}
+		projection := postgresqlquery.Projection{
+			ConnectionID:        scannedConnectionID,
+			DatabaseIdentity:    scannedDatabaseIdentity,
+			LineageID:           scannedLineageID,
+			Revision:            scannedProjectionRevision,
+			ContractHash:        scannedContractHash,
+			SchemaName:          scannedSchemaName,
+			RelationName:        scannedRelationName,
+			RelationKind:        scannedRelationKind,
+			Columns:             columns,
+			EmptySnapshotPolicy: scannedEmptyPolicy,
+		}
+		if projection.Validate() != nil {
+			persistence = true
+			return nil
+		}
+		limits := postgresqlquery.Limits{
+			MaxRows:            int(scannedMaxRows),
+			MaxColumns:         scannedMaxColumns,
+			MaxFieldBytes:      int(scannedMaxFieldBytes),
+			MaxRowBytes:        int(scannedMaxRowBytes),
+			MaxTotalBytes:      int(scannedMaxTotalBytes),
+			StatementTimeout:   time.Duration(scannedTimeoutMS) * time.Millisecond,
+			TransactionTimeout: time.Duration(scannedTimeoutMS+120000) * time.Millisecond,
+		}
+		if limits.Validate() != nil {
+			persistence = true
+			return nil
+		}
+		result = PostgreSQLAuthorityResult{
+			workspaceID:         request.WorkspaceID,
+			workspaceRevision:   snapshot.Revision,
+			workspaceConfigHash: storedHash,
+			workspaceSourceID:   scannedWorkspaceSourceID,
+			sourceScopeID:       scannedSourceScopeID,
+			sourceScopeRevision: scannedScopeRevision,
+			scopeConfigHash:     scannedScopeConfigHash,
+			accessMode:          scannedAccessMode,
+			projection:          projection,
+			limits:              limits,
+		}
+		resolved = true
 		return nil
 	})
 	if readErr != nil {
@@ -148,8 +348,8 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 	if persistence {
 		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence}
 	}
-	if denied || notFound {
+	if denied || notFound || !resolved {
 		return PostgreSQLAuthorityResult{}, &Error{code: CodeNotFound}
 	}
-	return PostgreSQLAuthorityResult{}, &Error{code: CodeNotFound}
+	return result, nil
 }
