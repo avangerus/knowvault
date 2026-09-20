@@ -83,8 +83,8 @@ scored 9/10 or 10/10 in complexity.
 
 | Cycle | User-visible truth | Acceptance gate | Status |
 | --- | --- | --- | --- |
-| R1.0 — One authority | Browser and MCP enter the same admitted, authorized Question Run and see the same terminal semantics. | Durable admission before reads; equivalent identity/scope tests; revocation before disclosure; no second execution path. | Active after ADR-0096 |
-| R1.1 — Trusted profile | One approved dataset exposes human terms, grain, keys, types, units, NULL/time semantics, allowed operations and an immutable revision/hash. | Invalid, drifting or retired profiles fail closed; counts and duplicate policy match direct controls. | Queued |
+| R1.0 — One authority | Browser and MCP enter the same admitted, authorized Question Run and see the same terminal semantics. | Durable admission before reads; equivalent identity/scope tests; revocation before disclosure; no second execution path. | Complete — shared authority, disclosure reauthorization and REST/MCP parity accepted on 20 September 2026 |
+| R1.1 — Trusted profile | One approved dataset exposes human terms, grain, keys, types, units, NULL/time semantics, allowed operations and an immutable revision/hash. | Invalid, drifting or retired profiles fail closed; counts and duplicate policy match direct controls. | Active |
 | R1.2 — Closed intent | Varied ordinary-language questions become a typed lookup/filter/group/aggregate intent without SQL. | Closed schemas; unknown fields/operators/relations refused; plan binds exact profile and catalog hashes. | Queued |
 | R1.3 — Deterministic read | Server compiles the intent to a bounded parameterized read and returns a typed numeric or row result. | Read-only transaction; identifier allowlist; row/byte/time budgets; decimals, NULLs, periods, truncation and errors verified. | Queued |
 | R1.4 — Verifiable answer | The user receives a concise answer whose numbers cannot differ from the deterministic result and whose limits are visible. | Completeness gates totals/absence; receipt binds inputs, coverage and digest; retained evidence and live observation are labelled separately. | Queued |
