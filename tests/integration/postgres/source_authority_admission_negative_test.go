@@ -232,3 +232,138 @@ func TestPostgreSQLSourceAuthorityIdentityPreconditions(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgreSQLSourceAuthorityCurrentStatePreconditions(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, admittedAuthorityFixture)
+	}{
+		{
+			name: "activation syncing",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				tag, err := fixture.admin.Exec(ctx, `
+					UPDATE public.source_scope_activation
+					SET status = 'SYNCING', activated_at = NULL
+					WHERE organization_id = $1
+					  AND source_scope_id = $2
+					  AND source_scope_revision = $3
+					  AND revision = 1
+					  AND status = 'READY'`,
+					regOrg, fixture.request.SourceScopeID, fixture.request.SourceScopeRevision)
+				if err != nil {
+					t.Fatalf("activation READY->SYNCING blocker: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("activation READY->SYNCING affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "trust revoked",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				tag, err := fixture.admin.Exec(ctx, `
+					UPDATE public.source_connection_trust_projection AS projection
+					SET status = 'REVOKED'
+					WHERE projection.organization_id = $1
+					  AND projection.trust_record_id = (
+						  SELECT connection_revision.trust_record_id
+						  FROM public.source_scope_revision AS scope_revision
+						  JOIN public.source_connection_revision AS connection_revision
+							ON connection_revision.organization_id = scope_revision.organization_id
+						   AND connection_revision.connection_id = scope_revision.connection_id
+						   AND connection_revision.revision = scope_revision.connection_revision
+						  WHERE scope_revision.organization_id = $1
+							AND scope_revision.source_scope_id = $2
+							AND scope_revision.revision = $3
+					  )
+					  AND projection.revision = 1
+					  AND projection.status = 'VERIFIED'`,
+					regOrg, fixture.request.SourceScopeID, fixture.request.SourceScopeRevision)
+				if err != nil {
+					t.Fatalf("trust VERIFIED->REVOKED blocker: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("trust VERIFIED->REVOKED affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "projection revoked",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				tag, err := fixture.admin.Exec(ctx, `
+					UPDATE public.postgresql_query_projection
+					SET status = 'REVOKED'
+					WHERE organization_id = $1
+					  AND source_scope_id = $2
+					  AND source_scope_revision = $3
+					  AND status = 'ACTIVE'`,
+					regOrg, fixture.request.SourceScopeID, fixture.request.SourceScopeRevision)
+				if err != nil {
+					t.Fatalf("projection ACTIVE->REVOKED blocker: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("projection ACTIVE->REVOKED affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityNotFound(t, result, err)
+			},
+		},
+		{
+			name: "unknown projection column",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				tag, err := fixture.admin.Exec(ctx, `
+					UPDATE public.postgresql_query_projection
+					SET columns_json = jsonb_set(columns_json, '{0,unknown}', 'true'::jsonb, true)
+					WHERE organization_id = $1
+					  AND source_scope_id = $2
+					  AND source_scope_revision = $3
+					  AND status = 'ACTIVE'`,
+					regOrg, fixture.request.SourceScopeID, fixture.request.SourceScopeRevision)
+				if err != nil {
+					t.Fatalf("unknown projection column mutation blocker: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("unknown projection column mutation affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityPersistence(t, result, err)
+			},
+		},
+		{
+			name: "inconsistent valid database limits",
+			run: func(t *testing.T, fixture admittedAuthorityFixture) {
+				ctx := context.Background()
+				tag, err := fixture.admin.Exec(ctx, `
+					UPDATE public.postgresql_query_projection
+					SET max_field_bytes = 4096, max_row_bytes = 1024
+					WHERE organization_id = $1
+					  AND source_scope_id = $2
+					  AND source_scope_revision = $3
+					  AND status = 'ACTIVE'`,
+					regOrg, fixture.request.SourceScopeID, fixture.request.SourceScopeRevision)
+				if err != nil {
+					t.Fatalf("inconsistent limits mutation blocker: %v", err)
+				}
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("inconsistent limits mutation affected %d rows, want 1", tag.RowsAffected())
+				}
+				result, err := fixture.store.ResolvePostgreSQLAuthority(ctx, fixture.access, fixture.request)
+				assertAuthorityPersistence(t, result, err)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.run(t, newAdmittedAuthorityFixture(t))
+		})
+	}
+}
