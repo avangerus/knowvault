@@ -13,6 +13,7 @@ package postgres_test
 import (
 	"context"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -221,6 +222,68 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 	} {
 		if strings.Contains(combined, marker) {
 			t.Fatalf("resolved projection leaked %q in %s", marker, combined)
+		}
+	}
+
+	// Source-plane privilege loss must fail closed without returning the
+	// database cause, SQL or credential metadata. Use a fresh request and
+	// restore the runtime grant immediately after the resolver returns so the
+	// following reauthorization race starts from the original fixture.
+	privilegeRequest := workspacerepository.PostgreSQLAuthorityRequest{
+		WorkspaceID:         workspaceID,
+		WorkspaceSourceID:   workspaceSourceID,
+		SourceScopeID:       registered.SourceScopeID,
+		SourceScopeRevision: req.ProjectionRevision,
+		ScopeConfigHash:     registered.ScopeConfigHash,
+		AccessMode:          "WORKSPACE_MANAGED",
+	}
+	privilegeAccess := authorityAccess(binding, regOwner, "req_admission_projection_privilege")
+	privilegeRestored := false
+	restoreProjectionRead := func() {
+		if privilegeRestored {
+			return
+		}
+		if _, restoreErr := admin.Exec(context.Background(),
+			`GRANT SELECT ON public.postgresql_query_projection TO knowvault_app`); restoreErr != nil {
+			t.Errorf("restore postgresql projection read privilege: %v", restoreErr)
+			return
+		}
+		privilegeRestored = true
+	}
+	defer restoreProjectionRead()
+	if _, err := admin.Exec(ctx, `REVOKE SELECT ON public.postgresql_query_projection FROM knowvault_app`); err != nil {
+		t.Fatalf("revoke postgresql projection read privilege: %v", err)
+	}
+	rejected, rejectedErr := store.ResolvePostgreSQLAuthority(ctx, privilegeAccess, privilegeRequest)
+	restoreProjectionRead()
+	if rejectedErr == nil {
+		t.Fatalf("projection privilege loss resolved authority: result=%s", formatAuthorityResult(t, rejected))
+	}
+	if gotCode := workspacerepository.CodeOf(rejectedErr); gotCode != workspacerepository.CodePersistence {
+		t.Fatalf("projection privilege loss error code = %q, want %q", gotCode, workspacerepository.CodePersistence)
+	}
+	if rejectedErr.Error() != string(workspacerepository.CodePersistence) {
+		t.Fatalf("projection privilege loss error text = %q, want %q", rejectedErr.Error(), workspacerepository.CodePersistence)
+	}
+	if errors.Unwrap(rejectedErr) != nil {
+		t.Fatalf("projection privilege loss exposed an underlying error: %v", errors.Unwrap(rejectedErr))
+	}
+	if rejected.WorkspaceID() != "" || rejected.WorkspaceRevision() != 0 ||
+		rejected.WorkspaceConfigurationHash() != "" || rejected.WorkspaceSourceID() != "" ||
+		rejected.SourceScopeID() != "" || rejected.SourceScopeRevision() != 0 ||
+		rejected.ScopeConfigHash() != "" || rejected.AccessMode() != "" {
+		t.Fatalf("projection privilege loss returned scalar authority accessors: %s", formatAuthorityResult(t, rejected))
+	}
+	safeError := strings.ToLower(rejectedErr.Error())
+	for _, forbidden := range []string{
+		"permission",
+		"postgresql_query_projection",
+		"select",
+		strings.ToLower(authorityCredentialSentinel),
+		"postgres://",
+	} {
+		if strings.Contains(safeError, forbidden) {
+			t.Fatalf("projection privilege loss error leaked %q: %q", forbidden, rejectedErr.Error())
 		}
 	}
 
