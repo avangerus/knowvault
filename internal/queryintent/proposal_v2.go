@@ -3,6 +3,7 @@ package queryintent
 import (
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -183,6 +184,134 @@ func NewFieldToken(v string) (FieldToken, error) {
 		return FieldToken{}, newRefusal(CodeInvalidProposal)
 	}
 	return FieldToken{name: v}, nil
+}
+
+// DatasetProfileRef identifies an approved dataset profile definition.
+// Its fields are private so proposals cannot bypass constructor validation.
+type DatasetProfileRef struct {
+	datasetID      string
+	profileVersion int64
+}
+
+func NewDatasetProfileRef(datasetID string, profileVersion int64) (DatasetProfileRef, error) {
+	if !validLabel(datasetID, maxIDLength) || profileVersion <= 0 {
+		return DatasetProfileRef{}, newRefusal(CodeInvalidProposal)
+	}
+	return DatasetProfileRef{datasetID: datasetID, profileVersion: profileVersion}, nil
+}
+
+func (r DatasetProfileRef) Valid() bool {
+	return validLabel(r.datasetID, maxIDLength) && r.profileVersion > 0
+}
+
+func (r DatasetProfileRef) DatasetID() (string, bool) {
+	if !r.Valid() {
+		return "", false
+	}
+	return r.datasetID, true
+}
+
+func (r DatasetProfileRef) ProfileVersion() (int64, bool) {
+	if !r.Valid() {
+		return 0, false
+	}
+	return r.profileVersion, true
+}
+
+// MetricRef identifies an approved metric definition.
+type MetricRef struct {
+	metricID      string
+	metricVersion int64
+}
+
+func NewMetricRef(metricID string, metricVersion int64) (MetricRef, error) {
+	if !validLabel(metricID, maxIDLength) || metricVersion <= 0 {
+		return MetricRef{}, newRefusal(CodeInvalidProposal)
+	}
+	return MetricRef{metricID: metricID, metricVersion: metricVersion}, nil
+}
+
+func (r MetricRef) Valid() bool {
+	return validLabel(r.metricID, maxIDLength) && r.metricVersion > 0
+}
+
+func (r MetricRef) MetricID() (string, bool) {
+	if !r.Valid() {
+		return "", false
+	}
+	return r.metricID, true
+}
+
+func (r MetricRef) MetricVersion() (int64, bool) {
+	if !r.Valid() {
+		return 0, false
+	}
+	return r.metricVersion, true
+}
+
+type PeriodMode string
+
+const (
+	PeriodEXPLICIT        PeriodMode = "EXPLICIT"
+	PeriodTODAY           PeriodMode = "TODAY"
+	PeriodCURRENTMONTH    PeriodMode = "CURRENT_MONTH"
+	PeriodLATESTAVAILABLE PeriodMode = "LATEST_AVAILABLE"
+)
+
+func (m PeriodMode) Valid() bool {
+	return m == PeriodEXPLICIT || m == PeriodTODAY || m == PeriodCURRENTMONTH || m == PeriodLATESTAVAILABLE
+}
+
+// PeriodProposal preserves unresolved period input. Resolution belongs to a
+// later stage that has the approved profile and its timezone available.
+type PeriodProposal struct {
+	mode        PeriodMode
+	start       string
+	end         string
+	initialized bool
+}
+
+func NewRelativePeriod(mode PeriodMode) (PeriodProposal, error) {
+	if mode != PeriodTODAY && mode != PeriodCURRENTMONTH && mode != PeriodLATESTAVAILABLE {
+		return PeriodProposal{}, newRefusal(CodeInvalidProposal)
+	}
+	return PeriodProposal{mode: mode, initialized: true}, nil
+}
+
+func NewExplicitPeriod(start, end string) (PeriodProposal, error) {
+	if !validPeriodBound(start) || !validPeriodBound(end) {
+		return PeriodProposal{}, newRefusal(CodeInvalidProposal)
+	}
+	return PeriodProposal{mode: PeriodEXPLICIT, start: start, end: end, initialized: true}, nil
+}
+
+func (p PeriodProposal) Valid() bool {
+	if !p.initialized || !p.mode.Valid() {
+		return false
+	}
+	if p.mode == PeriodEXPLICIT {
+		return validPeriodBound(p.start) && validPeriodBound(p.end)
+	}
+	return p.start == "" && p.end == ""
+}
+
+func (p PeriodProposal) Mode() (PeriodMode, bool) {
+	if !p.Valid() {
+		return "", false
+	}
+	return p.mode, true
+}
+
+func (p PeriodProposal) ExplicitBounds() (string, string, bool) {
+	if !p.Valid() || p.mode != PeriodEXPLICIT {
+		return "", "", false
+	}
+	return p.start, p.end, true
+}
+
+func validPeriodBound(value string) bool {
+	return value != "" && len(value) <= 64 && utf8.ValidString(value) && strings.TrimSpace(value) == value &&
+		!strings.ContainsFunc(value, unicode.IsControl)
 }
 
 const (

@@ -28,6 +28,140 @@ func TestProposalV2ClosedVocabulary(t *testing.T) {
 	pBad(t, e)
 }
 
+func TestProposalV2DefinitionReferences(t *testing.T) {
+	dataset, e := NewDatasetProfileRef("service-desk", 7)
+	if e != nil || !dataset.Valid() {
+		t.Fatal(e)
+	}
+	if id, ok := dataset.DatasetID(); !ok || id != "service-desk" {
+		t.Fatal(id, ok)
+	}
+	if version, ok := dataset.ProfileVersion(); !ok || version != 7 {
+		t.Fatal(version, ok)
+	}
+	metric, e := NewMetricRef("open_tickets", 3)
+	if e != nil || !metric.Valid() {
+		t.Fatal(e)
+	}
+	if id, ok := metric.MetricID(); !ok || id != "open_tickets" {
+		t.Fatal(id, ok)
+	}
+	if version, ok := metric.MetricVersion(); !ok || version != 3 {
+		t.Fatal(version, ok)
+	}
+
+	for _, id := range []string{"", " leading", "trailing ", "line\nbreak", strings.Repeat("x", maxIDLength+1)} {
+		_, e := NewDatasetProfileRef(id, 1)
+		pBad(t, e)
+		_, e = NewMetricRef(id, 1)
+		pBad(t, e)
+	}
+	for _, version := range []int64{-1, 0} {
+		_, e := NewDatasetProfileRef("dataset", version)
+		pBad(t, e)
+		_, e = NewMetricRef("metric", version)
+		pBad(t, e)
+	}
+
+	var zeroDataset DatasetProfileRef
+	if zeroDataset.Valid() {
+		t.Fatal("zero dataset profile reference valid")
+	}
+	if _, ok := zeroDataset.DatasetID(); ok {
+		t.Fatal("zero dataset id readable")
+	}
+	if _, ok := zeroDataset.ProfileVersion(); ok {
+		t.Fatal("zero profile version readable")
+	}
+	var zeroMetric MetricRef
+	if zeroMetric.Valid() {
+		t.Fatal("zero metric reference valid")
+	}
+	if _, ok := zeroMetric.MetricID(); ok {
+		t.Fatal("zero metric id readable")
+	}
+	if _, ok := zeroMetric.MetricVersion(); ok {
+		t.Fatal("zero metric version readable")
+	}
+}
+
+func TestProposalV2PeriodModesAndRelativePeriods(t *testing.T) {
+	for _, mode := range []PeriodMode{PeriodEXPLICIT, PeriodTODAY, PeriodCURRENTMONTH, PeriodLATESTAVAILABLE} {
+		if !mode.Valid() {
+			t.Fatal(mode)
+		}
+	}
+	for _, mode := range []PeriodMode{"", "today", "CURRENT-MONTH", "UNKNOWN"} {
+		if mode.Valid() {
+			t.Fatal(mode)
+		}
+		_, e := NewRelativePeriod(mode)
+		pBad(t, e)
+	}
+	_, e := NewRelativePeriod(PeriodEXPLICIT)
+	pBad(t, e)
+	for _, mode := range []PeriodMode{PeriodTODAY, PeriodCURRENTMONTH, PeriodLATESTAVAILABLE} {
+		period, e := NewRelativePeriod(mode)
+		if e != nil || !period.Valid() {
+			t.Fatal(mode, e)
+		}
+		if got, ok := period.Mode(); !ok || got != mode {
+			t.Fatal(got, ok)
+		}
+		if start, end, ok := period.ExplicitBounds(); ok || start != "" || end != "" {
+			t.Fatal(start, end, ok)
+		}
+	}
+}
+
+func TestProposalV2ExplicitPeriodSyntaxAndAccessors(t *testing.T) {
+	start := "2026-13-45T25:61:61Z"
+	end := "2024-01-01T00:00:00Z"
+	period, e := NewExplicitPeriod(start, end)
+	if e != nil || !period.Valid() {
+		t.Fatal(e)
+	}
+	if got, ok := period.Mode(); !ok || got != PeriodEXPLICIT {
+		t.Fatal(got, ok)
+	}
+	if gotStart, gotEnd, ok := period.ExplicitBounds(); !ok || gotStart != start || gotEnd != end {
+		t.Fatal(gotStart, gotEnd, ok)
+	}
+	if _, e := NewExplicitPeriod(strings.Repeat("x", 64), strings.Repeat("y", 64)); e != nil {
+		t.Fatal("64-byte bounds rejected", e)
+	}
+	for _, bounds := range [][2]string{
+		{"", "end"}, {"start", ""}, {" start", "end"}, {"start", "end "},
+		{"start\a", "end"}, {"start", "end\u009f"}, {strings.Repeat("x", 65), "end"}, {"start", strings.Repeat("y", 65)},
+		{string([]byte{0xff}), "end"},
+	} {
+		_, e := NewExplicitPeriod(bounds[0], bounds[1])
+		pBad(t, e)
+	}
+}
+
+func TestProposalV2ZeroAndForgedPeriodsInvalid(t *testing.T) {
+	for _, period := range []PeriodProposal{
+		{},
+		{mode: PeriodTODAY},
+		{mode: "UNKNOWN", initialized: true},
+		{mode: PeriodTODAY, start: "forged", initialized: true},
+		{mode: PeriodCURRENTMONTH, end: "forged", initialized: true},
+		{mode: PeriodEXPLICIT, start: "", end: "end", initialized: true},
+		{mode: PeriodEXPLICIT, start: " start", end: "end", initialized: true},
+	} {
+		if period.Valid() {
+			t.Fatal("forged period valid", period)
+		}
+		if _, ok := period.Mode(); ok {
+			t.Fatal("invalid period mode readable")
+		}
+		if _, _, ok := period.ExplicitBounds(); ok {
+			t.Fatal("invalid period bounds readable")
+		}
+	}
+}
+
 func TestProposalV2ScalarsAndTemporalGrammar(t *testing.T) {
 	for in, want := range map[string]string{"00012.3400": "12.34", "-000.000": "0", "0.0100": "0.01"} {
 		s, e := NumericScalar(in)
