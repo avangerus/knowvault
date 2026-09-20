@@ -409,3 +409,174 @@ func TestProposalV2LimitBoundsDefaultAndZero(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestProposalV2PredicateValidRejectsForgedValues(t *testing.T) {
+	field, _ := NewFieldToken("status")
+	valid, _ := NewPredicate(field, OpEQ, IntScalar(1))
+	if !valid.Valid() {
+		t.Fatal("constructed predicate invalid")
+	}
+	for _, predicate := range []Predicate{
+		{},
+		{field: FieldToken{}, op: OpEQ, values: []Scalar{IntScalar(1)}},
+		{field: field, op: "LIKE", values: []Scalar{IntScalar(1)}},
+		{field: field, op: OpEQ},
+		{field: field, op: OpIN, values: []Scalar{IntScalar(1), BoolScalar(true)}},
+		{field: field, op: OpGTE, values: []Scalar{{kind: KindTEXT, text: "x"}}},
+		{field: field, op: OpEQ, values: []Scalar{{kind: KindDATE, text: "2024-02-30"}}},
+	} {
+		if predicate.Valid() {
+			t.Fatal("forged predicate valid", predicate)
+		}
+	}
+}
+
+func TestProposalV2PredicatesBoundsRepeatedFieldsAndCopies(t *testing.T) {
+	if MaxPredicates != 4 {
+		t.Fatal(MaxPredicates)
+	}
+	field, _ := NewFieldToken("amount")
+	one, _ := NumericScalar("1")
+	two, _ := NumericScalar("2")
+	lower, _ := NewPredicate(field, OpGTE, one)
+	upper, _ := NewPredicate(field, OpLTE, two)
+
+	var zero Predicates
+	if zero.Valid() {
+		t.Fatal("zero predicates valid")
+	}
+	empty, err := NewPredicates()
+	if err != nil || !empty.Valid() {
+		t.Fatal(err)
+	}
+	four, err := NewPredicates(lower, upper, lower, upper)
+	if err != nil || !four.Valid() {
+		t.Fatal("four or repeated field rejected", err)
+	}
+	_, err = NewPredicates(lower, upper, lower, upper, lower)
+	pBad(t, err)
+
+	inputValues := []Scalar{one, two}
+	in, _ := NewPredicate(field, OpIN, inputValues...)
+	input := []Predicate{in}
+	predicates, _ := NewPredicates(input...)
+	inputValues[0] = IntScalar(9)
+	input[0].values[0] = IntScalar(8)
+	first, _ := predicates.Values()
+	first[0].values[0] = IntScalar(7)
+	second, _ := predicates.Values()
+	if got, _ := second[0].values[0].Numeric(); got != "1" {
+		t.Fatal("predicate values alias input or output", got)
+	}
+}
+
+func validProposalV2Parts(t *testing.T) (DatasetProfileRef, MetricRef, PeriodProposal, Predicates, Dimensions, SortKeys, Limit) {
+	t.Helper()
+	dataset, _ := NewDatasetProfileRef("service-desk", 2)
+	metric, _ := NewMetricRef("open_tickets", 3)
+	period, _ := NewRelativePeriod(PeriodCURRENTMONTH)
+	field, _ := NewFieldToken("team")
+	value, _ := TextScalar("support")
+	predicate, _ := NewPredicate(field, OpEQ, value)
+	filters, _ := NewPredicates(predicate)
+	dimensions, _ := NewDimensions(field)
+	key, _ := NewSortKey(field, SortASC)
+	sort, _ := NewSortKeys(key)
+	limit, _ := NewLimit(25)
+	return dataset, metric, period, filters, dimensions, sort, limit
+}
+
+func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
+	d, m, p, f, dimensions, sort, limit := validProposalV2Parts(t)
+	for _, candidate := range []struct {
+		d          DatasetProfileRef
+		m          MetricRef
+		p          PeriodProposal
+		f          Predicates
+		dimensions Dimensions
+		sort       SortKeys
+		limit      Limit
+		output     Output
+	}{
+		{m: m, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{d: d, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{d: d, m: m, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{d: d, m: m, p: p, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{d: d, m: m, p: p, f: f, sort: sort, limit: limit, output: OutputValue},
+		{d: d, m: m, p: p, f: f, dimensions: dimensions, limit: limit, output: OutputValue},
+		{d: d, m: m, p: p, f: f, dimensions: dimensions, sort: sort, output: OutputValue},
+		{d: d, m: m, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: "TABLE"},
+	} {
+		_, err := NewProposalV2(candidate.d, candidate.m, candidate.p, candidate.f, candidate.dimensions, candidate.sort, candidate.limit, candidate.output)
+		pBad(t, err)
+	}
+	var zero ProposalV2
+	if zero.Valid() {
+		t.Fatal("zero proposal valid")
+	}
+	if _, ok := zero.Dataset(); ok {
+		t.Fatal("zero dataset accessor succeeded")
+	}
+	if _, ok := zero.Metric(); ok {
+		t.Fatal("zero metric accessor succeeded")
+	}
+	if _, ok := zero.Period(); ok {
+		t.Fatal("zero period accessor succeeded")
+	}
+	if _, ok := zero.Filters(); ok {
+		t.Fatal("zero proposal accessor succeeded")
+	}
+	if _, ok := zero.Dimensions(); ok {
+		t.Fatal("zero dimensions accessor succeeded")
+	}
+	if _, ok := zero.Sort(); ok {
+		t.Fatal("zero sort accessor succeeded")
+	}
+	if _, ok := zero.Limit(); ok {
+		t.Fatal("zero limit accessor succeeded")
+	}
+	if _, ok := zero.Output(); ok {
+		t.Fatal("zero output accessor succeeded")
+	}
+}
+
+func TestProposalV2CompleteRoundTripAndFilterIsolation(t *testing.T) {
+	d, m, p, f, dimensions, sort, limit := validProposalV2Parts(t)
+	proposal, err := NewProposalV2(d, m, p, f, dimensions, sort, limit, OutputRowset)
+	if err != nil || !proposal.Valid() {
+		t.Fatal(err)
+	}
+	f.values[0].values[0], _ = TextScalar("mutated-input")
+	if got, ok := proposal.Dataset(); !ok || got != d {
+		t.Fatal("dataset", got, ok)
+	}
+	if got, ok := proposal.Metric(); !ok || got != m {
+		t.Fatal("metric", got, ok)
+	}
+	if got, ok := proposal.Period(); !ok || got != p {
+		t.Fatal("period", got, ok)
+	}
+	if got, ok := proposal.Dimensions(); !ok || got != dimensions {
+		t.Fatal("dimensions", got, ok)
+	}
+	if got, ok := proposal.Sort(); !ok || got != sort {
+		t.Fatal("sort", got, ok)
+	}
+	if got, ok := proposal.Limit(); !ok || got != limit {
+		t.Fatal("limit", got, ok)
+	}
+	if got, ok := proposal.Output(); !ok || got != OutputRowset {
+		t.Fatal("output", got, ok)
+	}
+	read, ok := proposal.Filters()
+	if !ok {
+		t.Fatal("filters")
+	}
+	values, _ := read.Values()
+	values[0].values[0], _ = TextScalar("changed")
+	again, _ := proposal.Filters()
+	againValues, _ := again.Values()
+	if got, _ := againValues[0].values[0].Text(); got != "support" {
+		t.Fatal("proposal filters alias accessor", got)
+	}
+}

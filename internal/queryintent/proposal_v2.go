@@ -516,18 +516,11 @@ type Predicate struct {
 }
 
 func NewPredicate(field FieldToken, op Operator, values ...Scalar) (Predicate, error) {
-	if !field.Valid() || !op.Valid() || !validArity(op, len(values)) {
+	predicate := Predicate{field: field, op: op, values: append([]Scalar(nil), values...)}
+	if !predicate.Valid() {
 		return Predicate{}, newRefusal(CodeInvalidProposal)
 	}
-	if len(values) > 0 && (!values[0].kind.Valid() || op == OpISNull && values[0].kind != KindBOOL || (op == OpGTE || op == OpLTE) && !orderable(values[0].kind)) {
-		return Predicate{}, newRefusal(CodeInvalidProposal)
-	}
-	for _, v := range values[1:] {
-		if !v.kind.Valid() || v.kind != values[0].kind {
-			return Predicate{}, newRefusal(CodeInvalidProposal)
-		}
-	}
-	return Predicate{field: field, op: op, values: append([]Scalar(nil), values...)}, nil
+	return predicate, nil
 }
 
 func validArity(op Operator, n int) bool {
@@ -537,6 +530,194 @@ func orderable(k ScalarKind) bool {
 	return k == KindINT || k == KindNUMERIC || k == KindDATE || k == KindTIMESTAMP || k == KindTIMESTAMPTZ
 }
 
+func (p Predicate) Valid() bool {
+	if !p.field.Valid() || !p.op.Valid() || !validArity(p.op, len(p.values)) {
+		return false
+	}
+	kind := p.values[0].kind
+	if p.op == OpISNull && kind != KindBOOL || (p.op == OpGTE || p.op == OpLTE) && !orderable(kind) {
+		return false
+	}
+	for _, value := range p.values {
+		if value.kind != kind || !value.valid() {
+			return false
+		}
+	}
+	return true
+}
+
+func (s Scalar) valid() bool {
+	if !s.kind.Valid() {
+		return false
+	}
+	if s.kind == KindBOOL {
+		return s.text == "" && s.i == 0
+	}
+	if s.kind == KindINT {
+		return s.text == "" && !s.b
+	}
+	if s.i != 0 || s.b {
+		return false
+	}
+	switch s.kind {
+	case KindTEXT:
+		return utf8.ValidString(s.text) && len(s.text) <= MaxScalarText
+	case KindNUMERIC:
+		value, err := NumericScalar(s.text)
+		return err == nil && value.text == s.text
+	case KindDATE:
+		return validDate(s.text)
+	case KindTIMESTAMP:
+		tail, ok := wallTail(s.text)
+		return ok && tail == ""
+	case KindTIMESTAMPTZ:
+		value, err := TimestamptzScalar(s.text)
+		return err == nil && value.text == s.text
+	default:
+		return false
+	}
+}
+
 func (p Predicate) Field() FieldToken { return p.field }
 func (p Predicate) Op() Operator      { return p.op }
 func (p Predicate) Values() []Scalar  { return append([]Scalar(nil), p.values...) }
+
+const MaxPredicates = 4
+
+type Predicates struct {
+	values      [MaxPredicates]Predicate
+	count       uint8
+	initialized bool
+}
+
+func NewPredicates(values ...Predicate) (Predicates, error) {
+	if len(values) > MaxPredicates {
+		return Predicates{}, newRefusal(CodeInvalidProposal)
+	}
+	var predicates Predicates
+	for i, predicate := range values {
+		if !predicate.Valid() {
+			return Predicates{}, newRefusal(CodeInvalidProposal)
+		}
+		predicates.values[i] = clonePredicate(predicate)
+	}
+	predicates.count = uint8(len(values))
+	predicates.initialized = true
+	return predicates, nil
+}
+
+func (p Predicates) Valid() bool {
+	if !p.initialized || int(p.count) > MaxPredicates {
+		return false
+	}
+	for i := 0; i < int(p.count); i++ {
+		if !p.values[i].Valid() {
+			return false
+		}
+	}
+	return true
+}
+
+func (p Predicates) Values() ([]Predicate, bool) {
+	if !p.Valid() {
+		return nil, false
+	}
+	values := make([]Predicate, int(p.count))
+	for i := range values {
+		values[i] = clonePredicate(p.values[i])
+	}
+	return values, true
+}
+
+func clonePredicate(predicate Predicate) Predicate {
+	predicate.values = append([]Scalar(nil), predicate.values...)
+	return predicate
+}
+
+type ProposalV2 struct {
+	dataset     DatasetProfileRef
+	metric      MetricRef
+	period      PeriodProposal
+	filters     Predicates
+	dimensions  Dimensions
+	sort        SortKeys
+	limit       Limit
+	output      Output
+	initialized bool
+}
+
+func NewProposalV2(dataset DatasetProfileRef, metric MetricRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
+	proposal := ProposalV2{dataset: dataset, metric: metric, period: period, filters: clonePredicates(filters), dimensions: dimensions, sort: sort, limit: limit, output: output, initialized: true}
+	if !proposal.Valid() {
+		return ProposalV2{}, newRefusal(CodeInvalidProposal)
+	}
+	return proposal, nil
+}
+
+func (p ProposalV2) Valid() bool {
+	return p.initialized && p.dataset.Valid() && p.metric.Valid() && p.period.Valid() && p.filters.Valid() &&
+		p.dimensions.Valid() && p.sort.Valid() && p.limit.Valid() && p.output.valid()
+}
+
+func clonePredicates(predicates Predicates) Predicates {
+	for i := 0; i < int(predicates.count) && i < MaxPredicates; i++ {
+		predicates.values[i] = clonePredicate(predicates.values[i])
+	}
+	return predicates
+}
+
+func (p ProposalV2) Dataset() (DatasetProfileRef, bool) {
+	if !p.Valid() {
+		return DatasetProfileRef{}, false
+	}
+	return p.dataset, true
+}
+
+func (p ProposalV2) Metric() (MetricRef, bool) {
+	if !p.Valid() {
+		return MetricRef{}, false
+	}
+	return p.metric, true
+}
+
+func (p ProposalV2) Period() (PeriodProposal, bool) {
+	if !p.Valid() {
+		return PeriodProposal{}, false
+	}
+	return p.period, true
+}
+
+func (p ProposalV2) Dimensions() (Dimensions, bool) {
+	if !p.Valid() {
+		return Dimensions{}, false
+	}
+	return p.dimensions, true
+}
+
+func (p ProposalV2) Sort() (SortKeys, bool) {
+	if !p.Valid() {
+		return SortKeys{}, false
+	}
+	return p.sort, true
+}
+
+func (p ProposalV2) Limit() (Limit, bool) {
+	if !p.Valid() {
+		return Limit{}, false
+	}
+	return p.limit, true
+}
+
+func (p ProposalV2) Output() (Output, bool) {
+	if !p.Valid() {
+		return "", false
+	}
+	return p.output, true
+}
+
+func (p ProposalV2) Filters() (Predicates, bool) {
+	if !p.Valid() {
+		return Predicates{}, false
+	}
+	return clonePredicates(p.filters), true
+}
