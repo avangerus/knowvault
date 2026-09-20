@@ -55,13 +55,18 @@ The earlier exit-127 and namespace-check failures remain archived separately.
 Syft 1.48.0 observes 20 artifacts; reconciliation checks all 17 unchanged Maven
 JAR hashes and the worker JAR. Grype 0.116.0 scans the exact OCI archive and
 the separately identified native libc6 PURL, with zero findings/suppressions
-on database v6.1.9 built `2026-09-15T06:31:36Z`, publisher archive SHA-256
-`da59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60`.
+on database v6.1.9 built `2026-09-20T06:27:54Z`, publisher archive SHA-256
+`a52051769db44825dcab6e6d4c32ffee53cdea0d456d98630b55b15ad52b16f3`.
 The v2 vulnerability attestation binds OCI/config/artifact identities directly;
 it makes no claim about a Docker distribution manifest. Raw image/native scan
 SHA-256 values are respectively
-`dc5840a7cdb31f2b022131bea7b37512ac41c03484569019f4ab5554d36ff3f2` and
-`310ad80b15f6f2c57a1f2d9079acdaab088ab4b9e76cbc0f76d6c24285961335`.
+`790ae21d73a28bcaa395171ca08234d2fac264f39dd5424cff20d19b1f19decf` and
+`9e026a3f37ea79ab13fe2a98fb664aa7d58df493d98adf2574b8f269438dc926`.
+Their UTC filesystem completion timestamps on the isolated scan host are
+`2026-09-20T08:56:21.821693255Z` and `2026-09-20T08:56:20.346703139Z`;
+the reconciled Syft JSON is
+`e097a46512d116bcff428583be02b12ffad119a1976524f1ea4df8db771c2faf`
+at `2026-09-20T08:56:21.637694488Z`.
 The release verifier checks both scans and the shared pinned DB provenance.
 The reviewed SPDX transformation documents manual identification of the
 native layer and the Temurin source offer, rather than claiming auto-discovery.
