@@ -26,7 +26,8 @@ Workspace
    uncertainty/conflicts, or UNKNOWN/clarification.
 7. Open the authenticated KnowVault evidence page with the retained passage, version and metadata; follow an original-source locator when available and permitted.
 8. Inspect available context and recorded source relationships; broader cross-system coverage follows the connector roadmap.
-9. If necessary, re-run the question as a new Question Run.
+9. Ask a bounded follow-up when more detail or a changed period is needed; every
+   turn is persisted and authorized as a new Question Run.
 
 ## 3. Objects 1.0
 
@@ -40,13 +41,16 @@ Workspace
 - `CanonicalEntity` and `EntityRelation` — versioned cross-source knowledge graph nodes/edges with provenance and workspace authorization.
 - `SemanticTerm` — workspace-scoped ontology term/alias/context revision.
 - `PlannerPlan` and `AnalyticToolRun` — immutable task/tool provenance; tool output is not an independent source of fact.
-- `QuestionRun` — independent question, retrieval snapshot, and one answer.
+- `Conversation` — bounded user-visible context linking Question Runs; it is not
+  an evidence source or an authorization boundary.
+- `QuestionRun` — one independently authorized turn, retrieval snapshot, plan,
+  tool history and answer.
 - `Claim`/`Citation` — linkage of each answer output to specific Evidence IDs.
 - `AuditEvent` — append-only action record, not a user result.
 
 ## 4. Interface Surfaces
 
-The workspace web UI, versioned HTTP API and authenticated MCP share authorization and evidence services. External agents use factual retrieval/read tools and perform their own reasoning. Built-in questions use the bounded Question/Planner authority. The UI contains sections:
+The workspace web UI, versioned HTTP API and authenticated MCP share authorization and evidence services. External agents and built-in questions use the same bounded Question/Planner authority. A model may propose typed operations from a frozen closed catalog; the server alone validates, authorizes, compiles and executes them. The UI contains sections:
 
 ```text
 Search · Sources · Access · Activity log
@@ -71,8 +75,12 @@ The broader parser design covers PDF, DOCX, PPTX, XLSX, CSV, TXT, Markdown, HTML
 
 ## 6. Non-revisable properties
 
-1. This is not a conversation-log: each question is an independent Question Run without hidden thread memory; the planner uses only explicitly permitted corpus.
-2. This is not an autonomous agent: the model has no arbitrary tools, credentials, or network access; only the server-side planner can invoke a bounded adapter.
+1. A conversation is a bounded sequence of independently authorized Question
+   Runs. There is no hidden authoritative thread memory; prior answers are
+   context rather than evidence and current rights are checked on every turn.
+2. This is not an autonomous agent: the model has no arbitrary tools,
+   credentials, or network access. It may propose only typed calls from the
+   frozen catalog; server policy validates and invokes every bounded adapter.
 3. External sources remain the source of truth.
 4. Original binary documents do not become the product's permanent storage.
 5. Derived text fragments are stored because without them, search, answering, and citation verification are impossible.
@@ -89,13 +97,18 @@ The broader parser design covers PDF, DOCX, PPTX, XLSX, CSV, TXT, Markdown, HTML
 
 ## 7. What is forbidden in 1.0
 
-- chat and message chains;
+- unbounded message chains, hidden long-term model memory, or treating an earlier
+  answer as evidence; bounded follow-ups governed by ADR-0096 are allowed;
 - arbitrary MCP/tool runtime and unauthenticated public API; only versioned HTTP API and authenticated MCP from ADR-0082 via the common Question/Planner authority are allowed, without SQL input, credentials, or write actions;
 - autonomous actions or writes to external source systems; read-only access by authenticated external MCP agents remains part of the product;
 - reports, timelines, decision log, and commitments;
 - watch, notifications, and automatic recalculation of answers;
 - cross-workspace search;
-- SQL authorship/input on product, UI, API, operator, user, and model surfaces, model-generated SQL, and any database connector outside the precise boundary `POSTGRESQL_QUERY` from ADR-0078; connector-generated fixed SELECT from §5 is not a user SQL surface;
+- SQL authorship/input on product, UI, API, operator, user, and model surfaces,
+  model-generated SQL, and any database connector outside the precise boundary
+  `POSTGRESQL_QUERY` from ADR-0078. The typed analytics compiler from ADR-0096
+  may emit a parameterized read only from a closed AST and registry-owned
+  identifiers; this does not create a SQL input surface;
 - treating planned Slack, Teams, SharePoint, Jira, Notion or CRM integrations as released capabilities; each requires an approved connector and access contract;
 - search in the open internet;
 - fine-tuning on client data;

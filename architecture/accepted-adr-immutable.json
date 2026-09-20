@@ -83,6 +83,7 @@
     "docs/adr/0085-enterprise-knowledge-graph-generic-planner-accepted.md": "f272ba2ed0542cf300117835c6de88d2b4731eb9d7c116b873eca5794a545bca",
     "docs/adr/0092-source-observed-presence-accepted.md": "d15161fad8a027e4bbf8d0d6257d47dd663e3a753021a80e09718566508098b1",
     "docs/adr/0093-migration-comment-translation-compatibility-accepted.md": "fc3df728356bf19c990486a147b47160d0a64f81bb3125d9f09e55d6a9ab575f",
-    "docs/adr/0094-english-source-publication-accepted.md": "0f940cd417d17bd34f81f2852cb98e6e8161890fd30e5004d3d618e9b5eea307"
+    "docs/adr/0094-english-source-publication-accepted.md": "0f940cd417d17bd34f81f2852cb98e6e8161890fd30e5004d3d618e9b5eea307",
+    "docs/adr/0096-read-only-conversational-analytics-authority-accepted.md": "61a78a7bb2bbc65cc8c75a1bf9100987716d5521548e6a319070c71c65f3c942"
   }
 }

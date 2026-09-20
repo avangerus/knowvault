@@ -66,6 +66,36 @@ and release plan; it is not an extension of the current chat session.
 | R2 — Cross-source reasoning | One conversation can combine structured data and documents, follow links between entities and answer a question that requires more than one retrieval or calculation step. | Claim-level source coverage, rights tests for every step, replayable plan and failure/partial-answer behavior. |
 | R3 — Enterprise pilot | Administrators can connect and profile the customer's required sources; users receive the same behavior through the web chat and MCP. | Customer question set, permission matrix, audit review, freshness SLOs, scale and operational handoff. |
 
+R1 is governed by [ADR-0096](../adr/0096-read-only-conversational-analytics-authority-accepted.md).
+Each follow-up is a new authorized Question Run, typed analytics replaces
+model-authored SQL, browser and MCP share one server authority, and all source
+operations remain strictly read-only.
+
+### R1 nested delivery cycles
+
+Only the first incomplete capability is active. Every capability is delivered
+as small DSH cards, normally one concern, no more than three production files,
+focused tests and an explicit stop condition. The release lead accepts a card
+only from its diff and measured behavior; a completed model turn is not
+acceptance. Luna maintains dependency order and acceptance evidence. Astra is
+the independent critic for architecture, authorization, evidence and any branch
+scored 9/10 or 10/10 in complexity.
+
+| Cycle | User-visible truth | Acceptance gate | Status |
+| --- | --- | --- | --- |
+| R1.0 — One authority | Browser and MCP enter the same admitted, authorized Question Run and see the same terminal semantics. | Durable admission before reads; equivalent identity/scope tests; revocation before disclosure; no second execution path. | Active after ADR-0096 |
+| R1.1 — Trusted profile | One approved dataset exposes human terms, grain, keys, types, units, NULL/time semantics, allowed operations and an immutable revision/hash. | Invalid, drifting or retired profiles fail closed; counts and duplicate policy match direct controls. | Queued |
+| R1.2 — Closed intent | Varied ordinary-language questions become a typed lookup/filter/group/aggregate intent without SQL. | Closed schemas; unknown fields/operators/relations refused; plan binds exact profile and catalog hashes. | Queued |
+| R1.3 — Deterministic read | Server compiles the intent to a bounded parameterized read and returns a typed numeric or row result. | Read-only transaction; identifier allowlist; row/byte/time budgets; decimals, NULLs, periods, truncation and errors verified. | Queued |
+| R1.4 — Verifiable answer | The user receives a concise answer whose numbers cannot differ from the deterministic result and whose limits are visible. | Completeness gates totals/absence; receipt binds inputs, coverage and digest; retained evidence and live observation are labelled separately. | Queued |
+| R1.5 — Bounded follow-up | A user can refine period, entity or grouping without repeating context, while every turn remains independently authorized. | Context/depth budget; inherited references resolved into the new plan; previous answers are not evidence; revocation tests pass. | Queued |
+| R1.6 — Unseen GM demo | Unseen direct, aggregate, comparison, anomaly, informal and unsupported GM questions work through browser and MCP. | Owner-reviewed 24-question suite, at least 90% correct answerable cases, 100% correct refuse/clarify and zero unauthorized disclosure. | Queued |
+
+Promotion is one-way only after its gate passes. A failed card is split before a
+second implementation attempt. Two failed revisions, an unplanned branch over
+four hours, or a 9/10–10/10 complexity estimate returns the decision to the
+release lead and owner rather than widening the implementation.
+
 R1 starts with the accessible GM contract/container and KPI projections because
 they provide real data and direct controls. Vehicle, route and raw removal
 questions enter acceptance only after read-only semantic projections for those
