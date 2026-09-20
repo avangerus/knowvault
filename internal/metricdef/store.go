@@ -51,6 +51,13 @@ type ApprovalAudit interface {
 		transaction database.Transaction, event ApprovalEvent) error
 }
 
+// DatasetBindingApprovalChecker is the narrow approval-time seam for a bound
+// dataset/profile/measure reference. It receives the exact current DRAFT after
+// Store authorization and persistence load; it never approves or mutates state.
+type DatasetBindingApprovalChecker interface {
+	Check(ctx context.Context, access database.AccessContext, workspaceID string, definition Definition) error
+}
+
 // mirroredError is a content-free sentinel whose Is matches an equivalent
 // sentinel in another package by its canonical message. It exists only because
 // the transport imports this package (not the other way around); matching by
@@ -77,10 +84,11 @@ var ErrDefinitionNotFound = &mirroredError{message: "METRICDEFINITION_NOT_FOUND"
 
 // Store is safe for concurrent use once constructed.
 type Store struct {
-	database   *database.Store
-	workspaces WorkspaceAuthority
-	audit      ApprovalAudit
-	now        func() time.Time
+	database       *database.Store
+	workspaces     WorkspaceAuthority
+	audit          ApprovalAudit
+	bindingChecker DatasetBindingApprovalChecker
+	now            func() time.Time
 }
 
 // New binds the definition catalog to the reviewed database, the existing
@@ -88,10 +96,19 @@ type Store struct {
 // accepted so a deployment without the audit capability still fails approvals
 // closed (CodeAuditUnavailable) instead of silently approving.
 func New(databaseStore *database.Store, workspaces WorkspaceAuthority, approvalAudit ApprovalAudit) (*Store, error) {
+	return NewWithDatasetBindingApprovalChecker(databaseStore, workspaces, approvalAudit, nil)
+}
+
+// NewWithDatasetBindingApprovalChecker adds the optional approval checker seam
+// while keeping New source-compatible. A nil checker deliberately fails bound
+// approvals closed.
+func NewWithDatasetBindingApprovalChecker(databaseStore *database.Store, workspaces WorkspaceAuthority,
+	approvalAudit ApprovalAudit, checker DatasetBindingApprovalChecker) (*Store, error) {
 	if databaseStore == nil || workspaces == nil {
 		return nil, newError(CodeInvalidDefinition)
 	}
-	return &Store{database: databaseStore, workspaces: workspaces, audit: approvalAudit, now: time.Now}, nil
+	return &Store{database: databaseStore, workspaces: workspaces, audit: approvalAudit,
+		bindingChecker: checker, now: time.Now}, nil
 }
 
 // authorize re-checks the caller's workspace access through the existing
@@ -294,13 +311,14 @@ func (store *Store) Approve(ctx context.Context, access database.AccessContext,
 		if !found {
 			return ErrDefinitionNotFound
 		}
-		// A bound definition is fail-closed for approval in this card: the binding
-		// pins an immutable dataset profile and there is no authority checker or
-		// allow path yet, so approval is refused with a stable content-free code
-		// before any audit event is recorded or any row is mutated. Unbound legacy
-		// definitions keep the pre-existing approval path unchanged.
-		if series.Current().Binding().Bound() {
-			return newError(CodeBindingApprovalUnavailable)
+		current := series.Current()
+		if current.Status() == StatusDraft && current.Binding().Bound() {
+			if store.bindingChecker == nil {
+				return newError(CodeBindingApprovalUnavailable)
+			}
+			if err := store.bindingChecker.Check(transactionContext, access, workspaceID, current); err != nil {
+				return newError(CodeBindingApprovalUnavailable)
+			}
 		}
 		var auditor ApprovalAuditor
 		if store.audit != nil {
