@@ -1,6 +1,13 @@
 package repository
 
-import "knowvault.local/verified-workspace/internal/source/postgresqlquery"
+import (
+	"context"
+
+	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/policy"
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery"
+	"knowvault.local/verified-workspace/internal/workspace"
+)
 
 // PostgreSQLAuthorityRequest carries the immutable identity of one workspace
 // source scope revision for which an authority decision is requested.
@@ -61,3 +68,88 @@ func (r PostgreSQLAuthorityResult) Projection() postgresqlquery.Projection {
 }
 
 func (r PostgreSQLAuthorityResult) Limits() postgresqlquery.Limits { return r.limits }
+
+// ResolvePostgreSQLAuthority resolves the authority decision for one exact
+// workspace source scope revision through the admission boundary only. It
+// validates the request and the caller's access context, then performs a single
+// read that authenticates the caller, loads the current workspace snapshot,
+// authorizes the workspace.ask operation and exact-compares the stored current
+// configuration hash against the recomputed one. This card intentionally stops
+// at that boundary: a local notFound sentinel keeps the method fail-closed
+// until the exact source query is added next, so no path here can admit data.
+func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access database.AccessContext, request PostgreSQLAuthorityRequest) (PostgreSQLAuthorityResult, error) {
+	if store == nil || store.database == nil || ctx == nil || access.Validate() != nil {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+	}
+	if !validID(request.WorkspaceID) || !validID(request.WorkspaceSourceID) || !validID(request.SourceScopeID) {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+	}
+	if request.SourceScopeRevision <= 0 {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+	}
+	if !workspace.IsConfigurationHash(request.ScopeConfigHash) {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+	}
+	if request.AccessMode != authorityAccessModeManaged {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+	}
+	denied := false
+	notFound := false
+	persistence := false
+	readErr := store.database.Read(ctx, access, func(transactionContext context.Context, transaction database.Transaction) error {
+		subject, organization, found, actorErr := currentActor(transactionContext, transaction, access, false)
+		if actorErr != nil {
+			return actorErr
+		}
+		if !found || organization.Status != policy.OrganizationActive {
+			denied = true
+			return nil
+		}
+		snapshot, storedHash, _, exists, loadErr := loadCurrentSnapshot(transactionContext, transaction, access.OrganizationID, request.WorkspaceID, false)
+		if loadErr != nil {
+			return loadErr
+		}
+		if !exists {
+			notFound = true
+			return nil
+		}
+		membership := currentMembership(snapshot, access.PrincipalID)
+		decision := policy.EvaluateWorkspace(policy.Request{
+			Operation: policy.OperationWorkspaceAsk,
+			Subject:   subject,
+			Workspace: policy.Workspace{
+				OrganizationID: snapshot.OrganizationID,
+				ID:             snapshot.ID,
+				Status:         policy.WorkspaceStatus(snapshot.Status),
+			},
+			Membership: membership,
+		})
+		if !decision.Allowed {
+			denied = true
+			return nil
+		}
+		recomputedHash, hashErr := workspace.ConfigurationHash(snapshot)
+		if hashErr != nil {
+			persistence = true
+			return nil
+		}
+		if recomputedHash != storedHash {
+			persistence = true
+			return nil
+		}
+		// The exact source query is added by the next card; until then this
+		// method stays fail-closed rather than returning an admitted result.
+		notFound = true
+		return nil
+	})
+	if readErr != nil {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence, cause: readErr}
+	}
+	if persistence {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence}
+	}
+	if denied || notFound {
+		return PostgreSQLAuthorityResult{}, &Error{code: CodeNotFound}
+	}
+	return PostgreSQLAuthorityResult{}, &Error{code: CodeNotFound}
+}
