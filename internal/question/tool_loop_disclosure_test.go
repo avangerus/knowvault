@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-
 	"knowvault.local/verified-workspace/internal/platform/database"
 )
 
@@ -17,29 +15,9 @@ const (
 	toolLoopDisclosureEvidenceMarker = "evidence_fragment_readable"
 )
 
-type toolLoopDisclosureBoolRow struct {
-	value bool
-	err   error
-}
-
-func (row toolLoopDisclosureBoolRow) Scan(dest ...any) error {
-	if row.err != nil {
-		return row.err
-	}
-	if len(dest) != 1 {
-		return fmt.Errorf("tool-loop disclosure test row: got %d destinations, want 1", len(dest))
-	}
-	target, ok := dest[0].(*bool)
-	if !ok {
-		return fmt.Errorf("tool-loop disclosure test row: destination is %T, want *bool", dest[0])
-	}
-	*target = row.value
-	return nil
-}
-
-type toolLoopDisclosureFakeQueryer struct {
+type toolLoopDisclosureFakeScanner struct {
 	// scopeResults and evidenceResults are consumed one per classified
-	// query; running out of either makes the returned row's Scan fail.
+	// query; running out of either makes the returned Scan fail.
 	scopeResults    []bool
 	evidenceResults []bool
 	scopeCalls      int
@@ -50,33 +28,46 @@ type toolLoopDisclosureFakeQueryer struct {
 	unexpected string
 }
 
-func (queryer *toolLoopDisclosureFakeQueryer) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+// ScanRow mirrors the database platform seam: it classifies the statement,
+// writes the supplied boolean into the single *bool destination, and returns
+// strict errors directly.
+func (scanner *toolLoopDisclosureFakeScanner) ScanRow(_ context.Context, sql string, args []any, destinations ...any) error {
 	switch {
 	case strings.Contains(sql, toolLoopDisclosureScopeMarker):
-		queryer.scopeCalls++
-		queryer.sequence = append(queryer.sequence, "scope")
-		if queryer.scopeCalls > len(queryer.scopeResults) {
-			return toolLoopDisclosureBoolRow{err: fmt.Errorf(
-				"tool-loop disclosure test: unexpected scope query %d", queryer.scopeCalls)}
+		scanner.scopeCalls++
+		scanner.sequence = append(scanner.sequence, "scope")
+		if scanner.scopeCalls > len(scanner.scopeResults) {
+			return fmt.Errorf("tool-loop disclosure test: unexpected scope query %d", scanner.scopeCalls)
 		}
-		return toolLoopDisclosureBoolRow{value: queryer.scopeResults[queryer.scopeCalls-1]}
+		return scanToolLoopDisclosureBool(destinations, scanner.scopeResults[scanner.scopeCalls-1])
 	case strings.Contains(sql, toolLoopDisclosureEvidenceMarker):
-		queryer.evidenceCalls++
-		queryer.sequence = append(queryer.sequence, "evidence")
+		scanner.evidenceCalls++
+		scanner.sequence = append(scanner.sequence, "evidence")
 		if err := validateToolLoopDisclosureEvidenceArgs(args); err != nil {
-			return toolLoopDisclosureBoolRow{err: err}
+			return err
 		}
-		if queryer.evidenceCalls > len(queryer.evidenceResults) {
-			return toolLoopDisclosureBoolRow{err: fmt.Errorf(
-				"tool-loop disclosure test: unexpected evidence query %d", queryer.evidenceCalls)}
+		if scanner.evidenceCalls > len(scanner.evidenceResults) {
+			return fmt.Errorf("tool-loop disclosure test: unexpected evidence query %d", scanner.evidenceCalls)
 		}
-		return toolLoopDisclosureBoolRow{value: queryer.evidenceResults[queryer.evidenceCalls-1]}
+		return scanToolLoopDisclosureBool(destinations, scanner.evidenceResults[scanner.evidenceCalls-1])
 	default:
-		queryer.sequence = append(queryer.sequence, "unknown")
-		queryer.unexpected = sql
-		return toolLoopDisclosureBoolRow{err: fmt.Errorf(
-			"tool-loop disclosure test: unrecognized query %q", sql)}
+		scanner.sequence = append(scanner.sequence, "unknown")
+		scanner.unexpected = sql
+		return fmt.Errorf("tool-loop disclosure test: unrecognized query %q", sql)
 	}
+}
+
+// scanToolLoopDisclosureBool writes value into the single *bool destination.
+func scanToolLoopDisclosureBool(destinations []any, value bool) error {
+	if len(destinations) != 1 {
+		return fmt.Errorf("tool-loop disclosure test: got %d destinations, want 1", len(destinations))
+	}
+	target, ok := destinations[0].(*bool)
+	if !ok {
+		return fmt.Errorf("tool-loop disclosure test: destination is %T, want *bool", destinations[0])
+	}
+	*target = value
+	return nil
 }
 
 // validateToolLoopDisclosureEvidenceArgs proves the evidence query observes the
@@ -141,11 +132,11 @@ func TestToolLoopDisclosureReauthorizesScopeAndEvidence(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			queryer := &toolLoopDisclosureFakeQueryer{
+			scanner := &toolLoopDisclosureFakeScanner{
 				scopeResults:    testCase.scopeResults,
 				evidenceResults: testCase.evidenceResults,
 			}
-			err := toolLoopDisclosure(context.Background(), queryer,
+			err := toolLoopDisclosure(context.Background(), scanner,
 				questionAccess(database.ActorKindHuman), run)
 			if testCase.wantError {
 				if CodeOf(err) != CodeNotFound {
@@ -154,8 +145,8 @@ func TestToolLoopDisclosureReauthorizesScopeAndEvidence(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("toolLoopDisclosure = %v, want nil", err)
 			}
-			if queryer.unexpected != "" {
-				t.Fatalf("toolLoopDisclosure issued unrecognized query %q", queryer.unexpected)
+			if scanner.unexpected != "" {
+				t.Fatalf("toolLoopDisclosure issued unrecognized query %q", scanner.unexpected)
 			}
 			// An unknown classification yields a failing Scan and
 			// therefore a non-NotFound error; prove that never
@@ -163,11 +154,11 @@ func TestToolLoopDisclosureReauthorizesScopeAndEvidence(t *testing.T) {
 			if got := CodeOf(err); err != nil && got != CodeNotFound {
 				t.Fatalf("toolLoopDisclosure error = %v code=%q, want code %q", err, got, CodeNotFound)
 			}
-			if !reflect.DeepEqual(queryer.sequence, testCase.wantSequence) {
-				t.Fatalf("classified call sequence = %#v, want %#v", queryer.sequence, testCase.wantSequence)
+			if !reflect.DeepEqual(scanner.sequence, testCase.wantSequence) {
+				t.Fatalf("classified call sequence = %#v, want %#v", scanner.sequence, testCase.wantSequence)
 			}
-			if queryer.scopeCalls != 1 {
-				t.Fatalf("scope queries = %d, want 1", queryer.scopeCalls)
+			if scanner.scopeCalls != 1 {
+				t.Fatalf("scope queries = %d, want 1", scanner.scopeCalls)
 			}
 		})
 	}

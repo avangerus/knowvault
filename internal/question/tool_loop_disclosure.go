@@ -4,20 +4,18 @@ import (
 	"context"
 	"sort"
 
-	"github.com/jackc/pgx/v5"
-
 	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/platform/database"
 )
 
-type toolLoopDisclosureQueryer interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
+type toolLoopDisclosureScanner interface {
+	ScanRow(context.Context, string, []any, ...any) error
 }
 
 // A trace contains every retrieved result, including evidence not cited in
 // the final answer. The legacy citation gate alone cannot authorize it.
 // Recheck the full footprint in the same transaction as run disclosure.
-func toolLoopDisclosure(ctx context.Context, tx toolLoopDisclosureQueryer, access database.AccessContext, run Run) error {
+func toolLoopDisclosure(ctx context.Context, tx toolLoopDisclosureScanner, access database.AccessContext, run Run) error {
 	if run.AnswerMode != AnswerModeToolLoop {
 		return nil
 	}
@@ -54,9 +52,9 @@ func toolLoopDisclosure(ctx context.Context, tx toolLoopDisclosureQueryer, acces
 	}
 	sort.Strings(fragments)
 	var readable bool
-	if err := tx.QueryRow(ctx, `SELECT NOT EXISTS (
+	if err := tx.ScanRow(ctx, `SELECT NOT EXISTS (
 		SELECT 1 FROM unnest($1::text[]) id WHERE NOT app.evidence_fragment_readable(id,$2)
-	)`, fragments, run.WorkspaceID).Scan(&readable); err != nil {
+	)`, []any{fragments, run.WorkspaceID}, &readable); err != nil {
 		return err
 	}
 	if !readable {
