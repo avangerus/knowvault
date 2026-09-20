@@ -139,7 +139,8 @@ func (store *Store) List(ctx context.Context, access database.AccessContext,
 		rows, queryErr := transaction.Query(transactionContext, `
 			SELECT definition_id, version, status, name, source_connection_id,
 			       projection_version, entity_key, grain, allowed_filters, unit,
-			       owner_principal_id
+			       owner_principal_id,
+			       dataset_id, profile_version, profile_hash, measure_id, execution_mode
 			FROM public.metric_definition_version
 			WHERE organization_id = $1 AND workspace_id = $2
 			ORDER BY definition_id, version
@@ -183,7 +184,8 @@ func (store *Store) GetVersion(ctx context.Context, access database.AccessContex
 		row := transaction.QueryRow(transactionContext, `
 			SELECT definition_id, version, status, name, source_connection_id,
 			       projection_version, entity_key, grain, allowed_filters, unit,
-			       owner_principal_id
+			       owner_principal_id,
+			       dataset_id, profile_version, profile_hash, measure_id, execution_mode
 			FROM public.metric_definition_version
 			WHERE organization_id = $1 AND workspace_id = $2
 			  AND definition_id = $3 AND version = $4
@@ -292,6 +294,14 @@ func (store *Store) Approve(ctx context.Context, access database.AccessContext,
 		if !found {
 			return ErrDefinitionNotFound
 		}
+		// A bound definition is fail-closed for approval in this card: the binding
+		// pins an immutable dataset profile and there is no authority checker or
+		// allow path yet, so approval is refused with a stable content-free code
+		// before any audit event is recorded or any row is mutated. Unbound legacy
+		// definitions keep the pre-existing approval path unchanged.
+		if series.Current().Binding().Bound() {
+			return newError(CodeBindingApprovalUnavailable)
+		}
 		var auditor ApprovalAuditor
 		if store.audit != nil {
 			auditor = transactionAuditor{ctx: transactionContext, access: access, transaction: transaction, journal: store.audit}
@@ -336,27 +346,68 @@ func scanDefinition(row rowScanner, workspaceID string) (Definition, error) {
 	var id, status, name, connectionID, entityKey, grain, unit, owner string
 	var version, projectionVersion int64
 	var filters []string
+	// The five binding columns are nullable; each is scanned into a pointer so an
+	// absent column is distinguishable from a present empty and the all-null
+	// legacy shape can be recognised without inferring or dropping a field.
+	var datasetID, profileHash, measureID, executionMode *string
+	var profileVersion *int64
 	if err := row.Scan(&id, &version, &status, &name, &connectionID, &projectionVersion,
-		&entityKey, &grain, &filters, &unit, &owner); err != nil {
+		&entityKey, &grain, &filters, &unit, &owner,
+		&datasetID, &profileVersion, &profileHash, &measureID, &executionMode); err != nil {
 		return Definition{}, err
 	}
 	if !validID(id) || !validID(owner) || !Status(status).valid() {
-		return Definition{}, errors.New("METRICDEFINITION_PERSISTENCE_INVALID")
+		return Definition{}, errMetricDefinitionPersistenceInvalid
+	}
+	binding, bindingErr := bindingFromColumns(datasetID, profileVersion, profileHash, measureID, executionMode)
+	if bindingErr != nil {
+		return Definition{}, bindingErr
 	}
 	normalized, err := normalizeSpec(Spec{
 		Name: name, Source: SourceConnection{ConnectionID: connectionID, ProjectionVersion: projectionVersion},
-		EntityKey: entityKey, Grain: PeriodGrain(grain), Unit: unit, AllowedFilters: filters,
+		EntityKey: entityKey, Grain: PeriodGrain(grain), Unit: unit, AllowedFilters: filters, Binding: binding,
 	})
 	if err != nil {
-		return Definition{}, errors.New("METRICDEFINITION_PERSISTENCE_INVALID")
+		return Definition{}, errMetricDefinitionPersistenceInvalid
 	}
 	return Definition{
 		id: id, workspaceID: workspaceID, ownerPrincipalID: owner, version: version,
 		name: normalized.name, source: normalized.source, entityKey: normalized.entityKey,
 		grain: normalized.grain, allowedFilters: normalized.filters, unit: normalized.unit,
-		status: Status(status),
+		binding: normalized.binding,
+		status:  Status(status),
 	}, nil
 }
+
+// bindingFromColumns turns the five nullable binding columns into a
+// DatasetBinding. All five NULLs are the explicit legacy/unbound state; any
+// partially populated set or an invalid non-null shape is refused with the one
+// content-free persistence error. The value is chosen only by NewDatasetBinding,
+// so a bad shape can never be silently inferred or dropped.
+func bindingFromColumns(datasetID *string, profileVersion *int64, profileHash, measureID, executionMode *string) (DatasetBinding, error) {
+	if datasetID == nil && profileVersion == nil && profileHash == nil && measureID == nil && executionMode == nil {
+		return DatasetBinding{}, nil
+	}
+	if datasetID == nil || profileVersion == nil || profileHash == nil || measureID == nil || executionMode == nil {
+		return DatasetBinding{}, errMetricDefinitionPersistenceInvalid
+	}
+	binding, err := NewDatasetBinding(DatasetBindingInput{
+		DatasetID:      *datasetID,
+		ProfileVersion: *profileVersion,
+		ProfileHash:    *profileHash,
+		MeasureID:      *measureID,
+		Mode:           DatasetBindingMode(*executionMode),
+	})
+	if err != nil || binding.IsZero() {
+		return DatasetBinding{}, errMetricDefinitionPersistenceInvalid
+	}
+	return binding, nil
+}
+
+// errMetricDefinitionPersistenceInvalid is the single content-free failure for
+// an unreadable or ill-shaped persisted row. It carries no source, metric or
+// model content.
+var errMetricDefinitionPersistenceInvalid = errors.New("METRICDEFINITION_PERSISTENCE_INVALID")
 
 // loadSeries rehydrates the whole version history of one definition id from
 // the durable rows, locking the definition pointer so concurrent writers
@@ -380,7 +431,8 @@ func loadSeries(ctx context.Context, transaction database.Transaction,
 	rows, err := transaction.Query(ctx, `
 		SELECT definition_id, version, status, name, source_connection_id,
 		       projection_version, entity_key, grain, allowed_filters, unit,
-		       owner_principal_id
+		       owner_principal_id,
+		       dataset_id, profile_version, profile_hash, measure_id, execution_mode
 		FROM public.metric_definition_version
 		WHERE organization_id = $1 AND workspace_id = $2 AND definition_id = $3
 		ORDER BY version
@@ -430,14 +482,38 @@ func insertVersion(ctx context.Context, transaction database.Transaction, access
 		INSERT INTO public.metric_definition_version (
 			organization_id, workspace_id, definition_id, version, status, name,
 			source_connection_id, projection_version, entity_key, grain,
-			allowed_filters, unit, owner_principal_id, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, access.OrganizationID, definition.workspaceID, definition.id, definition.version,
+			allowed_filters, unit, owner_principal_id, created_by,
+			dataset_id, profile_version, profile_hash, measure_id, execution_mode
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::text, $16::bigint, $17::text, $18::text, $19::text)
+	`, append([]any{
+		access.OrganizationID, definition.workspaceID, definition.id, definition.version,
 		string(definition.status), definition.name, definition.source.ConnectionID,
 		definition.source.ProjectionVersion, definition.entityKey, string(definition.grain),
 		definition.allowedFilters.Values(), definition.unit, definition.ownerPrincipalID,
-		access.PrincipalID)
+		access.PrincipalID,
+	}, bindingArgs(definition.binding)...)...)
 	return err
+}
+
+// bindingArgs expands the five binding columns into the positional argument
+// list the insert and draft-update statements expect. Every persistence caller
+// goes through bindingColumns, so the column shape and the argument shape
+// cannot drift apart.
+func bindingArgs(binding DatasetBinding) []any {
+	datasetID, profileVersion, profileHash, measureID, mode := bindingColumns(binding)
+	return []any{datasetID, profileVersion, profileHash, measureID, mode}
+}
+
+// bindingColumns maps a binding onto the five nullable persistence columns.
+// The explicit zero binding is stored as five NULLs (the legacy/unbound shape);
+// a bound value is stored as its five populated fields. NewDatasetBinding is the
+// only constructor of a non-zero binding, so a partially populated column set
+// can never be written through this path.
+func bindingColumns(binding DatasetBinding) (any, any, any, any, any) {
+	if binding.IsZero() {
+		return nil, nil, nil, nil, nil
+	}
+	return binding.DatasetID(), binding.ProfileVersion(), binding.ProfileHash(), binding.MeasureID(), string(binding.Mode())
 }
 
 // updateDraftVersion edits a DRAFT in place. The WHERE clause restricts the
@@ -448,13 +524,17 @@ func updateDraftVersion(ctx context.Context, transaction database.Transaction, a
 	definition Definition) error {
 	tag, err := transaction.Exec(ctx, `
 		UPDATE public.metric_definition_version
-		SET name = $6, source_connection_id = $7, projection_version = $8,
-		    entity_key = $9, grain = $10, allowed_filters = $11, unit = $12
+		SET name = $5, source_connection_id = $6, projection_version = $7,
+		    entity_key = $8, grain = $9, allowed_filters = $10, unit = $11,
+		    dataset_id = $12::text, profile_version = $13::bigint, profile_hash = $14::text,
+		    measure_id = $15::text, execution_mode = $16::text
 		WHERE organization_id = $1 AND workspace_id = $2 AND definition_id = $3
 		  AND version = $4 AND status = 'DRAFT'
-	`, access.OrganizationID, definition.workspaceID, definition.id, definition.version,
+	`, append([]any{
+		access.OrganizationID, definition.workspaceID, definition.id, definition.version,
 		definition.name, definition.source.ConnectionID, definition.source.ProjectionVersion,
-		definition.entityKey, string(definition.grain), definition.allowedFilters.Values(), definition.unit)
+		definition.entityKey, string(definition.grain), definition.allowedFilters.Values(), definition.unit,
+	}, bindingArgs(definition.binding)...)...)
 	if err != nil {
 		return err
 	}

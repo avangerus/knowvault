@@ -960,6 +960,7 @@
     "tests/integration/postgres/knowledge_graph_test.go": "ed438fa5817372149bcef0af48e1fb33a7e227b9786c95385f5e3c97ba1b3196",
     "tests/integration/postgres/member_candidates_test.go": "372f77914a5ac7b62997ac42e0b84b9572a7f75e139874fd676ab817723d3083",
     "tests/integration/postgres/metric_definition_binding_migration_test.go": "8e4326c8fc537a04f40f4f985011be3cbd4f0d147cbf1025a25ba2e1fdc1c43d",
+    "tests/integration/postgres/metric_definition_binding_store_test.go": "7ddfa22ea20b7a5635eddd02e4d3207c583e4ab60f5c41bc4779976a50a88e85",
     "tests/integration/postgres/metric_definitions_test.go": "3320e75bedda24f6971f968576d4d41a5b12e69806bf0a558847e06839536e4d",
     "tests/integration/postgres/office_worker_live_matrix_test.go": "6d98a5e4968aa1a5bbb3662b5c4f38627d988898441c736759325cb1e5e9b620",
     "tests/integration/postgres/ooxml_fixtures_test.go": "13d9f0f770bff1ddc3b35e583ab180d35a69d8027f36f1a809388215afb48bae",

@@ -184,6 +184,10 @@ const (
 	CodeAuditUnavailable    ErrorCode = "METRICDEF_AUDIT_UNAVAILABLE"
 	CodeAuditFailed         ErrorCode = "METRICDEF_AUDIT_FAILED"
 	CodeUnknownVersion      ErrorCode = "METRICDEF_UNKNOWN_VERSION"
+	// CodeBindingApprovalUnavailable refuses approval of a definition whose
+	// binding is populated. Bound approval has no authority checker in this
+	// card, so it is deliberately fail-closed with a content-free code.
+	CodeBindingApprovalUnavailable ErrorCode = "METRICDEF_BINDING_APPROVAL_UNAVAILABLE"
 )
 
 // Error is the typed refusal returned by this package. It never carries
