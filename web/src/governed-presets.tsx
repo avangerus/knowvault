@@ -423,6 +423,88 @@ export function GovernedPresetResultView({ result }: { result: GovernedPresetRun
 }
 
 // ---------------------------------------------------------------------------
+// Governed ask  -- pure result projection (no network, no state, no form yet).
+// ---------------------------------------------------------------------------
+
+/** Receipt fields of one governed ask, in display order. Exactly the server's
+ * exposed receipt values, verbatim: the attempt id, the statement hash, the
+ * result digest, the schema revision the answer was produced against, the
+ * result format and the read window's start and end. No field is synthesized
+ * and none is omitted; the SQL text itself is shown separately. */
+export function governedAskReceiptRows(
+  result: GovernedAskResult,
+): { label: string; value: string }[] {
+  return [
+    { label: "attempt_id", value: result.attempt_id },
+    { label: "sql_hash", value: result.sql_hash },
+    { label: "result_digest", value: result.result_digest },
+    { label: "exposed_schema_revision", value: String(result.exposed_schema_revision) },
+    { label: "result_format", value: result.result_format },
+    { label: "Read window start", value: governedTimestampText(result.execution_started_at) },
+    { label: "Read window end", value: governedTimestampText(result.execution_completed_at) },
+  ];
+}
+
+/** One governed answer: the question that was asked, the answer itself as the
+ * primary content, the source it was read from, the exact read window, the
+ * rows exactly as the server returned them, and the receipt — with the exact
+ * SQL kept inert inside a collapsed <details>. Split out so the probe can
+ * render the real production markup from a fixture without touching the
+ * network. Every server string is rendered as React text, so HTML-looking
+ * content is escaped, never parsed. */
+export function GovernedAskResultView(
+  { result, submittedQuestion }: { result: GovernedAskResult; submittedQuestion: string },
+) {
+  return (
+    <section aria-labelledby="governed-ask-heading" className="governed-ask">
+      <h3 id="governed-ask-heading">Database answer</h3>
+      <p className="governed-ask-question">Question: {submittedQuestion}</p>
+      <p className="governed-ask-answer">{result.answer}</p>
+      <p className="governed-ask-source">
+        <span className="governed-ask-source-database">{result.database_identity}</span>
+        {" · "}
+        <span className="governed-ask-source-connection">{result.connection_id}</span>
+      </p>
+      <p className="governed-ask-window">
+        Read window {governedTimestampText(result.execution_started_at)} – {governedTimestampText(result.execution_completed_at)}
+      </p>
+      <div className="governed-ask-table-wrap">
+        <table className="governed-ask-table">
+          <thead>
+            <tr>{result.columns.map((column) => <th key={column} scope="col">{column}</th>)}</tr>
+          </thead>
+          <tbody>
+            {result.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex}>{cell === null
+                    ? <span className="governed-null">{GOVERNED_NULL_CELL}</span>
+                    : governedCellText(cell)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="governed-ask-count">{governedRowCountText(result)}</p>
+      {result.rows.length === 0 && <p className="governed-presets-note">{GOVERNED_NO_ROWS}</p>}
+      <details className="governed-ask-technical">
+        <summary>Technical details</summary>
+        <dl>
+          {governedAskReceiptRows(result).map((entry) => (
+            <div className="governed-ask-receipt-row" key={entry.label}>
+              <dt>{entry.label}</dt>
+              <dd>{entry.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <pre className="governed-ask-sql">{result.sql}</pre>
+      </details>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Governed ask transport (no UI yet).
 // ---------------------------------------------------------------------------
 

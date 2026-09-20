@@ -34,8 +34,10 @@ import {
   GOVERNED_RECEIPT_NOTE,
   GOVERNED_RESULT_RUN_UNAVAILABLE,
   GOVERNED_RESULT_UNKNOWN_PRESET,
+  GovernedAskResultView,
   GovernedPresetResultView,
   governedAsk,
+  governedAskReceiptRows,
   governedCellText,
   governedMCPCall,
   governedPresetListArguments,
@@ -518,6 +520,106 @@ async function main(): Promise<void> {
     check(outcome.kind === "error", `a ${typeof csrfToken === "number" ? "numeric" : "blank"} CSRF token is an error`);
     check(calls.length === 1, "a malformed CSRF token makes exactly one request");
     check(calls.every((call) => (call.init?.method ?? "GET") !== "POST"), "a malformed CSRF token makes no POST");
+  }
+
+  // --- 18. governed ask result projection (pure render) ------------------
+  // The real component is rendered from a fixture whose question, answer,
+  // cell and SQL all contain HTML-looking text. Every server string must
+  // reach the DOM as escaped text: no <img> or <script> element may appear.
+  {
+    const ASK_QUESTION = 'Latest <img src=x onerror=alert(1)> amount?';
+    const ASK_ANSWER = 'Answer <script>alert(2)</script> stays text <img src=x onerror=alert(3)>.';
+    const ASK_SQL = "SELECT '<img src=x onerror=alert(4)>', '<script>alert(5)</script>' FROM ledger";
+    const ASK_CELL = '<script>alert(6)</script>';
+    const ASK_IDENTITY = 'db-identity-<img src=x onerror=alert(7)>';
+    const ASK_CONNECTION = "connection-<script>alert(8)</script>";
+
+    const askResult: GovernedAskResult = {
+      attempt_id: "attempt-ask-4",
+      sql: ASK_SQL,
+      sql_hash: "hmac-sha256:k7:" + "d".repeat(64),
+      columns: ["second", "first"],
+      rows: [[PRECISE_DECIMAL, null], [ASK_CELL, ""]],
+      row_count: 2,
+      cost_estimate: 4.5,
+      answer: ASK_ANSWER,
+      connection_id: ASK_CONNECTION,
+      database_identity: ASK_IDENTITY,
+      exposed_schema_revision: 12,
+      result_format: "json_rows",
+      result_digest: "hmac-sha256:k8:" + "e".repeat(64),
+      execution_started_at: STARTED_AT,
+      execution_completed_at: COMPLETED_AT,
+    };
+
+    const askMarkup = renderToStaticMarkup(
+      createElement(GovernedAskResultView, { result: askResult, submittedQuestion: ASK_QUESTION }));
+
+    // Escaping: HTML-looking server text is inert, and no element is created.
+    check(!askMarkup.includes("<img"), "no literal <img element is created from server text");
+    check(!askMarkup.includes("<script"), "no literal <script element is created from server text");
+    check(!askMarkup.includes("<pre><script"), "the SQL <pre> carries no injected script element");
+
+    // Headings and the primary content.
+    check(askMarkup.includes("Database answer"), "the answer heading is present");
+    check(askMarkup.includes("Latest &lt;img src=x onerror=alert(1)&gt; amount?"),
+      "the submitted question is present, escaped as text");
+    check(askMarkup.includes("Answer &lt;script&gt;alert(2)&lt;/script&gt; stays text"),
+      "the answer is present as escaped text");
+
+    // Source identity and read window, verbatim.
+    check(askMarkup.includes("db-identity-&lt;img src=x onerror=alert(7)&gt;"),
+      "the escaped database identity is disclosed");
+    check(askMarkup.includes("connection-&lt;script&gt;alert(8)&lt;/script&gt;"),
+      "the escaped connection id is disclosed");
+    check(askMarkup.includes(STARTED_AT) && askMarkup.includes(COMPLETED_AT),
+      "both read-window timestamps are shown verbatim");
+
+    // Table: server column and row order, precise decimal, NULL and empty.
+    const askHeaderSecond = askMarkup.indexOf(">second<");
+    const askHeaderFirst = askMarkup.indexOf(">first<");
+    check(askHeaderSecond !== -1 && askHeaderFirst !== -1 && askHeaderSecond < askHeaderFirst,
+      "the ask header keeps the server column order");
+    const askDecimal = askMarkup.indexOf(PRECISE_DECIMAL);
+    const askNull = askMarkup.indexOf(GOVERNED_NULL_CELL);
+    const askCell = askMarkup.indexOf("&lt;script&gt;alert(6)&lt;/script&gt;");
+    // An empty string cell renders as the two-quote marker, with each quote
+    // escaped by React.
+    const askEmpty = askMarkup.indexOf("&quot;&quot;");
+    check(askDecimal !== -1 && askDecimal < askNull && askNull < askCell && askCell < askEmpty,
+      "the ask rows keep the server row order with a precise decimal, NULL and an empty string");
+    check(!askMarkup.includes('>"' + PRECISE_DECIMAL + '"<'), "the precise decimal is not re-quoted");
+
+    // Reported row count.
+    check(askMarkup.includes(`Rows: ${askResult.row_count}`), "the reported row count is shown");
+
+    // The full receipt, in order, inside the collapsed Technical details.
+    check(askMarkup.includes("<details"), "the technical details are collapsed");
+    check(askMarkup.includes("<summary>Technical details</summary>"), "the summary is Technical details");
+    let previous = -1;
+    for (const entry of governedAskReceiptRows(askResult)) {
+      const labelAt = askMarkup.indexOf(`<dt>${entry.label}</dt>`);
+      const valueAt = askMarkup.indexOf(`<dd>${entry.value}</dd>`);
+      check(labelAt !== -1 && valueAt !== -1 && labelAt > previous,
+        `the receipt carries ${entry.label} in order`);
+      previous = labelAt;
+    }
+    check(askMarkup.includes(askResult.sql_hash) && askMarkup.includes(askResult.result_digest)
+      && askMarkup.includes(askResult.attempt_id) && askMarkup.includes(askResult.result_format)
+      && askMarkup.includes(String(askResult.exposed_schema_revision)),
+      "the receipt values are present verbatim");
+
+    // The exact SQL, inert, inside <pre>, with no dangerouslySetInnerHTML.
+    check(askMarkup.includes("<pre class=\"governed-ask-sql\">"), "the exact SQL sits in a <pre>");
+    check(askMarkup.includes("SELECT &#x27;&lt;img src=x onerror=alert(4)&gt;&#x27;"),
+      "the exact SQL is present as escaped text");
+
+    // Empty rowset is stated.
+    const askEmptyMarkup = renderToStaticMarkup(createElement(GovernedAskResultView, {
+      result: { ...askResult, rows: [], row_count: 0 },
+      submittedQuestion: ASK_QUESTION,
+    }));
+    check(askEmptyMarkup.includes(GOVERNED_NO_ROWS), "an empty ask rowset is stated, not left blank");
   }
 
   if (failures !== 0) throw new Error(`${failures} governed-preset assertion(s) failed`);
