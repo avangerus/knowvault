@@ -2,59 +2,60 @@ package analytic
 
 import "math"
 
-// ValidateDatasetProfileCatalogTransition proves that next is the only legal
-// immediate successor of previous: same catalog identity, exactly one revision
-// step, no entry removed or mutated, no retired entry revived, every new entry
-// active, and at least one addition or ACTIVE->RETIRED change.
+// ValidateDatasetProfileCatalogTransition accepts one immutable, adjacent
+// catalog snapshot transition. It performs no mutation or external lookup.
 func ValidateDatasetProfileCatalogTransition(previous, next DatasetProfileCatalog) error {
-	if !previous.Valid() || !next.Valid() {
-		return invalidDatasetProfileCatalogTransition()
-	}
-	if previous.id != next.id {
-		return invalidDatasetProfileCatalogTransition()
-	}
-	if previous.revision == math.MaxInt64 || next.revision != previous.revision+1 {
+	if !previous.Valid() || !next.Valid() ||
+		previous.ID() != next.ID() ||
+		previous.Revision() == math.MaxInt64 ||
+		next.Revision() != previous.Revision()+1 {
 		return invalidDatasetProfileCatalogTransition()
 	}
 
-	previousMaxVersion := make(map[string]int64, len(previous.entries))
-	for _, entry := range previous.entries {
-		previousMaxVersion[entry.Profile.Key().DatasetID()] = entry.Profile.Key().Version()
+	previousEntries := previous.Entries()
+	nextEntries := next.Entries()
+	previousByKey := make(map[ProfileKey]CatalogEntryInput, len(previousEntries))
+	nextByKey := make(map[ProfileKey]CatalogEntryInput, len(nextEntries))
+	previousMaxByDataset := make(map[string]int64)
+
+	for _, entry := range previousEntries {
+		key := entry.Profile.Key()
+		previousByKey[key] = entry
+		if maximum, found := previousMaxByDataset[key.DatasetID()]; !found || key.Version() > maximum {
+			previousMaxByDataset[key.DatasetID()] = key.Version()
+		}
+	}
+	for _, entry := range nextEntries {
+		nextByKey[entry.Profile.Key()] = entry
 	}
 
 	changed := false
-	seen := make(map[ProfileKey]struct{}, len(next.entries))
-	for _, entry := range next.entries {
-		key := entry.Profile.Key()
-		seen[key] = struct{}{}
-		prior, existed := previous.Inspect(key)
-		if !existed {
-			if entry.State != ProfileActive {
-				return invalidDatasetProfileCatalogTransition()
-			}
-			if maximum, present := previousMaxVersion[key.DatasetID()]; present && key.Version() <= maximum {
-				return invalidDatasetProfileCatalogTransition()
-			}
-			changed = true
-			continue
-		}
-		if entry.Profile.Hash() != prior.Profile.Hash() {
+	for _, previousEntry := range previousEntries {
+		key := previousEntry.Profile.Key()
+		nextEntry, found := nextByKey[key]
+		if !found || nextEntry.Profile.Hash() != previousEntry.Profile.Hash() {
 			return invalidDatasetProfileCatalogTransition()
 		}
-		switch {
-		case prior.State == ProfileActive && entry.State == ProfileActive:
-		case prior.State == ProfileActive && entry.State == ProfileRetired:
-			changed = true
-		case prior.State == ProfileRetired && entry.State == ProfileRetired:
-		default:
+		if previousEntry.State == ProfileRetired && nextEntry.State == ProfileActive {
 			return invalidDatasetProfileCatalogTransition()
+		}
+		if previousEntry.State == ProfileActive && nextEntry.State == ProfileRetired {
+			changed = true
 		}
 	}
 
-	for _, entry := range previous.entries {
-		if _, present := seen[entry.Profile.Key()]; !present {
+	for _, nextEntry := range nextEntries {
+		key := nextEntry.Profile.Key()
+		if _, existed := previousByKey[key]; existed {
+			continue
+		}
+		if nextEntry.State != ProfileActive {
 			return invalidDatasetProfileCatalogTransition()
 		}
+		if maximum, existed := previousMaxByDataset[key.DatasetID()]; existed && key.Version() <= maximum {
+			return invalidDatasetProfileCatalogTransition()
+		}
+		changed = true
 	}
 
 	if !changed {
@@ -63,4 +64,6 @@ func ValidateDatasetProfileCatalogTransition(previous, next DatasetProfileCatalo
 	return nil
 }
 
-func invalidDatasetProfileCatalogTransition() error { return &Error{code: CodeInvalidRequest} }
+func invalidDatasetProfileCatalogTransition() error {
+	return &Error{code: CodeInvalidRequest}
+}
