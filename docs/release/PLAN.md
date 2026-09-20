@@ -39,6 +39,24 @@ correct, decision-ready answer with usable evidence. Connector count, indexed
 chunk count, preset count, model benchmark scores and generated SQL are
 supporting measures; none is the product result.
 
+## Read-only product boundary
+
+The current product is strictly read-only. KnowVault may discover metadata,
+search, read, aggregate, compare and explain data. It must not create, update or
+delete source records; run customer business commands; trigger workflows;
+approve transactions; or modify files, databases, tickets, messages or source
+permissions. This boundary applies to the browser, API, MCP, models, internal
+tools and administrator-configured connectors. User confirmation does not make
+a write operation admissible.
+
+Every structured connector uses a dedicated read-only identity and a
+read-only transaction. Every document connector ingests through a read-only
+source capability. Tool schemas expose no mutation operation. Acceptance must
+prove that unsupported write requests are refused before reaching a source and
+that the refusal is attributable in the audit journal. Any future write-back
+capability requires a separate owner decision, threat model, product contract
+and release plan; it is not an extension of the current chat session.
+
 ## Release path to the north star
 
 | Milestone | User-visible truth | Acceptance |
