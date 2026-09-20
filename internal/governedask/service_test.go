@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -91,7 +92,11 @@ func TestSchemaEvidenceOneItemPerObject(t *testing.T) {
 // recordExecutedAttempt, which needs a real *database.Store this test never
 // constructs, so the mutant reliably goes RED.
 func TestDiscloseExecutedAttemptFailsClosedOnAuditError(t *testing.T) {
-	service := &Service{}
+	calls := 0
+	service := &Service{disclosureCheck: func(context.Context, database.AccessContext, string) error {
+		calls++
+		return nil
+	}}
 	auditErr := errors.New("audit append failed")
 	value := "3"
 	result := governedquery.QueryResult{Columns: []string{"count"}, Rows: [][]*string{{&value}}, RowCount: 1}
@@ -109,6 +114,10 @@ func TestDiscloseExecutedAttemptFailsClosedOnAuditError(t *testing.T) {
 	}
 	if !errors.Is(err, auditErr) {
 		t.Fatalf("expected the disclosure error to wrap the audit append error, got %v", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("expected the audit-error branch to skip disclosure reauthorization, got %d call(s)", calls)
 	}
 }
 
@@ -200,5 +209,49 @@ func TestAskSystemInstructionsStateClaimTextBoundary(t *testing.T) {
 		if !strings.Contains(askSystemInstructions, required) {
 			t.Fatalf("governed query instructions do not state the SQL text boundary %q", required)
 		}
+	}
+}
+
+// TestDiscloseExecutedAttemptReauthorizesBeforeDisclosure guards the
+// disclosure-time reauthorization gate: even with a successful audit append and
+// a real, nonempty result, a denied caller or a workspace with live queries
+// disabled must receive exactly the typed error and a completely zero
+// AskResult. The injected counter proves the gate ran exactly once, and the
+// nonempty QueryResult proves the gate -- not an empty result -- is what
+// suppresses disclosure.
+func TestDiscloseExecutedAttemptReauthorizesBeforeDisclosure(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		gateErr  error
+		wantCode ErrorCode
+	}{
+		{name: "denied", gateErr: &Error{code: CodeDenied}, wantCode: CodeDenied},
+		{name: "live queries off", gateErr: &Error{code: CodeLiveQueriesOff}, wantCode: CodeLiveQueriesOff},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			calls := 0
+			gateErr := testCase.gateErr
+			service := &Service{disclosureCheck: func(context.Context, database.AccessContext, string) error {
+				calls++
+				return gateErr
+			}}
+			value := "3"
+			result := governedquery.QueryResult{Columns: []string{"count"}, Rows: [][]*string{{&value}}, RowCount: 1}
+			attempt := governedquery.Attempt{SQLHash: "deadbeef", Outcome: governedquery.OutcomeSucceeded}
+
+			got, err := service.discloseExecutedAttempt(context.Background(), database.AccessContext{}, "ws_demo", 1,
+				"SELECT count(*) FROM fleet_trips", attempt, result, nil)
+
+			if calls != 1 {
+				t.Fatalf("expected exactly one disclosure reauthorization call, got %d", calls)
+			}
+			var typed *Error
+			if !errors.As(err, &typed) || typed.code != testCase.wantCode {
+				t.Fatalf("expected a %s *Error, got %v", testCase.wantCode, err)
+			}
+			if !reflect.DeepEqual(got, AskResult{}) {
+				t.Fatalf("expected a completely zero AskResult when disclosure is refused, got %+v", got)
+			}
+		})
 	}
 }

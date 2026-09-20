@@ -175,6 +175,11 @@ type Service struct {
 	enabled bool
 	adapter *modelgateway.LabAdapter
 	now     func() time.Time
+	// disclosureCheck, when non-nil, replaces the real reauthorization +
+	// live-queries gate in reauthorizeDisclosure. It exists only so package
+	// tests can drive discloseExecutedAttempt without a live database; nil in
+	// production, where the real checks always run.
+	disclosureCheck func(context.Context, database.AccessContext, string) error
 }
 
 func New(db *database.Store, auditor auditAppender) (*Service, error) {
@@ -417,6 +422,27 @@ func newAdmissionID() (string, error) {
 	return ids.New("gqad")
 }
 
+// reauthorizeDisclosure re-checks, at the moment of disclosure, that the
+// caller still holds workspace.ask and that live queries are still enabled for
+// this workspace. A test-injected disclosureCheck takes precedence so package
+// tests can drive this gate without a live database; nil uses the real checks.
+func (service *Service) reauthorizeDisclosure(ctx context.Context, access database.AccessContext, workspaceID string) error {
+	if service.disclosureCheck != nil {
+		return service.disclosureCheck(ctx, access, workspaceID)
+	}
+	if err := service.authorize(ctx, access, workspaceID, policy.OperationWorkspaceAsk); err != nil {
+		return err
+	}
+	enabled, err := service.liveQueriesEnabled(ctx, access, workspaceID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return &Error{code: CodeLiveQueriesOff}
+	}
+	return nil
+}
+
 // discloseExecutedAttempt is Ask()'s disclosure gate for one governed query
 // that already executed successfully (execErr == nil): its own mandatory
 // audit record is a precondition of returning any row to the caller. auditErr
@@ -433,6 +459,12 @@ func (service *Service) discloseExecutedAttempt(ctx context.Context, access data
 	// about its result is disclosed without the audit receipt.
 	if auditErr != nil {
 		return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+	}
+	// Disclosure also requires the caller to still be authorized and live
+	// queries to still be enabled; a failure here returns before any row,
+	// answer or saved-attempt record is produced.
+	if err := service.reauthorizeDisclosure(ctx, access, workspaceID); err != nil {
+		return AskResult{}, err
 	}
 	answer := "The database returned " + strconv.Itoa(result.RowCount) + " row(s) for your query."
 	// Record what actually ran before answering. This row is the only
