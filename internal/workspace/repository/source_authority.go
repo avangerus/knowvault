@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"strings"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
@@ -52,6 +53,16 @@ type PostgreSQLAuthorityResult struct {
 	accessMode          string
 	projection          postgresqlquery.Projection
 	limits              postgresqlquery.Limits
+}
+
+// postgreSQLExecutionAuthority is the private, in-process execution envelope.
+// Credential material and the exact connection revision never cross the
+// public authority result boundary.
+type postgreSQLExecutionAuthority struct {
+	result              PostgreSQLAuthorityResult
+	connectionID        string
+	connectionRevision  int64
+	credentialReference string
 }
 
 func (r PostgreSQLAuthorityResult) WorkspaceID() string { return r.workspaceID }
@@ -106,26 +117,36 @@ func (PostgreSQLAuthorityResult) MarshalJSON() ([]byte, error) {
 // hash against the recomputed one, and resolves the exact current confirmed
 // PostgreSQL projection and server-owned limits through the source query.
 func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access database.AccessContext, request PostgreSQLAuthorityRequest) (PostgreSQLAuthorityResult, error) {
+	authority, err := store.resolvePostgreSQLExecutionAuthority(ctx, access, request)
+	if err != nil {
+		return PostgreSQLAuthorityResult{}, err
+	}
+	return authority.result, nil
+}
+
+// resolvePostgreSQLExecutionAuthority resolves the public authority decision
+// and the exact private connector target in the same final admission SELECT.
+func (store *Store) resolvePostgreSQLExecutionAuthority(ctx context.Context, access database.AccessContext, request PostgreSQLAuthorityRequest) (postgreSQLExecutionAuthority, error) {
 	if store == nil || store.database == nil || ctx == nil || access.Validate() != nil {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodeRequestInvalid}
 	}
 	if !validID(request.WorkspaceID) || !validID(request.WorkspaceSourceID) || !validID(request.SourceScopeID) {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodeRequestInvalid}
 	}
 	if request.SourceScopeRevision <= 0 {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodeRequestInvalid}
 	}
 	if !workspace.IsConfigurationHash(request.ScopeConfigHash) {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodeRequestInvalid}
 	}
 	if request.AccessMode != authorityAccessModeManaged {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodeRequestInvalid}
 	}
 	denied := false
 	notFound := false
 	persistence := false
 	resolved := false
-	result := PostgreSQLAuthorityResult{}
+	result := postgreSQLExecutionAuthority{}
 	readErr := store.database.Read(ctx, access, func(transactionContext context.Context, transaction database.Transaction) error {
 		subject, organization, found, actorErr := currentActor(transactionContext, transaction, access, false)
 		if actorErr != nil {
@@ -168,32 +189,35 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			return nil
 		}
 		var (
-			scannedWorkspaceSourceID  string
-			scannedSourceScopeID      string
-			scannedScopeRevision      int64
-			scannedAccessMode         string
-			scannedScopeConfigHash    string
-			scannedConnectionID       string
-			scannedDatabaseIdentity   string
-			scannedLineageID          string
-			scannedProjectionRevision int64
-			scannedContractHash       string
-			scannedSchemaName         string
-			scannedRelationName       string
-			scannedRelationKind       string
-			scannedColumnsRaw         string
-			scannedEmptyPolicy        string
-			scannedMaxRows            int64
-			scannedMaxColumns         int
-			scannedMaxFieldBytes      int64
-			scannedMaxRowBytes        int64
-			scannedMaxTotalBytes      int64
-			scannedTimeoutMS          int64
+			scannedWorkspaceSourceID   string
+			scannedSourceScopeID       string
+			scannedScopeRevision       int64
+			scannedAccessMode          string
+			scannedScopeConfigHash     string
+			scannedConnectionID        string
+			scannedConnectionRevision  int64
+			scannedCredentialReference string
+			scannedDatabaseIdentity    string
+			scannedLineageID           string
+			scannedProjectionRevision  int64
+			scannedContractHash        string
+			scannedSchemaName          string
+			scannedRelationName        string
+			scannedRelationKind        string
+			scannedColumnsRaw          string
+			scannedEmptyPolicy         string
+			scannedMaxRows             int64
+			scannedMaxColumns          int
+			scannedMaxFieldBytes       int64
+			scannedMaxRowBytes         int64
+			scannedMaxTotalBytes       int64
+			scannedTimeoutMS           int64
 		)
 		scanErr := transaction.QueryRow(transactionContext, `
 			SELECT status.workspace_source_id, status.source_scope_id,
 			       status.source_scope_revision, status.access_mode, status.scope_config_hash,
-			       status.connection_id,
+			       status.connection_id, execution_connection.revision,
+			       execution_connection.credential_reference,
 			       projection.database_identity, projection.lineage_id,
 			       projection.projection_revision, projection.contract_hash,
 			       projection.schema_name, projection.relation_name,
@@ -238,6 +262,11 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			   AND scope_revision.revision=status.source_scope_revision
 			   AND scope_revision.connection_id=status.connection_id
 			   AND scope_revision.scope_config_hash=status.scope_config_hash
+			  JOIN public.source_connection_revision AS execution_connection
+			    ON execution_connection.organization_id=$2
+			   AND execution_connection.connection_id=scope_revision.connection_id
+			   AND execution_connection.revision=scope_revision.connection_revision
+			   AND execution_connection.connector_type='POSTGRESQL_QUERY'
 			  JOIN public.source_scope_activation AS activation
 			    ON activation.organization_id=$2
 			   AND activation.source_scope_id=status.source_scope_id
@@ -268,7 +297,8 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 		).Scan(
 			&scannedWorkspaceSourceID, &scannedSourceScopeID,
 			&scannedScopeRevision, &scannedAccessMode, &scannedScopeConfigHash,
-			&scannedConnectionID,
+			&scannedConnectionID, &scannedConnectionRevision,
+			&scannedCredentialReference,
 			&scannedDatabaseIdentity, &scannedLineageID,
 			&scannedProjectionRevision, &scannedContractHash,
 			&scannedSchemaName, &scannedRelationName,
@@ -291,6 +321,10 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			scannedScopeConfigHash != request.ScopeConfigHash ||
 			scannedAccessMode != request.AccessMode {
 			notFound = true
+			return nil
+		}
+		if scannedConnectionRevision <= 0 || !validAuthorityCredentialReference(scannedCredentialReference) {
+			persistence = true
 			return nil
 		}
 		var decoded []authorityColumn
@@ -344,29 +378,54 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			persistence = true
 			return nil
 		}
-		result = PostgreSQLAuthorityResult{
-			workspaceID:         request.WorkspaceID,
-			workspaceRevision:   snapshot.Revision,
-			workspaceConfigHash: storedHash,
-			workspaceSourceID:   scannedWorkspaceSourceID,
-			sourceScopeID:       scannedSourceScopeID,
-			sourceScopeRevision: scannedScopeRevision,
-			scopeConfigHash:     scannedScopeConfigHash,
-			accessMode:          scannedAccessMode,
-			projection:          projection,
-			limits:              limits,
+		result = postgreSQLExecutionAuthority{
+			result: PostgreSQLAuthorityResult{
+				workspaceID:         request.WorkspaceID,
+				workspaceRevision:   snapshot.Revision,
+				workspaceConfigHash: storedHash,
+				workspaceSourceID:   scannedWorkspaceSourceID,
+				sourceScopeID:       scannedSourceScopeID,
+				sourceScopeRevision: scannedScopeRevision,
+				scopeConfigHash:     scannedScopeConfigHash,
+				accessMode:          scannedAccessMode,
+				projection:          projection,
+				limits:              limits,
+			},
+			connectionID:        scannedConnectionID,
+			connectionRevision:  scannedConnectionRevision,
+			credentialReference: scannedCredentialReference,
 		}
 		resolved = true
 		return nil
 	})
 	if readErr != nil {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodePersistence}
 	}
 	if persistence {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodePersistence}
 	}
 	if denied || notFound || !resolved {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodeNotFound}
+		return postgreSQLExecutionAuthority{}, &Error{code: CodeNotFound}
 	}
 	return result, nil
+}
+
+func validAuthorityCredentialReference(value string) bool {
+	const (
+		prefix   = "cred_"
+		alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	)
+	if len(value) != len(prefix)+26 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	encoded := value[len(prefix):]
+	if encoded[0] < '0' || encoded[0] > '7' {
+		return false
+	}
+	for _, symbol := range encoded[1:] {
+		if !strings.ContainsRune(alphabet, symbol) {
+			return false
+		}
+	}
+	return true
 }
