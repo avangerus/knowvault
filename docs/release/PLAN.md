@@ -1,10 +1,88 @@
-# Release scope and direction
+# Product north star and release path
+
+## Product north star
+
+**An authorized employee asks a simple or complex question about the company in
+a chat or through MCP and receives a concise, complete and verifiable answer
+from all current connected company data they are allowed to use. KnowVault
+discovers the relevant sources, builds and executes a bounded multi-step plan,
+reconciles the facts, explains uncertainty and attaches inspectable evidence without giving a
+model or caller unrestricted access to the underlying systems.**
+
+Every part of that statement is a product contract:
+
+| Term | Required product behavior |
+| --- | --- |
+| Authorized employee | Identity, workspace membership and source ACLs are enforced at every retrieval and tool call, including follow-up turns. |
+| Asks | The primary input is ordinary language. Users describe the business outcome; they do not select SQL, tables or a fixed report. |
+| Chat | A session keeps useful context, supports follow-up questions and clarification, and shows tool progress without forcing the user to understand the implementation. The same capability is available to external agents through MCP. |
+| Simple or complex | The system handles direct lookup as well as decomposition, time comparison, aggregation, joins, reconciliation, anomaly analysis and multi-source questions. |
+| Question about the company | The vocabulary is the organization's vocabulary: contracts, customers, operations, incidents, routes, vehicles, documents and other governed entities, rather than database identifiers. |
+| All current company data | Documents and structured systems participate through connectors and typed source profiles. Freshness and observed time are explicit; unavailable or stale sources are never silently treated as current. |
+| Allowed to use | Retrieval, computation and answer synthesis preserve source permissions. Hidden data cannot influence an answer, citation, count or suggested follow-up. |
+| Concise, complete answer | The response leads with the business conclusion, includes the decisive facts and calculations, and expands when the question requires detail. A raw result table is evidence, not the answer. |
+| Verifiable | Every material claim maps to a document fragment, source record or signed execution receipt with source identity, observation time and reproducible inputs. |
+| Multi-step plan | KnowVault may inspect metadata, search, read, aggregate, compare and re-query. The plan is bounded, observable and interruptible. |
+| Bounded access | Models propose typed intents over administrator-approved semantic profiles. Server code validates and compiles them to parameterized reads. Models and callers never receive a general SQL execution surface. |
+| Explains uncertainty | Ambiguity, missing coverage, stale data, conflicts and failed tools are stated in the answer. Clarification is requested only when it materially changes the result. |
+
+The interaction reference is [Gordon in Docker Desktop](https://docs.docker.com/ai/gordon/):
+an assistant embedded in the product, aware of the user's current context, able
+to select and use tools, maintain a conversation, and explain actions and
+failures.
+KnowVault applies that interaction model to governed company knowledge. Its
+additional contract is claim-level evidence, inherited enterprise permissions,
+durable audit and fully local operation when required.
+
+The business outcome is measured as time from a real employee question to a
+correct, decision-ready answer with usable evidence. Connector count, indexed
+chunk count, preset count, model benchmark scores and generated SQL are
+supporting measures; none is the product result.
+
+## Release path to the north star
+
+| Milestone | User-visible truth | Acceptance |
+| --- | --- | --- |
+| R0 — Controlled access baseline | The deployed system can securely search documents and execute reviewed live database reads with rights, audit and receipts. | Existing document and Cicada D0-D4 evidence. This is a diagnostic baseline, not the north-star product. |
+| R1 — First real data conversation | In chat, a user asks varied natural-language questions over one approved structured domain, including follow-ups, periods, grouping, comparisons and anomaly questions. KnowVault plans the read, returns a written answer and exposes its calculation and receipt. No question is matched to a fixed SQL preset. | A domain-independent stress suite with paraphrases, informal questions, ambiguity, inaccessible fields, stale data and adversarial inputs; answers checked against direct controls. |
+| R2 — Cross-source reasoning | One conversation can combine structured data and documents, follow links between entities and answer a question that requires more than one retrieval or calculation step. | Claim-level source coverage, rights tests for every step, replayable plan and failure/partial-answer behavior. |
+| R3 — Enterprise pilot | Administrators can connect and profile the customer's required sources; users receive the same behavior through the web chat and MCP. | Customer question set, permission matrix, audit review, freshness SLOs, scale and operational handoff. |
+
+R1 starts with the accessible GM contract/container and KPI projections because
+they provide real data and direct controls. Vehicle, route and raw removal
+questions enter acceptance only after read-only semantic projections for those
+entities are available. Adding fixed question-to-SQL bindings does not advance
+R1. Existing presets remain release diagnostics and break-glass controls.
+
+R1 uses two complementary evidence paths. Versioned entity snapshots support
+exact source pages, relationships and record-level drill-down. Typed analytics
+support bounded counts, trends, grouping and comparisons that cannot be made
+reliable by retrieving a sample of rows. A model chooses only profile, measure,
+dimensions, typed filters and period; server code validates that intent and
+compiles a parameterized read from registry-owned identifiers. The written
+answer cites snapshot evidence where available and always links the immutable
+analytic run receipt for calculated claims.
+
+The first R1 acceptance set contains 24 owner-reviewed questions: 14 factual or
+synthesis questions including informal wording and typos, four questions that
+require both structured data and documents, three follow-up turns and three
+ambiguous or unsupported questions. At least 90% of answerable cases must be
+correct, every material claim must carry readable evidence, all unsupported
+cases must clarify or refuse correctly, and unauthorized identities must learn
+zero facts or metadata. At least six cases must complete two or more knowledge
+tool calls without operator intervention. Browser and MCP must agree on facts
+and sources; every question, model call, tool call and read is attributable in
+the audit journal. Initial performance targets are visible activity within two
+seconds, median completion within 30 seconds and p95 within 90 seconds on the
+qualified pilot hardware.
+
+## Current proven baseline
 
 KnowVault's current release is an **operator-assisted MCP pilot**. It connects
 approved document folders and prepared PostgreSQL views to authorized search,
 complete source reads and inspectable evidence pages.
 
-## North star: customer demonstration release
+### Cicada controlled-query demonstration
 
 The immediate release outcome is a complete demonstration in the customer
 pilot environment: an authorized owner opens KnowVault in a browser, chooses
