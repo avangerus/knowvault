@@ -223,6 +223,134 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 			t.Fatalf("resolved projection leaked %q in %s", marker, combined)
 		}
 	}
+
+	// Reauthorization race: a resolver that has been admitted but has not yet
+	// read the current workspace snapshot must re-check the principal before it
+	// discloses the source authority. Hold the snapshot relation lock so the
+	// resolver is observably waiting, commit the principal revocation, then
+	// release the blocker and require a content-free NOT_FOUND result.
+	raceCtx, cancelRace := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRace()
+	blocker, err := admin.Begin(raceCtx)
+	if err != nil {
+		t.Fatalf("begin snapshot blocker: %v", err)
+	}
+	released := false
+	releaseBlocker := func() {
+		if released {
+			return
+		}
+		released = true
+		if rollbackErr := blocker.Rollback(context.Background()); rollbackErr != nil {
+			t.Errorf("release snapshot blocker: %v", rollbackErr)
+		}
+	}
+	defer releaseBlocker()
+	if _, err := blocker.Exec(raceCtx, `LOCK TABLE public.workspace_revision_snapshot IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("lock workspace revision snapshot: %v", err)
+	}
+
+	type authorityResolution struct {
+		result workspacerepository.PostgreSQLAuthorityResult
+		err    error
+	}
+	done := make(chan authorityResolution, 1)
+	go func() {
+		result, resolveErr := store.ResolvePostgreSQLAuthority(raceCtx,
+			authorityAccess(binding, regOwner, "req_admission_reauthorization_race"), authorityRequest)
+		done <- authorityResolution{result: result, err: resolveErr}
+	}()
+
+	waiting := false
+	pollDeadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(pollDeadline) {
+		var observed bool
+		if err := admin.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks AS waiting_lock
+				JOIN pg_class AS relation ON relation.oid = waiting_lock.relation
+				JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+				JOIN pg_stat_activity AS activity ON activity.pid = waiting_lock.pid
+				WHERE waiting_lock.locktype = 'relation'
+				  AND waiting_lock.mode = 'AccessShareLock'
+				  AND NOT waiting_lock.granted
+				  AND namespace.nspname = 'public'
+				  AND relation.relname = 'workspace_revision_snapshot'
+				  AND activity.application_name = 'knowvault-runtime'
+				  AND activity.wait_event_type = 'Lock'
+			)`,
+		).Scan(&observed); err != nil {
+			releaseBlocker()
+			t.Fatalf("poll for workspace snapshot lock wait: %v", err)
+		}
+		if observed {
+			waiting = true
+			break
+		}
+		select {
+		case outcome := <-done:
+			releaseBlocker()
+			t.Fatalf("resolver completed before waiting for workspace snapshot lock: err=%v result=%s", outcome.err, formatAuthorityResult(t, outcome.result))
+		default:
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !waiting {
+		releaseBlocker()
+		select {
+		case outcome := <-done:
+			t.Fatalf("resolver never waited for workspace snapshot lock: err=%v result=%s", outcome.err, formatAuthorityResult(t, outcome.result))
+		case <-time.After(1 * time.Second):
+			t.Fatal("resolver never waited for workspace snapshot lock within 8 seconds")
+		}
+	}
+
+	disabled := false
+	defer func() {
+		if !disabled {
+			return
+		}
+		if _, restoreErr := admin.Exec(context.Background(),
+			`UPDATE public.principal SET status = 'ACTIVE', session_revision = session_revision + 1 WHERE organization_id = $1 AND id = $2`, regOrg, regOwner); restoreErr != nil {
+			t.Errorf("restore principal status: %v", restoreErr)
+		}
+	}()
+	if tag, err := admin.Exec(ctx, `
+		UPDATE public.principal
+		SET status = 'DISABLED', session_revision = session_revision + 1
+		WHERE organization_id = $1 AND id = $2 AND status = 'ACTIVE'`, regOrg, regOwner); err != nil {
+		releaseBlocker()
+		t.Fatalf("disable principal during authority race: %v", err)
+	} else if tag.RowsAffected() != 1 {
+		releaseBlocker()
+		t.Fatalf("disable principal during authority race affected %d rows, want 1", tag.RowsAffected())
+	} else {
+		disabled = true
+	}
+
+	releaseBlocker()
+	var outcome authorityResolution
+	select {
+	case outcome = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolver did not finish after releasing workspace snapshot lock")
+	}
+	if outcome.err == nil {
+		t.Fatalf("revoked principal resolved authority: result=%s", formatAuthorityResult(t, outcome.result))
+	}
+	if gotCode := workspacerepository.CodeOf(outcome.err); gotCode != workspacerepository.CodeNotFound {
+		t.Fatalf("revoked principal error code = %q, want %q", gotCode, workspacerepository.CodeNotFound)
+	}
+	if outcome.err.Error() != string(workspacerepository.CodeNotFound) {
+		t.Fatalf("revoked principal error text = %q, want %q", outcome.err.Error(), workspacerepository.CodeNotFound)
+	}
+	if outcome.result.WorkspaceID() != "" || outcome.result.WorkspaceRevision() != 0 ||
+		outcome.result.WorkspaceConfigurationHash() != "" || outcome.result.WorkspaceSourceID() != "" ||
+		outcome.result.SourceScopeID() != "" || outcome.result.SourceScopeRevision() != 0 ||
+		outcome.result.ScopeConfigHash() != "" || outcome.result.AccessMode() != "" {
+		t.Fatalf("revoked principal returned scalar authority accessors: %s", formatAuthorityResult(t, outcome.result))
+	}
 }
 
 func assertNoExportedAuthorityResultFields(t *testing.T, got workspacerepository.PostgreSQLAuthorityResult) {
