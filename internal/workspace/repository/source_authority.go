@@ -198,6 +198,13 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			       projection.max_field_bytes, projection.max_row_bytes,
 			       projection.max_total_bytes, projection.statement_timeout_ms
 			  FROM app.workspace_source_status_v3($1) AS status
+			  JOIN public.organization AS admission_organization
+			    ON admission_organization.id=$2
+			   AND admission_organization.status='ACTIVE'
+			  JOIN public.principal AS admission_principal
+			    ON admission_principal.organization_id=$2
+			   AND admission_principal.id=$10
+			   AND admission_principal.status='ACTIVE'
 			  JOIN public.workspace AS current_workspace
 			    ON current_workspace.organization_id=$2 AND current_workspace.id=$1
 			   AND current_workspace.current_revision=$9
@@ -252,7 +259,7 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 			   AND app.workspace_source_confirmation_live($1,$3,$4,$5,$6,$7)`,
 			request.WorkspaceID, access.OrganizationID, request.WorkspaceSourceID,
 			request.SourceScopeID, request.SourceScopeRevision, request.ScopeConfigHash,
-			request.AccessMode, storedHash, snapshot.Revision,
+			request.AccessMode, storedHash, snapshot.Revision, access.PrincipalID,
 		).Scan(
 			&scannedWorkspaceSourceID, &scannedSourceScopeID,
 			&scannedScopeRevision, &scannedAccessMode, &scannedScopeConfigHash,
@@ -348,7 +355,7 @@ func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access datab
 		return nil
 	})
 	if readErr != nil {
-		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence, cause: readErr}
+		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence}
 	}
 	if persistence {
 		return PostgreSQLAuthorityResult{}, &Error{code: CodePersistence}
