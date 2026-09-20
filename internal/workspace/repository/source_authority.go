@@ -72,10 +72,15 @@ func (r PostgreSQLAuthorityResult) ScopeConfigHash() string { return r.scopeConf
 
 func (r PostgreSQLAuthorityResult) AccessMode() string { return r.accessMode }
 
-// Projection returns an independent copy of the resolved projection. The
-// Columns slice, every column Roles slice, is newly allocated on every call.
+// Projection returns an independent copy of the resolved projection. A nil
+// Columns slice is preserved as the true zero value so that an unresolved
+// result stays strictly zero; a non-nil slice, and every column Roles slice
+// within it, is newly allocated on every call.
 func (r PostgreSQLAuthorityResult) Projection() postgresqlquery.Projection {
 	projection := r.projection
+	if r.projection.Columns == nil {
+		return projection
+	}
 	projection.Columns = make([]postgresqlquery.Column, len(r.projection.Columns))
 	for i, column := range r.projection.Columns {
 		column.Roles = make([]postgresqlquery.Role, len(column.Roles))
