@@ -2,6 +2,8 @@ package analytic
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strings"
 	"testing"
@@ -30,12 +32,42 @@ func TestDatasetProfileCanonicalNormalizesOrderAndIsDeterministic(t *testing.T) 
 	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(leftHash) {
 		t.Fatalf("non-canonical hash %q", leftHash)
 	}
+	digest := sha256.Sum256(leftBytes)
+	if want := "sha256:" + hex.EncodeToString(digest[:]); leftHash != want {
+		t.Fatalf("hash = %q, want independently computed %q", leftHash, want)
+	}
+	for _, member := range []string{
+		`"key":{"dataset_id":"operations","version":1}`,
+		`"mode":"LIVE"`,
+		`"source":{"connection_id":"primary","database_identity":"gm","exposed_schema_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","exposed_schema_revision":1,"projection_contract_hash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","projection_lineage_id":"operations","projection_revision":1,"relation_kind":"VIEW","relation_name":"operations","schema_name":"public","source_scope_id":"gm"}`,
+		`{"allowed_ops":[],"filterable":false,"groupable":false,"logical_type":"TEXT","nullable":false,"output_allowed":true,"physical_name":"object_id","physical_type":"PG_TEXT","sortable":false,"source_ordinal":1,"token":"object_id"}`,
+		`{"denominator_field":"","distinct_field":"","eligibility":"ALL_ROWS","id":"amount","null_policy":"EXCLUDE_AND_REPORT","numerator_field":"amount","reducer":"SUM","unit":"units"}`,
+		`"time":{"calendar":"","field_token":"","kind":"NONE","reporting_timezone":"","source_timezone":""}`,
+		`"coverage":"UNKNOWN"`,
+		`"limits":{"max_input_rows":1000,"max_output_groups":20,"max_period_days":31,"max_result_bytes":1048576,"statement_timeout_ms":5000}`,
+	} {
+		if !bytes.Contains(leftBytes, []byte(member)) {
+			t.Fatalf("canonical profile missing member %s: %s", member, leftBytes)
+		}
+	}
 }
 
 func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 	cases := map[string]func(*testing.T, *DatasetProfileSpec){
+		"dataset id": func(t *testing.T, spec *DatasetProfileSpec) {
+			spec.Key = mustProfileKey(t, "operations_alt", spec.Key.Version())
+		},
+		"source scope": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.SourceScopeID = "gm_alt" })
+		},
 		"connection id": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateSource(t, spec, func(v *SourceProjectionInput) { v.ConnectionID = "secondary" })
+		},
+		"database identity": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.DatabaseIdentity = "gm_alt" })
+		},
+		"projection lineage": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.ProjectionLineageID = "operations_alt" })
 		},
 		"projection revision": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateSource(t, spec, func(v *SourceProjectionInput) { v.ProjectionRevision++ })
@@ -45,6 +77,21 @@ func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 		},
 		"exposed schema hash": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateSource(t, spec, func(v *SourceProjectionInput) { v.ExposedSchemaHash = "sha256:" + strings.Repeat("4", 64) })
+		},
+		"exposed schema revision": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.ExposedSchemaRevision++ })
+		},
+		"schema name": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.SchemaName = "reporting" })
+		},
+		"relation name": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.RelationName = "operations_alt" })
+		},
+		"relation kind": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateSource(t, spec, func(v *SourceProjectionInput) { v.RelationKind = RelationMaterializedView })
+		},
+		"field token": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateField(t, spec, "object_id", func(v *FieldSpecInput) { v.Token = "record_id" })
 		},
 		"physical field name": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.PhysicalName = "amount_total" })
@@ -61,6 +108,21 @@ func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 		"permission flag": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.Nullable = !v.Nullable })
 		},
+		"filter and allowed ops": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.Filterable = true; v.AllowedOps = []PredicateOperator{PredicateEQ} })
+		},
+		"groupable": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.Groupable = true })
+		},
+		"sortable": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.Sortable = true })
+		},
+		"output allowed": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.OutputAllowed = false })
+		},
+		"measure id": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateMeasure(t, spec, "amount", func(v *MeasureSpecInput) { v.ID = "amount_total" })
+		},
 		"unit": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateMeasure(t, spec, "amount", func(v *MeasureSpecInput) { v.Unit = "currency" })
 		},
@@ -75,6 +137,18 @@ func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 			value := spec.Limits.Values()
 			value.MaxOutputGroups++
 			spec.Limits = mustLimits(t, value)
+		},
+		"max input rows": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateLimits(t, spec, func(v *ProfileLimitsInput) { v.MaxInputRows++ })
+		},
+		"max period days": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateLimits(t, spec, func(v *ProfileLimitsInput) { v.MaxPeriodDays-- })
+		},
+		"max result bytes": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateLimits(t, spec, func(v *ProfileLimitsInput) { v.MaxResultBytes++ })
+		},
+		"statement timeout": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateLimits(t, spec, func(v *ProfileLimitsInput) { v.StatementTimeoutMS++ })
 		},
 		"profile version": func(t *testing.T, spec *DatasetProfileSpec) {
 			spec.Key = mustProfileKey(t, spec.Key.DatasetID(), spec.Key.Version()+1)
@@ -164,6 +238,12 @@ func mutateMeasure(t *testing.T, spec *DatasetProfileSpec, id string, mutate fun
 		}
 	}
 	t.Fatalf("measure %q not found", id)
+}
+func mutateLimits(t *testing.T, spec *DatasetProfileSpec, mutate func(*ProfileLimitsInput)) {
+	t.Helper()
+	value := spec.Limits.Values()
+	mutate(&value)
+	spec.Limits = mustLimits(t, value)
 }
 func mustField(t *testing.T, value FieldSpecInput) FieldSpec {
 	t.Helper()
