@@ -87,14 +87,19 @@ func (r PostgreSQLAuthorityResult) Projection() postgresqlquery.Projection {
 
 func (r PostgreSQLAuthorityResult) Limits() postgresqlquery.Limits { return r.limits }
 
+// MarshalJSON renders the authority result as an opaque empty JSON object so
+// that no private source authority value can leak through generic JSON logging.
+func (PostgreSQLAuthorityResult) MarshalJSON() ([]byte, error) {
+	return []byte("{}"), nil
+}
+
 // ResolvePostgreSQLAuthority resolves the authority decision for one exact
-// workspace source scope revision through the admission boundary only. It
-// validates the request and the caller's access context, then performs a single
-// read that authenticates the caller, loads the current workspace snapshot,
-// authorizes the workspace.ask operation and exact-compares the stored current
-// configuration hash against the recomputed one. This card intentionally stops
-// at that boundary: a local notFound sentinel keeps the method fail-closed
-// until the exact source query is added next, so no path here can admit data.
+// workspace source scope revision through the admission boundary. It validates
+// the request and the caller's access context, then performs a single read that
+// authenticates the caller, loads the current workspace snapshot, authorizes
+// the workspace.ask operation, exact-compares the stored current configuration
+// hash against the recomputed one, and resolves the exact current confirmed
+// PostgreSQL projection and server-owned limits through the source query.
 func (store *Store) ResolvePostgreSQLAuthority(ctx context.Context, access database.AccessContext, request PostgreSQLAuthorityRequest) (PostgreSQLAuthorityResult, error) {
 	if store == nil || store.database == nil || ctx == nil || access.Validate() != nil {
 		return PostgreSQLAuthorityResult{}, &Error{code: CodeRequestInvalid}
