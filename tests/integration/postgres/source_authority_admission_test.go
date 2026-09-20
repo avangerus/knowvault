@@ -62,7 +62,7 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 	// 3. VERIFIED trust for the connection, then the WORKSPACE_MANAGED binding.
 	verifyIsolationTrust(t, ctx, admin, registered.ConnectionID)
 	binding := seedRegistrationWorkspaceBinding(t, ctx, admin,
-		registered.SourceScopeID, registered.ScopeConfigHash, "binding_admission_01ARZ3NDEKTSV4RRFFQ69G5FAV")
+		registered.SourceScopeID, registered.ScopeConfigHash, "binding_01ARZ3NDEKTSV4RRFFQ69G5FAD")
 
 	// 4. Issue the runtime grant and confirm the managed source.
 	runtime := newAuthorityRuntime(t, ctx)
