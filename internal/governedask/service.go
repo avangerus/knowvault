@@ -296,7 +296,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		return AskResult{}, err
 	}
 	if !liveQueriesEnabled {
-		service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+		if auditErr := service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
 		return AskResult{}, &Error{code: CodeLiveQueriesOff}
 	}
 	schema, revision, err := service.loadExposedSchema(ctx, access, workspaceID)
@@ -304,7 +306,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		return AskResult{}, err
 	}
 	if schema == nil {
-		service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+		if auditErr := service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
 		return AskResult{}, &Error{code: CodeSchemaUnavailable}
 	}
 
@@ -338,13 +342,17 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 				service.logModelAttempt(outerAttempt, innerAttempt, result)
 			})
 		if genErr != nil {
-			service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			lastErr = &Error{code: CodeGenerationFailed, cause: genErr}
 			continue
 		}
 		sqlText, ok := candidateSQL(plan)
 		if !ok {
-			service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			lastErr = &Error{code: CodeGenerationFailed}
 			continue
 		}
@@ -354,6 +362,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		})
 		auditErr := service.auditAttempt(ctx, access, workspaceID, revision, attempt.SQLHash, string(attempt.Outcome),
 			costPointer(attempt), rowCountPointer(attempt), digestPointer(attempt))
+		if auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
 		if execErr != nil {
 			lastErr = &Error{code: CodeExecutionFailed, cause: execErr}
 			if ctx.Err() != nil {
