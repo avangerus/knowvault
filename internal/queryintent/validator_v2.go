@@ -64,6 +64,7 @@ func (binding CatalogBindingV2) Hash() (string, bool) {
 // can only ever authorize the authority it was built from.
 type ValidatorV2 struct {
 	catalog analytic.DatasetProfileCatalog
+	clock   func() time.Time
 }
 
 // NewValidatorV2 builds a validator over one installed catalog snapshot. An
@@ -75,11 +76,25 @@ func NewValidatorV2(catalog analytic.DatasetProfileCatalog) (ValidatorV2, error)
 	return ValidatorV2{catalog: catalog}, nil
 }
 
+// NewValidatorV2WithClock builds a validator that captures trusted time only
+// when a relative period reaches the final resolution step. Catalog validity
+// takes precedence over the clock argument, including a nil provider.
+func NewValidatorV2WithClock(catalog analytic.DatasetProfileCatalog, clock func() time.Time) (ValidatorV2, error) {
+	if !catalog.Valid() {
+		return ValidatorV2{}, newRefusal(CodeCatalogUnavailable)
+	}
+	if clock == nil {
+		return ValidatorV2{}, newRefusal(CodeTrustedNowRequired)
+	}
+	return ValidatorV2{catalog: catalog, clock: clock}, nil
+}
+
 // ValidateProposalV2 is the only path from a ProposalV2 to a ValidatedIntentV2.
 // The checks run in a fixed order: proposal shape, validator catalog, frozen
 // binding, exact profile resolution, measure authority for AGGREGATE, filters,
-// shape, period resolution and then the seal. Every semantic check runs against
-// the resolved profile before the sealed value is produced.
+// shape, period mode/clock capture, resolution and then the seal. Every
+// semantic check runs against the resolved profile before the sealed value is
+// produced.
 func (validator ValidatorV2) ValidateProposalV2(proposal ProposalV2, frozen CatalogBindingV2) (ValidatedIntentV2, error) {
 	if !proposal.Valid() {
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
@@ -115,7 +130,24 @@ func (validator ValidatorV2) ValidateProposalV2(proposal ProposalV2, frozen Cata
 	if !periodOK {
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
 	}
-	resolution, err := resolvePeriodForProfileV2(profile, period, time.Time{})
+	mode, modeOK := period.Mode()
+	if !modeOK {
+		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
+	}
+	capturedAt := time.Time{}
+	switch mode {
+	case PeriodEXPLICIT:
+	case PeriodTODAY, PeriodCURRENTMONTH:
+		if validator.clock == nil {
+			return ValidatedIntentV2{}, newRefusal(CodeTrustedNowRequired)
+		}
+		capturedAt = validator.clock()
+	case PeriodLATESTAVAILABLE:
+		return ValidatedIntentV2{}, newRefusal(CodePeriodUnavailable)
+	default:
+		return ValidatedIntentV2{}, newRefusal(CodePeriodInvalid)
+	}
+	resolution, err := resolvePeriodForProfileV2(profile, period, capturedAt)
 	if err != nil {
 		return ValidatedIntentV2{}, err
 	}
