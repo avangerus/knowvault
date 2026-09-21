@@ -3,7 +3,7 @@ import type { ComponentType, CSSProperties, FormEvent, KeyboardEvent as ReactKey
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
-import { GovernedPresetPanel } from "./governed-presets";
+import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -2142,21 +2142,13 @@ function App() {
           )}
 
           {session === "signedIn" && (
-            <GovernedPresetPanelHost
-              active={!evidenceTarget && section === "search"}
-              onSessionExpired={expireSession}
-              requestedWorkspaceID={selectedWorkspaceID}
-              revalidationKey={workspaceRefreshVersion}
-              state={data}
-            />
-          )}
-
-          {session === "signedIn" && (
-            <SearchView
+            <AskSurface
               active={!evidenceTarget && section === "search"}
               key={`${selectedWorkspaceID}:${searchResetEpoch}`}
               onOpenEvidence={openEvidence}
               onOpenSources={() => { dismissFootnoteTooltip(); setSection("sources"); }}
+              onSessionExpired={expireSession}
+              revalidationKey={workspaceRefreshVersion}
               requestedWorkspaceID={selectedWorkspaceID}
               state={data}
             />
@@ -3780,30 +3772,42 @@ type PilotSearchPage = {
   next_offset: number | null;
 };
 
-export function GovernedPresetPanelHost({ active, onSessionExpired, requestedWorkspaceID, revalidationKey, state }: {
-  active: boolean; onSessionExpired: () => void; requestedWorkspaceID: string | null; revalidationKey: number; state: WorkspaceDataState;
+export function GovernedPresetPanelHost({ active, onCatalogAvailability, onSessionExpired, requestedWorkspaceID, revalidationKey, state }: {
+  active: boolean; onCatalogAvailability: (availability: GovernedCatalogAvailability) => void; onSessionExpired: () => void;
+  requestedWorkspaceID: string | null; revalidationKey: number; state: WorkspaceDataState;
 }) {
   const authorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
   const [catalogEpoch, setCatalogEpoch] = useState<number | null>(null);
-  const catalogWasAuthorized = useRef(false);
+  const [catalogAvailability, setCatalogAvailability] = useState<GovernedCatalogAvailability>({ status: "loading", catalogAvailable: false, liveAskAvailable: false });
   const [retention, dispatchRetention] = useReducer(reduceGovernedRetention, { workspaceID: null, revision: null, phase: "pending" as GovernedWorkspaceAuthorization, resetKey: 0 });
 
-  const onCatalogAuthorization = useCallback((catalogAuthorized: boolean) => {
-    if (catalogAuthorized) catalogWasAuthorized.current = true;
-    setCatalogEpoch(catalogAuthorized || !catalogWasAuthorized.current ? revalidationKey : null);
-  }, [revalidationKey]);
+  const onCatalogAuthorization = useCallback((availability: GovernedCatalogAvailability) => {
+    setCatalogAvailability(availability);
+    onCatalogAvailability(availability);
+    setCatalogEpoch(availability.catalogAvailable ? revalidationKey : null);
+  }, [onCatalogAvailability, revalidationKey]);
 
   useEffect(() => { dispatchRetention({ workspaceID: requestedWorkspaceID, phase: authorization.phase, revision: authorization.revision }); }, [authorization.phase, authorization.revision, requestedWorkspaceID]);
+  useEffect(() => {
+    if (authorization.phase !== "authorized") {
+      onCatalogAuthorization({
+        status: authorization.phase === "pending" ? "loading" : "unavailable",
+        catalogAvailable: false,
+        liveAskAvailable: false,
+      });
+    }
+  }, [authorization.phase, onCatalogAuthorization]);
 
   if (requestedWorkspaceID === null) return null;
   const authorized = authorization.phase === "authorized" && authorization.revision !== null;
   const visible = active && authorized && catalogEpoch === revalidationKey && retention.workspaceID === requestedWorkspaceID
     && retention.phase === "authorized" && retention.revision === authorization.revision;
   return (
-    <div className="search-pilot governed-preset-owner" hidden={!visible} style={{ flex: "0 0 auto", paddingBottom: 0 }}>
+    <div className="governed-preset-owner" hidden={!visible}>
       <GovernedPresetPanel
         authorized={authorized}
         key={`${requestedWorkspaceID}:${retention.resetKey}`}
+        liveAskAvailable={catalogAvailability.liveAskAvailable}
         onCatalogAuthorization={onCatalogAuthorization}
         onSessionExpired={onSessionExpired}
         revalidationKey={revalidationKey}
@@ -3814,12 +3818,80 @@ export function GovernedPresetPanelHost({ active, onSessionExpired, requestedWor
   );
 }
 
+export type AskExecutionMode = "workspace-search" | "live-database";
+
+export function defaultAskExecutionMode(_catalogAvailable: boolean): AskExecutionMode {
+  return "workspace-search";
+}
+
+export function effectiveAskExecutionMode(requestedMode: AskExecutionMode | null, catalogAvailable: boolean, catalogStatus: GovernedCatalogAvailability["status"] = "available"): AskExecutionMode {
+  const requestedOrDefault = requestedMode ?? defaultAskExecutionMode(catalogAvailable);
+  return requestedOrDefault === "live-database" && catalogStatus === "unavailable" ? "workspace-search" : requestedOrDefault;
+}
+
+export function askExecutionVisibility(mode: AskExecutionMode): { workspaceSearch: boolean; liveDatabase: boolean } {
+  return { workspaceSearch: mode === "workspace-search", liveDatabase: mode === "live-database" };
+}
+
+/** The owner of the two source surfaces. It stays mounted while workspace
+ * data is revalidated so a same-revision governed answer and its in-flight
+ * continuation remain owned by the same GovernedPresetPanelHost instance. */
+export function AskSurface({ active, onOpenEvidence, onOpenSources, onSessionExpired, revalidationKey, state, requestedWorkspaceID }: {
+  active: boolean;
+  onOpenEvidence: (hash: string) => void;
+  onOpenSources: () => void;
+  onSessionExpired: () => void;
+  revalidationKey: number;
+  state: WorkspaceDataState;
+  requestedWorkspaceID: string | null;
+}) {
+  const [requestedMode, setRequestedMode] = useState<AskExecutionMode | null>(null);
+  const [catalogAvailability, setCatalogAvailability] = useState<GovernedCatalogAvailability>({ status: "loading", catalogAvailable: false, liveAskAvailable: false });
+  const sourceMode = effectiveAskExecutionMode(requestedMode, catalogAvailability.catalogAvailable, catalogAvailability.status);
+  const visibility = askExecutionVisibility(sourceMode);
+  const onCatalogAvailability = useCallback((availability: GovernedCatalogAvailability) => {
+    setCatalogAvailability(availability);
+    if (availability.status === "unavailable") setRequestedMode("workspace-search");
+  }, []);
+
+  return (
+    <div className="ask-surface" hidden={!active}>
+      <header className="ask-page-header">
+        <h1>Ask</h1>
+        <div className="ask-page-actions">
+          <div className="ask-source-switch" role="group" aria-label="Mode">
+            <button aria-pressed={sourceMode === "live-database"} className={sourceMode === "live-database" ? "ask-source-button is-selected" : "ask-source-button"}
+              disabled={!catalogAvailability.catalogAvailable} onClick={() => setRequestedMode("live-database")} type="button">Live database</button>
+            <button aria-pressed={sourceMode === "workspace-search"} className={sourceMode === "workspace-search" ? "ask-source-button is-selected" : "ask-source-button"}
+              onClick={() => setRequestedMode("workspace-search")} type="button">Workspace search</button>
+          </div>
+          <button className="text-button" onClick={onOpenSources} type="button">Sources</button>
+        </div>
+      </header>
+
+      <GovernedPresetPanelHost
+        active={active && visibility.liveDatabase}
+        onCatalogAvailability={onCatalogAvailability}
+        onSessionExpired={onSessionExpired}
+        requestedWorkspaceID={requestedWorkspaceID}
+        revalidationKey={revalidationKey}
+        state={state}
+      />
+      <SearchView
+        active={active && visibility.workspaceSearch}
+        onOpenEvidence={onOpenEvidence}
+        requestedWorkspaceID={requestedWorkspaceID}
+        state={state}
+      />
+    </div>
+  );
+}
+
 // The pilot presents independent document searches. It never sends a
 // conversation ID or loads conversation history; source results do not wait
-// for generation. The shell keeps this document surface mounted while an
+// for generation. The owner keeps this document surface mounted while an
 // evidence page or another section is active.
-export function SearchView({ onOpenSources, onOpenEvidence, state, requestedWorkspaceID, active }: {
-  onOpenSources: () => void;
+export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active }: {
   onOpenEvidence: (hash: string) => void;
   state: WorkspaceDataState;
   requestedWorkspaceID: string | null;
@@ -3967,68 +4039,65 @@ export function SearchView({ onOpenSources, onOpenEvidence, state, requestedWork
   return (
     <section className="search-pilot" hidden={!active} ref={searchElement}
       onScroll={(event) => { if (active) scrollPosition.current = event.currentTarget.scrollTop; }}>
-      <details className="document-search-disclosure">
-        <summary>Search documents</summary>
-        <div className="document-search-content">
-      <form className="search-pilot-form" onSubmit={search}>
-        <label className="sr-only" htmlFor="pilot-question">Document search query</label>
-        <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Search documents" />
-        <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Search"}</button>
-      </form>
-      <div className="search-pilot-options">
-        <label><input type="checkbox" checked={includeAnswer && answerAvailable} disabled={!answerAvailable} onChange={(event) => setIncludeAnswer(event.target.checked)} /> {answerAvailable ? "AI answer" : "AI answer unavailable"}</label>
-        {models.length > 0 && <select aria-label="Model" className="search-model-select"
-          value={selectedModel?.id ?? ""} disabled={!includeAnswer} onChange={(event) => setSelectedModelID(event.target.value)}>
-          {!selectedModel && <option disabled value="">Select a model</option>}
-          {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
-        </select>}
-        <button className="text-button" onClick={onOpenSources} type="button">Sources</button>
-      </div>
-      {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
-      {visible && (answerPending || answer) && (
-        <section aria-label="AI answer" className="search-pilot-answer">
-          {!answerPending && <h2>AI answer <small>{answerModel ? `${answerModel.label} · ` : ""}preview</small></h2>}
-          {answerPending && <div className="search-answer-progress">
-            <p aria-live="polite" aria-atomic="true" className="search-answer-status" role="status"><span aria-hidden="true" className="search-answer-spinner" />{page?.kind === "ok" ? `${answerModel?.label ?? "Model"} is preparing an answer…` : "Searching sources…"}</p>
-            <div aria-hidden="true" className="search-answer-skeleton"><span /><span /><span /></div>
-          </div>}
-          {answer && answer.kind !== "ok" && <p className="msg-warning">AI answer unavailable.</p>}
-          {run && <>
-          <AnswerBody text={run.answer ?? run.clarification ?? "No answer yet. Refine your question or open the sources."}
-            citations={run.citations} turnId={run.question_run_id} panelTurnId={null} selectedCitationId={null}
-            onSelectCitation={(id) => {
-              const citation = run.citations.find((item) => item.citation_id === id);
-              if (citation) onOpenEvidence(citationHref(citation));
-            }} />
-          {corpusStatusWarning(run.corpus_status) && <p className="hint">{corpusStatusWarning(run.corpus_status)}</p>}
-          {run.citations.length > 0 && <ul className="search-pilot-citations">{run.citations.map((citation) => (
-            <li key={citation.citation_id}><a href={citationHref(citation)} onClick={(event) => openSource(event, citationHref(citation))}>Source [{citation.number}]</a></li>
-          ))}</ul>}
-          </>}
-        </section>
-      )}
-      {visible && page && page.kind !== "ok" && <ClosedOrError result={page} />}
-      {visible && page?.kind === "ok" && (
-        <section aria-label="Sources" className="search-pilot-results">
-          {hits.length > 0 && <h2>Sources</h2>}
-          {hits.length === 0 && <p>No results found.</p>}
-          {hits.map((hit, index) => (
-            <article key={`${hit.canonical_address}-${index}`} className="search-pilot-hit">
-              <a href={buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address })}
-                onClick={(event) => openSource(event, buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address }))}>
-                {evidenceSourceFilename(hit.source_path) ?? "Source fragment"}
-              </a>
-              {hit.source_path && <p className="search-pilot-path">{hit.source_path}</p>}
-              <p className="search-pilot-excerpt">{hit.excerpt}</p>
-              {hit.observed_at && <p className="hint">Data retrieved: {formatTime(hit.observed_at)}</p>}
-            </article>
-          ))}
-          {page.value.partial && <p className="hint">Only some matches are shown. Refine your query or load more results.</p>}
-          {page.value.has_more && <button className="secondary-button" onClick={() => void more()} disabled={searching} type="button">More results</button>}
-        </section>
-      )}
+      <section aria-labelledby="document-search-mode-heading" className="document-search-mode">
+        <h2 className="sr-only" id="document-search-mode-heading">Search documents</h2>
+        <form className="search-pilot-form" onSubmit={search}>
+          <label className="sr-only" htmlFor="pilot-question">Document search query</label>
+          <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Search documents" />
+          <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Search"}</button>
+        </form>
+        <div className="search-pilot-options">
+          <label><input type="checkbox" checked={includeAnswer && answerAvailable} disabled={!answerAvailable} onChange={(event) => setIncludeAnswer(event.target.checked)} /> {answerAvailable ? "AI answer" : "AI answer unavailable"}</label>
+          {models.length > 0 && <select aria-label="Model" className="search-model-select"
+            value={selectedModel?.id ?? ""} disabled={!includeAnswer} onChange={(event) => setSelectedModelID(event.target.value)}>
+            {!selectedModel && <option disabled value="">Select a model</option>}
+            {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
+          </select>}
         </div>
-      </details>
+        {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
+        {visible && (answerPending || answer) && (
+          <section aria-label="AI answer" className="search-pilot-answer">
+            {!answerPending && <h2>AI answer <small>{answerModel ? `${answerModel.label} · ` : ""}preview</small></h2>}
+            {answerPending && <div className="search-answer-progress">
+              <p aria-live="polite" aria-atomic="true" className="search-answer-status" role="status"><span aria-hidden="true" className="search-answer-spinner" />{page?.kind === "ok" ? `${answerModel?.label ?? "Model"} is preparing an answer…` : "Searching sources…"}</p>
+              <div aria-hidden="true" className="search-answer-skeleton"><span /><span /><span /></div>
+            </div>}
+            {answer && answer.kind !== "ok" && <p className="msg-warning">AI answer unavailable.</p>}
+            {run && <>
+            <AnswerBody text={run.answer ?? run.clarification ?? "No answer yet. Refine your question or open the sources."}
+              citations={run.citations} turnId={run.question_run_id} panelTurnId={null} selectedCitationId={null}
+              onSelectCitation={(id) => {
+                const citation = run.citations.find((item) => item.citation_id === id);
+                if (citation) onOpenEvidence(citationHref(citation));
+              }} />
+            {corpusStatusWarning(run.corpus_status) && <p className="hint">{corpusStatusWarning(run.corpus_status)}</p>}
+            {run.citations.length > 0 && <ul className="search-pilot-citations">{run.citations.map((citation) => (
+              <li key={citation.citation_id}><a href={citationHref(citation)} onClick={(event) => openSource(event, citationHref(citation))}>Source [{citation.number}]</a></li>
+            ))}</ul>}
+            </>}
+          </section>
+        )}
+        {visible && page && page.kind !== "ok" && <ClosedOrError result={page} />}
+        {visible && page?.kind === "ok" && (
+          <section aria-label="Sources" className="search-pilot-results">
+            {hits.length > 0 && <h2>Sources</h2>}
+            {hits.length === 0 && <p>No results found.</p>}
+            {hits.map((hit, index) => (
+              <article key={`${hit.canonical_address}-${index}`} className="search-pilot-hit">
+                <a href={buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address })}
+                  onClick={(event) => openSource(event, buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address }))}>
+                  {evidenceSourceFilename(hit.source_path) ?? "Source fragment"}
+                </a>
+                {hit.source_path && <p className="search-pilot-path">{hit.source_path}</p>}
+                <p className="search-pilot-excerpt">{hit.excerpt}</p>
+                {hit.observed_at && <p className="hint">Data retrieved: {formatTime(hit.observed_at)}</p>}
+              </article>
+            ))}
+            {page.value.partial && <p className="hint">Only some matches are shown. Refine your query or load more results.</p>}
+            {page.value.has_more && <button className="secondary-button" onClick={() => void more()} disabled={searching} type="button">More results</button>}
+          </section>
+        )}
+      </section>
     </section>
   );
 }

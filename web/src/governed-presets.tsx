@@ -41,6 +41,28 @@ export type GovernedPresetCatalog = {
   presets: GovernedPresetSummary[];
 };
 
+export type GovernedCatalogStatus = "loading" | "available" | "unavailable";
+
+export type GovernedCatalogAvailability = {
+  status: GovernedCatalogStatus;
+  catalogAvailable: boolean;
+  liveAskAvailable: boolean;
+};
+
+/** A ready, nonempty catalog enables the Live database surface. The server's
+ * content-free tools/list capability probe independently enables its ad hoc
+ * ask composer; preset-only deployments keep Diagnostics usable while hiding
+ * only that composer. */
+export function governedCatalogAvailability(
+  catalog: GovernedPresetCatalog | null,
+  askToolAdvertised = false,
+  nullStatus: GovernedCatalogStatus = "loading",
+): GovernedCatalogAvailability {
+  if (catalog === null) return { status: nullStatus, catalogAvailable: false, liveAskAvailable: false };
+  const catalogAvailable = catalog.presets.length > 0;
+  return { status: catalogAvailable ? "available" : "unavailable", catalogAvailable, liveAskAvailable: catalogAvailable && askToolAdvertised };
+}
+
 // Rows keep the server's exact JSON shape: one nullable string per cell, so a
 // SQL NULL stays distinguishable from an empty string and a precise decimal
 // never passes through a JavaScript number.
@@ -102,14 +124,20 @@ export type GovernedCallOutcome<T> =
   | { kind: "absent" }
   | { kind: "error" };
 
-/** The minimal CSRF/tools-call transport: GET /api/v1/session/csrf, then POST
- * /api/v1/mcp with Accept, Content-Type and X-KnowVault-CSRF and deliberately
- * no Idempotency-Key (the endpoint rejects it). */
-export async function governedMCPCall<T>(
+type GovernedMCPEnvelope = {
+  result?: unknown;
+  error?: { code?: number };
+};
+
+/** The shared CSRF + JSON-RPC transport. It returns only a typed outcome and
+ * the parsed envelope; callers decide which content-free result projection is
+ * safe for their operation. Server error text never crosses this boundary. */
+async function governedMCPRequest(
   fetchImpl: GovernedFetch,
-  tool: string,
-  args: Record<string, unknown>,
-): Promise<GovernedCallOutcome<T>> {
+  id: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<GovernedCallOutcome<GovernedMCPEnvelope>> {
   let csrf: Response;
   try {
     csrf = await fetchImpl("/api/v1/session/csrf", { cache: "no-store", headers: { Accept: "application/json" } });
@@ -136,27 +164,36 @@ export async function governedMCPCall<T>(
         "Content-Type": "application/json",
         "X-KnowVault-CSRF": token,
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: tool, method: "tools/call", params: { name: tool, arguments: args } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
     });
   } catch {
     return { kind: "error" };
   }
   if (response.status === 401) return { kind: "sessionExpired" };
-  // A JSON-RPC failure is reported with HTTP 200, so the body is inspected
-  // regardless of the HTTP status.
-  let envelope: { result?: unknown; error?: { code?: number } };
+  let envelope: GovernedMCPEnvelope;
   try {
-    envelope = (await response.json()) as typeof envelope;
+    envelope = (await response.json()) as GovernedMCPEnvelope;
   } catch {
     return { kind: "error" };
   }
   if (envelope.error !== undefined) {
-    // The server hides an unmounted tool behind the same "method not found" it
-    // uses for an unknown name, so this is the absent-catalogue signal.
     return envelope.error.code === -32601 ? { kind: "absent" } : { kind: "error" };
   }
   if (!response.ok) return { kind: "error" };
-  const result = envelope.result as { isError?: unknown; structuredContent?: unknown } | undefined;
+  return { kind: "ok", value: envelope };
+}
+
+/** The minimal CSRF/tools-call transport: GET /api/v1/session/csrf, then POST
+ * /api/v1/mcp with Accept, Content-Type and X-KnowVault-CSRF and deliberately
+ * no Idempotency-Key (the endpoint rejects it). */
+export async function governedMCPCall<T>(
+  fetchImpl: GovernedFetch,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<GovernedCallOutcome<T>> {
+  const response = await governedMCPRequest(fetchImpl, tool, "tools/call", { name: tool, arguments: args });
+  if (response.kind !== "ok") return response;
+  const result = response.value.result as { isError?: unknown; structuredContent?: unknown } | undefined;
   if (!result || typeof result !== "object") return { kind: "error" };
   if (result.isError === true) return { kind: "error" };
   // The catalogue and its rows are read from the structured payload only. The
@@ -165,6 +202,28 @@ export async function governedMCPCall<T>(
   const structured = result.structuredContent;
   if (!structured || typeof structured !== "object") return { kind: "error" };
   return { kind: "ok", value: structured as T };
+}
+
+/** Advertise capability without reading or returning tool descriptions. The
+ * server removes knowvault_governed_query_ask from tools/list in PRESET_ONLY;
+ * this exact-name probe therefore distinguishes live ask from prepared
+ * reviewed checks without widening the catalog wire contract. */
+export const GOVERNED_QUERY_ASK_TOOL = "knowvault_governed_query_ask";
+
+export async function governedMCPAskCapability(
+  fetchImpl: GovernedFetch,
+): Promise<GovernedCallOutcome<boolean>> {
+  const response = await governedMCPRequest(fetchImpl, "tools/list", "tools/list", {});
+  if (response.kind !== "ok") return response.kind === "absent" ? { kind: "ok", value: false } : response;
+  const result = response.value.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) return { kind: "error" };
+  const tools = (result as { tools?: unknown }).tools;
+  if (!Array.isArray(tools)) return { kind: "error" };
+  return {
+    kind: "ok",
+    value: tools.some((entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry)
+      && (entry as { name?: unknown }).name === GOVERNED_QUERY_ASK_TOOL),
+  };
 }
 
 /** The exact tools/call arguments for the catalogue: workspace only. No
@@ -321,7 +380,8 @@ export type GovernedPresetPanelProps = {
   authorized: boolean;
   visible: boolean;
   revalidationKey: number;
-  onCatalogAuthorization: (authorized: boolean) => void;
+  onCatalogAuthorization: (availability: GovernedCatalogAvailability) => void;
+  liveAskAvailable: boolean;
   /** Called on HTTP 401 so the shell can expire the session. The panel never
    * shows its own signed-out copy. */
   onSessionExpired: () => void;
@@ -329,7 +389,7 @@ export type GovernedPresetPanelProps = {
 
 /** The governed company-data section of the Search screen. It loads the
  * catalogue on mount only; running a preset is always an explicit click. */
-export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCatalogAuthorization, workspaceID, onSessionExpired }: GovernedPresetPanelProps) {
+export function GovernedPresetPanel({ authorized, liveAskAvailable, visible, revalidationKey, onCatalogAuthorization, workspaceID, onSessionExpired }: GovernedPresetPanelProps) {
   const [catalogState, setCatalogState] = useState<CatalogState>({ phase: "loading" });
   const [presetID, setPresetID] = useState("");
   const [runState, setRunState] = useState<RunState>({ phase: "idle" });
@@ -374,19 +434,41 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
   const loadCatalog = useCallback(async (resetState: boolean) => {
     const current = ++epoch.current;
     setCatalogState({ phase: "loading" });
+    onCatalogAuthorization(governedCatalogAvailability(null));
     if (resetState) resetProtectedState();
     const outcome = await governedMCPCall<GovernedPresetCatalog>(
       fetch, GOVERNED_QUERIES_LIST_TOOL, governedPresetListArguments(workspaceID));
     if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
-    if (outcome.kind === "sessionExpired") { resetProtectedState(); onCatalogAuthorization(false); onSessionExpired(); return; }
-    if (outcome.kind !== "ok") { resetProtectedState(); onCatalogAuthorization(false); setCatalogState({ phase: "unavailable" }); return; }
+    if (outcome.kind === "sessionExpired") { resetProtectedState(); onCatalogAuthorization(governedCatalogAvailability(null, false, "unavailable")); onSessionExpired(); return; }
+    if (outcome.kind !== "ok") { resetProtectedState(); onCatalogAuthorization(governedCatalogAvailability(null, false, "unavailable")); setCatalogState({ phase: "unavailable" }); return; }
     const presets = outcome.value.presets ?? [];
-    if (presets.length === 0) { resetProtectedState(); onCatalogAuthorization(false); setCatalogState({ phase: "empty" }); return; }
+    if (presets.length === 0) { resetProtectedState(); onCatalogAuthorization(governedCatalogAvailability(outcome.value)); setCatalogState({ phase: "empty" }); return; }
+    // A nonempty preset catalogue is still PRESET_ONLY until the same
+    // authorized MCP transport advertises the exact ad hoc ask tool. Probe
+    // content-free capability before exposing Live database mode; this keeps
+    // a prepared snapshot from being mistaken for a live natural-language
+    // query surface.
+    const askCapability = await governedMCPAskCapability(fetch);
+    if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
+    if (askCapability.kind === "sessionExpired") {
+      resetProtectedState();
+      onCatalogAuthorization(governedCatalogAvailability(null, false, "unavailable"));
+      onSessionExpired();
+      return;
+    }
     const previousBinding = catalogBinding.current;
     const nextBinding = { connection_id: outcome.value.connection_id, database_identity: outcome.value.database_identity };
     if (previousBinding && (previousBinding.connection_id !== nextBinding.connection_id || previousBinding.database_identity !== nextBinding.database_identity)) resetProtectedState();
     catalogBinding.current = nextBinding;
-    onCatalogAuthorization(true);
+    const availability = governedCatalogAvailability(outcome.value, askCapability.kind === "ok" && askCapability.value);
+    if (!availability.liveAskAvailable) {
+      // A live capability withdrawal must not leave an earlier ad hoc answer
+      // waiting to reappear if the tool is advertised again later.
+      askEpoch.current++;
+      askPendingRef.current = false;
+      setAskState({ phase: "idle" });
+    }
+    onCatalogAuthorization(availability);
     setPresetID("");
     setCatalogState({ phase: "ready", catalog: outcome.value });
   }, [onCatalogAuthorization, onSessionExpired, resetProtectedState, workspaceID]);
@@ -423,6 +505,11 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
     // accepted path and the catch path compare against, so a stale rejection
     // can never release a newer run's guard or set its state.
     const current = ++runEpoch.current;
+    // A reviewed check owns the single protected result slot. Clear a prior
+    // ad hoc answer before the run starts, including when the chosen preset
+    // is missing and the run will fail synchronously.
+    askEpoch.current++;
+    setAskState({ phase: "idle" });
     try {
       const chosen = catalog.presets.find((preset) => preset.id === presetID);
       // A reservation that names no runnable preset consumes nothing: the
@@ -467,6 +554,11 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
     // The single-submission guard: a second synchronous submit (a double
     // click, an Enter plus a click) returns false here and produces no POST.
     if (!reserveGovernedAskSubmission(askPendingRef, { question })) return;
+    // The two governed result surfaces are mutually exclusive. Clear a prior
+    // reviewed-check result before the ask starts, so a failed ask cannot
+    // leave stale diagnostics rows beside it.
+    runEpoch.current++;
+    setRunState({ phase: "idle" });
     const submittedQuestion = question;
     const current = ++askEpoch.current;
     // A new ask clears the previous answer before it leaves, so a failure can
@@ -513,8 +605,7 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
   const runDisabled = askPending;
 
   return (
-    <section aria-labelledby="governed-presets-heading" className="governed-presets" hidden={!visible}>
-      <h1 className="governed-presets-heading" id="governed-presets-heading">Ask company data</h1>
+    <section aria-label="Live database" className="governed-presets" hidden={!visible}>
       {catalogState.phase === "loading" && <p className="governed-presets-note" role="status">{GOVERNED_PRESETS_LOADING}</p>}
       {catalogState.phase === "empty" && <p className="governed-presets-note">{GOVERNED_PRESETS_EMPTY}</p>}
       {catalogState.phase === "unavailable" && (
@@ -523,7 +614,7 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
           <button className="text-button" onClick={() => { void loadCatalog(true); }} type="button">Retry</button>
         </p>
       )}
-      {catalog && (
+      {catalog && liveAskAvailable && (
         <form className="governed-ask-form" onSubmit={(event) => { event.preventDefault(); ask(catalog); }}>
           <div className="governed-ask-form-row">
             <label className="sr-only" htmlFor="governed-ask-input">Ask company data</label>
@@ -531,7 +622,7 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
               className="governed-ask-input"
               id="governed-ask-input"
               type="text"
-              placeholder="Ask company data"
+              placeholder="Ask a question"
               autoComplete="off"
               value={question}
               disabled={askPending}
@@ -551,8 +642,9 @@ export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCa
         </form>
       )}
       {catalog && <details className="governed-reviewed-checks">
-        <summary>Reviewed checks</summary>
+        <summary>Diagnostics</summary>
         <div className="governed-reviewed-checks-content">
+        <h2 className="governed-reviewed-checks-heading">Reviewed checks</h2>
         <div className="governed-presets-picker">
           <label className="sr-only" htmlFor="governed-preset-select">Reviewed check</label>
           <select className="governed-preset-select" id="governed-preset-select" value={presetID} disabled={pending || runDisabled}

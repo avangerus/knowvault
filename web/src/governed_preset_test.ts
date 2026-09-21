@@ -39,6 +39,7 @@ import {
   governedAsk,
   governedAskReceiptRows,
   governedCellText,
+  governedMCPAskCapability,
   governedMCPCall,
   governedPresetListArguments,
   governedPresetRunArguments,
@@ -246,7 +247,40 @@ async function main(): Promise<void> {
     check(calls.length === 1 && calls[0] === "/api/v1/session/csrf", "the 401 short-circuits before any MCP POST");
   }
 
-  // --- 8. governedAsk success: exact request and unchanged result ---------
+  // --- 8. tools/list is a content-free live-ask capability probe ----------
+  {
+    const calls: { url: string; init: RequestInit | undefined }[] = [];
+    let step = 0;
+    const fakeFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      step += 1;
+      if (step === 1) {
+        return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ result: { tools: [
+        { name: "knowvault_queries_list", description: "prepared checks" },
+        { name: "knowvault_governed_query_ask", description: "ad hoc ask" },
+      ] } }), { status: 200 });
+    };
+    const capability = await governedMCPAskCapability(fakeFetch);
+    check(capability.kind === "ok" && capability.value === true, "tools/list advertises the exact governed ask capability");
+    check(calls.length === 2 && calls[0].url === "/api/v1/session/csrf" && calls[1].url === "/api/v1/mcp",
+      "capability probe uses one CSRF GET and one MCP POST");
+    if (calls[1]) {
+      const body = JSON.parse(String(calls[1].init?.body)) as { method?: string; params?: unknown };
+      check(body.method === "tools/list" && JSON.stringify(body.params) === "{}",
+        "capability probe sends tools/list with empty params and no content query");
+    }
+
+    const absentFetch: typeof fetch = async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/session/csrf") return new Response(JSON.stringify({ csrf_token: ASK_CSRF_TOKEN }), { status: 200 });
+      return new Response(JSON.stringify({ result: { tools: [{ name: "knowvault_queries_list" }] } }), { status: 200 });
+    };
+    const absent = await governedMCPAskCapability(absentFetch);
+    check(absent.kind === "ok" && absent.value === false, "preset-only tools/list keeps live ask unavailable");
+  }
+
+  // --- 9. governedAsk success: exact request and unchanged result ---------
   // The transport must fetch a CSRF token, POST the connection-scoped :ask
   // path with exactly the ask headers, send exactly { question } and return
   // the server's result untouched -- precise decimal, NULL and empty string
@@ -331,7 +365,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // --- 9. every invocation owns a fresh idempotency key ------------------
+  // --- 10. every invocation owns a fresh idempotency key ------------------
   {
     const keys: string[] = [];
     let call = 0;
