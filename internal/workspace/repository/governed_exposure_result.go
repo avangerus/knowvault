@@ -166,25 +166,7 @@ type governedExposureResultInput struct {
 // trimmed, normalized, case-folded, sorted, rewritten or deduplicated, and the
 // columns are deep-copied so that the caller's slice can never reach the result.
 func newGovernedExposureResult(input governedExposureResultInput) GovernedExposureResult {
-	if !validID(input.workspaceID) || !validID(input.workspaceSourceID) ||
-		!validID(input.sourceScopeID) || !validID(input.connectionID) {
-		return GovernedExposureResult{}
-	}
-	if !validGovernedExposureRevision(input.workspaceRevision) ||
-		!validGovernedExposureRevision(input.sourceScopeRevision) ||
-		!validGovernedExposureRevision(input.connectionRevision) ||
-		!validGovernedExposureRevision(input.exposureRevision) {
-		return GovernedExposureResult{}
-	}
-	if !workspace.IsConfigurationHash(input.workspaceConfigurationHash) ||
-		!workspace.IsConfigurationHash(input.sourceScopeConfigurationHash) ||
-		!workspace.IsConfigurationHash(input.exposureArtifactHash) {
-		return GovernedExposureResult{}
-	}
-	if !validGovernedExposureDatabaseIdentity(input.databaseIdentity) || !input.liveQueryEnabled {
-		return GovernedExposureResult{}
-	}
-	if !validGovernedExposureIdentifier(input.schemaName) || !validGovernedExposureIdentifier(input.relationName) {
+	if !validGovernedExposureResultBase(input) {
 		return GovernedExposureResult{}
 	}
 	if len(input.columns) == 0 || len(input.columns) > maxGovernedExposureColumns {
@@ -226,6 +208,34 @@ func newGovernedExposureResult(input governedExposureResultInput) GovernedExposu
 		columns:                      columns,
 		resolved:                     true,
 	}
+}
+
+// validGovernedExposureResultBase validates every resolved fact except the
+// decoded column list. The loader uses it before decoding so a malformed server
+// scalar cannot be reclassified as a missing requested relation.
+func validGovernedExposureResultBase(input governedExposureResultInput) bool {
+	if !validID(input.workspaceID) || !validID(input.workspaceSourceID) ||
+		!validID(input.sourceScopeID) || !validID(input.connectionID) {
+		return false
+	}
+	if !validGovernedExposureRevision(input.workspaceRevision) ||
+		!validGovernedExposureRevision(input.sourceScopeRevision) ||
+		!validGovernedExposureRevision(input.connectionRevision) ||
+		!validGovernedExposureRevision(input.exposureRevision) {
+		return false
+	}
+	if !workspace.IsConfigurationHash(input.workspaceConfigurationHash) ||
+		!workspace.IsConfigurationHash(input.sourceScopeConfigurationHash) ||
+		!workspace.IsConfigurationHash(input.exposureArtifactHash) {
+		return false
+	}
+	if !validGovernedExposureDatabaseIdentity(input.databaseIdentity) || !input.liveQueryEnabled {
+		return false
+	}
+	if !validGovernedExposureIdentifier(input.schemaName) || !validGovernedExposureIdentifier(input.relationName) {
+		return false
+	}
+	return true
 }
 
 // validGovernedExposureRevision is the safe-revision semantics every other

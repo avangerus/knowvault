@@ -223,6 +223,44 @@ func TestGovernedExposureResultConstructsEveryExactMixedCaseDollarFact(t *testin
 	assertGovernedExposureResultColumns(t, result.Columns(), "ID", "amount$Total", "Signed_On")
 }
 
+func TestValidGovernedExposureResultBaseExcludesColumnsOnly(t *testing.T) {
+	t.Parallel()
+
+	input := governedExposureResultTestInput()
+	input.columns = nil
+	if !validGovernedExposureResultBase(input) {
+		t.Fatal("valid base facts with nil columns were refused")
+	}
+
+	input = governedExposureResultTestInput()
+	input.databaseIdentity = "pgdb/invalid"
+	if validGovernedExposureResultBase(input) {
+		t.Fatal("malformed database identity was accepted as base facts")
+	}
+
+	for _, mutate := range []func(*governedExposureResultInput){
+		func(input *governedExposureResultInput) { input.sourceScopeRevision = 0 },
+		func(input *governedExposureResultInput) { input.sourceScopeConfigurationHash = "sha256:short" },
+	} {
+		input = governedExposureResultTestInput()
+		mutate(&input)
+		if validGovernedExposureResultBase(input) {
+			t.Fatal("malformed source-scope base fact was accepted")
+		}
+	}
+}
+
+func TestGovernedExposureResultConstructorRefusesNilColumnsAfterValidBase(t *testing.T) {
+	t.Parallel()
+
+	input := governedExposureResultTestInput()
+	input.columns = nil
+	if !validGovernedExposureResultBase(input) {
+		t.Fatal("nil columns changed valid base facts")
+	}
+	assertGovernedExposureResultIsTrueZero(t, newGovernedExposureResult(input))
+}
+
 // 3. Mutating the source slice after construction cannot reach the result, and
 // the result's own internal slice is unreachable through Columns as well.
 func TestGovernedExposureResultRetainsNoSourceSlice(t *testing.T) {
