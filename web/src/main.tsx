@@ -2158,8 +2158,6 @@ function App() {
               key={`${selectedWorkspaceID}:${searchResetEpoch}`}
               onOpenEvidence={openEvidence}
               onOpenSources={() => { dismissFootnoteTooltip(); setSection("sources"); }}
-              onSessionExpired={expireSession}
-              revalidationKey={workspaceRefreshVersion}
               requestedWorkspaceID={selectedWorkspaceID}
               state={data}
             />
@@ -3087,6 +3085,33 @@ function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitationId, 
   );
 }
 
+// The same disclosure is used by the conversation view and the single
+// question surface. The standalone surface keeps the result payload hidden:
+// people can see which governed tools ran and whether they completed without
+// putting row values, ids or hashes into the answer itself.
+function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
+  if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
+  return (
+    <details className="tool-trace">
+      <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
+      <ol>
+        {run.tool_loop.calls.map((call, index) => (
+          <li key={`${call.id}-${index}`}>
+            {showResults ? (
+              <details>
+                <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
+                <pre>{call.result.text}</pre>
+              </details>
+            ) : (
+              <span>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
   run: QuestionRun;
   turnId: string;
@@ -3097,7 +3122,6 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   const statusMessage = questionStatusMessage(run);
   const corpusWarning = corpusStatusWarning(run.corpus_status);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
-  const isAddressBound = run.answer_mode === "TOOL_LOOP" || run.verification_method === "ADDRESS_BOUND";
   const showGenericHow = run.status === "COMPLETED" && run.planning_operation === "AGGREGATE" && !run.answer_result;
   // R2 Outcome 3: a structured answer is an aggregate reduction (the rowset
   // LIST reduction is an AGGREGATE function) or a LIST projection. Either way
@@ -3115,21 +3139,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   const leftoverCitations = run.citations.filter((citation) => !referencedCitationNumbers.has(citation.number));
   return (
     <>
-      {run.tool_loop && (
-        <details className="tool-trace">
-          <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
-          <ol>
-            {run.tool_loop.calls.map((call, index) => (
-              <li key={`${call.id}-${index}`}>
-                <details>
-                  <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
-                  <pre>{call.result.text}</pre>
-                </details>
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
+      <ToolCallsDisclosure run={run} />
       {run.understood && <UnderstoodBanner understood={run.understood} />}
       {showGenericHow && <HowObtained run={run} />}
       {run.answer_result ? (
@@ -3157,7 +3167,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
             </div>
           ))}
           {run.answer && (
-            <p className="msg-note">{isAddressBound ? (run.tool_loop?.all_claims_bound ? BOUND_CLAIM_LABEL : UNBOUND_CLAIM_LABEL) : `Answer: ${groundingStateText(run.grounding_status)}.`}</p>
+            <p className="msg-note">{questionClaimGroundingLabel(run)}</p>
           )}
           {run.citations.length > 0 && (
             <p className="msg-note">
@@ -3419,6 +3429,16 @@ function basisExcerptText(excerpt: string): string {
 // absent/unknown value is reported honestly as “unverified”.
 function groundingStateText(status: string | undefined): string {
   return status === "CONFIRMED_BY_FRAGMENT" ? "supported by a fragment" : "unverified";
+}
+
+// Address-bound/tool-loop answers expose claim binding from the tool trace.
+// Extractive and byte-exact answers use their server grounding state instead;
+// they must never be labelled "unbound" merely because no tool loop exists.
+export function questionClaimGroundingLabel(run: Pick<QuestionRun, "answer_mode" | "verification_method" | "grounding_status" | "tool_loop">): string {
+  const isAddressBound = run.answer_mode === "TOOL_LOOP" || run.verification_method === "ADDRESS_BOUND";
+  return isAddressBound
+    ? (run.tool_loop?.all_claims_bound ? BOUND_CLAIM_LABEL : UNBOUND_CLAIM_LABEL)
+    : `Answer: ${groundingStateText(run.grounding_status)}.`;
 }
 
 function firstAnswerCitation(run: QuestionRun | null | undefined): string | null {
@@ -3794,21 +3814,6 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
   );
 }
 
-type PilotSearchHit = {
-  fragment_id: string;
-  canonical_address: string;
-  source_path?: string;
-  excerpt: string;
-  observed_at?: string;
-};
-
-type PilotSearchPage = {
-  results: PilotSearchHit[];
-  has_more: boolean;
-  partial: boolean;
-  next_offset: number | null;
-};
-
 export function GovernedPresetPanelHost({ active, onCatalogAvailability, onSessionExpired, requestedWorkspaceID, revalidationKey, state }: {
   active: boolean; onCatalogAvailability: (availability: GovernedCatalogAvailability) => void; onSessionExpired: () => void;
   requestedWorkspaceID: string | null; revalidationKey: number; state: WorkspaceDataState;
@@ -3870,29 +3875,23 @@ export function askExecutionVisibility(mode: AskExecutionMode): { workspaceSearc
   return { workspaceSearch: mode === "workspace-search", liveDatabase: mode === "live-database" };
 }
 
-/** The owner of the two source surfaces. It stays mounted while workspace
- * data is revalidated so a same-revision governed answer and its in-flight
- * continuation remain owned by the same GovernedPresetPanelHost instance. */
-export function AskSurface({ active, onOpenEvidence, onOpenSources, onSessionExpired, revalidationKey, state, requestedWorkspaceID }: {
+/** The single question surface. Governed preset checks remain an admin-only
+ * component for a future Diagnostics surface; they are deliberately not
+ * mounted beside the user question composer. */
+export function AskSurface({ active, onOpenEvidence, onOpenSources, state, requestedWorkspaceID }: {
   active: boolean;
   onOpenEvidence: (hash: string) => void;
   onOpenSources: () => void;
-  onSessionExpired: () => void;
-  revalidationKey: number;
+  // Retained as optional compatibility props for callers that used the
+  // retired governed panel host. The main Ask surface no longer mounts it.
+  onSessionExpired?: () => void;
+  revalidationKey?: number;
   state: WorkspaceDataState;
   requestedWorkspaceID: string | null;
 }) {
-  const [requestedMode, setRequestedMode] = useState<AskExecutionMode | null>(null);
-  const [catalogAvailability, setCatalogAvailability] = useState<GovernedCatalogAvailability>({ status: "loading", catalogAvailable: false, liveAskAvailable: false });
-  const sourceMode = effectiveAskExecutionMode(requestedMode, catalogAvailability.catalogAvailable, catalogAvailability.status);
-  const visibility = askExecutionVisibility(sourceMode);
   const askSources = governedWorkspaceAuthorization(state, requestedWorkspaceID).phase === "authorized"
     ? authorizedSourcesForAsk(state, requestedWorkspaceID)
     : null;
-  const onCatalogAvailability = useCallback((availability: GovernedCatalogAvailability) => {
-    setCatalogAvailability(availability);
-    if (availability.status === "unavailable") setRequestedMode("workspace-search");
-  }, []);
 
   return (
     <div className="ask-surface" hidden={!active}>
@@ -3900,25 +3899,10 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onSessionExp
         <h1>Ask</h1>
         <div className="ask-page-actions">
           {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
-          <div className="ask-source-switch" role="group" aria-label="Search source">
-            <button aria-pressed={sourceMode === "workspace-search"} className={sourceMode === "workspace-search" ? "ask-source-button is-selected" : "ask-source-button"}
-              onClick={() => setRequestedMode("workspace-search")} type="button">Workspace search</button>
-            <button aria-pressed={sourceMode === "live-database"} className={sourceMode === "live-database" ? "ask-source-button is-selected" : "ask-source-button"}
-              disabled={!catalogAvailability.catalogAvailable} onClick={() => setRequestedMode("live-database")} type="button">Live database</button>
-          </div>
         </div>
       </header>
-
-      <GovernedPresetPanelHost
-        active={active && visibility.liveDatabase}
-        onCatalogAvailability={onCatalogAvailability}
-        onSessionExpired={onSessionExpired}
-        requestedWorkspaceID={requestedWorkspaceID}
-        revalidationKey={revalidationKey}
-        state={state}
-      />
       <SearchView
-        active={active && visibility.workspaceSearch}
+        active={active}
         onOpenEvidence={onOpenEvidence}
         requestedWorkspaceID={requestedWorkspaceID}
         state={state}
@@ -3927,10 +3911,86 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onSessionExp
   );
 }
 
-// The pilot presents independent document searches. It never sends a
-// conversation ID or loads conversation history; source results do not wait
-// for generation. The owner keeps this document surface mounted while an
-// evidence page or another section is active.
+// The Ask surface sends one governed question run per submit. The server owns
+// retrieval and tool orchestration; the browser only presents the resulting
+// answer, citations and actual tool-call disclosure.
+export function questionRunPayload(question: string, model: ModelProfile | null | undefined): {
+  question: string;
+  model_profile_id?: string;
+} {
+  return {
+    question,
+    ...(model ? { model_profile_id: model.id } : {}),
+  };
+}
+
+function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
+  onOpenEvidence: (hash: string) => void;
+  run: QuestionRun;
+  workspaceID: string;
+}) {
+  const statusMessage = questionStatusMessage(run);
+  const corpusWarning = corpusStatusWarning(run.corpus_status);
+  const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
+  const text = run.answer ?? run.clarification;
+  const resultValue = run.answer_result?.value
+    ? `${run.answer_result.value}${run.answer_result.unit ? ` ${run.answer_result.unit}` : ""}`
+    : null;
+  const citationHref = (citation: QuestionCitation): string => buildEvidenceHash({
+    workspace: workspaceID,
+    fragment: citation.evidence_fragment_id,
+    ...(citation.address ? { canonicalAddress: citation.address } : {}),
+    ...(confirmedEvidenceQuoteSelector(citation) ? { selector: confirmedEvidenceQuoteSelector(citation)! } : {}),
+  });
+  const selectCitation = (citationID: string) => {
+    const citation = run.citations.find((item) => item.citation_id === citationID);
+    if (citation) onOpenEvidence(citationHref(citation));
+  };
+  return (
+    <>
+      <ToolCallsDisclosure run={run} showResults={false} />
+      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : text ? (
+        isQuote ? (
+          <blockquote className="answer-quote">
+            <span className="badge badge-quote"><IconCheckCircle />quote verified</span>
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          </blockquote>
+        ) : (
+          <div className="answer-body">
+            <span className="badge badge-tell">paraphrase</span>
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          </div>
+        )
+      ) : resultValue ? (
+        <div className="answer-body">
+          <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={resultValue} turnId={run.question_run_id} />
+          {run.answer_result?.period?.label && <p className="msg-note">Period: {run.answer_result.period.label}</p>}
+        </div>
+      ) : <p className="msg-warning">No answer was returned. Check the sources and try again.</p>}
+      {text && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
+      {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
+      {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
+      {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
+      {run.citations.length > 0 && (
+        <ul aria-label="Answer sources" className="search-pilot-citations">
+          {run.citations.map((citation) => {
+            const href = citationHref(citation);
+            return (
+              <li key={citation.citation_id}>
+                <a href={href} onClick={(event) => {
+                  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  onOpenEvidence(href);
+                }}>Source [{citation.number}]</a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
 export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active }: {
   onOpenEvidence: (hash: string) => void;
   state: WorkspaceDataState;
@@ -3938,13 +3998,11 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
   active: boolean;
 }) {
   const [question, setQuestion] = useState("");
-  const [includeAnswer, setIncludeAnswer] = useState(true);
   const [selectedModelID, setSelectedModelID] = useState<string | null>(null);
   const [submittedModel, setSubmittedModel] = useState<ModelProfile | null>(null);
   const [searching, setSearching] = useState(false);
   const [answerPending, setAnswerPending] = useState(false);
   const [submitted, setSubmitted] = useState("");
-  const [page, setPage] = useState<ApiResult<PilotSearchPage> | null>(null);
   const [answer, setAnswer] = useState<ApiResult<QuestionRun> | null>(null);
   const [resultWorkspace, setResultWorkspace] = useState<string | null>(null);
   const generation = useRef(0);
@@ -3956,19 +4014,15 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
   const workspaceClosed = snapshot?.status === "ARCHIVED" || snapshot?.status === "REVOKED";
   const workspaceAuthorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
   const models = snapshot?.model_profiles ?? [];
-  const modelCatalogKnown = snapshot?.model_profiles !== undefined;
-  const answerAvailable = !modelCatalogKnown || models.length > 0;
   const selectedModel = selectedModelID === null
     ? models.find((model) => model.is_default) ?? models[0]
     : models.find((model) => model.id === selectedModelID);
-  const modelSelectionMissing = modelCatalogKnown && includeAnswer && answerAvailable && !selectedModel;
   const successfulRevision = useRef(snapshot?.revision);
 
   const clearSearch = useCallback(() => {
     generation.current++;
     setQuestion("");
     setSubmitted("");
-    setPage(null);
     setAnswer(null);
     setSearching(false);
     setAnswerPending(false);
@@ -3997,74 +4051,37 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
   async function search(event: FormEvent) {
     event.preventDefault();
     const query = question.trim();
-    if (!query || !workspaceID || workspaceClosed || searching || modelSelectionMissing) return;
+    if (!query || !workspaceID || workspaceClosed || searching) return;
     const epoch = ++generation.current;
     const base = `/api/v1/workspaces/${encodeURIComponent(workspaceID)}`;
     setResultWorkspace(workspaceID);
     setSubmitted(query);
-    setPage(null);
     setAnswer(null);
-    const wantsAnswer = includeAnswer && answerAvailable;
-    setSubmittedModel(wantsAnswer && selectedModel ? { id: selectedModel.id, label: selectedModel.label, location: selectedModel.location } : null);
+    const selected = selectedModel
+      ? { id: selectedModel.id, label: selectedModel.label, location: selectedModel.location }
+      : null;
+    setSubmittedModel(selected);
     setSearching(true);
-    setAnswerPending(wantsAnswer);
+    setAnswerPending(true);
     dismissFootnoteTooltip();
-    const result = await apiGet<PilotSearchPage>(`${base}/tools/search?query=${encodeURIComponent(query)}&limit=10`);
-    if (generation.current !== epoch) return;
-    setPage(result);
-    setSearching(false);
-    if (result.kind !== "ok" || !wantsAnswer) {
-      setAnswerPending(false);
-      return;
-    }
     const summary = await apiPost<QuestionRun>(`${base}/questions`, {
-      question: query,
-      ...(selectedModel ? { model_profile_id: selectedModel.id } : {}),
+      ...questionRunPayload(query, selectedModel),
     }, newIdempotencyKey());
     if (generation.current !== epoch) return;
     if (summary.kind !== "ok" && [401, 403, 404].includes(summary.status)) {
-      // A continuation already in flight must not repopulate protected hits
-      // after the model endpoint has denied this workspace request.
+      // A denied question must not leave a previous protected answer visible.
+      // Keep this failed attempt stamped to the current workspace so the user
+      // gets the ordinary ClosedOrError explanation instead of a silent blank.
       generation.current++;
-      setPage(summary);
-      setAnswer(null);
+      setAnswer(summary);
+      setResultWorkspace(workspaceID);
       setSearching(false);
       setAnswerPending(false);
       return;
     }
+    setSearching(false);
     setAnswer(summary);
     setAnswerPending(false);
-  }
-
-  async function more() {
-    if (!workspaceID || searching || page?.kind !== "ok" || !page.value.has_more || page.value.next_offset === null) return;
-    const epoch = generation.current;
-    const previous = page.value;
-    setSearching(true);
-    const next = await apiGet<PilotSearchPage>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}/tools/search?query=${encodeURIComponent(submitted)}&limit=10&offset=${previous.next_offset}`);
-    if (generation.current !== epoch) return;
-    setSearching(false);
-    // A denied refresh must also remove the earlier protected results.
-    if (next.kind !== "ok") {
-      generation.current++;
-      setPage(next);
-      setAnswer(null);
-      setAnswerPending(false);
-      return;
-    }
-    setPage({ ...next, value: { ...next.value, results: [...previous.results, ...next.value.results] } });
-  }
-
-  function citationHref(citation: QuestionCitation): string {
-    return buildEvidenceHash({ workspace: workspaceID!, fragment: citation.evidence_fragment_id,
-      ...(citation.address ? { canonicalAddress: citation.address } : {}),
-      ...(confirmedEvidenceQuoteSelector(citation) ? { selector: confirmedEvidenceQuoteSelector(citation)! } : {}) });
-  }
-
-  function openSource(event: ReactMouseEvent<HTMLAnchorElement>, hash: string) {
-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    onOpenEvidence(hash);
   }
 
   if (snapshotResult && snapshotResult.kind !== "ok") return <div className="search-pilot" hidden={!active}><ClosedOrError result={snapshotResult} /></div>;
@@ -4072,24 +4089,22 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
   if (workspaceClosed) return <div className="search-pilot" hidden={!active}><p>This workspace is closed.</p></div>;
   if (workspaceAuthorization.phase !== "authorized") return <div className="search-pilot" hidden={!active}><p role="status">{workspaceAuthorization.phase === "pending" ? "Checking access…" : "This workspace is unavailable."}</p></div>;
   const visible = resultWorkspace === workspaceID;
-  const run = visible && page?.kind === "ok" && answer?.kind === "ok" ? answer.value : null;
-  const hits = visible && page?.kind === "ok" ? page.value.results : [];
+  const run = visible && answer?.kind === "ok" ? answer.value : null;
   const answerModel = run?.model_profile ?? submittedModel;
 
   return (
     <section className="search-pilot" hidden={!active} ref={searchElement}
       onScroll={(event) => { if (active) scrollPosition.current = event.currentTarget.scrollTop; }}>
-      <section aria-labelledby="document-search-mode-heading" className="document-search-mode">
-        <h2 className="sr-only" id="document-search-mode-heading">Search documents</h2>
+      <section aria-labelledby="question-composer-heading" className="document-search-mode">
+        <h2 className="sr-only" id="question-composer-heading">Ask a question</h2>
         <form className="search-pilot-form" onSubmit={search}>
           <label className="sr-only" htmlFor="pilot-question">Ask a question</label>
           <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question" />
-          <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Ask"}</button>
+          <button className="primary-button" disabled={!question.trim() || searching} type="submit">{searching ? "Asking…" : "Ask"}</button>
         </form>
         <div className="search-pilot-options">
-          <label><input type="checkbox" checked={includeAnswer && answerAvailable} disabled={!answerAvailable} onChange={(event) => setIncludeAnswer(event.target.checked)} /> {answerAvailable ? "AI answer" : "AI answer unavailable"}</label>
           {models.length > 0 && <select aria-label="Model" className="search-model-select"
-            value={selectedModel?.id ?? ""} disabled={!includeAnswer} onChange={(event) => setSelectedModelID(event.target.value)}>
+            value={selectedModel?.id ?? ""} onChange={(event) => setSelectedModelID(event.target.value)}>
             {!selectedModel && <option disabled value="">Select a model</option>}
             {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
           </select>}
@@ -4097,44 +4112,13 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
         {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
         {visible && (answerPending || answer) && (
           <section aria-label="AI answer" className="search-pilot-answer">
-            {!answerPending && <h2>AI answer <small>{answerModel ? `${answerModel.label} · ` : ""}preview</small></h2>}
+            {!answerPending && <h2>AI answer <small>{answerModel ? `${answerModel.label} · ` : ""}answer</small></h2>}
             {answerPending && <div className="search-answer-progress">
-              <p aria-live="polite" aria-atomic="true" className="search-answer-status" role="status"><span aria-hidden="true" className="search-answer-spinner" />{page?.kind === "ok" ? `${answerModel?.label ?? "Model"} is preparing an answer…` : "Searching sources…"}</p>
+              <p aria-live="polite" aria-atomic="true" className="search-answer-status" role="status"><span aria-hidden="true" className="search-answer-spinner" />{answerModel?.label ?? "Model"} is preparing an answer…</p>
               <div aria-hidden="true" className="search-answer-skeleton"><span /><span /><span /></div>
             </div>}
-            {answer && answer.kind !== "ok" && <p className="msg-warning">AI answer unavailable.</p>}
-            {run && <>
-            <AnswerBody text={run.answer ?? run.clarification ?? "No answer yet. Refine your question or open the sources."}
-              citations={run.citations} turnId={run.question_run_id} panelTurnId={null} selectedCitationId={null}
-              onSelectCitation={(id) => {
-                const citation = run.citations.find((item) => item.citation_id === id);
-                if (citation) onOpenEvidence(citationHref(citation));
-              }} />
-            {corpusStatusWarning(run.corpus_status) && <p className="hint">{corpusStatusWarning(run.corpus_status)}</p>}
-            {run.citations.length > 0 && <ul className="search-pilot-citations">{run.citations.map((citation) => (
-              <li key={citation.citation_id}><a href={citationHref(citation)} onClick={(event) => openSource(event, citationHref(citation))}>Source [{citation.number}]</a></li>
-            ))}</ul>}
-            </>}
-          </section>
-        )}
-        {visible && page && page.kind !== "ok" && <ClosedOrError result={page} />}
-        {visible && page?.kind === "ok" && (
-          <section aria-label="Sources" className="search-pilot-results">
-            {hits.length > 0 && <h2>Sources</h2>}
-            {hits.length === 0 && <p>No results found.</p>}
-            {hits.map((hit, index) => (
-              <article key={`${hit.canonical_address}-${index}`} className="search-pilot-hit">
-                <a href={buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address })}
-                  onClick={(event) => openSource(event, buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address }))}>
-                  {evidenceSourceFilename(hit.source_path) ?? "Source fragment"}
-                </a>
-                {hit.source_path && <p className="search-pilot-path">{hit.source_path}</p>}
-                <p className="search-pilot-excerpt">{hit.excerpt}</p>
-                {hit.observed_at && <p className="hint">Data retrieved: {formatTime(hit.observed_at)}</p>}
-              </article>
-            ))}
-            {page.value.partial && <p className="hint">Only some matches are shown. Refine your query or load more results.</p>}
-            {page.value.has_more && <button className="secondary-button" onClick={() => void more()} disabled={searching} type="button">More results</button>}
+            {answer && answer.kind !== "ok" && <ClosedOrError result={answer} />}
+            {run && <QuestionRunAnswer onOpenEvidence={onOpenEvidence} run={run} workspaceID={workspaceID} />}
           </section>
         )}
       </section>

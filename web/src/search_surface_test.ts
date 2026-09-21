@@ -4,9 +4,8 @@ import {
   AskSurface,
   SearchView,
   authorizedSourcesForAsk,
-  askExecutionVisibility,
-  defaultAskExecutionMode,
-  effectiveAskExecutionMode,
+  questionClaimGroundingLabel,
+  questionRunPayload,
   relySourceSummary,
   reduceGovernedRetention,
   type GovernedRetentionState,
@@ -97,12 +96,10 @@ check(authorizedSourcesForAsk(pendingState, "workspace-1").length === 0 && autho
 check(sourceSummary.length === 1 && sourceSummary[0].label === "GM · public.v_container_group_contract" && sourceSummary[0].headline === "Data is up to date", "RelyBar uses the real source label and freshness headline");
 check(!renderAsk(pendingState).includes("rely-summary") && !renderAsk(deniedState).includes("rely-summary"), "pending and denied Ask surfaces render no source summary");
 check((searchMarkup.match(/<h1>Ask<\/h1>/g) ?? []).length === 1, "the Ask surface has one page heading");
-check(searchMarkup.includes("Live database") && searchMarkup.includes("Workspace search"), "execution modes use honest labels");
-check(!/class="ask-source-button[^>]*>Answer<\//.test(searchMarkup) && !/class="ask-source-button[^>]*>Search<\//.test(searchMarkup), "the mode control does not use conversational Answer/Search labels");
-check(searchMarkup.includes('aria-label="Search source"'), "execution mode is labelled as the search source");
-check(searchMarkup.indexOf(">Workspace search<") < searchMarkup.indexOf(">Live database<"), "search source buttons are ordered Workspace search then Live database");
-check(searchMarkup.includes('aria-pressed="true"') && searchMarkup.includes('>Workspace search<'), "default mode is Workspace search before governed capability is authorized");
+check(!searchMarkup.includes("Live database") && !searchMarkup.includes("Workspace search") && !searchMarkup.includes("Search source"), "the Ask surface has no user-facing execution-mode selector");
+check(!searchMarkup.includes("GovernedPresetPanelHost") && !searchMarkup.includes("Reviewed checks"), "governed checks are not placed beside the question");
 check(searchMarkup.includes('placeholder="Ask a question"') && searchMarkup.includes(">Ask<"), "Workspace search uses the compact Ask composer");
+check((searchMarkup.match(/<form/g) ?? []).length === 1, "Ask surface exposes exactly one question composer");
 check((searchMarkup.match(/<input[^>]*id="pilot-question"/g) ?? []).length === 1, "Ask surface exposes one visible question input");
 check(searchMarkup.includes("Sources: ") && searchMarkup.includes("<b>0</b>") && !searchMarkup.includes("No sources are connected yet"), "authorized empty sources use the compact Sources: 0 pill");
 check(mainSource.includes("authorizedSourcesForAsk") && mainSource.includes("askSources && <RelyBar onManageSources={onOpenSources}"), "Ask RelyBar is gated by workspace authorization and offers source management");
@@ -111,33 +108,36 @@ check(mainSource.includes("sourceLabel(source)") && mainSource.includes("sourceH
 check(stylesSource.includes(".ask-page-actions .rely-list") && stylesSource.includes("left: 0; right: auto")
   && stylesSource.includes("width: min(360px, calc(100vw - 88px)); max-width: calc(100vw - 88px)"), "header source popover stays inside the 56px rail plus 32px mobile gutters");
 check(renderSearch(false).includes("hidden"), "document search remains mounted while inactive");
+const searchStart = mainSource.indexOf("export function SearchView");
+const searchEnd = mainSource.indexOf("function AskView", searchStart);
+const searchSource = searchStart >= 0 && searchEnd > searchStart ? mainSource.slice(searchStart, searchEnd) : "";
+const answerStart = mainSource.indexOf("function QuestionRunAnswer");
+const answerSource = answerStart >= 0 && searchStart > answerStart ? mainSource.slice(answerStart, searchStart) : "";
+check((searchSource.match(/apiPost<QuestionRun>/g) ?? []).length === 1, "one question submit performs exactly one QuestionRun POST");
+check(!searchSource.includes("tools/search") && !searchSource.includes("apiGet<"), "question submit does not issue a preliminary document-search GET");
+check(searchSource.includes("<QuestionRunAnswer") && answerSource.includes("<AnswerBody") && answerSource.includes("run.citations") && answerSource.includes("onOpenEvidence"), "QuestionRun renders the existing answer, citations and evidence actions");
+check(mainSource.includes('className="tool-trace"') && mainSource.includes("TOOL_CALLS_TITLE") && mainSource.includes("run.tool_loop.calls"), "QuestionRun uses the actual collapsed tool-call disclosure");
+check(searchSource.includes('className="search-model-select"') && searchSource.includes('aria-label="Model"'), "the configured model selector remains available");
+check(!searchSource.includes("<pre>") && !searchSource.includes("answer_hash") && !searchSource.includes("result_digest"), "the main answer surface does not render raw technical rows or hashes");
+const denialStart = searchSource.indexOf("if (summary.kind !== \"ok\" && [401, 403, 404].includes(summary.status))");
+const denialBlock = denialStart >= 0 ? searchSource.slice(denialStart, denialStart + 520) : "";
+check(denialBlock.includes("setAnswer(summary)") && denialBlock.includes("setResultWorkspace(workspaceID)") && denialBlock.includes("setAnswerPending(false)"), "denied QuestionRun clears the old answer but keeps the current failure visible");
+const byteExactLabel = questionClaimGroundingLabel({ answer_mode: "DOCUMENT", verification_method: "BYTE_EXACT_CITATION", grounding_status: "CONFIRMED_BY_FRAGMENT", tool_loop: undefined });
+check(byteExactLabel.includes("supported by a fragment") && !byteExactLabel.toLowerCase().includes("unbound"), "byte-exact verified answers use grounding state instead of an unbound tool-loop label");
+check(JSON.stringify(questionRunPayload("show contracts", { id: "model-1", label: "Local", location: "INTERNAL" })) === JSON.stringify({ question: "show contracts", model_profile_id: "model-1" }), "selected model is sent with the governed question");
+check(JSON.stringify(questionRunPayload("show contracts", null)) === JSON.stringify({ question: "show contracts" }), "one QuestionRun remains usable when no model catalog is exposed");
 const readyCatalog = { connection_id: "connection-1", database_identity: "gm", presets: [{ id: "p", version: "v1", name: "P", description: "", phrases: [], preset_hash: "h", source_attempt_id: "a", sql_hash: "s", exposed_schema_revision: 1 }] } as GovernedPresetCatalog;
 check(JSON.stringify(governedCatalogAvailability(null)) === JSON.stringify({ status: "loading", catalogAvailable: false, liveAskAvailable: false }), "catalog revalidation reports loading without final denial");
 check(JSON.stringify(governedCatalogAvailability({ ...readyCatalog, presets: [] }, true)) === JSON.stringify({ status: "unavailable", catalogAvailable: false, liveAskAvailable: false }), "empty catalog is a final unavailable state");
 check(JSON.stringify(governedCatalogAvailability(readyCatalog, false)) === JSON.stringify({ status: "available", catalogAvailable: true, liveAskAvailable: false }), "preset-only catalog keeps Live database and Diagnostics but hides ad hoc ask");
 check(JSON.stringify(governedCatalogAvailability(readyCatalog, true)) === JSON.stringify({ status: "available", catalogAvailable: true, liveAskAvailable: true }), "advertised ask capability enables the ad hoc composer");
-check(defaultAskExecutionMode(false) === "workspace-search" && defaultAskExecutionMode(true) === "workspace-search", "execution mode always defaults to Workspace search");
-check(effectiveAskExecutionMode("workspace-search", true) === "workspace-search", "explicit Workspace search selection survives later live authorization");
-check(effectiveAskExecutionMode(null, true) === "workspace-search", "live authorization never auto-flips the default mode");
-check(effectiveAskExecutionMode("live-database", false, "loading") === "live-database", "same-revision loading preserves an explicitly selected Live database mode");
-check(effectiveAskExecutionMode("live-database", false, "unavailable") === "workspace-search", "live mode falls back to Workspace search only after final catalog unavailability");
-const live = askExecutionVisibility("live-database");
-const workspaceSearch = askExecutionVisibility("workspace-search");
-check(live.liveDatabase && !live.workspaceSearch && !workspaceSearch.liveDatabase && workspaceSearch.workspaceSearch, "exactly one execution surface is active at a time");
-
 check(!mainSource.includes("document-search-disclosure"), "the old document-search details wrapper is removed");
-check(mainSource.includes("<GovernedPresetPanelHost") && mainSource.includes("<SearchView"), "both source surfaces remain mounted under the Ask owner");
 const ownerStart = mainSource.indexOf("export function AskSurface");
-const hostInOwner = mainSource.indexOf("<GovernedPresetPanelHost", ownerStart);
-const searchInOwner = mainSource.indexOf("<SearchView", ownerStart);
-check(ownerStart >= 0 && hostInOwner > ownerStart && searchInOwner > hostInOwner, "governed host is a sibling before SearchView, outside its early returns");
-check(!mainSource.includes('aria-label="Ask mode"') && !mainSource.includes('aria-label="Source scope"') && !mainSource.includes('>Answer<'), "Ask owner contains no conversational mode labels");
-check(mainSource.includes('active={active && visibility.liveDatabase}') && mainSource.includes('active={active && visibility.workspaceSearch}'), "owner gates exactly one visible composer without submitting on selection");
-check(mainSource.includes('onClick={() => setRequestedMode("live-database")}') && mainSource.includes('onClick={() => setRequestedMode("workspace-search")}'), "mode buttons only change execution mode");
-check(!mainSource.includes('onClick={() => setMode("answer")}') && !mainSource.includes('onClick={() => setMode("search")}'), "legacy Answer/Search switching is removed");
-check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "governed host is not wrapped in a nested search-pilot scroller");
-check(mainSource.includes("onCatalogAvailability") && mainSource.includes("catalogAvailability.catalogAvailable") && mainSource.includes("catalogAvailability.liveAskAvailable"), "catalog and live-ask capabilities are kept separate");
-check(mainSource.includes('availability.status === "unavailable"') && mainSource.includes('authorization.phase === "pending" ? "loading" : "unavailable"'), "loading preserves explicit mode while only final unavailability triggers fallback");
+const ownerEnd = mainSource.indexOf("// The Ask surface sends one governed question run", ownerStart);
+const askOwnerSource = ownerStart >= 0 && ownerEnd > ownerStart ? mainSource.slice(ownerStart, ownerEnd) : "";
+check(askOwnerSource.includes("<SearchView") && !askOwnerSource.includes("<GovernedPresetPanelHost"), "Ask owns one question surface and keeps governed checks out of the main flow");
+check(!askOwnerSource.includes('aria-label="Search source"') && !askOwnerSource.includes("Workspace search") && !askOwnerSource.includes("Live database"), "Ask owner contains no execution-mode labels");
+check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "the governed host remains available for a future Diagnostics surface");
 
 check((governedSource.match(/<h1[^>]*>Ask company data<\/h1>/g) ?? []).length === 0, "governed panel does not add a second page heading");
 check(governedSource.includes('<label className="sr-only" htmlFor="governed-ask-input">Ask company data</label>'), "governed ask keeps an accessible field label");
