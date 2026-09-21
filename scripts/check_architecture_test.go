@@ -2848,3 +2848,78 @@ func TestGovernedQueryBoundaryAcceptance(t *testing.T) {
 		t.Fatalf("accepted tree fails the governed query boundary: %v", problems)
 	}
 }
+
+// TestApplicationLanguageArchiveException proves the application-language
+// default-deny admits exactly the pinned IANA timezone bundle: the real bytes
+// at the normalized path only, never the same bytes under another path,
+// altered bytes, a directory, or a symlink.
+func TestApplicationLanguageArchiveException(t *testing.T) {
+	pinned, err := os.ReadFile(filepath.Join("..", "internal", "tzrules", "zoneinfo.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := func(t *testing.T, relativePath string, contents []byte) {
+		t.Helper()
+		root := t.TempDir()
+		writeFixtureFile(t, root, relativePath, contents)
+		if problems := checkApplicationLanguages(root); len(problems) != 0 {
+			t.Fatalf("%s was rejected: %v", relativePath, problems)
+		}
+	}
+	rejected := func(t *testing.T, relativePath string, contents []byte) {
+		t.Helper()
+		root := t.TempDir()
+		writeFixtureFile(t, root, relativePath, contents)
+		if problems := checkApplicationLanguages(root); len(problems) == 0 {
+			t.Fatalf("%s was accepted", relativePath)
+		}
+	}
+	t.Run("pinned archive at exact path", func(t *testing.T) {
+		accepted(t, pinnedTimezoneArchivePath, pinned)
+		for _, problem := range checkApplicationLanguages("..") {
+			if strings.Contains(problem, "zoneinfo.zip") {
+				t.Fatalf("real repository asset was rejected: %v", problem)
+			}
+		}
+	})
+	t.Run("pinned bytes at another path", func(t *testing.T) {
+		rejected(t, "internal/tzrules/timezones.zip", pinned)
+	})
+	t.Run("altered bytes at exact path", func(t *testing.T) {
+		altered := append([]byte(nil), pinned...)
+		altered[len(altered)/2] ^= 0xff
+		rejected(t, "internal/tzrules/zoneinfo.zip", altered)
+	})
+	t.Run("directory at exact path", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "internal", "tzrules", "zoneinfo.zip"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if problems := checkApplicationLanguages(root); len(problems) == 0 {
+			t.Fatal("directory at the pinned archive path was accepted")
+		}
+	})
+	t.Run("symlink at exact path", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "pinned.zip")
+		if err := os.WriteFile(target, pinned, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(root, "internal", "tzrules", "zoneinfo.zip")
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks are unavailable on this platform: %v", err)
+		}
+		if problems := checkApplicationLanguages(root); len(problems) == 0 {
+			t.Fatal("symlink at the pinned archive path was accepted")
+		}
+	})
+	t.Run("approved extension", func(t *testing.T) {
+		accepted(t, "internal/tzrules/tzdata.json", []byte("{\"version\":1}\n"))
+	})
+	t.Run("unknown extension", func(t *testing.T) {
+		rejected(t, "internal/tzrules/tzdata.dat", []byte("zone data"))
+	})
+}

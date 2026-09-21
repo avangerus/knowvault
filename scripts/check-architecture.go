@@ -10487,6 +10487,32 @@ func parseAllowedBinaries(guardrails string) ([]string, []string) {
 	return entries, problems
 }
 
+const (
+	pinnedTimezoneArchivePath   = "internal/tzrules/zoneinfo.zip"
+	pinnedTimezoneArchiveSize   = 408125
+	pinnedTimezoneArchiveDigest = "8f55634d05f8bca1f7bc7c69c5933428c69357e0bdf565e5ba224e3f88ff12e8"
+)
+
+// pinnedTimezoneArchive admits exactly one archive into the default-deny
+// application tree: the normalized pinned path holding a regular, non-symlink
+// file whose size and SHA-256 match the frozen zoneinfo bundle. The archive is
+// never admitted by name or extension alone.
+func pinnedTimezoneArchive(root, path string, entry os.DirEntry) bool {
+	if !entry.Type().IsRegular() || filepath.ToSlash(relative(root, path)) != pinnedTimezoneArchivePath {
+		return false
+	}
+	info, err := entry.Info()
+	if err != nil || info.Size() != pinnedTimezoneArchiveSize {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]) == pinnedTimezoneArchiveDigest
+}
+
 func checkApplicationLanguages(root string) []string {
 	// Application directories are default-deny. The list includes the approved
 	// source languages plus inert configuration/document/asset formats needed by
@@ -10513,13 +10539,16 @@ func checkApplicationLanguages(root string) []string {
 				return nil
 			}
 			if entry.IsDir() {
+				if filepath.ToSlash(relative(root, path)) == pinnedTimezoneArchivePath {
+					problems = append(problems, "forbidden or unknown application file type: "+relative(root, path))
+				}
 				if path != applicationRoot && skippedDirectories[entry.Name()] {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 			extension := strings.ToLower(filepath.Ext(path))
-			if !allowedApplicationExtensions[extension] {
+			if !allowedApplicationExtensions[extension] && !pinnedTimezoneArchive(root, path, entry) {
 				problems = append(problems, "forbidden or unknown application file type: "+relative(root, path))
 			}
 			return nil
