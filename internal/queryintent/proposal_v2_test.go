@@ -12,6 +12,8 @@ func pBad(t *testing.T, e error) {
 	}
 }
 
+const testProfileHash = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func TestProposalV2ClosedVocabulary(t *testing.T) {
 	for _, k := range []ScalarKind{KindBOOL, KindINT, KindNUMERIC, KindTEXT, KindDATE, KindTIMESTAMP, KindTIMESTAMPTZ} {
 		if !k.Valid() {
@@ -29,7 +31,7 @@ func TestProposalV2ClosedVocabulary(t *testing.T) {
 }
 
 func TestProposalV2DefinitionReferences(t *testing.T) {
-	dataset, e := NewDatasetProfileRef("service-desk", 7)
+	dataset, e := NewDatasetProfileRef("service-desk", 7, testProfileHash)
 	if e != nil || !dataset.Valid() {
 		t.Fatal(e)
 	}
@@ -39,27 +41,41 @@ func TestProposalV2DefinitionReferences(t *testing.T) {
 	if version, ok := dataset.ProfileVersion(); !ok || version != 7 {
 		t.Fatal(version, ok)
 	}
-	metric, e := NewMetricRef("open_tickets", 3)
-	if e != nil || !metric.Valid() {
+	if hash, ok := dataset.ExpectedProfileHash(); !ok || hash != testProfileHash {
+		t.Fatal(hash, ok)
+	}
+	measure, e := NewMeasureRef("open_tickets")
+	if e != nil || !measure.Valid() {
 		t.Fatal(e)
 	}
-	if id, ok := metric.MetricID(); !ok || id != "open_tickets" {
+	if id, ok := measure.MeasureID(); !ok || id != "open_tickets" {
 		t.Fatal(id, ok)
-	}
-	if version, ok := metric.MetricVersion(); !ok || version != 3 {
-		t.Fatal(version, ok)
 	}
 
 	for _, id := range []string{"", " leading", "trailing ", "line\nbreak", strings.Repeat("x", maxIDLength+1)} {
-		_, e := NewDatasetProfileRef(id, 1)
+		_, e := NewDatasetProfileRef(id, 1, testProfileHash)
 		pBad(t, e)
-		_, e = NewMetricRef(id, 1)
+		_, e = NewMeasureRef(id)
 		pBad(t, e)
 	}
 	for _, version := range []int64{-1, 0} {
-		_, e := NewDatasetProfileRef("dataset", version)
+		_, e := NewDatasetProfileRef("dataset", version, testProfileHash)
 		pBad(t, e)
-		_, e = NewMetricRef("metric", version)
+	}
+	for _, hash := range []string{
+		"",
+		"sha256:",
+		"sha256:" + strings.Repeat("a", 63),
+		"sha256:" + strings.Repeat("a", 65),
+		"sha256:" + strings.Repeat("A", 64),
+		"sha256:" + strings.Repeat("g", 64),
+		"sha256:" + strings.Repeat("a", 63) + "-",
+		"sha256" + strings.Repeat("a", 64),
+		"SHA256:" + strings.Repeat("a", 64),
+		"sha512:" + strings.Repeat("a", 64),
+		strings.Repeat("a", 64),
+	} {
+		_, e := NewDatasetProfileRef("dataset", 1, hash)
 		pBad(t, e)
 	}
 
@@ -73,15 +89,27 @@ func TestProposalV2DefinitionReferences(t *testing.T) {
 	if _, ok := zeroDataset.ProfileVersion(); ok {
 		t.Fatal("zero profile version readable")
 	}
-	var zeroMetric MetricRef
-	if zeroMetric.Valid() {
-		t.Fatal("zero metric reference valid")
+	if _, ok := zeroDataset.ExpectedProfileHash(); ok {
+		t.Fatal("zero expected profile hash readable")
 	}
-	if _, ok := zeroMetric.MetricID(); ok {
-		t.Fatal("zero metric id readable")
+	for _, forged := range []DatasetProfileRef{
+		{datasetID: "service-desk", profileVersion: 7},
+		{datasetID: "service-desk", profileVersion: 7, expectedProfileHash: "sha256:" + strings.Repeat("A", 64)},
+		{datasetID: "service-desk", expectedProfileHash: testProfileHash},
+	} {
+		if forged.Valid() {
+			t.Fatal("forged dataset profile reference valid")
+		}
+		if _, ok := forged.ExpectedProfileHash(); ok {
+			t.Fatal("forged expected profile hash readable")
+		}
 	}
-	if _, ok := zeroMetric.MetricVersion(); ok {
-		t.Fatal("zero metric version readable")
+	var zeroMeasure MeasureRef
+	if zeroMeasure.Valid() {
+		t.Fatal("zero measure reference valid")
+	}
+	if _, ok := zeroMeasure.MeasureID(); ok {
+		t.Fatal("zero measure id readable")
 	}
 }
 
@@ -470,10 +498,10 @@ func TestProposalV2PredicatesBoundsRepeatedFieldsAndCopies(t *testing.T) {
 	}
 }
 
-func validProposalV2Parts(t *testing.T) (DatasetProfileRef, MetricRef, PeriodProposal, Predicates, Dimensions, SortKeys, Limit) {
+func validProposalV2Parts(t *testing.T) (DatasetProfileRef, MeasureRef, PeriodProposal, Predicates, Dimensions, SortKeys, Limit) {
 	t.Helper()
-	dataset, _ := NewDatasetProfileRef("service-desk", 2)
-	metric, _ := NewMetricRef("open_tickets", 3)
+	dataset, _ := NewDatasetProfileRef("service-desk", 2, testProfileHash)
+	measure, _ := NewMeasureRef("open_tickets")
 	period, _ := NewRelativePeriod(PeriodCURRENTMONTH)
 	field, _ := NewFieldToken("team")
 	value, _ := TextScalar("support")
@@ -483,14 +511,14 @@ func validProposalV2Parts(t *testing.T) (DatasetProfileRef, MetricRef, PeriodPro
 	key, _ := NewSortKey(field, SortASC)
 	sort, _ := NewSortKeys(key)
 	limit, _ := NewLimit(25)
-	return dataset, metric, period, filters, dimensions, sort, limit
+	return dataset, measure, period, filters, dimensions, sort, limit
 }
 
 func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
-	d, m, p, f, dimensions, sort, limit := validProposalV2Parts(t)
+	d, measure, p, f, dimensions, sort, limit := validProposalV2Parts(t)
 	for _, candidate := range []struct {
 		d          DatasetProfileRef
-		m          MetricRef
+		measure    MeasureRef
 		p          PeriodProposal
 		f          Predicates
 		dimensions Dimensions
@@ -498,16 +526,16 @@ func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 		limit      Limit
 		output     Output
 	}{
-		{m: m, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{measure: measure, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
 		{d: d, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
-		{d: d, m: m, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
-		{d: d, m: m, p: p, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
-		{d: d, m: m, p: p, f: f, sort: sort, limit: limit, output: OutputValue},
-		{d: d, m: m, p: p, f: f, dimensions: dimensions, limit: limit, output: OutputValue},
-		{d: d, m: m, p: p, f: f, dimensions: dimensions, sort: sort, output: OutputValue},
-		{d: d, m: m, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: "TABLE"},
+		{d: d, measure: measure, f: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{d: d, measure: measure, p: p, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue},
+		{d: d, measure: measure, p: p, f: f, sort: sort, limit: limit, output: OutputValue},
+		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, limit: limit, output: OutputValue},
+		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, sort: sort, output: OutputValue},
+		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: "TABLE"},
 	} {
-		_, err := NewProposalV2(candidate.d, candidate.m, candidate.p, candidate.f, candidate.dimensions, candidate.sort, candidate.limit, candidate.output)
+		_, err := NewProposalV2(candidate.d, candidate.measure, candidate.p, candidate.f, candidate.dimensions, candidate.sort, candidate.limit, candidate.output)
 		pBad(t, err)
 	}
 	var zero ProposalV2
@@ -517,8 +545,8 @@ func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 	if _, ok := zero.Dataset(); ok {
 		t.Fatal("zero dataset accessor succeeded")
 	}
-	if _, ok := zero.Metric(); ok {
-		t.Fatal("zero metric accessor succeeded")
+	if _, ok := zero.Measure(); ok {
+		t.Fatal("zero measure accessor succeeded")
 	}
 	if _, ok := zero.Period(); ok {
 		t.Fatal("zero period accessor succeeded")
@@ -541,8 +569,8 @@ func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 }
 
 func TestProposalV2CompleteRoundTripAndFilterIsolation(t *testing.T) {
-	d, m, p, f, dimensions, sort, limit := validProposalV2Parts(t)
-	proposal, err := NewProposalV2(d, m, p, f, dimensions, sort, limit, OutputRowset)
+	d, measure, p, f, dimensions, sort, limit := validProposalV2Parts(t)
+	proposal, err := NewProposalV2(d, measure, p, f, dimensions, sort, limit, OutputRowset)
 	if err != nil || !proposal.Valid() {
 		t.Fatal(err)
 	}
@@ -550,8 +578,8 @@ func TestProposalV2CompleteRoundTripAndFilterIsolation(t *testing.T) {
 	if got, ok := proposal.Dataset(); !ok || got != d {
 		t.Fatal("dataset", got, ok)
 	}
-	if got, ok := proposal.Metric(); !ok || got != m {
-		t.Fatal("metric", got, ok)
+	if got, ok := proposal.Measure(); !ok || got != measure {
+		t.Fatal("measure", got, ok)
 	}
 	if got, ok := proposal.Period(); !ok || got != p {
 		t.Fatal("period", got, ok)

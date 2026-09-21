@@ -189,19 +189,40 @@ func NewFieldToken(v string) (FieldToken, error) {
 // DatasetProfileRef identifies an approved dataset profile definition.
 // Its fields are private so proposals cannot bypass constructor validation.
 type DatasetProfileRef struct {
-	datasetID      string
-	profileVersion int64
+	datasetID           string
+	profileVersion      int64
+	expectedProfileHash string
 }
 
-func NewDatasetProfileRef(datasetID string, profileVersion int64) (DatasetProfileRef, error) {
-	if !validLabel(datasetID, maxIDLength) || profileVersion <= 0 {
+const (
+	profileHashPrefix    = "sha256:"
+	profileHashHexLength = 64
+)
+
+// validProfileHash requires the exact canonical form: the "sha256:" tag
+// followed by 64 lowercase hex digits.
+func validProfileHash(value string) bool {
+	if len(value) != len(profileHashPrefix)+profileHashHexLength || !strings.HasPrefix(value, profileHashPrefix) {
+		return false
+	}
+	for i := len(profileHashPrefix); i < len(value); i++ {
+		c := value[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func NewDatasetProfileRef(datasetID string, profileVersion int64, expectedProfileHash string) (DatasetProfileRef, error) {
+	if !validLabel(datasetID, maxIDLength) || profileVersion <= 0 || !validProfileHash(expectedProfileHash) {
 		return DatasetProfileRef{}, newRefusal(CodeInvalidProposal)
 	}
-	return DatasetProfileRef{datasetID: datasetID, profileVersion: profileVersion}, nil
+	return DatasetProfileRef{datasetID: datasetID, profileVersion: profileVersion, expectedProfileHash: expectedProfileHash}, nil
 }
 
 func (r DatasetProfileRef) Valid() bool {
-	return validLabel(r.datasetID, maxIDLength) && r.profileVersion > 0
+	return validLabel(r.datasetID, maxIDLength) && r.profileVersion > 0 && validProfileHash(r.expectedProfileHash)
 }
 
 func (r DatasetProfileRef) DatasetID() (string, bool) {
@@ -218,35 +239,35 @@ func (r DatasetProfileRef) ProfileVersion() (int64, bool) {
 	return r.profileVersion, true
 }
 
-// MetricRef identifies an approved metric definition.
-type MetricRef struct {
-	metricID      string
-	metricVersion int64
-}
-
-func NewMetricRef(metricID string, metricVersion int64) (MetricRef, error) {
-	if !validLabel(metricID, maxIDLength) || metricVersion <= 0 {
-		return MetricRef{}, newRefusal(CodeInvalidProposal)
-	}
-	return MetricRef{metricID: metricID, metricVersion: metricVersion}, nil
-}
-
-func (r MetricRef) Valid() bool {
-	return validLabel(r.metricID, maxIDLength) && r.metricVersion > 0
-}
-
-func (r MetricRef) MetricID() (string, bool) {
+// ExpectedProfileHash returns the pinned profile hash used for stale-profile
+// detection. The hash carries no authority of its own.
+func (r DatasetProfileRef) ExpectedProfileHash() (string, bool) {
 	if !r.Valid() {
 		return "", false
 	}
-	return r.metricID, true
+	return r.expectedProfileHash, true
 }
 
-func (r MetricRef) MetricVersion() (int64, bool) {
-	if !r.Valid() {
-		return 0, false
+// MeasureRef identifies a measure defined by the pinned dataset profile. It
+// carries no independent version: the profile version is authoritative.
+type MeasureRef struct {
+	measureID string
+}
+
+func NewMeasureRef(measureID string) (MeasureRef, error) {
+	if !validLabel(measureID, maxIDLength) {
+		return MeasureRef{}, newRefusal(CodeInvalidProposal)
 	}
-	return r.metricVersion, true
+	return MeasureRef{measureID: measureID}, nil
+}
+
+func (r MeasureRef) Valid() bool { return validLabel(r.measureID, maxIDLength) }
+
+func (r MeasureRef) MeasureID() (string, bool) {
+	if !r.Valid() {
+		return "", false
+	}
+	return r.measureID, true
 }
 
 type PeriodMode string
@@ -636,7 +657,7 @@ func clonePredicate(predicate Predicate) Predicate {
 
 type ProposalV2 struct {
 	dataset     DatasetProfileRef
-	metric      MetricRef
+	measure     MeasureRef
 	period      PeriodProposal
 	filters     Predicates
 	dimensions  Dimensions
@@ -646,8 +667,8 @@ type ProposalV2 struct {
 	initialized bool
 }
 
-func NewProposalV2(dataset DatasetProfileRef, metric MetricRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
-	proposal := ProposalV2{dataset: dataset, metric: metric, period: period, filters: clonePredicates(filters), dimensions: dimensions, sort: sort, limit: limit, output: output, initialized: true}
+func NewProposalV2(dataset DatasetProfileRef, measure MeasureRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
+	proposal := ProposalV2{dataset: dataset, measure: measure, period: period, filters: clonePredicates(filters), dimensions: dimensions, sort: sort, limit: limit, output: output, initialized: true}
 	if !proposal.Valid() {
 		return ProposalV2{}, newRefusal(CodeInvalidProposal)
 	}
@@ -655,7 +676,7 @@ func NewProposalV2(dataset DatasetProfileRef, metric MetricRef, period PeriodPro
 }
 
 func (p ProposalV2) Valid() bool {
-	return p.initialized && p.dataset.Valid() && p.metric.Valid() && p.period.Valid() && p.filters.Valid() &&
+	return p.initialized && p.dataset.Valid() && p.measure.Valid() && p.period.Valid() && p.filters.Valid() &&
 		p.dimensions.Valid() && p.sort.Valid() && p.limit.Valid() && p.output.valid()
 }
 
@@ -673,11 +694,11 @@ func (p ProposalV2) Dataset() (DatasetProfileRef, bool) {
 	return p.dataset, true
 }
 
-func (p ProposalV2) Metric() (MetricRef, bool) {
+func (p ProposalV2) Measure() (MeasureRef, bool) {
 	if !p.Valid() {
-		return MetricRef{}, false
+		return MeasureRef{}, false
 	}
-	return p.metric, true
+	return p.measure, true
 }
 
 func (p ProposalV2) Period() (PeriodProposal, bool) {
