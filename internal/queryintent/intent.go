@@ -74,14 +74,17 @@ type Proposal struct {
 type ErrorCode string
 
 const (
-	CodeInvalidProposal    ErrorCode = "QUERYINTENT_INVALID_PROPOSAL"
-	CodeUnknownMetric      ErrorCode = "QUERYINTENT_UNKNOWN_METRIC"
-	CodeUnknownVersion     ErrorCode = "QUERYINTENT_UNKNOWN_VERSION"
-	CodeRetiredVersion     ErrorCode = "QUERYINTENT_RETIRED_VERSION"
-	CodeNotApproved        ErrorCode = "QUERYINTENT_NOT_APPROVED"
-	CodeFilterNotAllowed   ErrorCode = "QUERYINTENT_FILTER_NOT_ALLOWED"
-	CodeMalformedPeriod    ErrorCode = "QUERYINTENT_MALFORMED_PERIOD"
-	CodeCatalogUnavailable ErrorCode = "QUERYINTENT_CATALOG_UNAVAILABLE"
+	CodeInvalidProposal           ErrorCode = "QUERYINTENT_INVALID_PROPOSAL"
+	CodeUnknownMetric             ErrorCode = "QUERYINTENT_UNKNOWN_METRIC"
+	CodeUnknownVersion            ErrorCode = "QUERYINTENT_UNKNOWN_VERSION"
+	CodeRetiredVersion            ErrorCode = "QUERYINTENT_RETIRED_VERSION"
+	CodeNotApproved               ErrorCode = "QUERYINTENT_NOT_APPROVED"
+	CodeFilterNotAllowed          ErrorCode = "QUERYINTENT_FILTER_NOT_ALLOWED"
+	CodeMalformedPeriod           ErrorCode = "QUERYINTENT_MALFORMED_PERIOD"
+	CodeCatalogUnavailable        ErrorCode = "QUERYINTENT_CATALOG_UNAVAILABLE"
+	CodeCatalogBindingMismatch    ErrorCode = "QUERYINTENT_CATALOG_BINDING_MISMATCH"
+	CodeDatasetProfileUnavailable ErrorCode = "QUERYINTENT_DATASET_PROFILE_UNAVAILABLE"
+	CodeMeasureUnavailable        ErrorCode = "QUERYINTENT_MEASURE_UNAVAILABLE"
 )
 
 func clarificationFor(code ErrorCode) string {
@@ -102,6 +105,12 @@ func clarificationFor(code ErrorCode) string {
 		return "The requested period is missing or does not match this metric definition's grain. Provide a start and end that match the definition grain."
 	case CodeCatalogUnavailable:
 		return "Metric definitions are temporarily unavailable. Try again later."
+	case CodeCatalogBindingMismatch:
+		return "The snapshot this request was checked against is not the snapshot now installed. Refresh and try again."
+	case CodeDatasetProfileUnavailable:
+		return "This dataset profile is not available in the current catalog. Choose a dataset profile that is active."
+	case CodeMeasureUnavailable:
+		return "This measure is not available in the selected dataset profile. Choose a measure that profile defines."
 	default:
 		return "The request could not be validated. Adjust it and try again."
 	}
