@@ -600,6 +600,25 @@ type Service struct {
 	intentDefinitions MetricDefinitionLister
 	intentProposer    QueryIntentProposer
 	intentExecutor    QueryIntentExecutor
+
+	// datasetProfileCatalog is the trusted, immutable analytic
+	// DatasetProfile snapshot loaded by composition at startup
+	// (internal/platform/analyticcatalog). It is the zero value until
+	// EnableDatasetProfileCatalog installs it exactly once; R1.1 stores the
+	// value only, and no path reads it yet.
+	datasetProfileCatalog analytic.DatasetProfileCatalog
+}
+
+// EnableDatasetProfileCatalog installs the startup-loaded, immutable analytic
+// DatasetProfile catalog. It is a one-shot install: a nil Service, an
+// invalid/zero catalog, or a second install returns a content-free CodeInvalid
+// refusal, and a refused call leaves any already-installed value untouched.
+func (service *Service) EnableDatasetProfileCatalog(catalog analytic.DatasetProfileCatalog) error {
+	if service == nil || !catalog.Valid() || service.datasetProfileCatalog.Valid() {
+		return &Error{code: CodeInvalid}
+	}
+	service.datasetProfileCatalog = catalog
+	return nil
 }
 
 // EnableGeneration wires the GEN-1 interim Model Gateway adapter and claim

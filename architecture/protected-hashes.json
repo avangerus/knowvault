@@ -513,7 +513,7 @@
     "internal/question/model_profiles.go": "fa397f8e8a0f192ff42067f5d34800dd21ea0e2b9b6bcf0f1f969d6fec7bafe5",
     "internal/question/model_profiles_test.go": "8bdf9326884ae655912ed2f14228860d9de89b1ac2eb4e58daeaddb970643a70",
     "internal/question/model_response_diagnostics_test.go": "f52563bebd3a6ec4ffbb65c81034e00ddddc74377ebfe9abea918a128560573a",
-    "internal/question/service.go": "1224f6600ca310264d671646f52b0cc9a8ba6e6c2ff544cb3579854a0e274cdb",
+    "internal/question/service.go": "f130bd319bfdcf6e0449125184ac3cae34df206c71885b4dd1090062ee69a890",
     "internal/question/tool_finalization_test.go": "12a71c25ed5549bf0b5787849d23c4aa22f817e7b24102d7e31db3b2097a3a9b",
     "internal/question/tool_loop.go": "20d5329b09a0a80b2ce4ed024ea760a5a69942cd823f91e41ec9007c8dd0852b",
     "internal/retrieval/workspace_copy_units_test.go": "522e5bc44f8d9f754e0d0e5424535fb73207b0c71f22c5e92942376259c684d1",
