@@ -2,9 +2,10 @@ package analytic
 
 import (
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"knowvault.local/verified-workspace/internal/tzrules"
 )
 
 // CoveragePolicy states whether the approved source guarantees complete coverage.
@@ -106,12 +107,14 @@ func (value TimePolicy) Values() TimePolicyInput {
 	}
 }
 
+// validProfileTimezone accepts only names the embedded pinned rules resolve; the
+// host zone database (TZ, ZONEINFO) is never consulted and there is no fallback.
 func validProfileTimezone(value string) bool {
 	if value == "" || len(value) > 64 || !utf8.ValidString(value) || strings.TrimSpace(value) != value ||
 		strings.ContainsFunc(value, unicode.IsControl) {
 		return false
 	}
-	_, err := time.LoadLocation(value)
+	_, err := tzrules.Load(value)
 	return err == nil
 }
 

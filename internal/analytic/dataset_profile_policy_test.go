@@ -1,6 +1,8 @@
 package analytic
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -91,15 +93,26 @@ func TestDatasetProfilePolicyTimeRequirements(t *testing.T) {
 }
 
 func TestDatasetProfilePolicyTimezoneValidation(t *testing.T) {
-	base := TimePolicyInput{Kind: TimeBusinessDate, FieldToken: "day", ReportingTimezone: "UTC", Calendar: CalendarGregorian}
-	for _, zone := range []string{" UTC", "UTC ", "UT\nC", "Unknown/Nowhere", strings.Repeat("A", 65), string([]byte{0xff})} {
-		input := base
-		input.ReportingTimezone = zone
-		assertInvalidPolicyTime(t, input)
+	accepted := []string{"UTC", "Europe/Moscow", "America/New_York"}
+	rejected := []string{
+		"", "Local", "CET", "Etc/UTC", "US/Eastern",
+		"posix/America/New_York", "right/America/New_York",
+		" UTC", "UTC ", "UT\nC", "Unknown/Nowhere",
+		strings.Repeat("A", 65), string([]byte{0xff}), "UTC\x7f",
 	}
-	local := TimePolicyInput{Kind: TimeLocalTimestamp, FieldToken: "at", ReportingTimezone: "UTC", SourceTimezone: "UTC", Calendar: CalendarGregorian}
-	local.SourceTimezone = "UTC\x7f"
-	assertInvalidPolicyTime(t, local)
+	for round := 0; round < 2; round++ {
+		if round == 1 {
+			poisonHostZoneDatabase(t)
+		}
+		for _, zone := range accepted {
+			assertTimezoneVerdict(t, zone, false, true)
+			assertTimezoneVerdict(t, zone, true, true)
+		}
+		for _, zone := range rejected {
+			assertTimezoneVerdict(t, zone, false, false)
+			assertTimezoneVerdict(t, zone, true, false)
+		}
+	}
 }
 
 func TestDatasetProfilePolicyTimeValuesAreDetached(t *testing.T) {
@@ -158,5 +171,38 @@ func assertInvalidPolicyTime(t *testing.T, input TimePolicyInput) {
 	t.Helper()
 	if value, err := NewTimePolicy(input); err == nil || CodeOf(err) != CodeInvalidRequest || value.Valid() {
 		t.Fatalf("invalid time policy accepted: %+v", input)
+	}
+}
+
+// poisonHostZoneDatabase makes host tzdata lookups misleading or unavailable, so
+// any acceptance can only come from the embedded pinned rules.
+func poisonHostZoneDatabase(t *testing.T) {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(directory, "Europe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "Europe", "Moscow"), []byte("not TZif"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TZ", "America/Los_Angeles")
+	t.Setenv("ZONEINFO", directory)
+}
+
+func assertTimezoneVerdict(t *testing.T, zone string, source bool, want bool) {
+	t.Helper()
+	input := TimePolicyInput{Kind: TimeBusinessDate, FieldToken: "day", ReportingTimezone: "UTC", Calendar: CalendarGregorian}
+	if source {
+		input.Kind = TimeLocalTimestamp
+		input.SourceTimezone = zone
+	} else {
+		input.ReportingTimezone = zone
+	}
+	value, err := NewTimePolicy(input)
+	if want && (err != nil || !value.Valid()) {
+		t.Fatalf("timezone %q rejected (source=%v): %v", zone, source, err)
+	}
+	if !want && (err == nil || CodeOf(err) != CodeInvalidRequest || value.Valid()) {
+		t.Fatalf("timezone %q accepted (source=%v)", zone, source)
 	}
 }
