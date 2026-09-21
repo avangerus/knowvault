@@ -7,6 +7,13 @@ import (
 	"knowvault.local/verified-workspace/internal/policy"
 )
 
+// authorityAccessModeSourceEnforced is the second legitimate workspace source
+// access mode, private to the authority surface. The lookup needs the exact
+// spelling so that a legitimate SOURCE_ENFORCED binding — a workspace source
+// this execution path cannot serve — stays distinct from an access-mode fact
+// the database should never have returned.
+const authorityAccessModeSourceEnforced = "SOURCE_ENFORCED"
+
 // PostgreSQLAuthorityLookup names one PostgreSQL source binding a caller
 // already knows by its workspace, source scope and connection. It is a closed
 // identity triple: it is never SQL, never a credential reference, never a
@@ -34,12 +41,13 @@ type PostgreSQLAuthorityLookup struct {
 // existence oracle.
 //
 // The single read queries only app.workspace_source_status_v3($1) for the
-// exact scope and connection. Zero rows and a legitimate row this execution
-// path cannot use both collapse to CodeNotFound. Any other server fact that
-// does not match the requested identity, a revision outside the safe positive
-// range, an unparseable scope configuration hash, an ambiguous result set and
-// every driver/scan/rows error are malformed server facts and fail closed with
-// CodePersistence. No error carries a wrapped database cause.
+// exact scope and connection. Zero rows and a legitimate SOURCE_ENFORCED row
+// this execution path cannot serve both collapse to CodeNotFound. Any other
+// server fact that does not match the requested identity, a revision outside
+// the safe positive range, an unparseable scope configuration hash, an access
+// mode that is neither of the two legitimate modes, an ambiguous result set
+// and every driver/scan/rows error are malformed server facts and fail closed
+// with CodePersistence. No error carries a wrapped database cause.
 func (store *Store) ResolvePostgreSQLAuthorityRequest(ctx context.Context, access database.AccessContext, lookup PostgreSQLAuthorityLookup) (PostgreSQLAuthorityRequest, error) {
 	if store == nil || store.database == nil || ctx == nil || access.Validate() != nil {
 		return PostgreSQLAuthorityRequest{}, &Error{code: CodeRequestInvalid}
@@ -146,11 +154,21 @@ func (store *Store) ResolvePostgreSQLAuthorityRequest(ctx context.Context, acces
 			persistence = true
 			return nil
 		}
-		// A SOURCE_ENFORCED binding is a legitimate workspace source this
-		// execution path cannot serve, so it is deliberately unavailable rather
-		// than corrupt.
-		if scannedAccessMode != authorityAccessModeManaged {
+		// The access mode is a closed server fact, so it is classified only
+		// after every identity/revision/hash fact above was exact-checked.
+		// WORKSPACE_MANAGED is the one mode this execution path serves. A
+		// SOURCE_ENFORCED binding is a legitimate workspace source this path
+		// cannot serve, so it is deliberately unavailable rather than corrupt.
+		// Every other string — empty, padded, wrong case or unknown — is not a
+		// mode at all: it is a malformed server fact that must fail closed
+		// instead of borrowing that deliberate unavailability.
+		switch scannedAccessMode {
+		case authorityAccessModeManaged:
+		case authorityAccessModeSourceEnforced:
 			notFound = true
+			return nil
+		default:
+			persistence = true
 			return nil
 		}
 		request = PostgreSQLAuthorityRequest{
