@@ -110,3 +110,79 @@ func TestResolveExplicitZonedTimestampV2RefusesRelativeAndForgedProposals(t *tes
 		zonedTimestampRefused(t, name, proposal)
 	}
 }
+
+// zonedTimestampUTCRefused pins one whole refusal for the UTC day-budget
+// resolver: the zero value, the expected code as a content-free typed error
+// with its clarification, no unwrap and no echoed bound text.
+func zonedTimestampUTCRefused(t *testing.T, name string, proposal PeriodProposal, maxPeriodDays int, code ErrorCode) {
+	t.Helper()
+	value, err := resolveExplicitZonedTimestampUTCV2(proposal, maxPeriodDays)
+	clarification := ClarificationOf(err)
+	if value != (ResolvedPeriodV2{}) || err == nil || CodeOf(err) != code ||
+		err.Error() != string(code) || clarification != clarificationFor(code) ||
+		errors.Unwrap(err) != nil {
+		t.Fatalf("%s: value=%v err=%v clarification=%q", name, value, err, clarification)
+	}
+	for _, leaked := range []string{proposal.start, proposal.end, string(proposal.mode)} {
+		if leaked != "" && (strings.Contains(err.Error(), leaked) || strings.Contains(clarification, leaked)) {
+			t.Fatalf("%s: refusal leaked %q", name, leaked)
+		}
+	}
+}
+
+func TestResolveExplicitZonedTimestampUTCV2AcceptsWithinUTCDayBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, end, wantStart, wantEnd string
+		maxPeriodDays                        int
+	}{
+		{"midnight to midnight covers one UTC date", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", 1},
+		{"noon to noon covers two UTC dates", "2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z", "2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z", 2},
+		{"last included nanosecond lands on the second date", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00.000000001Z", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00.000000001Z", 2},
+		{"exact span at the maximum budget", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", 31},
+		{"leap day covers two UTC dates", "2024-02-28T00:00:00Z", "2024-03-01T00:00:00Z", "2024-02-28T00:00:00Z", "2024-03-01T00:00:00Z", 2},
+		{"offsets normalize to one UTC date", "2026-01-01T23:00:00-05:00", "2026-01-02T10:00:00+02:00", "2026-01-02T04:00:00Z", "2026-01-02T08:00:00Z", 1},
+		{"source offsets do not define the UTC dates", "2026-01-01T20:00:00-04:00", "2026-01-03T09:00:00+09:00", "2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z", 1},
+	} {
+		value, err := resolveExplicitZonedTimestampUTCV2(businessDateProposal(t, tc.start, tc.end), tc.maxPeriodDays)
+		if err != nil || !value.Valid() {
+			t.Fatalf("%s: value=%v err=%v", tc.name, value, err)
+		}
+		mode, modeOK := value.Mode()
+		kind, kindOK := value.TimeKind()
+		start, end, boundsOK := value.Bounds()
+		if !modeOK || mode != PeriodEXPLICIT || !kindOK || kind != analytic.TimeZonedTimestamp ||
+			!boundsOK || start != tc.wantStart || end != tc.wantEnd || value.IsLatestAvailable() {
+			t.Fatalf("%s: resolved %q/%q %q..%q ok=%v/%v/%v", tc.name, mode, kind, start, end, modeOK, kindOK, boundsOK)
+		}
+	}
+}
+
+func TestResolveExplicitZonedTimestampUTCV2RefusesWiderSpansAndInvalidInput(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		start, end    string
+		maxPeriodDays int
+		code          ErrorCode
+	}{
+		{"one UTC date past the budget", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00.000000001Z", 1, CodePeriodLimitExceeded},
+		{"noon to noon past a one-date budget", "2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z", 1, CodePeriodLimitExceeded},
+		{"one UTC date past the maximum budget", "2026-01-01T00:00:00Z", "2026-02-02T00:00:00Z", 31, CodePeriodLimitExceeded},
+		{"leap day past the budget", "2024-02-28T00:00:00Z", "2024-03-01T00:00:00Z", 1, CodePeriodLimitExceeded},
+		{"offset spellings widen the UTC span", "2026-01-01T23:00:00-05:00", "2026-01-03T04:00:00+02:00", 1, CodePeriodLimitExceeded},
+		{"zero budget", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", 0, CodePeriodInvalid},
+		{"negative budget", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", -1, CodePeriodInvalid},
+		{"budget above maximum", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", 32, CodePeriodInvalid},
+		{"offset-free bounds fail before the budget", "2026-01-01T00:00:00", "2026-01-02T00:00:00Z", 1, CodePeriodInvalid},
+		{"padded fraction fails before the budget", "2026-01-01T00:00:00.120Z", "2026-01-02T00:00:00Z", 31, CodePeriodInvalid},
+		{"non-increasing instants fail before the budget", "2026-01-01T03:00:00+03:00", "2026-01-01T00:00:00Z", 31, CodePeriodInvalid},
+	} {
+		zonedTimestampUTCRefused(t, tc.name, businessDateProposal(t, tc.start, tc.end), tc.maxPeriodDays, tc.code)
+	}
+	for name, proposal := range map[string]PeriodProposal{
+		"zero proposal": {},
+		"uninitialized": {mode: PeriodEXPLICIT, start: "2026-01-01T00:00:00Z", end: "2026-01-02T00:00:00Z"},
+		"unknown mode":  {mode: "UNKNOWN", start: "2026-01-01T00:00:00Z", end: "2026-01-02T00:00:00Z", initialized: true},
+	} {
+		zonedTimestampUTCRefused(t, name, proposal, 31, CodePeriodInvalid)
+	}
+}
