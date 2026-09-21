@@ -42,7 +42,7 @@ func TestDatasetProfileCanonicalNormalizesOrderAndIsDeterministic(t *testing.T) 
 		`"source":{"connection_id":"primary","database_identity":"gm","exposed_schema_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","exposed_schema_revision":1,"projection_contract_hash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","projection_lineage_id":"operations","projection_revision":1,"relation_kind":"VIEW","relation_name":"operations","schema_name":"public","source_scope_id":"gm"}`,
 		`{"allowed_ops":[],"filterable":false,"groupable":false,"logical_type":"TEXT","nullable":false,"output_allowed":true,"physical_name":"object_id","physical_type":"PG_TEXT","sortable":false,"source_ordinal":1,"token":"object_id"}`,
 		`{"denominator_field":"","distinct_field":"","eligibility":"ALL_ROWS","id":"amount","null_policy":"EXCLUDE_AND_REPORT","numerator_field":"amount","reducer":"SUM","unit":"units"}`,
-		`"time":{"calendar":"","field_token":"","kind":"NONE","reporting_timezone":"","source_timezone":""}`,
+		`"time":{"calendar":"","field_token":"","kind":"NONE","reporting_timezone":"","source_timezone":"","timezone_rules_bundle_sha256":"sha256:8f55634d05f8bca1f7bc7c69c5933428c69357e0bdf565e5ba224e3f88ff12e8"}`,
 		`"coverage":"UNKNOWN"`,
 		`"limits":{"max_input_rows":1000,"max_output_groups":20,"max_period_days":31,"max_result_bytes":1048576,"statement_timeout_ms":5000}`,
 	} {

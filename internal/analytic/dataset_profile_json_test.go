@@ -5,6 +5,8 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"knowvault.local/verified-workspace/internal/tzrules"
 )
 
 func TestDecodeDatasetProfileJSONRoundTripsCanonicalProfile(t *testing.T) {
@@ -84,6 +86,25 @@ func TestDecodeDatasetProfileJSONRejectsInvalidPhysicalLogicalAndBusinessSemanti
 			`"token":"amount"`, `"token":"other"`),
 		"invalid coverage": replaceDatasetProfileJSON(t, raw,
 			`"coverage":"UNKNOWN"`, `"coverage":"COMPLETE"`),
+	}
+	for name, candidate := range cases {
+		t.Run(name, func(t *testing.T) { assertInvalidDatasetProfileJSON(t, candidate) })
+	}
+}
+
+func TestDecodeDatasetProfileJSONBindsTimezoneRulesBundleDigest(t *testing.T) {
+	raw, _ := canonicalProfileForTest(t, validDatasetProfileSpec(t))
+	member := `"timezone_rules_bundle_sha256":"` + tzrules.BundleSHA256 + `"`
+	if !bytes.Contains(raw, []byte(member)) {
+		t.Fatalf("canonical time object lacks pinned timezone rules digest: %s", raw)
+	}
+	cases := map[string][]byte{
+		"missing digest": replaceDatasetProfileJSON(t, raw, ","+member, ``),
+		"altered digest": replaceDatasetProfileJSON(t, raw, member,
+			`"timezone_rules_bundle_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"`),
+		"digest outside time": replaceDatasetProfileJSON(t, raw,
+			`"schema_version":`, member+`,"schema_version":`),
+		"duplicate digest": replaceDatasetProfileJSON(t, raw, member, member+`,`+member),
 	}
 	for name, candidate := range cases {
 		t.Run(name, func(t *testing.T) { assertInvalidDatasetProfileJSON(t, candidate) })

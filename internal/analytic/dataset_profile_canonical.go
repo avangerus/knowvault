@@ -1,6 +1,9 @@
 package analytic
 
-import "knowvault.local/verified-workspace/internal/source/canon"
+import (
+	"knowvault.local/verified-workspace/internal/source/canon"
+	"knowvault.local/verified-workspace/internal/tzrules"
+)
 
 const datasetProfileSchemaVersion = "knowvault-dataset-profile-v2"
 
@@ -145,11 +148,12 @@ func canonicalDatasetProfile(value normalizedDatasetProfileSpec) ([]byte, string
 		Semantics canonicalProfileSemantics `json:"semantics"`
 		Grain     canonicalProfileGrain     `json:"grain"`
 		Time      struct {
-			Kind              TimeKind `json:"kind"`
-			FieldToken        string   `json:"field_token"`
-			ReportingTimezone string   `json:"reporting_timezone"`
-			SourceTimezone    string   `json:"source_timezone"`
-			Calendar          Calendar `json:"calendar"`
+			Kind                      TimeKind `json:"kind"`
+			FieldToken                string   `json:"field_token"`
+			ReportingTimezone         string   `json:"reporting_timezone"`
+			SourceTimezone            string   `json:"source_timezone"`
+			Calendar                  Calendar `json:"calendar"`
+			TimezoneRulesBundleSHA256 string   `json:"timezone_rules_bundle_sha256"`
 		} `json:"time"`
 		Coverage CoveragePolicy `json:"coverage"`
 		Limits   struct {
@@ -170,6 +174,7 @@ func canonicalDatasetProfile(value normalizedDatasetProfileSpec) ([]byte, string
 	projection.Source.SchemaName, projection.Source.RelationName, projection.Source.RelationKind = source.SchemaName, source.RelationName, source.RelationKind
 	projection.Time.Kind, projection.Time.FieldToken = timePolicy.Kind, timePolicy.FieldToken
 	projection.Time.ReportingTimezone, projection.Time.SourceTimezone, projection.Time.Calendar = timePolicy.ReportingTimezone, timePolicy.SourceTimezone, timePolicy.Calendar
+	projection.Time.TimezoneRulesBundleSHA256 = tzrules.BundleSHA256
 	projection.Limits.MaxInputRows, projection.Limits.MaxOutputGroups = limits.MaxInputRows, limits.MaxOutputGroups
 	projection.Limits.MaxPeriodDays, projection.Limits.MaxResultBytes = limits.MaxPeriodDays, limits.MaxResultBytes
 	projection.Limits.StatementTimeoutMS = limits.StatementTimeoutMS

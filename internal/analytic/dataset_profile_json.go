@@ -3,6 +3,8 @@ package analytic
 import (
 	jsontext "encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+
+	"knowvault.local/verified-workspace/internal/tzrules"
 )
 
 // maxDatasetProfileJSONBytes bounds one trusted, server-owned profile before
@@ -116,11 +118,12 @@ type datasetProfileGrainJSON struct {
 }
 
 type datasetProfileTimeJSON struct {
-	Kind              *TimeKind `json:"kind"`
-	FieldToken        *string   `json:"field_token"`
-	ReportingTimezone *string   `json:"reporting_timezone"`
-	SourceTimezone    *string   `json:"source_timezone"`
-	Calendar          *Calendar `json:"calendar"`
+	Kind                      *TimeKind `json:"kind"`
+	FieldToken                *string   `json:"field_token"`
+	ReportingTimezone         *string   `json:"reporting_timezone"`
+	SourceTimezone            *string   `json:"source_timezone"`
+	Calendar                  *Calendar `json:"calendar"`
+	TimezoneRulesBundleSHA256 *string   `json:"timezone_rules_bundle_sha256"`
 }
 
 type datasetProfileLimitsJSON struct {
@@ -286,7 +289,8 @@ func (wire datasetProfileGrainJSON) value() (DatasetGrain, error) {
 
 func (wire datasetProfileTimeJSON) value() (TimePolicy, error) {
 	if wire.Kind == nil || !wire.Kind.Valid() || wire.FieldToken == nil || wire.ReportingTimezone == nil ||
-		wire.SourceTimezone == nil || wire.Calendar == nil {
+		wire.SourceTimezone == nil || wire.Calendar == nil || wire.TimezoneRulesBundleSHA256 == nil ||
+		*wire.TimezoneRulesBundleSHA256 != tzrules.BundleSHA256 {
 		return TimePolicy{}, invalidDatasetProfileJSON()
 	}
 	return NewTimePolicy(TimePolicyInput{
