@@ -956,6 +956,7 @@ ul.answer-keys li:last-child { border-bottom: none; }
 
 .search-pilot { width: min(100%, 960px); box-sizing: border-box; margin: 0 auto; padding: 32px 28px 64px; overflow-y: auto; }
 .search-pilot[hidden] { display: none; }
+.content-panel-ask > .search-pilot:not(.governed-preset-owner) { flex: 1 1 auto; min-height: 0; }
 .search-pilot h1 { font-size: var(--fs-page); margin: 8px 0 24px; }
 .search-pilot h2 { font-size: var(--fs-title); margin: 0 0 16px; }
 .search-pilot h2 small { color: var(--ink-secondary); font-size: var(--fs-caption); font-weight: 400; }
@@ -979,12 +980,10 @@ ul.answer-keys li:last-child { border-bottom: none; }
 }
 .search-pilot-citations { display: flex; flex-wrap: wrap; gap: 8px 18px; list-style: none; padding: 0; font-size: 13px; }
 .search-pilot-results { margin-top: 28px; }
-
-/* D3B: live database checks sit beneath the Search options and stay visually
-   secondary to the primary search surface. The table is the only element that
-   scrolls horizontally, so a wide live row never widens the page. */
-.governed-presets { margin: 18px 0 26px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
-.governed-presets-heading { font-size: var(--fs-meta); font-weight: 650; margin: 0 0 10px; color: var(--ink-secondary); }
+.document-search-disclosure { margin: 24px 0 26px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.document-search-disclosure > summary { cursor: pointer; padding: 15px 16px; color: var(--ink); font-size: var(--fs-title); font-weight: 650; }
+.governed-presets { margin: 0 0 26px; padding: 20px 18px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--r-md); background: var(--surface); }
+.governed-presets-heading { margin: 0 0 18px; color: var(--ink); }
 .governed-presets-note { margin: 8px 0 0; font-size: var(--fs-meta); color: var(--ink-secondary); }
 .governed-presets-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .governed-preset-select { flex: 1 1 260px; min-width: 0; max-width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink); background: var(--surface); font: inherit; }

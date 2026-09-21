@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ComponentType, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
@@ -1313,10 +1313,33 @@ function ClosedOrError({ result }: { result: ApiFailure | ApiBroken }) {
 // when its Journal tab is selected because the read appends audit.viewed.
 // ---------------------------------------------------------------------------
 
-type WorkspaceDataState =
+export type WorkspaceDataState =
   | { phase: "idle" }
   | { phase: "loading" }
   | { phase: "loaded"; snapshot: ApiResult<WorkspaceSnapshot>; sources: ApiResult<SourcesEnvelope> };
+
+export type GovernedWorkspaceAuthorization = "pending" | "authorized" | "denied";
+export type GovernedRetentionState = { workspaceID: string | null; revision: number | null; phase: GovernedWorkspaceAuthorization; resetKey: number };
+type GovernedRetentionEvent = Pick<GovernedRetentionState, "workspaceID" | "phase" | "revision">;
+export function reduceGovernedRetention(state: GovernedRetentionState, event: GovernedRetentionEvent): GovernedRetentionState {
+  if (state.workspaceID !== event.workspaceID) return { ...event, resetKey: state.resetKey + 1 };
+  if (event.phase === "pending") return state.phase === "pending" ? state : { ...state, phase: "pending" };
+  if (event.phase === "denied") return state.phase === "denied" && state.revision === null ? state : { ...state, phase: "denied", revision: null, resetKey: state.resetKey + 1 };
+  if (state.revision === event.revision && event.revision !== null) {
+    return state.phase === "authorized" ? state : { ...state, phase: "authorized" };
+  }
+  return { ...state, phase: "authorized", revision: event.revision, resetKey: state.resetKey + 1 };
+}
+
+const authorizationDenied = (result: ApiResult<unknown>) => result.kind === "failure" && [401, 403, 404].includes(result.status);
+
+export function governedWorkspaceAuthorization(state: WorkspaceDataState, requestedWorkspaceID: string | null): { phase: GovernedWorkspaceAuthorization; revision: number | null } {
+  if (requestedWorkspaceID === null || state.phase !== "loaded") return { phase: "pending", revision: null };
+  if (state.snapshot.kind !== "ok") return { phase: authorizationDenied(state.snapshot) ? "denied" : "pending", revision: null };
+  if (state.snapshot.value.id !== requestedWorkspaceID || state.snapshot.value.status !== "ACTIVE") return { phase: "denied", revision: null };
+  if (state.sources.kind !== "ok") return { phase: authorizationDenied(state.sources) ? "denied" : "pending", revision: null };
+  return { phase: "authorized", revision: state.snapshot.value.revision };
+}
 
 function useWorkspaceData(workspaceID: string | null, refreshVersion: number): WorkspaceDataState {
   const [reply, setReply] = useState<{ workspaceID: string; refreshVersion: number; state: WorkspaceDataState } | null>(null);
@@ -2064,7 +2087,13 @@ function App() {
                   aria-label={current.label}
                   className={section === item ? "rail-item active" : "rail-item"}
                   key={item}
-                  onClick={() => { dismissFootnoteTooltip(); setSection(item); }}
+                  onClick={() => {
+                    dismissFootnoteTooltip();
+                    if (item === "search" && section !== "search") {
+                      setWorkspaceRefreshVersion((version) => version + 1);
+                    }
+                    setSection(item);
+                  }}
                   title={current.label}
                   type="button"
                 >
@@ -2112,13 +2141,22 @@ function App() {
             </header>
           )}
 
-          {session === "signedIn" && section === "search" && (
+          {session === "signedIn" && (
+            <GovernedPresetPanelHost
+              active={!evidenceTarget && section === "search"}
+              onSessionExpired={expireSession}
+              requestedWorkspaceID={selectedWorkspaceID}
+              revalidationKey={workspaceRefreshVersion}
+              state={data}
+            />
+          )}
+
+          {session === "signedIn" && (
             <SearchView
-              active={!evidenceTarget}
+              active={!evidenceTarget && section === "search"}
               key={`${selectedWorkspaceID}:${searchResetEpoch}`}
               onOpenEvidence={openEvidence}
               onOpenSources={() => { dismissFootnoteTooltip(); setSection("sources"); }}
-              onSessionExpired={expireSession}
               requestedWorkspaceID={selectedWorkspaceID}
               state={data}
             />
@@ -3742,12 +3780,47 @@ type PilotSearchPage = {
   next_offset: number | null;
 };
 
-// The pilot presents independent searches. It never sends a conversation ID
-// or loads conversation history; source results do not wait for generation.
-function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, requestedWorkspaceID, active }: {
+export function GovernedPresetPanelHost({ active, onSessionExpired, requestedWorkspaceID, revalidationKey, state }: {
+  active: boolean; onSessionExpired: () => void; requestedWorkspaceID: string | null; revalidationKey: number; state: WorkspaceDataState;
+}) {
+  const authorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
+  const [catalogEpoch, setCatalogEpoch] = useState<number | null>(null);
+  const catalogWasAuthorized = useRef(false);
+  const [retention, dispatchRetention] = useReducer(reduceGovernedRetention, { workspaceID: null, revision: null, phase: "pending" as GovernedWorkspaceAuthorization, resetKey: 0 });
+
+  const onCatalogAuthorization = useCallback((catalogAuthorized: boolean) => {
+    if (catalogAuthorized) catalogWasAuthorized.current = true;
+    setCatalogEpoch(catalogAuthorized || !catalogWasAuthorized.current ? revalidationKey : null);
+  }, [revalidationKey]);
+
+  useEffect(() => { dispatchRetention({ workspaceID: requestedWorkspaceID, phase: authorization.phase, revision: authorization.revision }); }, [authorization.phase, authorization.revision, requestedWorkspaceID]);
+
+  if (requestedWorkspaceID === null) return null;
+  const authorized = authorization.phase === "authorized" && authorization.revision !== null;
+  const visible = active && authorized && catalogEpoch === revalidationKey && retention.workspaceID === requestedWorkspaceID
+    && retention.phase === "authorized" && retention.revision === authorization.revision;
+  return (
+    <div className="search-pilot governed-preset-owner" hidden={!visible} style={{ flex: "0 0 auto", paddingBottom: 0 }}>
+      <GovernedPresetPanel
+        authorized={authorized}
+        key={`${requestedWorkspaceID}:${retention.resetKey}`}
+        onCatalogAuthorization={onCatalogAuthorization}
+        onSessionExpired={onSessionExpired}
+        revalidationKey={revalidationKey}
+        visible={visible}
+        workspaceID={requestedWorkspaceID}
+      />
+    </div>
+  );
+}
+
+// The pilot presents independent document searches. It never sends a
+// conversation ID or loads conversation history; source results do not wait
+// for generation. The shell keeps this document surface mounted while an
+// evidence page or another section is active.
+export function SearchView({ onOpenSources, onOpenEvidence, state, requestedWorkspaceID, active }: {
   onOpenSources: () => void;
   onOpenEvidence: (hash: string) => void;
-  onSessionExpired: () => void;
   state: WorkspaceDataState;
   requestedWorkspaceID: string | null;
   active: boolean;
@@ -3769,6 +3842,7 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
   const snapshot = snapshotResult?.kind === "ok" ? snapshotResult.value : null;
   const workspaceID = snapshot?.id === requestedWorkspaceID ? snapshot.id : null;
   const workspaceClosed = snapshot?.status === "ARCHIVED" || snapshot?.status === "REVOKED";
+  const workspaceAuthorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
   const models = snapshot?.model_profiles ?? [];
   const modelCatalogKnown = snapshot?.model_profiles !== undefined;
   const answerAvailable = !modelCatalogKnown || models.length > 0;
@@ -3797,10 +3871,10 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
     // Revalidation loading is not a new workspace revision. Keep the search in
     // memory, while the stamped workspace hook prevents it being displayed.
     if (!snapshotResult) return;
-    if (!snapshot || workspaceClosed || snapshot.id !== requestedWorkspaceID
+    if (!snapshot || workspaceClosed || workspaceAuthorization.phase === "denied" || snapshot.id !== requestedWorkspaceID
       || (successfulRevision.current !== undefined && successfulRevision.current !== snapshot.revision)) clearSearch();
     successfulRevision.current = snapshot?.revision;
-  }, [snapshotResult, snapshot, workspaceClosed, requestedWorkspaceID, clearSearch]);
+  }, [snapshotResult, snapshot, workspaceAuthorization.phase, workspaceClosed, requestedWorkspaceID, clearSearch]);
 
   useLayoutEffect(() => () => { generation.current++; }, []);
 
@@ -3884,6 +3958,7 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
   if (snapshotResult && snapshotResult.kind !== "ok") return <div className="search-pilot" hidden={!active}><ClosedOrError result={snapshotResult} /></div>;
   if (!workspaceID) return <div className="search-pilot" hidden={!active}><p role="status">{requestedWorkspaceID ? "Checking access…" : "Select a workspace."}</p></div>;
   if (workspaceClosed) return <div className="search-pilot" hidden={!active}><p>This workspace is closed.</p></div>;
+  if (workspaceAuthorization.phase !== "authorized") return <div className="search-pilot" hidden={!active}><p role="status">{workspaceAuthorization.phase === "pending" ? "Checking access…" : "This workspace is unavailable."}</p></div>;
   const visible = resultWorkspace === workspaceID;
   const run = visible && page?.kind === "ok" && answer?.kind === "ok" ? answer.value : null;
   const hits = visible && page?.kind === "ok" ? page.value.results : [];
@@ -3892,12 +3967,12 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
   return (
     <section className="search-pilot" hidden={!active} ref={searchElement}
       onScroll={(event) => { if (active) scrollPosition.current = event.currentTarget.scrollTop; }}>
-      <header>
-        <h1>Search</h1>
-      </header>
+      <details className="document-search-disclosure">
+        <summary>Search documents</summary>
+        <div className="document-search-content">
       <form className="search-pilot-form" onSubmit={search}>
-        <label className="sr-only" htmlFor="pilot-question">Search query</label>
-        <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question or search" />
+        <label className="sr-only" htmlFor="pilot-question">Document search query</label>
+        <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Search documents" />
         <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Search"}</button>
       </form>
       <div className="search-pilot-options">
@@ -3909,11 +3984,6 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
         </select>}
         <button className="text-button" onClick={onOpenSources} type="button">Sources</button>
       </div>
-      {/* D3B: the administrator-approved live database checks are a separate,
-          secondary surface on the Search screen. They are keyed by workspace so
-          a workspace change discards the whole catalogue and result, and they
-          never touch ordinary document search or the AI answer. */}
-      {active && <GovernedPresetPanel key={workspaceID} onSessionExpired={onSessionExpired} workspaceID={workspaceID} />}
       {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
       {visible && (answerPending || answer) && (
         <section aria-label="AI answer" className="search-pilot-answer">
@@ -3957,6 +4027,8 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
           {page.value.has_more && <button className="secondary-button" onClick={() => void more()} disabled={searching} type="button">More results</button>}
         </section>
       )}
+        </div>
+      </details>
     </section>
   );
 }

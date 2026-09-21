@@ -1,4 +1,4 @@
-// D3B — Live database checks: a thin browser client over the existing
+// D3B — Governed company data: a thin browser client over the existing
 // POST /api/v1/mcp transport.
 //
 // The Search screen may show the administrator-approved live SQL presets for
@@ -80,11 +80,11 @@ export const GOVERNED_QUERY_RUN_TOOL = "knowvault_query_run";
 export const GOVERNED_LIVE_DATA_STATE = "LIVE_OBSERVATION";
 
 /** Generic, content-free copy. Server messages are never shown. */
-export const GOVERNED_PRESETS_UNAVAILABLE = "Live database checks unavailable.";
-export const GOVERNED_PRESETS_EMPTY = "No live database checks configured.";
-export const GOVERNED_PRESETS_LOADING = "Loading live database checks…";
-export const GOVERNED_RESULT_UNKNOWN_PRESET = "Select a live database check before running it.";
-export const GOVERNED_RESULT_RUN_UNAVAILABLE = "Live database check could not be run.";
+export const GOVERNED_PRESETS_UNAVAILABLE = "Company data unavailable.";
+export const GOVERNED_PRESETS_EMPTY = "No company data checks configured.";
+export const GOVERNED_PRESETS_LOADING = "Loading company data…";
+export const GOVERNED_RESULT_UNKNOWN_PRESET = "Select a reviewed check before running it.";
+export const GOVERNED_RESULT_RUN_UNAVAILABLE = "Company data check could not be run.";
 export const GOVERNED_RESULT_HISTORICAL = "Not a live observation.";
 export const GOVERNED_NO_ROWS = "No rows returned.";
 export const GOVERNED_NULL_CELL = "NULL";
@@ -247,7 +247,7 @@ export function governedRequestAccepted(stamp: number, current: number, alive: b
  * (transport error, non-2xx, unparsable or mismatched payload) collapses to
  * it. The pending line is a state, not progress the server reported. */
 export const GOVERNED_ASK_UNAVAILABLE = "Database answer unavailable.";
-export const GOVERNED_ASK_PENDING = "Asking the live database…";
+export const GOVERNED_ASK_PENDING = "Checking company data…";
 
 /** Reserve one governed-ask submission: the single gate that makes at most one
  * `governedAsk` call per user submit. The component holds a boolean ref; the
@@ -318,14 +318,18 @@ export type GovernedPresetPanelProps = {
   /** The workspace whose catalogue is shown. The panel is keyed by it: a
    * workspace change remounts and discards everything below. */
   workspaceID: string;
+  authorized: boolean;
+  visible: boolean;
+  revalidationKey: number;
+  onCatalogAuthorization: (authorized: boolean) => void;
   /** Called on HTTP 401 so the shell can expire the session. The panel never
    * shows its own signed-out copy. */
   onSessionExpired: () => void;
 };
 
-/** The live-database-checks section of the Search screen. It loads the
+/** The governed company-data section of the Search screen. It loads the
  * catalogue on mount only; running a preset is always an explicit click. */
-export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedPresetPanelProps) {
+export function GovernedPresetPanel({ authorized, visible, revalidationKey, onCatalogAuthorization, workspaceID, onSessionExpired }: GovernedPresetPanelProps) {
   const [catalogState, setCatalogState] = useState<CatalogState>({ phase: "loading" });
   const [presetID, setPresetID] = useState("");
   const [runState, setRunState] = useState<RunState>({ phase: "idle" });
@@ -335,6 +339,11 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
   // checks "alive" after awaiting, so a response for a previous workspace (or
   // for an unmounted panel) can never restore a catalogue or rows.
   const epoch = useRef(0);
+  // Catalogue reauthorization must never steal the continuation identity of
+  // an explicit reviewed-check execution. A return to Search can refresh the
+  // catalogue while that execution is in flight; the run still owns this
+  // separate epoch and releases its guard when it resolves.
+  const runEpoch = useRef(0);
   const alive = useRef(true);
   // The ask owns its own epoch: a catalogue reload, a preset run or a remount
   // must be able to supersede an in-flight ask without disturbing the run
@@ -351,48 +360,56 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
   // reservation is refused while it is held — so no ask can start while a run
   // is in flight and no run can start while an ask is in flight.
   const runPendingRef = useRef(false);
+  const catalogLoadKey = useRef<number | null>(null);
+  const catalogBinding = useRef<{ connection_id: string; database_identity: string } | null>(null);
 
-  const loadCatalog = useCallback(async () => {
+  const resetProtectedState = useCallback(() => {
+    askEpoch.current++;
+    runEpoch.current++;
+    askPendingRef.current = runPendingRef.current = false;
+    catalogBinding.current = null;
+    setAskState({ phase: "idle" }); setRunState({ phase: "idle" });
+  }, []);
+
+  const loadCatalog = useCallback(async (resetState: boolean) => {
     const current = ++epoch.current;
     setCatalogState({ phase: "loading" });
-    setRunState({ phase: "idle" });
-    // A catalogue reload replaces the connection the form would ask, so any
-    // answer still in flight belongs to a catalogue that no longer exists: its
-    // epoch is bumped (its continuation is now rejected), the form is dropped
-    // back to idle and the guards are released for the new catalogue. A reset
-    // only ever runs from a live panel with no accepted continuation pending,
-    // so clearing the refs here cannot race an in-flight release; reloading the
-    // catalogue never itself sends an ask.
-    askEpoch.current++;
-    askPendingRef.current = false;
-    runPendingRef.current = false;
-    setAskState({ phase: "idle" });
+    if (resetState) resetProtectedState();
     const outcome = await governedMCPCall<GovernedPresetCatalog>(
       fetch, GOVERNED_QUERIES_LIST_TOOL, governedPresetListArguments(workspaceID));
     if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
-    if (outcome.kind === "sessionExpired") { onSessionExpired(); return; }
-    if (outcome.kind !== "ok") { setCatalogState({ phase: "unavailable" }); return; }
+    if (outcome.kind === "sessionExpired") { resetProtectedState(); onCatalogAuthorization(false); onSessionExpired(); return; }
+    if (outcome.kind !== "ok") { resetProtectedState(); onCatalogAuthorization(false); setCatalogState({ phase: "unavailable" }); return; }
     const presets = outcome.value.presets ?? [];
+    if (presets.length === 0) { resetProtectedState(); onCatalogAuthorization(false); setCatalogState({ phase: "empty" }); return; }
+    const previousBinding = catalogBinding.current;
+    const nextBinding = { connection_id: outcome.value.connection_id, database_identity: outcome.value.database_identity };
+    if (previousBinding && (previousBinding.connection_id !== nextBinding.connection_id || previousBinding.database_identity !== nextBinding.database_identity)) resetProtectedState();
+    catalogBinding.current = nextBinding;
+    onCatalogAuthorization(true);
     setPresetID("");
-    setCatalogState(presets.length === 0
-      ? { phase: "empty" }
-      : { phase: "ready", catalog: outcome.value });
-  }, [workspaceID, onSessionExpired]);
+    setCatalogState({ phase: "ready", catalog: outcome.value });
+  }, [onCatalogAuthorization, onSessionExpired, resetProtectedState, workspaceID]);
 
   useEffect(() => {
-    // The panel only ever loads the catalogue here. No preset is run without
-    // an explicit user click, and a remount (workspace or session change)
-    // starts from a clean catalogue.
+    // Revalidation hides this mounted panel; authority changes remount it.
     alive.current = true;
-    void loadCatalog();
     return () => {
       alive.current = false;
       epoch.current++;
+      runEpoch.current++;
       // Unmount invalidates every ask epoch too: no answer may resolve into a
       // component that is no longer mounted.
       askEpoch.current++;
     };
-  }, [loadCatalog]);
+  }, [workspaceID]);
+
+  useEffect(() => {
+    if (!authorized || catalogLoadKey.current === revalidationKey) return;
+    const resetState = catalogLoadKey.current === null;
+    catalogLoadKey.current = revalidationKey;
+    void loadCatalog(resetState);
+  }, [authorized, loadCatalog, revalidationKey]);
 
   async function run(catalog: GovernedPresetCatalog) {
     // The synchronous reservation is the FIRST thing a run does: no work — not
@@ -405,7 +422,7 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
     // synchronous reservation and before any await: it is the stamp both the
     // accepted path and the catch path compare against, so a stale rejection
     // can never release a newer run's guard or set its state.
-    const current = ++epoch.current;
+    const current = ++runEpoch.current;
     try {
       const chosen = catalog.presets.find((preset) => preset.id === presetID);
       // A reservation that names no runnable preset consumes nothing: the
@@ -418,7 +435,7 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
         fetch, GOVERNED_QUERY_RUN_TOOL, governedPresetRunArguments(workspaceID, catalog, chosen.id));
       // A superseded or unmounted run (a catalogue reset, a remount, a preset
       // change) releases the guard to its new owner and touches no state.
-      if (!governedRequestAccepted(current, epoch.current, alive.current)) return;
+      if (!governedRequestAccepted(current, runEpoch.current, alive.current)) return;
       // The current run — and only it — releases the guard, on every accepted
       // outcome including sessionExpired.
       runPendingRef.current = false;
@@ -428,7 +445,7 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
       // The reservation must never leak into the UI as a rejected promise. A
       // throw from the transport is not a run outcome, so the guard is
       // released only for the continuation that still owns it.
-      if (governedRequestAccepted(current, epoch.current, alive.current)) {
+      if (governedRequestAccepted(current, runEpoch.current, alive.current)) {
         runPendingRef.current = false;
         setRunState({ phase: "failed" });
       }
@@ -496,33 +513,32 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
   const runDisabled = askPending;
 
   return (
-    <section aria-labelledby="governed-presets-heading" className="governed-presets">
-      <h2 className="governed-presets-heading" id="governed-presets-heading">Live database checks</h2>
+    <section aria-labelledby="governed-presets-heading" className="governed-presets" hidden={!visible}>
+      <h1 className="governed-presets-heading" id="governed-presets-heading">Ask company data</h1>
       {catalogState.phase === "loading" && <p className="governed-presets-note" role="status">{GOVERNED_PRESETS_LOADING}</p>}
       {catalogState.phase === "empty" && <p className="governed-presets-note">{GOVERNED_PRESETS_EMPTY}</p>}
       {catalogState.phase === "unavailable" && (
         <p className="governed-presets-note">
           {GOVERNED_PRESETS_UNAVAILABLE}{" "}
-          <button className="text-button" onClick={() => { void loadCatalog(); }} type="button">Retry</button>
+          <button className="text-button" onClick={() => { void loadCatalog(true); }} type="button">Retry</button>
         </p>
       )}
       {catalog && (
         <form className="governed-ask-form" onSubmit={(event) => { event.preventDefault(); ask(catalog); }}>
-          <h3 className="governed-ask-form-heading">Ask live database</h3>
           <div className="governed-ask-form-row">
-            <label className="sr-only" htmlFor="governed-ask-input">Ask a question about live company data</label>
+            <label className="sr-only" htmlFor="governed-ask-input">Ask company data</label>
             <input
               className="governed-ask-input"
               id="governed-ask-input"
               type="text"
-              placeholder="Ask a question about live company data"
+              placeholder="Ask company data"
               autoComplete="off"
               value={question}
               disabled={askPending}
               onChange={(event) => { setQuestion(event.target.value); }}
             />
             <button className="secondary-button" disabled={askDisabled} type="submit">
-              {askPending ? "Asking…" : "Ask"}
+              {askPending ? "Checking…" : "Ask"}
             </button>
           </div>
           {askPending && <p className="governed-presets-note" role="status">{GOVERNED_ASK_PENDING}</p>}
@@ -534,25 +550,24 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
           )}
         </form>
       )}
-      {catalog && (
-        <p className="governed-presets-subheading">Reviewed checks</p>
-      )}
-      {catalog && (
+      {catalog && <details className="governed-reviewed-checks">
+        <summary>Reviewed checks</summary>
+        <div className="governed-reviewed-checks-content">
         <div className="governed-presets-picker">
-          <label className="sr-only" htmlFor="governed-preset-select">Live database check</label>
+          <label className="sr-only" htmlFor="governed-preset-select">Reviewed check</label>
           <select className="governed-preset-select" id="governed-preset-select" value={presetID} disabled={pending || runDisabled}
             onChange={(event) => {
               // Selecting a different check supersedes any run in flight: the
               // epoch is bumped first, so that run's continuation is rejected
               // even if it resolves before the new preset settles.
-              epoch.current++;
+              runEpoch.current++;
               // The previously rendered rows belong to the previously chosen
               // check. They are discarded before the selection changes, so a
               // result is never shown under a newly selected check.
               setRunState({ phase: "idle" });
               setPresetID(event.target.value);
             }}>
-            <option value="">Select a live database check</option>
+            <option value="">Select a reviewed check</option>
             {catalog.presets.map((preset) => (
               <option key={preset.id} value={preset.id}>
                 {preset.description ? `${preset.name} — ${preset.description}` : preset.name}
@@ -564,13 +579,14 @@ export function GovernedPresetPanel({ workspaceID, onSessionExpired }: GovernedP
             {pending ? "Running…" : "Run"}
           </button>
         </div>
-      )}
-      {runState.phase === "failed" && (
-        <p className="governed-presets-note" role="status">
-          {chosenPreset ? GOVERNED_RESULT_RUN_UNAVAILABLE : GOVERNED_RESULT_UNKNOWN_PRESET}
-        </p>
-      )}
-      {runState.phase === "done" && <GovernedPresetResultView result={runState.result} />}
+        {runState.phase === "failed" && (
+          <p className="governed-presets-note" role="status">
+            {chosenPreset ? GOVERNED_RESULT_RUN_UNAVAILABLE : GOVERNED_RESULT_UNKNOWN_PRESET}
+          </p>
+        )}
+        {runState.phase === "done" && <GovernedPresetResultView result={runState.result} />}
+        </div>
+      </details>}
     </section>
   );
 }
