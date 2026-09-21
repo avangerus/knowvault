@@ -31,6 +31,13 @@ package postgres_test
 // to the identical true-zero, cause-free CodeNotFound, so a caller can
 // distinguish neither the disabled live flag nor the missing membership from
 // any other unavailable lookup.
+//
+// B2.3c3 adds the malformed persisted-fact precedence pair: a latest artifact
+// whose stored revision_hash is not the hash of the JSON stored beside it, and
+// a stored database identity the application boundary deliberately refuses
+// while the connection's only exposure artifact holds no requested relation.
+// Both are malformed server facts, so both answer the identical true-zero,
+// cause-free CodePersistence rather than the decoder's CodeNotFound.
 
 import (
 	"context"
@@ -53,6 +60,13 @@ const (
 	governedExposureRelation      = "contracts"
 	governedExposureStaleRelation = "retired_ledger"
 	governedExposureOtherRelation = "counterparties"
+
+	// governedExposureMalformedDatabaseIdentity is stored as the governed
+	// connection's database identity by the B2.3c3 malformed-fact case: the
+	// migration 000068 CHECK accepts it — 1..128 bytes, trimmed, no control
+	// character — while the application boundary refuses the '/' character, so
+	// the row itself is a legal persisted fact only that boundary rejects.
+	governedExposureMalformedDatabaseIdentity = "cluster/governed-exposure-malformed"
 )
 
 // seedGovernedExposureRevision inserts one immutable exposed-schema revision of
@@ -76,12 +90,13 @@ func seedGovernedExposureRevision(t *testing.T, ctx context.Context, fixture adm
 	return revisionHash
 }
 
-// assertGovernedExposureNotFound requires one failed lookup to be exactly the
-// content-free denial — the true zero result, the opaque empty JSON object, the
-// exact NOT_FOUND code as the whole error text and no unwrap/cause chain — so
-// the positive test's absence case and the two independent gates below share
-// one surface and cannot drift into distinguishable failures.
-func assertGovernedExposureNotFound(t *testing.T, label string, result workspacerepository.GovernedExposureResult, err error) {
+// assertGovernedExposureFailure requires one failed lookup to be exactly the
+// content-free refusal — the true zero result, the opaque empty JSON object,
+// the exact wanted code as the whole error text and no unwrap/cause chain — so
+// every documented refusal, the ordinary absence and the malformed persisted
+// fact alike, shares one observable surface and cannot drift into
+// distinguishable failures.
+func assertGovernedExposureFailure(t *testing.T, label string, result workspacerepository.GovernedExposureResult, err error, want workspacerepository.ErrorCode) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("%s: lookup unexpectedly resolved a governed exposure", label)
@@ -101,15 +116,33 @@ func assertGovernedExposureNotFound(t *testing.T, label string, result workspace
 	if marshalErr != nil || string(encoded) != "{}" {
 		t.Fatalf("%s: failure result JSON = %q err=%v, want the opaque empty object", label, encoded, marshalErr)
 	}
-	if code := workspacerepository.CodeOf(err); code != workspacerepository.CodeNotFound {
-		t.Fatalf("%s: failure code = %q, want %q", label, code, workspacerepository.CodeNotFound)
+	if code := workspacerepository.CodeOf(err); code != want {
+		t.Fatalf("%s: failure code = %q, want %q", label, code, want)
 	}
-	if err.Error() != string(workspacerepository.CodeNotFound) {
-		t.Fatalf("%s: failure text = %q, want %q", label, err.Error(), workspacerepository.CodeNotFound)
+	if err.Error() != string(want) {
+		t.Fatalf("%s: failure text = %q, want %q", label, err.Error(), want)
 	}
 	if unwrapped := errors.Unwrap(err); unwrapped != nil {
 		t.Fatalf("%s: failure retained a cause: %v", label, unwrapped)
 	}
+}
+
+// assertGovernedExposureNotFound requires one failed lookup to be the ordinary
+// absence: that same content-free surface carrying the exact NOT_FOUND code, so
+// the positive test's absence case and the two independent gates below stay one
+// indistinguishable denial.
+func assertGovernedExposureNotFound(t *testing.T, label string, result workspacerepository.GovernedExposureResult, err error) {
+	t.Helper()
+	assertGovernedExposureFailure(t, label, result, err, workspacerepository.CodeNotFound)
+}
+
+// assertGovernedExposurePersistence requires one failed lookup to be the
+// malformed-persisted-fact refusal: that same content-free surface carrying the
+// exact PERSISTENCE code, so a server fact this boundary rejects is never
+// reclassified as the decoder's ordinary absence.
+func assertGovernedExposurePersistence(t *testing.T, label string, result workspacerepository.GovernedExposureResult, err error) {
+	t.Helper()
+	assertGovernedExposureFailure(t, label, result, err, workspacerepository.CodePersistence)
 }
 
 // seedGovernedExposureReadSurface seeds the otherwise-valid governed read
@@ -397,5 +430,118 @@ func TestResolveGovernedExposureRealPostgreSQLOpaqueDenials(t *testing.T) {
 		access := authorityAccess(fixture.binding, authorityLookupOrgMemberPrincipal, "req_governed_exposure_org_member")
 		result, err := fixture.store.ResolveGovernedExposure(ctx, access, lookup)
 		assertGovernedExposureNotFound(t, "organization member without workspace membership", result, err)
+	})
+}
+
+// TestResolveGovernedExposureRealPostgreSQLMalformedFacts is B2.3c3: which
+// refusal wins when a persisted fact is malformed and the requested relation is
+// also absent, and what a wrong stored artifact hash answers on its own. Each
+// case builds its own fixture, so the existing database reset keeps them
+// independent, and each case leaves every other fact valid and hash-verified.
+// Both must answer the identical true-zero, cause-free CodePersistence, so a
+// malformed server fact is never reclassified as the decoder's ordinary
+// absence.
+func TestResolveGovernedExposureRealPostgreSQLMalformedFacts(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("latest artifact hash mismatch", func(t *testing.T) {
+		fixture := newAdmittedAuthorityFixture(t)
+		lookup := seedGovernedExposureReadSurface(t, ctx, fixture, true)
+
+		// Revision 2 becomes latest for the pinned connection and holds the
+		// requested relation, so exactly one persisted fact is wrong: the
+		// stored revision_hash is the digest of different bytes. The artifact
+		// and that digest are each well formed, so only the loader's own
+		// re-derivation can refuse the pair.
+		objects := []governedquery.ExposedObject{{
+			SchemaName:  governedExposureSchema,
+			TableName:   governedExposureRelation,
+			Description: "Executed contracts.",
+			Columns: []governedquery.ExposedColumn{
+				{Name: "contract_id", DataType: "text", Description: "Contract identifier."},
+			},
+		}}
+		canonicalBytes, err := canon.CanonicalJSON(objects)
+		if err != nil {
+			t.Fatalf("canonicalize mismatched governed exposure revision 2: %v", err)
+		}
+		artifactHash := canon.Hash(canonicalBytes)
+		wrongHash := canon.Hash([]byte("a different governed exposure artifact"))
+		if wrongHash == artifactHash {
+			t.Fatalf("mismatched persisted hash %q equals the artifact hash", wrongHash)
+		}
+		if _, err := fixture.admin.Exec(ctx, `
+			INSERT INTO public.governed_query_exposed_schema
+			    (organization_id, connection_id, revision, objects_json, revision_hash, created_by)
+			VALUES ($1, $2, 2, $3::jsonb, $4, $5)`,
+			fixture.binding.organizationID, lookup.ConnectionID, string(canonicalBytes), wrongHash,
+			fixture.binding.ownerID); err != nil {
+			t.Fatalf("seed mismatched governed exposure revision 2: %v", err)
+		}
+
+		result, err := fixture.store.ResolveGovernedExposure(ctx, fixture.access, lookup)
+		assertGovernedExposurePersistence(t, "latest artifact hash mismatch", result, err)
+	})
+
+	t.Run("malformed base fact outranks missing relation", func(t *testing.T) {
+		fixture := newAdmittedAuthorityFixture(t)
+
+		// The pinned connection is a fact of the fixture's exact current scope
+		// chain, not of the lookup: read the same source_scope_revision row the
+		// loader rebinds.
+		var connectionID string
+		var connectionRevision int64
+		if err := fixture.admin.QueryRow(ctx, `
+			SELECT connection_id, connection_revision
+			  FROM public.source_scope_revision
+			 WHERE organization_id = $1 AND source_scope_id = $2 AND revision = $3`,
+			fixture.binding.organizationID, fixture.request.SourceScopeID,
+			fixture.request.SourceScopeRevision).Scan(&connectionID, &connectionRevision); err != nil {
+			t.Fatalf("load pinned source connection: %v", err)
+		}
+		if connectionID == "" || connectionRevision < 1 {
+			t.Fatalf("pinned source connection = %q revision %d, want a non-empty id at a positive revision",
+				connectionID, connectionRevision)
+		}
+
+		// The governed connection is inserted once with the one identity this
+		// boundary refuses: migration 000068 stores it, so no constraint is
+		// disabled and no immutable field is rewritten afterwards.
+		if _, err := fixture.admin.Exec(ctx, `
+			INSERT INTO public.governed_query_connection
+			    (organization_id, id, workspace_id, database_identity, created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $5)`,
+			fixture.binding.organizationID, connectionID, fixture.binding.workspaceID,
+			governedExposureMalformedDatabaseIdentity, fixture.binding.ownerID); err != nil {
+			t.Fatalf("seed malformed governed query connection: %v", err)
+		}
+		if _, err := fixture.admin.Exec(ctx, `
+			INSERT INTO public.governed_query_workspace_binding
+			    (organization_id, connection_id, workspace_id, live_queries_enabled, created_by, updated_by)
+			VALUES ($1, $2, $3, true, $4, $4)`,
+			fixture.binding.organizationID, connectionID, fixture.binding.workspaceID,
+			fixture.binding.ownerID); err != nil {
+			t.Fatalf("seed governed query workspace binding: %v", err)
+		}
+		// The single artifact is valid, hash-verified and holds a relation, so
+		// the decoder's own answer for the requested relation is CodeNotFound.
+		seedGovernedExposureRevision(t, ctx, fixture, connectionID, 1, []governedquery.ExposedObject{{
+			SchemaName:  governedExposureSchema,
+			TableName:   governedExposureOtherRelation,
+			Description: "Counterparties of the executed contracts.",
+			Columns: []governedquery.ExposedColumn{
+				{Name: "counterparty_id", DataType: "text", Description: "Counterparty identifier."},
+			},
+		}})
+
+		lookup := workspacerepository.GovernedExposureLookup{
+			WorkspaceID:   fixture.binding.workspaceID,
+			SourceScopeID: fixture.request.SourceScopeID,
+			ConnectionID:  connectionID,
+			SchemaName:    governedExposureSchema,
+			RelationName:  governedExposureRelation,
+		}
+		result, err := fixture.store.ResolveGovernedExposure(ctx, fixture.access, lookup)
+		assertGovernedExposurePersistence(t, "malformed base fact outranks missing relation", result, err)
 	})
 }
