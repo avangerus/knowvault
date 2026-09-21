@@ -377,6 +377,10 @@ func TestClarificationForEveryCodeIsNonEmpty(t *testing.T) {
 		CodeCatalogBindingMismatch,
 		CodeDatasetProfileUnavailable,
 		CodeMeasureUnavailable,
+		CodeDimensionUnavailable,
+		CodeOutputFieldUnavailable,
+		CodeSortUnavailable,
+		CodeLimitExceeded,
 	}
 	for _, code := range codes {
 		if clarificationFor(code) == "" {

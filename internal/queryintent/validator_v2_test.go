@@ -252,7 +252,6 @@ func TestValidatorV2LookupNeedsNoMeasure(t *testing.T) {
 	validator, binding := v2Validator(t, catalog), v2Binding(t, catalog)
 	parts := v2LookupPartsFor(t, profile)
 	parts.Filters = v2ValidatorFilters(t)
-	parts.OutputFields = v2OutputFields(t, "unlisted")
 	lookup := v2SealLookup(t, parts)
 	if measure, ok := lookup.Measure(); ok || measure.Valid() {
 		t.Fatal("LOOKUP fixture carries a measure")
@@ -267,11 +266,11 @@ func TestValidatorV2LookupNeedsNoMeasure(t *testing.T) {
 	v2Digest(t, sealed)
 }
 
-// Dimensions, output fields, sort targets, limits and periods the profile
-// cannot resolve are deliberately left to a later card. Filter predicates are
-// resolved by the R1.2g policy, so every baseline here filters on the allowed
-// region field; the unknown filter field case now belongs to that policy.
-func TestValidatorV2LeavesSemanticsUnresolved(t *testing.T) {
+// Periods the profile cannot resolve are deliberately left to a later card.
+// Filter predicates and the result, grouping, sort and limit semantics are
+// resolved by earlier cards, so every baseline here is otherwise valid and only
+// the period differs.
+func TestValidatorV2LeavesPeriodSemanticsUnresolved(t *testing.T) {
 	catalog, profile := v2Base(t)
 	validator, binding := v2Validator(t, catalog), v2Binding(t, catalog)
 	agg := func(mutate func(*v2AggregateParts)) ProposalV2 {
@@ -280,27 +279,14 @@ func TestValidatorV2LeavesSemanticsUnresolved(t *testing.T) {
 			mutate(parts)
 		}))
 	}
-	lookupParts := v2LookupPartsFor(t, profile)
-	lookupParts.Filters = v2ValidatorFilters(t)
-	lookupParts.OutputFields = v2OutputFields(t, "unlisted")
-	lookupParts.Sort = v2DimensionSort(t, "unlisted", SortDESC)
 
 	cases := map[string]ProposalV2{
-		"unknown dimension": agg(func(parts *v2AggregateParts) {
-			parts.Dimensions = v2Dimensions(t, "unlisted")
-			parts.Sort = v2DimensionSort(t, "unlisted", SortDESC)
-		}),
-		"unknown measure sort": agg(func(parts *v2AggregateParts) {
-			parts.Sort = v2MeasureSort(t, "unlisted", SortDESC)
-		}),
-		"limit at the wire bound": agg(func(parts *v2AggregateParts) { parts.Limit = v2Limit(t, MaxLimit) }),
 		"unresolved relative period": agg(func(parts *v2AggregateParts) {
 			parts.Period = v2Relative(t, PeriodLATESTAVAILABLE)
 		}),
 		"period outside coverage": agg(func(parts *v2AggregateParts) {
 			parts.Period = v2Explicit(t, "1999-01-01", "1999-12-31")
 		}),
-		"unknown lookup output field": v2SealLookup(t, lookupParts),
 	}
 	for name, proposal := range cases {
 		sealed, err := validator.ValidateProposalV2(proposal, binding)

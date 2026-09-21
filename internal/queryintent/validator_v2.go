@@ -74,10 +74,10 @@ func NewValidatorV2(catalog analytic.DatasetProfileCatalog) (ValidatorV2, error)
 // ValidateProposalV2 is the only path from a ProposalV2 to a ValidatedIntentV2.
 // The checks run in a fixed order: proposal shape, validator catalog, frozen
 // binding, exact profile resolution, measure authority for AGGREGATE, and then
-// the seal. Filter predicates are resolved against the resolved profile before
-// the seal; dimensions, output fields, sort, limits and period semantics are
-// deliberately out of scope here, and the seal re-proves only the catalog
-// snapshot, the resolved profile and the proposal's dataset reference.
+// the seal. Filter predicates and the result, grouping, sort and limit
+// semantics are resolved against the resolved profile before the seal; period
+// semantics are deliberately out of scope here, and the seal re-proves only the
+// catalog snapshot, the resolved profile and the proposal's dataset reference.
 func (validator ValidatorV2) ValidateProposalV2(proposal ProposalV2, frozen CatalogBindingV2) (ValidatedIntentV2, error) {
 	if !proposal.Valid() {
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
@@ -104,6 +104,9 @@ func (validator ValidatorV2) ValidateProposalV2(proposal ProposalV2, frozen Cata
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
 	}
 	if err := validateV2Filters(profile, filters); err != nil {
+		return ValidatedIntentV2{}, err
+	}
+	if err := validateV2Shape(profile, proposal); err != nil {
 		return ValidatedIntentV2{}, err
 	}
 	sealed, err := newValidatedIntentV2(validator.catalog, profile, proposal)
@@ -262,4 +265,125 @@ func filterScalarMatchesV2(kind ScalarKind, logical analytic.ScalarType) bool {
 	default:
 		return false
 	}
+}
+
+// validateV2Shape resolves the requested limit, grouping, output fields and
+// sort keys against the resolved profile, in that fixed order: the limit budget
+// belongs to both shapes, AGGREGATE checks every dimension before its sort
+// keys, and LOOKUP every output field before its sort keys.
+func validateV2Shape(profile analytic.DatasetProfile, proposal ProposalV2) error {
+	limit, limitOK := proposal.Limit()
+	value, valueOK := limit.Value()
+	if !limitOK || !valueOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	if value > profile.Limits().Values().MaxOutputGroups {
+		return newRefusal(CodeLimitExceeded)
+	}
+	operation, operationOK := proposal.Operation()
+	if !operationOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	switch operation {
+	case OperationAGGREGATE:
+		return validateV2AggregateShape(profile, proposal)
+	case OperationLOOKUP:
+		return validateV2LookupShape(profile, proposal)
+	default:
+		return newRefusal(CodeInvalidProposal)
+	}
+}
+
+// validateV2AggregateShape resolves the AGGREGATE grouping and sort targets:
+// every dimension must resolve and be groupable, a dimension sort must resolve,
+// be sortable and be selected, and a measure sort must name the selected measure.
+func validateV2AggregateShape(profile analytic.DatasetProfile, proposal ProposalV2) error {
+	dimensions, dimensionsOK := proposal.Dimensions()
+	fields, fieldsOK := dimensions.Fields()
+	if !dimensionsOK || !fieldsOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	grouped := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		name, nameOK := field.Value()
+		spec, found := profile.Field(name)
+		if !nameOK || !found || !spec.Values().Groupable {
+			return newRefusal(CodeDimensionUnavailable)
+		}
+		grouped[name] = struct{}{}
+	}
+	measure, measureOK := proposal.Measure()
+	measureID, measureIDOK := measure.MeasureID()
+	if !measureOK || !measureIDOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	sort, sortOK := proposal.Sort()
+	keys, keysOK := sort.Values()
+	if !sortOK || !keysOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	for _, key := range keys {
+		if !aggregateSortAllowedV2(profile, grouped, measureID, key) {
+			return newRefusal(CodeSortUnavailable)
+		}
+	}
+	return nil
+}
+
+// aggregateSortAllowedV2 reports whether one AGGREGATE sort key is exactly what
+// the resolved profile and the selected grouping authorize.
+func aggregateSortAllowedV2(profile analytic.DatasetProfile, grouped map[string]struct{}, measureID string, key SortKey) bool {
+	kind, kindOK := key.TargetKind()
+	if !kindOK {
+		return false
+	}
+	switch kind {
+	case SortTargetDIMENSION:
+		field, fieldOK := key.Dimension()
+		name, nameOK := field.Value()
+		spec, found := profile.Field(name)
+		if !fieldOK || !nameOK || !found || !spec.Values().Sortable {
+			return false
+		}
+		_, selected := grouped[name]
+		return selected
+	case SortTargetMEASURE:
+		measure, measureOK := key.Measure()
+		id, idOK := measure.MeasureID()
+		return measureOK && idOK && id == measureID
+	default:
+		return false
+	}
+}
+
+// validateV2LookupShape resolves the LOOKUP result: every output field must
+// resolve and be allowed in results, and every sort key must resolve as a
+// sortable dimension field, which need not be one of the output fields.
+func validateV2LookupShape(profile analytic.DatasetProfile, proposal ProposalV2) error {
+	outputFields, outputFieldsOK := proposal.OutputFields()
+	fields, fieldsOK := outputFields.Fields()
+	if !outputFieldsOK || !fieldsOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	for _, field := range fields {
+		name, nameOK := field.Value()
+		spec, found := profile.Field(name)
+		if !nameOK || !found || !spec.Values().OutputAllowed {
+			return newRefusal(CodeOutputFieldUnavailable)
+		}
+	}
+	sort, sortOK := proposal.Sort()
+	keys, keysOK := sort.Values()
+	if !sortOK || !keysOK {
+		return newRefusal(CodeInvalidProposal)
+	}
+	for _, key := range keys {
+		field, fieldOK := key.Dimension()
+		name, nameOK := field.Value()
+		spec, found := profile.Field(name)
+		if !fieldOK || !nameOK || !found || !spec.Values().Sortable {
+			return newRefusal(CodeSortUnavailable)
+		}
+	}
+	return nil
 }

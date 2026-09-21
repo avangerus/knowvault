@@ -85,6 +85,10 @@ const (
 	CodeCatalogBindingMismatch    ErrorCode = "QUERYINTENT_CATALOG_BINDING_MISMATCH"
 	CodeDatasetProfileUnavailable ErrorCode = "QUERYINTENT_DATASET_PROFILE_UNAVAILABLE"
 	CodeMeasureUnavailable        ErrorCode = "QUERYINTENT_MEASURE_UNAVAILABLE"
+	CodeDimensionUnavailable      ErrorCode = "QUERYINTENT_DIMENSION_UNAVAILABLE"
+	CodeOutputFieldUnavailable    ErrorCode = "QUERYINTENT_OUTPUT_FIELD_UNAVAILABLE"
+	CodeSortUnavailable           ErrorCode = "QUERYINTENT_SORT_UNAVAILABLE"
+	CodeLimitExceeded             ErrorCode = "QUERYINTENT_LIMIT_EXCEEDED"
 )
 
 func clarificationFor(code ErrorCode) string {
@@ -111,6 +115,14 @@ func clarificationFor(code ErrorCode) string {
 		return "This dataset profile is not available in the current catalog. Choose a dataset profile that is active."
 	case CodeMeasureUnavailable:
 		return "This measure is not available in the selected dataset profile. Choose a measure that profile defines."
+	case CodeDimensionUnavailable:
+		return "A requested grouping field is not available in the selected dataset profile. Choose a field this profile allows grouping by."
+	case CodeOutputFieldUnavailable:
+		return "A requested output field is not available in the selected dataset profile. Choose a field this profile allows in results."
+	case CodeSortUnavailable:
+		return "A requested sort is not available in the selected dataset profile. Sort by a field or measure this profile allows."
+	case CodeLimitExceeded:
+		return "The requested row limit is above what the selected dataset profile allows. Ask for fewer rows."
 	default:
 		return "The request could not be validated. Adjust it and try again."
 	}
