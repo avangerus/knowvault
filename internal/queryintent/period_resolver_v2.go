@@ -1,6 +1,8 @@
 package queryintent
 
 import (
+	"time"
+
 	"knowvault.local/verified-workspace/internal/analytic"
 )
 
@@ -38,4 +40,50 @@ func resolveExplicitBusinessDateV2(proposal PeriodProposal, maxPeriodDays int) (
 		return ResolvedPeriodV2{}, newRefusal(CodePeriodInvalid)
 	}
 	return value, nil
+}
+
+// resolveExplicitZonedTimestampV2 resolves one already-valid EXPLICIT proposal
+// against a ZONED_TIMESTAMP field: both bounds must be canonical RFC3339Nano
+// instants with an explicit Z or numeric offset, each normalized to UTC ending
+// in Z, and the two instants must be strictly increasing. Nothing is trimmed,
+// coerced or defaulted here, and no relative mode is resolved. Every failure
+// returns the zero period with a content-free CodePeriodInvalid refusal.
+func resolveExplicitZonedTimestampV2(proposal PeriodProposal) (ResolvedPeriodV2, error) {
+	if !proposal.Valid() || proposal.mode != PeriodEXPLICIT {
+		return ResolvedPeriodV2{}, newRefusal(CodePeriodInvalid)
+	}
+	start, end, ok := proposal.ExplicitBounds()
+	if !ok {
+		return ResolvedPeriodV2{}, newRefusal(CodePeriodInvalid)
+	}
+	startAt, startUTC, startOK := zonedTimestampV2Instant(start)
+	endAt, endUTC, endOK := zonedTimestampV2Instant(end)
+	if !startOK || !endOK || !startAt.Before(endAt) {
+		return ResolvedPeriodV2{}, newRefusal(CodePeriodInvalid)
+	}
+	value, err := newResolvedPeriodV2(PeriodEXPLICIT, analytic.TimeZonedTimestamp, startUTC, endUTC)
+	if err != nil {
+		return ResolvedPeriodV2{}, newRefusal(CodePeriodInvalid)
+	}
+	return value, nil
+}
+
+// zonedTimestampV2Instant parses one canonical RFC3339Nano bound with an
+// explicit Z or numeric offset and returns its instant together with the UTC
+// spelling of that instant. The wall fields, offset and fraction are rechecked
+// here: a zero-padded fraction is refused because the canonical spelling trims
+// it, and anything offset-free or padded fails before the parse.
+func zonedTimestampV2Instant(value string) (time.Time, string, bool) {
+	tail, ok := wallTail(value)
+	if !ok || tail != "Z" && !validOffset(tail) {
+		return time.Time{}, "", false
+	}
+	if frac := value[19 : len(value)-len(tail)]; frac != "" && frac[len(frac)-1] == '0' {
+		return time.Time{}, "", false
+	}
+	instant, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	return instant, instant.UTC().Format(time.RFC3339Nano), true
 }
