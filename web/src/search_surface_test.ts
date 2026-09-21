@@ -3,9 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   AskSurface,
   SearchView,
+  authorizedSourcesForAsk,
   askExecutionVisibility,
   defaultAskExecutionMode,
   effectiveAskExecutionMode,
+  relySourceSummary,
   reduceGovernedRetention,
   type GovernedRetentionState,
   type WorkspaceDataState,
@@ -20,6 +22,7 @@ declare const require: (moduleName: string) => { readFileSync(path: string, enco
 const fs = require("fs");
 const governedSource = fs.readFileSync("src/governed-presets.tsx", "utf8");
 const mainSource = fs.readFileSync("src/main.tsx", "utf8");
+const stylesSource = fs.readFileSync("src/styles.css", "utf8");
 let failures = 0;
 const check = (ok: boolean, message: string) => { if (!ok) { failures++; console.error(`FAIL ${message}`); } };
 
@@ -47,12 +50,66 @@ const renderSearch = (active: boolean) => renderToStaticMarkup(createElement(Sea
 }));
 
 const searchMarkup = renderAsk(documentsState);
+const fixtureSource = {
+  workspace_source_id: "workspace-source-1",
+  source_scope_id: "source-1",
+  source_scope_revision: 1,
+  access_mode: "WORKSPACE_MANAGED",
+  enabled: true,
+  scope_config_hash: "sha256:scope",
+  connection_id: "conn-1",
+  connection_name: "GM",
+  source_type: "POSTGRESQL_QUERY",
+  postgresql_schema_name: "public",
+  postgresql_relation_name: "v_container_group_contract",
+  activation_status: "READY",
+  trust_verified: true,
+  sync_status: "SUCCEEDED",
+  sync_error_code: null,
+  sync_started_at: null,
+  sync_completed_at: "2026-09-21T10:00:00Z",
+  objects_seen: 12,
+  objects_ingested: 12,
+  versions_created: 12,
+  evidence_published: 12,
+  quarantined: 0,
+  job_status: "SUCCEEDED",
+  job_attempt_count: 1,
+  job_last_error_code: null,
+  content_freshness_sla_seconds: 300,
+  last_successful_sync_at: "2026-09-21T10:00:00Z",
+  freshness_state: "FRESH",
+  sync_interval_seconds: 300,
+  confirmed: true,
+  confirmation_state: "ACTIVE",
+  can_verify_connection_trust: false,
+};
+const sourceState = workspaceState([fixtureSource]);
+const pendingState = { phase: "loading" } as WorkspaceDataState;
+const deniedState = {
+  phase: "loaded",
+  snapshot: { kind: "failure", status: 403 },
+  sources: { kind: "ok", value: { sources: [fixtureSource], confirmation_context: {} } },
+} as unknown as WorkspaceDataState;
+const sourceSummary = relySourceSummary([fixtureSource] as never);
+check(authorizedSourcesForAsk(sourceState, "workspace-1").length === 1, "authorized Ask state exposes the current source metadata");
+check(authorizedSourcesForAsk(pendingState, "workspace-1").length === 0 && authorizedSourcesForAsk(deniedState, "workspace-1").length === 0, "pending and denied Ask state exposes no protected sources");
+check(sourceSummary.length === 1 && sourceSummary[0].label === "GM · public.v_container_group_contract" && sourceSummary[0].headline === "Data is up to date", "RelyBar uses the real source label and freshness headline");
+check(!renderAsk(pendingState).includes("rely-summary") && !renderAsk(deniedState).includes("rely-summary"), "pending and denied Ask surfaces render no source summary");
 check((searchMarkup.match(/<h1>Ask<\/h1>/g) ?? []).length === 1, "the Ask surface has one page heading");
 check(searchMarkup.includes("Live database") && searchMarkup.includes("Workspace search"), "execution modes use honest labels");
 check(!/class="ask-source-button[^>]*>Answer<\//.test(searchMarkup) && !/class="ask-source-button[^>]*>Search<\//.test(searchMarkup), "the mode control does not use conversational Answer/Search labels");
-check(searchMarkup.includes('aria-label="Mode"'), "execution mode is labelled for assistive technology");
+check(searchMarkup.includes('aria-label="Search source"'), "execution mode is labelled as the search source");
+check(searchMarkup.indexOf(">Workspace search<") < searchMarkup.indexOf(">Live database<"), "search source buttons are ordered Workspace search then Live database");
 check(searchMarkup.includes('aria-pressed="true"') && searchMarkup.includes('>Workspace search<'), "default mode is Workspace search before governed capability is authorized");
-check(searchMarkup.includes('placeholder="Search documents"'), "Workspace search keeps a usable document input");
+check(searchMarkup.includes('placeholder="Ask a question"') && searchMarkup.includes(">Ask<"), "Workspace search uses the compact Ask composer");
+check((searchMarkup.match(/<input[^>]*id="pilot-question"/g) ?? []).length === 1, "Ask surface exposes one visible question input");
+check(searchMarkup.includes("Sources: ") && searchMarkup.includes("<b>0</b>") && !searchMarkup.includes("No sources are connected yet"), "authorized empty sources use the compact Sources: 0 pill");
+check(mainSource.includes("authorizedSourcesForAsk") && mainSource.includes("askSources && <RelyBar onManageSources={onOpenSources}"), "Ask RelyBar is gated by workspace authorization and offers source management");
+check(!mainSource.includes('<button className="text-button" onClick={onOpenSources} type="button">Sources</button>'), "the duplicate header Sources button is removed");
+check(mainSource.includes("sourceLabel(source)") && mainSource.includes("sourceHeadline(source)"), "the source popover renders real labels and freshness headlines");
+check(stylesSource.includes(".ask-page-actions .rely-list") && stylesSource.includes("left: 0; right: auto")
+  && stylesSource.includes("width: min(360px, calc(100vw - 88px)); max-width: calc(100vw - 88px)"), "header source popover stays inside the 56px rail plus 32px mobile gutters");
 check(renderSearch(false).includes("hidden"), "document search remains mounted while inactive");
 const readyCatalog = { connection_id: "connection-1", database_identity: "gm", presets: [{ id: "p", version: "v1", name: "P", description: "", phrases: [], preset_hash: "h", source_attempt_id: "a", sql_hash: "s", exposed_schema_revision: 1 }] } as GovernedPresetCatalog;
 check(JSON.stringify(governedCatalogAvailability(null)) === JSON.stringify({ status: "loading", catalogAvailable: false, liveAskAvailable: false }), "catalog revalidation reports loading without final denial");

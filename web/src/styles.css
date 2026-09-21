@@ -495,6 +495,8 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .foot { flex: 0 0 auto; position: relative; padding: 10px 26px 16px; background: var(--bg); }
 .rely-empty { margin: 0 0 8px; font-size: var(--fs-caption); color: var(--ink-tertiary); }
 .rely { position: relative; margin-bottom: 8px; }
+.ask-page-actions > .rely { margin-bottom: 0; }
+.ask-page-actions .rely-list { top: calc(100% + 6px); bottom: auto; right: 0; left: auto; width: min(360px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
 .rely-summary { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-caption); color: var(--ink-secondary); border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-pill); padding: 4px 11px; }
 .rely-summary:hover { border-color: var(--accent); color: var(--accent); }
 .rely-summary svg { width: 13px; height: 13px; }
@@ -509,6 +511,7 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .dot-ready { background: var(--success); }
 .dot-attention { background: var(--warning); }
 .dot-disconnected { background: var(--ink-tertiary); }
+.rely-manage { display: block; width: 100%; border-top: 1px solid var(--line-soft); border-radius: 0; padding: 9px 16px; text-align: left; }
 
 .question-composer { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 9px 9px 9px 14px; margin: 0; }
 .question-composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-tint); }
@@ -1038,6 +1041,7 @@ ul.answer-keys li:last-child { border-bottom: none; }
   .top-bar { height: auto; min-height: 56px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
   .top-spacer { display: none; }
   .ask-page-header { padding: 20px 16px 12px; }
+  .ask-page-actions .rely-list { left: 0; right: auto; width: min(360px, calc(100vw - 88px)); max-width: calc(100vw - 88px); }
   .ask-surface > .search-pilot, .ask-surface > .governed-preset-owner { padding-left: 16px; padding-right: 16px; padding-bottom: 40px; }
   .search-pilot { padding: 20px 16px 40px; }
   .search-pilot h1 { font-size: 22px; }

@@ -1341,6 +1341,17 @@ export function governedWorkspaceAuthorization(state: WorkspaceDataState, reques
   return { phase: "authorized", revision: state.snapshot.value.revision };
 }
 
+/** Source metadata is a protected workspace projection. The Ask surface may
+ * pass it to RelyBar only after the same snapshot + source authorization gate
+ * used by the governed and document surfaces has completed. Pending, denied,
+ * stale-workspace and malformed source responses all return an empty summary,
+ * so a previous workspace's source names cannot flash during revalidation. */
+export function authorizedSourcesForAsk(state: WorkspaceDataState, requestedWorkspaceID: string | null): SourceStatus[] {
+  if (governedWorkspaceAuthorization(state, requestedWorkspaceID).phase !== "authorized") return [];
+  if (state.phase !== "loaded" || state.sources.kind !== "ok") return [];
+  return state.sources.value.sources;
+}
+
 function useWorkspaceData(workspaceID: string | null, refreshVersion: number): WorkspaceDataState {
   const [reply, setReply] = useState<{ workspaceID: string; refreshVersion: number; state: WorkspaceDataState } | null>(null);
   useEffect(() => {
@@ -3225,11 +3236,27 @@ function TurnCard({ turn, panelTurnId, selectedCitationId, onSelectTurn, onSelec
 // The rely bar (contract §4): a real count of enabled sources, how many need
 // attention, and — on demand — the same per-source freshness the Sources
 // screen shows, so "what we're relying on" is never a separate fiction.
-function RelyBar({ sources }: { sources: SourceStatus[] }) {
+export type RelySourceSummary = {
+  source_scope_id: string;
+  label: string;
+  headline: string;
+  variant: "ready" | "attention" | "updating" | "disconnected";
+};
+
+export function relySourceSummary(sources: SourceStatus[]): RelySourceSummary[] {
+  return sources.filter((source) => source.enabled).map((source) => ({
+    source_scope_id: source.source_scope_id,
+    label: sourceLabel(source),
+    headline: sourceHeadline(source),
+    variant: sourceCardVariant(source),
+  }));
+}
+
+function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const enabled = sources.filter((source) => source.enabled);
-  const attention = enabled.filter((source) => sourceCardVariant(source) === "attention").length;
+  const enabled = relySourceSummary(sources);
+  const attention = enabled.filter((source) => source.variant === "attention").length;
 
   useEffect(() => {
     if (!open) return;
@@ -3241,7 +3268,16 @@ function RelyBar({ sources }: { sources: SourceStatus[] }) {
   }, [open]);
 
   if (enabled.length === 0) {
-    return <p className="rely-empty">No sources are connected yet. Answers will use the sources added to this workspace.</p>;
+    if (onManageSources) {
+      return (
+        <button aria-label="Manage sources" className="rely-summary" onClick={onManageSources} type="button">
+          <IconSources /><span>Sources: <b>0</b></span>
+        </button>
+      );
+    }
+    return (
+      <p className="rely-empty">No sources are connected yet. Answers will use the sources added to this workspace.</p>
+    );
   }
 
   return (
@@ -3251,11 +3287,12 @@ function RelyBar({ sources }: { sources: SourceStatus[] }) {
           <h3>Workspace sources — {enabled.length}</h3>
           {enabled.map((source) => (
             <div className="rely-row" key={source.source_scope_id}>
-              <span aria-hidden="true" className={`dot dot-${sourceCardVariant(source)}`} />
-              <span className="rely-name">{sourceLabel(source)}</span>
-              <small>{sourceHeadline(source)}</small>
+              <span aria-hidden="true" className={`dot dot-${source.variant}`} />
+              <span className="rely-name">{source.label}</span>
+              <small>{source.headline}</small>
             </div>
           ))}
+          {onManageSources && <button className="text-button rely-manage" onClick={() => { setOpen(false); onManageSources(); }} type="button">Manage sources</button>}
         </div>
       )}
       <button aria-expanded={open} className="rely-summary" onClick={() => setOpen((value) => !value)} type="button">
@@ -3849,6 +3886,9 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onSessionExp
   const [catalogAvailability, setCatalogAvailability] = useState<GovernedCatalogAvailability>({ status: "loading", catalogAvailable: false, liveAskAvailable: false });
   const sourceMode = effectiveAskExecutionMode(requestedMode, catalogAvailability.catalogAvailable, catalogAvailability.status);
   const visibility = askExecutionVisibility(sourceMode);
+  const askSources = governedWorkspaceAuthorization(state, requestedWorkspaceID).phase === "authorized"
+    ? authorizedSourcesForAsk(state, requestedWorkspaceID)
+    : null;
   const onCatalogAvailability = useCallback((availability: GovernedCatalogAvailability) => {
     setCatalogAvailability(availability);
     if (availability.status === "unavailable") setRequestedMode("workspace-search");
@@ -3859,13 +3899,13 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onSessionExp
       <header className="ask-page-header">
         <h1>Ask</h1>
         <div className="ask-page-actions">
-          <div className="ask-source-switch" role="group" aria-label="Mode">
-            <button aria-pressed={sourceMode === "live-database"} className={sourceMode === "live-database" ? "ask-source-button is-selected" : "ask-source-button"}
-              disabled={!catalogAvailability.catalogAvailable} onClick={() => setRequestedMode("live-database")} type="button">Live database</button>
+          {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
+          <div className="ask-source-switch" role="group" aria-label="Search source">
             <button aria-pressed={sourceMode === "workspace-search"} className={sourceMode === "workspace-search" ? "ask-source-button is-selected" : "ask-source-button"}
               onClick={() => setRequestedMode("workspace-search")} type="button">Workspace search</button>
+            <button aria-pressed={sourceMode === "live-database"} className={sourceMode === "live-database" ? "ask-source-button is-selected" : "ask-source-button"}
+              disabled={!catalogAvailability.catalogAvailable} onClick={() => setRequestedMode("live-database")} type="button">Live database</button>
           </div>
-          <button className="text-button" onClick={onOpenSources} type="button">Sources</button>
         </div>
       </header>
 
@@ -4042,9 +4082,9 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
       <section aria-labelledby="document-search-mode-heading" className="document-search-mode">
         <h2 className="sr-only" id="document-search-mode-heading">Search documents</h2>
         <form className="search-pilot-form" onSubmit={search}>
-          <label className="sr-only" htmlFor="pilot-question">Document search query</label>
-          <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Search documents" />
-          <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Search"}</button>
+          <label className="sr-only" htmlFor="pilot-question">Ask a question</label>
+          <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question" />
+          <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Ask"}</button>
         </form>
         <div className="search-pilot-options">
           <label><input type="checkbox" checked={includeAnswer && answerAvailable} disabled={!answerAvailable} onChange={(event) => setIncludeAnswer(event.target.checked)} /> {answerAvailable ? "AI answer" : "AI answer unavailable"}</label>
