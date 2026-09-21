@@ -24,6 +24,13 @@ package postgres_test
 // revision-2 artifact, so requesting it answers the exact zero result with a
 // cause-free CodeNotFound. The loader grants no execution right, so this proof
 // dials no external database and executes no SQL against the pinned connection.
+//
+// B2.3c2 adds the opaque denial pair: the same fully seeded read surface with
+// this workspace's live binding disabled, and an active organization MEMBER
+// that holds no workspace membership. The two independent gates must collapse
+// to the identical true-zero, cause-free CodeNotFound, so a caller can
+// distinguish neither the disabled live flag nor the missing membership from
+// any other unavailable lookup.
 
 import (
 	"context"
@@ -67,6 +74,103 @@ func seedGovernedExposureRevision(t *testing.T, ctx context.Context, fixture adm
 		t.Fatalf("seed governed exposure revision %d: %v", revision, err)
 	}
 	return revisionHash
+}
+
+// assertGovernedExposureNotFound requires one failed lookup to be exactly the
+// content-free denial — the true zero result, the opaque empty JSON object, the
+// exact NOT_FOUND code as the whole error text and no unwrap/cause chain — so
+// the positive test's absence case and the two independent gates below share
+// one surface and cannot drift into distinguishable failures.
+func assertGovernedExposureNotFound(t *testing.T, label string, result workspacerepository.GovernedExposureResult, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: lookup unexpectedly resolved a governed exposure", label)
+	}
+	if result.Valid() ||
+		result.WorkspaceID() != "" || result.WorkspaceRevision() != 0 ||
+		result.WorkspaceConfigurationHash() != "" || result.WorkspaceSourceID() != "" ||
+		result.SourceScopeID() != "" || result.SourceScopeRevision() != 0 ||
+		result.SourceScopeConfigurationHash() != "" || result.ConnectionID() != "" ||
+		result.ConnectionRevision() != 0 || result.DatabaseIdentity() != "" ||
+		result.LiveQueryEnabled() || result.ExposureRevision() != 0 ||
+		result.ExposureArtifactHash() != "" || result.SchemaName() != "" ||
+		result.RelationName() != "" || result.Columns() != nil {
+		t.Fatalf("%s: failure returned a non-zero result", label)
+	}
+	encoded, marshalErr := jsonv2.Marshal(result)
+	if marshalErr != nil || string(encoded) != "{}" {
+		t.Fatalf("%s: failure result JSON = %q err=%v, want the opaque empty object", label, encoded, marshalErr)
+	}
+	if code := workspacerepository.CodeOf(err); code != workspacerepository.CodeNotFound {
+		t.Fatalf("%s: failure code = %q, want %q", label, code, workspacerepository.CodeNotFound)
+	}
+	if err.Error() != string(workspacerepository.CodeNotFound) {
+		t.Fatalf("%s: failure text = %q, want %q", label, err.Error(), workspacerepository.CodeNotFound)
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		t.Fatalf("%s: failure retained a cause: %v", label, unwrapped)
+	}
+}
+
+// seedGovernedExposureReadSurface seeds the otherwise-valid governed read
+// surface for the fixture's exact pinned connection — the governed connection,
+// this workspace's binding with liveQueriesEnabled, and one canonical exposure
+// revision holding the requested relation — and returns the lookup naming it,
+// so a caller changes exactly one gate and nothing else.
+func seedGovernedExposureReadSurface(
+	t *testing.T, ctx context.Context, fixture admittedAuthorityFixture, liveQueriesEnabled bool,
+) workspacerepository.GovernedExposureLookup {
+	t.Helper()
+	// The pinned connection is a fact of the fixture's exact current scope
+	// chain, not of the lookup: read the same source_scope_revision row the
+	// loader rebinds.
+	var connectionID string
+	var connectionRevision int64
+	if err := fixture.admin.QueryRow(ctx, `
+		SELECT connection_id, connection_revision
+		  FROM public.source_scope_revision
+		 WHERE organization_id = $1 AND source_scope_id = $2 AND revision = $3`,
+		fixture.binding.organizationID, fixture.request.SourceScopeID,
+		fixture.request.SourceScopeRevision).Scan(&connectionID, &connectionRevision); err != nil {
+		t.Fatalf("load pinned source connection: %v", err)
+	}
+	if connectionID == "" || connectionRevision < 1 {
+		t.Fatalf("pinned source connection = %q revision %d, want a non-empty id at a positive revision",
+			connectionID, connectionRevision)
+	}
+
+	if _, err := fixture.admin.Exec(ctx, `
+		INSERT INTO public.governed_query_connection
+		    (organization_id, id, workspace_id, database_identity, created_by, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $5)`,
+		fixture.binding.organizationID, connectionID, fixture.binding.workspaceID,
+		governedExposureDatabaseIdentity, fixture.binding.ownerID); err != nil {
+		t.Fatalf("seed governed query connection: %v", err)
+	}
+	if _, err := fixture.admin.Exec(ctx, `
+		INSERT INTO public.governed_query_workspace_binding
+		    (organization_id, connection_id, workspace_id, live_queries_enabled, created_by, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $5)`,
+		fixture.binding.organizationID, connectionID, fixture.binding.workspaceID,
+		liveQueriesEnabled, fixture.binding.ownerID); err != nil {
+		t.Fatalf("seed governed query workspace binding: %v", err)
+	}
+	seedGovernedExposureRevision(t, ctx, fixture, connectionID, 1, []governedquery.ExposedObject{{
+		SchemaName:  governedExposureSchema,
+		TableName:   governedExposureRelation,
+		Description: "Executed contracts.",
+		Columns: []governedquery.ExposedColumn{
+			{Name: "contract_id", DataType: "text", Description: "Contract identifier."},
+		},
+	}})
+
+	return workspacerepository.GovernedExposureLookup{
+		WorkspaceID:   fixture.binding.workspaceID,
+		SourceScopeID: fixture.request.SourceScopeID,
+		ConnectionID:  connectionID,
+		SchemaName:    governedExposureSchema,
+		RelationName:  governedExposureRelation,
+	}
 }
 
 func TestResolveGovernedExposureRealPostgreSQLPositiveLatest(t *testing.T) {
@@ -213,31 +317,85 @@ func TestResolveGovernedExposureRealPostgreSQLPositiveLatest(t *testing.T) {
 	staleLookup := lookup
 	staleLookup.RelationName = governedExposureStaleRelation
 	staleResult, staleErr := fixture.store.ResolveGovernedExposure(ctx, fixture.access, staleLookup)
-	if staleErr == nil {
-		t.Fatal("the revision-1-only relation unexpectedly resolved from the latest revision")
-	}
-	if code := workspacerepository.CodeOf(staleErr); code != workspacerepository.CodeNotFound {
-		t.Fatalf("revision-1-only relation code = %q, want %q", code, workspacerepository.CodeNotFound)
-	}
-	if staleErr.Error() != string(workspacerepository.CodeNotFound) {
-		t.Fatalf("revision-1-only relation error = %q, want %q", staleErr.Error(), workspacerepository.CodeNotFound)
-	}
-	if unwrapped := errors.Unwrap(staleErr); unwrapped != nil {
-		t.Fatalf("revision-1-only relation error retains a cause: %v", unwrapped)
-	}
-	if staleResult.Valid() ||
-		staleResult.WorkspaceID() != "" || staleResult.WorkspaceRevision() != 0 ||
-		staleResult.WorkspaceConfigurationHash() != "" || staleResult.WorkspaceSourceID() != "" ||
-		staleResult.SourceScopeID() != "" || staleResult.SourceScopeRevision() != 0 ||
-		staleResult.SourceScopeConfigurationHash() != "" || staleResult.ConnectionID() != "" ||
-		staleResult.ConnectionRevision() != 0 || staleResult.DatabaseIdentity() != "" ||
-		staleResult.LiveQueryEnabled() || staleResult.ExposureRevision() != 0 ||
-		staleResult.ExposureArtifactHash() != "" || staleResult.SchemaName() != "" ||
-		staleResult.RelationName() != "" || staleResult.Columns() != nil {
-		t.Fatal("governed exposure failure returned a non-zero result")
-	}
-	encoded, marshalErr = jsonv2.Marshal(staleResult)
-	if marshalErr != nil || string(encoded) != "{}" {
-		t.Fatalf("failure result JSON = %q err=%v, want the opaque empty object", encoded, marshalErr)
-	}
+	assertGovernedExposureNotFound(t, "revision-1-only relation", staleResult, staleErr)
+}
+
+// TestResolveGovernedExposureRealPostgreSQLOpaqueDenials is B2.3c2: the same
+// otherwise-valid read surface denied by two independent gates. Each case
+// builds its own fixture, so the existing database reset keeps them
+// independent, and each case changes exactly one fact — the workspace binding's
+// live flag, or the caller's workspace membership. Both must answer the
+// identical true-zero, cause-free CodeNotFound, so neither the disabled live
+// flag nor the missing membership is an existence oracle.
+func TestResolveGovernedExposureRealPostgreSQLOpaqueDenials(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("live binding disabled", func(t *testing.T) {
+		fixture := newAdmittedAuthorityFixture(t)
+		lookup := seedGovernedExposureReadSurface(t, ctx, fixture, false)
+		result, err := fixture.store.ResolveGovernedExposure(ctx, fixture.access, lookup)
+		assertGovernedExposureNotFound(t, "live binding disabled", result, err)
+	})
+
+	t.Run("active organization member without workspace membership", func(t *testing.T) {
+		fixture := newAdmittedAuthorityFixture(t)
+		lookup := seedGovernedExposureReadSurface(t, ctx, fixture, true)
+
+		// The caller is an ACTIVE organization MEMBER of the fixture tenant —
+		// the same actor seed source_authority_lookup_test.go uses for this
+		// precondition — that deliberately receives no workspace_member row,
+		// so the workspace snapshot it is admitted against holds no membership
+		// for it.
+		if _, err := fixture.admin.Exec(ctx, `
+			INSERT INTO public.principal (id, organization_id, type, display_name, status)
+			VALUES ($1, $2, 'USER', $1, 'ACTIVE')`,
+			authorityLookupOrgMemberPrincipal, fixture.binding.organizationID); err != nil {
+			t.Fatalf("seed active organization member principal: %v", err)
+		}
+		if _, err := fixture.admin.Exec(ctx, `
+			INSERT INTO public.organization_role_assignment
+				(id, organization_id, principal_id, role, valid_from_revision, assigned_by)
+			VALUES ($1, $2, $3, 'MEMBER', 1, $4)`,
+			authorityLookupOrgMemberRoleID, fixture.binding.organizationID,
+			authorityLookupOrgMemberPrincipal, fixture.binding.ownerID); err != nil {
+			t.Fatalf("seed organization MEMBER role: %v", err)
+		}
+		// Control read of the exact seeded facts: the actor is ACTIVE and holds
+		// the organization MEMBER role, yet holds no membership row in the
+		// fixture workspace, so the denial cannot come from a missing role.
+		var memberStatus string
+		var organizationMember, workspaceMember bool
+		if err := fixture.admin.QueryRow(ctx, `
+			SELECT principal.status,
+			       EXISTS (
+			           SELECT 1
+			           FROM public.organization_role_assignment AS assignment
+			           WHERE assignment.organization_id = $2
+			             AND assignment.principal_id = $1
+			             AND assignment.role = 'MEMBER'
+			             AND assignment.revoked_at IS NULL
+			       ),
+			       EXISTS (
+			           SELECT 1
+			           FROM public.workspace_member AS member
+			           WHERE member.organization_id = $2
+			             AND member.workspace_id = $3
+			             AND member.principal_id = $1
+			             AND member.removed_at IS NULL
+			       )
+			FROM public.principal AS principal
+			WHERE principal.organization_id = $2 AND principal.id = $1`,
+			authorityLookupOrgMemberPrincipal, fixture.binding.organizationID,
+			fixture.binding.workspaceID).Scan(&memberStatus, &organizationMember, &workspaceMember); err != nil {
+			t.Fatalf("control read of the seeded organization member: %v", err)
+		}
+		if memberStatus != "ACTIVE" || !organizationMember || workspaceMember {
+			t.Fatalf("seeded actor is status=%q organization_member=%t workspace_member=%t, want ACTIVE/true/false",
+				memberStatus, organizationMember, workspaceMember)
+		}
+
+		access := authorityAccess(fixture.binding, authorityLookupOrgMemberPrincipal, "req_governed_exposure_org_member")
+		result, err := fixture.store.ResolveGovernedExposure(ctx, access, lookup)
+		assertGovernedExposureNotFound(t, "organization member without workspace membership", result, err)
+	})
 }
