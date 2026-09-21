@@ -352,6 +352,17 @@ const (
 
 func (d SortDirection) Valid() bool { return d == SortASC || d == SortDESC }
 
+type SortTargetKind string
+
+const (
+	SortTargetDIMENSION SortTargetKind = "DIMENSION"
+	SortTargetMEASURE   SortTargetKind = "MEASURE"
+)
+
+func (k SortTargetKind) Valid() bool {
+	return k == SortTargetDIMENSION || k == SortTargetMEASURE
+}
+
 type Dimensions struct {
 	fields      [MaxDimensions]FieldToken
 	count       uint8
@@ -406,25 +417,65 @@ func duplicateField(fields []FieldToken, candidate FieldToken) bool {
 	return false
 }
 
+// SortKey names exactly one closed sort target: either a dimension field or a
+// measure reference, never both and never neither. A dimension and a measure
+// that share the same text remain distinct targets.
 type SortKey struct {
-	field     FieldToken
+	kind      SortTargetKind
+	dimension FieldToken
+	measure   MeasureRef
 	direction SortDirection
 }
 
-func NewSortKey(field FieldToken, direction SortDirection) (SortKey, error) {
-	if !field.Valid() || !direction.Valid() {
+func NewDimensionSortKey(field FieldToken, direction SortDirection) (SortKey, error) {
+	key := SortKey{kind: SortTargetDIMENSION, dimension: field, direction: direction}
+	if !key.Valid() {
 		return SortKey{}, newRefusal(CodeInvalidProposal)
 	}
-	return SortKey{field: field, direction: direction}, nil
+	return key, nil
 }
 
-func (k SortKey) Valid() bool { return k.field.Valid() && k.direction.Valid() }
+func NewMeasureSortKey(measure MeasureRef, direction SortDirection) (SortKey, error) {
+	key := SortKey{kind: SortTargetMEASURE, measure: measure, direction: direction}
+	if !key.Valid() {
+		return SortKey{}, newRefusal(CodeInvalidProposal)
+	}
+	return key, nil
+}
 
-func (k SortKey) Field() (FieldToken, bool) {
+func (k SortKey) Valid() bool {
+	if !k.direction.Valid() {
+		return false
+	}
+	switch k.kind {
+	case SortTargetDIMENSION:
+		return k.dimension.Valid() && !k.measure.Valid()
+	case SortTargetMEASURE:
+		return k.measure.Valid() && !k.dimension.Valid()
+	default:
+		return false
+	}
+}
+
+func (k SortKey) TargetKind() (SortTargetKind, bool) {
 	if !k.Valid() {
+		return "", false
+	}
+	return k.kind, true
+}
+
+func (k SortKey) Dimension() (FieldToken, bool) {
+	if !k.Valid() || k.kind != SortTargetDIMENSION {
 		return FieldToken{}, false
 	}
-	return k.field, true
+	return k.dimension, true
+}
+
+func (k SortKey) Measure() (MeasureRef, bool) {
+	if !k.Valid() || k.kind != SortTargetMEASURE {
+		return MeasureRef{}, false
+	}
+	return k.measure, true
 }
 
 func (k SortKey) Direction() (SortDirection, bool) {
@@ -446,7 +497,7 @@ func NewSortKeys(keys ...SortKey) (SortKeys, error) {
 	}
 	var sortKeys SortKeys
 	for i, key := range keys {
-		if !key.Valid() || duplicateSortField(keys[:i], key) {
+		if !key.Valid() || duplicateSortTarget(keys[:i], key) {
 			return SortKeys{}, newRefusal(CodeInvalidProposal)
 		}
 		sortKeys.keys[i] = key
@@ -461,7 +512,7 @@ func (s SortKeys) Valid() bool {
 		return false
 	}
 	for i := 0; i < int(s.count); i++ {
-		if !s.keys[i].Valid() || duplicateSortField(s.keys[:i], s.keys[i]) {
+		if !s.keys[i].Valid() || duplicateSortTarget(s.keys[:i], s.keys[i]) {
 			return false
 		}
 	}
@@ -477,15 +528,33 @@ func (s SortKeys) Values() ([]SortKey, bool) {
 	return keys, true
 }
 
-func duplicateSortField(keys []SortKey, candidate SortKey) bool {
-	field, _ := candidate.Field()
+// duplicateSortTarget reports whether candidate repeats the exact target
+// (kind and identity) of an earlier key, ignoring direction.
+func duplicateSortTarget(keys []SortKey, candidate SortKey) bool {
 	for _, key := range keys {
-		other, _ := key.Field()
-		if other == field {
+		if sameSortTarget(key, candidate) {
 			return true
 		}
 	}
 	return false
+}
+
+func sameSortTarget(left, right SortKey) bool {
+	if left.kind != right.kind {
+		return false
+	}
+	switch left.kind {
+	case SortTargetDIMENSION:
+		leftName, leftOK := left.dimension.Value()
+		rightName, rightOK := right.dimension.Value()
+		return leftOK && rightOK && leftName == rightName
+	case SortTargetMEASURE:
+		leftID, leftOK := left.measure.MeasureID()
+		rightID, rightOK := right.measure.MeasureID()
+		return leftOK && rightOK && leftID == rightID
+	default:
+		return false
+	}
 }
 
 type Limit struct {

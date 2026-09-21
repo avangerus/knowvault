@@ -315,7 +315,7 @@ func TestProposalV2DimensionsBoundsDuplicatesAndCopies(t *testing.T) {
 	}
 }
 
-func TestProposalV2SortDirectionAndKeyClosedVocabulary(t *testing.T) {
+func TestProposalV2SortDirectionAndTargetClosedVocabulary(t *testing.T) {
 	if !SortASC.Valid() || !SortDESC.Valid() {
 		t.Fatal("declared sort direction invalid")
 	}
@@ -324,12 +324,28 @@ func TestProposalV2SortDirectionAndKeyClosedVocabulary(t *testing.T) {
 			t.Fatal(direction)
 		}
 	}
+	if !SortTargetDIMENSION.Valid() || !SortTargetMEASURE.Valid() {
+		t.Fatal("declared sort target kind invalid")
+	}
+	for _, kind := range []SortTargetKind{"", "dimension", "measure", "FIELD", "MEASURE_REF"} {
+		if kind.Valid() {
+			t.Fatal(kind)
+		}
+	}
 	field, _ := NewFieldToken("created_at")
+	measure, _ := NewMeasureRef("created_at")
 	for _, candidate := range []struct {
 		field     FieldToken
 		direction SortDirection
 	}{{FieldToken{}, SortASC}, {field, "asc"}} {
-		_, e := NewSortKey(candidate.field, candidate.direction)
+		_, e := NewDimensionSortKey(candidate.field, candidate.direction)
+		pBad(t, e)
+	}
+	for _, candidate := range []struct {
+		measure   MeasureRef
+		direction SortDirection
+	}{{MeasureRef{}, SortDESC}, {measure, ""}} {
+		_, e := NewMeasureSortKey(candidate.measure, candidate.direction)
 		pBad(t, e)
 	}
 
@@ -337,20 +353,76 @@ func TestProposalV2SortDirectionAndKeyClosedVocabulary(t *testing.T) {
 	if zero.Valid() {
 		t.Fatal("zero sort key valid")
 	}
-	if _, ok := zero.Field(); ok {
-		t.Fatal("zero sort field readable")
+	if _, ok := zero.TargetKind(); ok {
+		t.Fatal("zero sort target kind readable")
+	}
+	if _, ok := zero.Dimension(); ok {
+		t.Fatal("zero sort dimension readable")
+	}
+	if _, ok := zero.Measure(); ok {
+		t.Fatal("zero sort measure readable")
 	}
 	if _, ok := zero.Direction(); ok {
 		t.Fatal("zero sort direction readable")
 	}
-	key, e := NewSortKey(field, SortDESC)
+	for _, forged := range []SortKey{
+		{dimension: field, direction: SortASC},
+		{kind: SortTargetDIMENSION, direction: SortASC},
+		{kind: SortTargetMEASURE, direction: SortASC},
+		{kind: SortTargetDIMENSION, dimension: field},
+		{kind: SortTargetDIMENSION, dimension: field, direction: "asc"},
+		{kind: SortTargetDIMENSION, dimension: field, measure: measure, direction: SortASC},
+		{kind: SortTargetMEASURE, dimension: field, measure: measure, direction: SortASC},
+		{kind: SortTargetDIMENSION, measure: measure, direction: SortASC},
+		{kind: SortTargetMEASURE, dimension: field, direction: SortASC},
+		{kind: SortTargetKind("FIELD"), dimension: field, direction: SortASC},
+	} {
+		if forged.Valid() {
+			t.Fatal("forged sort key valid", forged)
+		}
+		if _, ok := forged.TargetKind(); ok {
+			t.Fatal("forged sort target kind readable", forged)
+		}
+		if _, ok := forged.Dimension(); ok {
+			t.Fatal("forged sort dimension readable", forged)
+		}
+		if _, ok := forged.Measure(); ok {
+			t.Fatal("forged sort measure readable", forged)
+		}
+		if _, ok := forged.Direction(); ok {
+			t.Fatal("forged sort direction readable", forged)
+		}
+	}
+	key, e := NewDimensionSortKey(field, SortDESC)
 	if e != nil || !key.Valid() {
 		t.Fatal(e)
 	}
-	if got, ok := key.Field(); !ok || got != field {
+	if got, ok := key.TargetKind(); !ok || got != SortTargetDIMENSION {
+		t.Fatal(got, ok)
+	}
+	if got, ok := key.Dimension(); !ok || got != field {
 		t.Fatal(got)
 	}
+	if got, ok := key.Measure(); ok {
+		t.Fatal("dimension key measure readable", got)
+	}
 	if got, ok := key.Direction(); !ok || got != SortDESC {
+		t.Fatal(got)
+	}
+	measureKey, e := NewMeasureSortKey(measure, SortASC)
+	if e != nil || !measureKey.Valid() {
+		t.Fatal(e)
+	}
+	if got, ok := measureKey.TargetKind(); !ok || got != SortTargetMEASURE {
+		t.Fatal(got, ok)
+	}
+	if got, ok := measureKey.Measure(); !ok || got != measure {
+		t.Fatal(got)
+	}
+	if got, ok := measureKey.Dimension(); ok {
+		t.Fatal("measure key dimension readable", got)
+	}
+	if got, ok := measureKey.Direction(); !ok || got != SortASC {
 		t.Fatal(got)
 	}
 }
@@ -362,10 +434,16 @@ func TestProposalV2SortKeysBoundsDuplicatesAndCopies(t *testing.T) {
 	a, _ := NewFieldToken("a")
 	b, _ := NewFieldToken("b")
 	c, _ := NewFieldToken("c")
-	ascA, _ := NewSortKey(a, SortASC)
-	descA, _ := NewSortKey(a, SortDESC)
-	descB, _ := NewSortKey(b, SortDESC)
-	ascC, _ := NewSortKey(c, SortASC)
+	measureA, _ := NewMeasureRef("a")
+	measureB, _ := NewMeasureRef("b")
+	ascA, _ := NewDimensionSortKey(a, SortASC)
+	descA, _ := NewDimensionSortKey(a, SortDESC)
+	descB, _ := NewDimensionSortKey(b, SortDESC)
+	ascC, _ := NewDimensionSortKey(c, SortASC)
+	ascMeasureA, _ := NewMeasureSortKey(measureA, SortASC)
+	descMeasureA, _ := NewMeasureSortKey(measureA, SortDESC)
+	descMeasureB, _ := NewMeasureSortKey(measureB, SortDESC)
+	forged := SortKey{kind: SortTargetDIMENSION, dimension: a, measure: measureA, direction: SortASC}
 
 	var zero SortKeys
 	if zero.Valid() {
@@ -381,31 +459,71 @@ func TestProposalV2SortKeysBoundsDuplicatesAndCopies(t *testing.T) {
 	if values, ok := empty.Values(); !ok || values == nil || len(values) != 0 {
 		t.Fatal("constructed empty sort keys invalid")
 	}
-	for _, keys := range [][]SortKey{{ascA}, {ascA, descB}} {
+	for _, keys := range [][]SortKey{{ascA}, {ascA, descB}, {ascA, ascMeasureA}, {ascA, descMeasureB}, {ascMeasureA, descMeasureB}} {
 		s, e := NewSortKeys(keys...)
 		if e != nil || !s.Valid() {
 			t.Fatal(e)
 		}
 	}
-	for _, keys := range [][]SortKey{{ascA, descB, ascC}, {SortKey{}}, {ascA, descA}} {
+	for _, keys := range [][]SortKey{
+		{ascA, descB, ascC},
+		{SortKey{}},
+		{ascA, descA},
+		{ascA, forged},
+		{forged},
+		{ascMeasureA, descMeasureA},
+		{ascMeasureA, descMeasureB, ascC},
+	} {
 		_, e := NewSortKeys(keys...)
 		pBad(t, e)
 	}
-	if _, e := NewDimensions(a); e != nil {
-		t.Fatal(e)
+	mixed, e := NewSortKeys(ascA, ascMeasureA)
+	if e != nil || !mixed.Valid() {
+		t.Fatal("dimension and measure with same text not distinct", e)
 	}
-	if _, e := NewSortKeys(ascA); e != nil {
-		t.Fatal("dimension/sort overlap rejected")
+	mixedValues, _ := mixed.Values()
+	if kind, ok := mixedValues[0].TargetKind(); !ok || kind != SortTargetDIMENSION {
+		t.Fatal(kind, ok)
+	}
+	if kind, ok := mixedValues[1].TargetKind(); !ok || kind != SortTargetMEASURE {
+		t.Fatal(kind, ok)
 	}
 
-	input := []SortKey{ascA, descB}
+	input := []SortKey{ascA, descMeasureB}
 	s, _ := NewSortKeys(input...)
 	input[0] = ascC
 	first, _ := s.Values()
 	first[0] = ascC
 	second, _ := s.Values()
-	if second[0] != ascA || second[1] != descB {
+	if second[0] != ascA || second[1] != descMeasureB {
 		t.Fatal("sort keys alias input or accessor")
+	}
+}
+
+func TestProposalV2ProposalAcceptsMeasureSortTarget(t *testing.T) {
+	d, measure, p, f, dimensions, _, limit := validProposalV2Parts(t)
+	key, e := NewMeasureSortKey(measure, SortDESC)
+	if e != nil {
+		t.Fatal(e)
+	}
+	sort, e := NewSortKeys(key)
+	if e != nil || !sort.Valid() {
+		t.Fatal(e)
+	}
+	proposal, e := NewProposalV2(d, measure, p, f, dimensions, sort, limit, OutputRowset)
+	if e != nil || !proposal.Valid() {
+		t.Fatal(e)
+	}
+	got, ok := proposal.Sort()
+	if !ok {
+		t.Fatal("sort")
+	}
+	values, _ := got.Values()
+	if kind, ok := values[0].TargetKind(); !ok || kind != SortTargetMEASURE {
+		t.Fatal(kind, ok)
+	}
+	if got, ok := values[0].Measure(); !ok || got != measure {
+		t.Fatal(got, ok)
 	}
 }
 
@@ -508,7 +626,7 @@ func validProposalV2Parts(t *testing.T) (DatasetProfileRef, MeasureRef, PeriodPr
 	predicate, _ := NewPredicate(field, OpEQ, value)
 	filters, _ := NewPredicates(predicate)
 	dimensions, _ := NewDimensions(field)
-	key, _ := NewSortKey(field, SortASC)
+	key, _ := NewDimensionSortKey(field, SortASC)
 	sort, _ := NewSortKeys(key)
 	limit, _ := NewLimit(25)
 	return dataset, measure, period, filters, dimensions, sort, limit
