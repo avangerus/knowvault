@@ -381,6 +381,10 @@ func TestClarificationForEveryCodeIsNonEmpty(t *testing.T) {
 		CodeOutputFieldUnavailable,
 		CodeSortUnavailable,
 		CodeLimitExceeded,
+		CodePeriodUnavailable,
+		CodePeriodInvalid,
+		CodePeriodLimitExceeded,
+		CodeTrustedNowRequired,
 	}
 	for _, code := range codes {
 		if clarificationFor(code) == "" {

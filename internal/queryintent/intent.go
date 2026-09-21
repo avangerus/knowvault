@@ -89,6 +89,10 @@ const (
 	CodeOutputFieldUnavailable    ErrorCode = "QUERYINTENT_OUTPUT_FIELD_UNAVAILABLE"
 	CodeSortUnavailable           ErrorCode = "QUERYINTENT_SORT_UNAVAILABLE"
 	CodeLimitExceeded             ErrorCode = "QUERYINTENT_LIMIT_EXCEEDED"
+	CodePeriodUnavailable         ErrorCode = "QUERYINTENT_PERIOD_UNAVAILABLE"
+	CodePeriodInvalid             ErrorCode = "QUERYINTENT_PERIOD_INVALID"
+	CodePeriodLimitExceeded       ErrorCode = "QUERYINTENT_PERIOD_LIMIT_EXCEEDED"
+	CodeTrustedNowRequired        ErrorCode = "QUERYINTENT_TRUSTED_NOW_REQUIRED"
 )
 
 func clarificationFor(code ErrorCode) string {
@@ -123,6 +127,14 @@ func clarificationFor(code ErrorCode) string {
 		return "A requested sort is not available in the selected dataset profile. Sort by a field or measure this profile allows."
 	case CodeLimitExceeded:
 		return "The requested row limit is above what the selected dataset profile allows. Ask for fewer rows."
+	case CodePeriodUnavailable:
+		return "The requested period is not available. Choose a period the definition covers."
+	case CodePeriodInvalid:
+		return "The requested period is not valid. Provide a start and end the definition allows."
+	case CodePeriodLimitExceeded:
+		return "The requested period is wider than allowed. Ask for a shorter period."
+	case CodeTrustedNowRequired:
+		return "This request needs a trusted current time that is not available. Try again later."
 	default:
 		return "The request could not be validated. Adjust it and try again."
 	}
