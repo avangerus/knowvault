@@ -361,13 +361,25 @@ export async function verifyEvidenceQuoteSelector(
 // and projects; nothing here is invented by the client.
 // ---------------------------------------------------------------------------
 
-type WorkspaceSummary = {
+export type WorkspaceSummary = {
   id: string;
   name: string;
   status: string;
   revision: number;
   role: string;
 };
+
+export function activeWorkspaceSummaries(workspaces: readonly WorkspaceSummary[]): WorkspaceSummary[] {
+  return workspaces.filter((workspace) => workspace.status === "ACTIVE");
+}
+
+export function archivedWorkspaceSummaries(workspaces: readonly WorkspaceSummary[]): WorkspaceSummary[] {
+  return workspaces.filter((workspace) => workspace.status === "ARCHIVED");
+}
+
+export function automaticWorkspaceSelection(workspaces: readonly WorkspaceSummary[]): string | null {
+  return activeWorkspaceSummaries(workspaces)[0]?.id ?? null;
+}
 
 type MemberResponse = { principal_id: string; display_name: string; role: string };
 
@@ -1923,7 +1935,7 @@ function App() {
         setSessionState("signedIn");
         setWorkspaces(list);
         setSelectedWorkspaceID((current) =>
-          current ?? list[0]?.id ?? null,
+          current ?? automaticWorkspaceSelection(list),
         );
       } else if (result.kind === "failure" && result.status === 401) {
         setSessionState("signedOut");
@@ -2156,9 +2168,9 @@ function App() {
   );
 }
 
-// WorkspaceSwitcher lists exactly the workspaces the server returned for the
-// current principal; the selection drives all three workspace surfaces.
-function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, onClose, onCreate }: {
+// WorkspaceSwitcher keeps server-returned records available for deep links
+// and history while presenting ACTIVE workspaces as the primary choices.
+export function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, onClose, onCreate }: {
   workspaces: WorkspaceSummary[];
   selectedID: string | null;
   open: boolean;
@@ -2169,6 +2181,8 @@ function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, o
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const selected = workspaces.find((workspace) => workspace.id === selectedID) ?? null;
+  const activeWorkspaces = activeWorkspaceSummaries(workspaces);
+  const archivedWorkspaces = archivedWorkspaceSummaries(workspaces);
 
   useEffect(() => {
     if (!open) return;
@@ -2198,8 +2212,8 @@ function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, o
       </button>
       {open && (
         <ul className="switcher-pop" role="listbox" aria-label="Workspaces">
-          {workspaces.length === 0 && <li className="switcher-empty">No workspaces</li>}
-          {workspaces.map((workspace) => (
+          {activeWorkspaces.length === 0 && <li className="switcher-empty">No active workspaces</li>}
+          {activeWorkspaces.map((workspace) => (
             <li key={workspace.id}>
               <button
                 aria-selected={workspace.id === selectedID}
@@ -2216,6 +2230,32 @@ function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, o
               </button>
             </li>
           ))}
+          {archivedWorkspaces.length > 0 && (
+            <li>
+              <details className="switcher-archived">
+                <summary>Archived ({archivedWorkspaces.length})</summary>
+                <ul className="switcher-archived-list">
+                  {archivedWorkspaces.map((workspace) => (
+                    <li key={workspace.id}>
+                      <button
+                        aria-selected={workspace.id === selectedID}
+                        className={workspace.id === selectedID ? "switcher-item active" : "switcher-item"}
+                        onClick={() => onSelect(workspace.id)}
+                        role="option"
+                        type="button"
+                      >
+                        <span className="workspace-glyph">{workspace.name.slice(0, 1).toUpperCase()}</span>
+                        <span className="switcher-item-main">
+                          <strong>{workspace.name}</strong>
+                          <small>{workspaceStatusLabel(workspace.status)} · {roleLabel(workspace.role)}</small>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          )}
           <li className="switcher-create-row">
             <button className="switcher-create" onClick={onCreate} type="button">+ New workspace</button>
           </li>

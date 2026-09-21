@@ -320,6 +320,9 @@ svg { display: block; }
 .switcher-create-row { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line-soft); }
 .switcher-create { width: 100%; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--accent-strong); text-align: left; padding: 9px 10px; font-size: var(--fs-caption); font-weight: 700; }
 .switcher-create:hover { background: var(--bg); }
+.switcher-archived { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line-soft); }
+.switcher-archived summary { cursor: pointer; padding: 8px 10px; color: var(--ink-secondary); font-size: var(--fs-caption); font-weight: 700; }
+.switcher-archived-list { list-style: none; margin: 0; padding: 0; }
 
 /* ---------------------------------------------------------------------------
    Signed-out state
