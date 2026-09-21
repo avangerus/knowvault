@@ -56,10 +56,16 @@ const (
 	// SERVICE_UNAVAILABLE (see internal/governedask.Service, capability
 	// absent by default).
 	StartupStageGovernedQueryMount StartupStage = "GOVERNED_QUERY_MOUNT"
-	StartupStageWorkspaceHandler   StartupStage = "WORKSPACE_HANDLER"
-	StartupStageWebUI              StartupStage = "WEB_UI"
-	StartupStageHTTPDispatcher     StartupStage = "HTTP_DISPATCHER"
-	StartupStageHTTPServer         StartupStage = "HTTP_SERVER"
+	// StartupStageDatasetProfileMount is R1.1 (micro-card C): a present but
+	// invalid analyticcatalog mount, or a mounted catalog the Question
+	// authority refuses to install, is a startup failure, exactly like the
+	// generation mount above. A wholly absent mount is not a failure: it
+	// keeps the document-only capability (no dataset profile catalog).
+	StartupStageDatasetProfileMount StartupStage = "DATASET_PROFILE_MOUNT"
+	StartupStageWorkspaceHandler    StartupStage = "WORKSPACE_HANDLER"
+	StartupStageWebUI               StartupStage = "WEB_UI"
+	StartupStageHTTPDispatcher      StartupStage = "HTTP_DISPATCHER"
+	StartupStageHTTPServer          StartupStage = "HTTP_SERVER"
 )
 
 // StartupStageOf returns a stage only for a composition startup failure and
@@ -110,6 +116,7 @@ func knownStartupStage(stage StartupStage) bool {
 		StartupStageRetrievalExecutor,
 		StartupStageGenerationMount,
 		StartupStageGovernedQueryMount,
+		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
 		StartupStageWebUI,
 		StartupStageHTTPDispatcher,

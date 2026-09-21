@@ -17,6 +17,7 @@ import (
 	"knowvault.local/verified-workspace/internal/knowledgegraph"
 	"knowvault.local/verified-workspace/internal/metricdef"
 	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/platform/analyticcatalog"
 	"knowvault.local/verified-workspace/internal/platform/apphttp"
 	"knowvault.local/verified-workspace/internal/platform/browserauth"
 	"knowvault.local/verified-workspace/internal/platform/buildinfo"
@@ -333,6 +334,20 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	questions, err := question.NewWithRetrieval(databaseStore, auditStore, sourceCodec, viewer, retrievalExecutor)
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
+	}
+	// R1.1 (micro-card C): the trusted analytic DatasetProfile catalog is
+	// wired only behind its own explicit administrator mount
+	// (analyticcatalog.LoadMounted), exactly like the generation mount
+	// below. A wholly absent mount keeps the document-only capability; a
+	// present-but-invalid mount is a startup failure so drift can never look
+	// like a safe partial deployment.
+	datasetProfileCatalog, datasetProfileMountErr := analyticcatalog.LoadMounted()
+	if datasetProfileMountErr != nil {
+		if analyticcatalog.CodeOf(datasetProfileMountErr) != analyticcatalog.CodeMountUnavailable {
+			return fail(StartupStageDatasetProfileMount)
+		}
+	} else if err := questions.EnableDatasetProfileCatalog(datasetProfileCatalog); err != nil {
+		return fail(StartupStageDatasetProfileMount)
 	}
 	// GEN-2 (ADR-0088): the interim GENERATIVE adapter/verifier are wired only
 	// behind their own explicit administrator mount, exactly like the
