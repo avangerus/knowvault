@@ -1011,6 +1011,7 @@
     "tests/integration/postgres/source_activation_single_live_job_test.go": "3ad32400a6672996c106c6be2cec68eed6ea1ac6cfb18036068601677023ecd6",
     "tests/integration/postgres/source_authority_admission_negative_test.go": "243671c6f5ec3d5714b5587dd82b893dd8e24e22603527a6a0237c994f72e550",
     "tests/integration/postgres/source_authority_admission_test.go": "9fab163834f4ed50acf1b315b6ad28393d26d2f31eb509c84670eb3d871912a5",
+    "tests/integration/postgres/source_authority_lookup_test.go": "63845f36fda61cfa2eeac5c6c168a8d72bee3f9e08f9b76e933cfd618e3484e5",
     "tests/integration/postgres/source_connection_draft_test.go": "b84cb80e663ae3e260933fb4886a10119ea7ee2079d5ef3609cd62553798b5bd",
     "tests/integration/postgres/source_connection_trust_verify_separation_of_duty_test.go": "b925258143fdc8a332a4dc637b8826b1ff8be77122d081c2ebdb73a1375094e6",
     "tests/integration/postgres/source_connection_trust_verify_test.go": "f84f2daf64e7fe91ec3e1bb5e31f095e12cdf5ec567d8e2755c30cffdc5a2547",
