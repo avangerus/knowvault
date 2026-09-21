@@ -53,10 +53,20 @@ func v2RefusalV2(t *testing.T, name string, code ErrorCode, sealed ValidatedInte
 	}
 }
 
+// v2ValidatorFilters replaces the R1.2f baseline filter set with the one the
+// R1.2g filter policy allows the v2Base profile: business_day is not filterable,
+// so these baselines filter on the filterable region field instead.
+func v2ValidatorFilters(t *testing.T) Predicates {
+	t.Helper()
+	return v2Predicates(t, v2Predicate(t, "region", OpEQ, v2Text(t, "north")))
+}
+
 func TestValidatorV2ValidAggregateAndLookup(t *testing.T) {
 	catalog, profile := v2Base(t)
 	validator, binding := v2Validator(t, catalog), v2Binding(t, catalog)
-	proposal := v2SealAggregate(t, v2AggregatePartsFor(t, profile))
+	parts := v2AggregatePartsFor(t, profile)
+	parts.Filters = v2ValidatorFilters(t)
+	proposal := v2SealAggregate(t, parts)
 
 	sealed, err := validator.ValidateProposalV2(proposal, binding)
 	if err != nil || !sealed.Valid() {
@@ -82,7 +92,9 @@ func TestValidatorV2ValidAggregateAndLookup(t *testing.T) {
 		t.Fatal("the validator sealed a different value than the direct seal")
 	}
 
-	lookup, err := validator.ValidateProposalV2(v2SealLookup(t, v2LookupPartsFor(t, profile)), binding)
+	lookupParts := v2LookupPartsFor(t, profile)
+	lookupParts.Filters = v2ValidatorFilters(t)
+	lookup, err := validator.ValidateProposalV2(v2SealLookup(t, lookupParts), binding)
 	if err != nil || !lookup.Valid() {
 		t.Fatalf("lookup refused: valid=%v err=%v", lookup.Valid(), err)
 	}
@@ -239,6 +251,7 @@ func TestValidatorV2LookupNeedsNoMeasure(t *testing.T) {
 	catalog, profile := v2Base(t)
 	validator, binding := v2Validator(t, catalog), v2Binding(t, catalog)
 	parts := v2LookupPartsFor(t, profile)
+	parts.Filters = v2ValidatorFilters(t)
 	parts.OutputFields = v2OutputFields(t, "unlisted")
 	lookup := v2SealLookup(t, parts)
 	if measure, ok := lookup.Measure(); ok || measure.Valid() {
@@ -254,23 +267,25 @@ func TestValidatorV2LookupNeedsNoMeasure(t *testing.T) {
 	v2Digest(t, sealed)
 }
 
-// Filters, dimensions, output fields, sort targets, limits and periods the
-// profile cannot resolve are deliberately left to a later card: this card only
-// validates the exact catalog, the exact profile and the AGGREGATE measure.
+// Dimensions, output fields, sort targets, limits and periods the profile
+// cannot resolve are deliberately left to a later card. Filter predicates are
+// resolved by the R1.2g policy, so every baseline here filters on the allowed
+// region field; the unknown filter field case now belongs to that policy.
 func TestValidatorV2LeavesSemanticsUnresolved(t *testing.T) {
 	catalog, profile := v2Base(t)
 	validator, binding := v2Validator(t, catalog), v2Binding(t, catalog)
 	agg := func(mutate func(*v2AggregateParts)) ProposalV2 {
-		return v2SealAggregate(t, v2Parts(t, profile, mutate))
+		return v2SealAggregate(t, v2Parts(t, profile, func(parts *v2AggregateParts) {
+			parts.Filters = v2ValidatorFilters(t)
+			mutate(parts)
+		}))
 	}
 	lookupParts := v2LookupPartsFor(t, profile)
+	lookupParts.Filters = v2ValidatorFilters(t)
 	lookupParts.OutputFields = v2OutputFields(t, "unlisted")
 	lookupParts.Sort = v2DimensionSort(t, "unlisted", SortDESC)
 
 	cases := map[string]ProposalV2{
-		"unknown filter field": agg(func(parts *v2AggregateParts) {
-			parts.Filters = v2Predicates(t, v2Predicate(t, "unlisted", OpEQ, v2Text(t, "east")))
-		}),
 		"unknown dimension": agg(func(parts *v2AggregateParts) {
 			parts.Dimensions = v2Dimensions(t, "unlisted")
 			parts.Sort = v2DimensionSort(t, "unlisted", SortDESC)
