@@ -2246,6 +2246,86 @@ func TestLicensePolicyGuardRejectsReviewedEntryRemoval(t *testing.T) {
 	}
 }
 
+// TestTimezoneDataAssetMutationsAreRejected proves that the embedded timezone
+// bundle is a closed, content-addressed supply-chain component.
+func TestTimezoneDataAssetMutationsAreRejected(t *testing.T) {
+	versionRaw, err := os.ReadFile(filepath.Join("..", "architecture", "versions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseline map[string]any
+	if err := json.Unmarshal(versionRaw, &baseline); err != nil {
+		t.Fatal(err)
+	}
+	mutations := map[string]func(map[string]any){
+		"unknown asset": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["unexpected"] = map[string]any{}
+		},
+		"missing sha256": func(lock map[string]any) {
+			delete(lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any), "sha256")
+		},
+		"changed sha256": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["sha256"] = strings.Repeat("0", 64)
+		},
+		"changed size": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["size_bytes"] = float64(1)
+		},
+		"floating builder": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["builder_image"] = "golang:1.26.5-bookworm"
+		},
+		"unknown license": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["license"] = "Unknown-License"
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			lock, cloneErr := cloneJSONValue(baseline)
+			if cloneErr != nil {
+				t.Fatal(cloneErr)
+			}
+			mutate(lock.(map[string]any))
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "architecture"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeJSONFixture(t, filepath.Join(root, "architecture", "versions.json"), lock)
+			if problems := checkVersionLock(root); len(problems) == 0 {
+				t.Fatal("timezone data asset mutation was accepted")
+			}
+		})
+	}
+
+	policyRaw, err := os.ReadFile(filepath.Join("..", "architecture", "licenses.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const entry = "  - name: IANA Time Zone Database\n    status: ACTIVE\n    role: embedded deterministic timezone rules\n    license: LicenseRef-IANA-TZ-Public-Domain\n    source: https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README\n"
+	t.Run("removed selected component", func(t *testing.T) {
+		root := t.TempDir()
+		writeFixtureFile(t, root, "architecture/versions.json", versionRaw)
+		mutated := strings.Replace(string(policyRaw), entry, "", 1)
+		if mutated == string(policyRaw) {
+			t.Fatal("IANA selected component anchor is not unique")
+		}
+		writeFixtureFile(t, root, "architecture/licenses.yaml", []byte(mutated))
+		if problems := checkLicensePolicy(root); len(problems) == 0 {
+			t.Fatal("removing the IANA timezone selected component was accepted")
+		}
+	})
+	t.Run("source drift", func(t *testing.T) {
+		root := t.TempDir()
+		writeFixtureFile(t, root, "architecture/versions.json", versionRaw)
+		mutated := strings.Replace(string(policyRaw), "source: https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README", "source: https://example.invalid/iana", 1)
+		if mutated == string(policyRaw) {
+			t.Fatal("IANA provenance anchor is absent")
+		}
+		writeFixtureFile(t, root, "architecture/licenses.yaml", []byte(mutated))
+		if problems := checkLicensePolicy(root); len(problems) == 0 {
+			t.Fatal("IANA source provenance drift was accepted")
+		}
+	})
+}
+
 // TestSupplyChainGuardRejectsNonExactGoModuleVersions is the executable mutation
 // proof behind the architecture.supply.non-exact-version checker-native
 // invariant: the real module manifest reconciles to the exact version lock, and

@@ -25,6 +25,7 @@ allow:
   - PostgreSQL
   - PSF-2.0
   - ISC
+  - LicenseRef-IANA-TZ-Public-Domain
 
 conditional_allow:
   - expression: Artistic-2.0
@@ -259,6 +260,11 @@ selected_components:
     role: lexical and vector search
     license: Apache-2.0
     source: https://github.com/opensearch-project/OpenSearch/blob/main/LICENSE.txt
+  - name: IANA Time Zone Database
+    status: ACTIVE
+    role: embedded deterministic timezone rules
+    license: LicenseRef-IANA-TZ-Public-Domain
+    source: https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README
   - name: libc6 (isolated parser runtime)
     status: DEFERRED
     role: amd64 native loader closure for the scratch-based jlink document-parser worker (ADR-0066)

@@ -515,6 +515,19 @@
       "scope": "deploy/compose one-compose install: CPU-only interim embedding channel (ADR-0080 §2.4, ADR-0088 GEN-2 addendum) serving intfloat/multilingual-e5-small; not yet the full ADR-0080 §3 qualification matrix — see deploy/compose/README.md"
     }
   },
+  "data_assets": {
+    "iana_timezone_database": {
+      "version": "1.26.5",
+      "source": "IANA Time Zone Database compiled in Go 1.26.5",
+      "source_path": "lib/time/zoneinfo.zip",
+      "artifact_path": "internal/tzrules/zoneinfo.zip",
+      "builder_image": "golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669",
+      "size_bytes": 408125,
+      "sha256": "8f55634d05f8bca1f7bc7c69c5933428c69357e0bdf565e5ba224e3f88ff12e8",
+      "provenance": "https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README",
+      "license": "LicenseRef-IANA-TZ-Public-Domain"
+    }
+  },
   "application_images": {
     "server_runtime_base": "scratch",
     "worker_runtime_base": "scratch",
