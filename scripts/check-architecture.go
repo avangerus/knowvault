@@ -10927,6 +10927,57 @@ func isUnconditionalNilReturn(signature *ast.FuncType, body *ast.BlockStmt) bool
 	return ok && nilLiteral.Name == "nil"
 }
 
+// timezoneAuthorityOwner names the exact production file that parses explicit,
+// content-addressed TZif bytes with time.LoadLocationFromTZData. It is retained
+// in diagnostics; it is not an exception for host timezone lookup.
+const timezoneAuthorityOwner = "internal/tzrules/loader.go"
+
+// validateTimezoneAuthorityBoundary rejects direct standard-library host
+// timezone database authority (time.LoadLocation) everywhere. References are
+// resolved from the file's own AST import table, so a normal or aliased import
+// is rejected, taking the function as a value is rejected, and a dot import is
+// rejected in full. An import path that cannot be unquoted fails closed.
+// internal/tzrules.Load and time.LoadLocationFromTZData stay allowed.
+func validateTimezoneAuthorityBoundary(rel string, parsed *ast.File) []string {
+	names := map[string]bool{}
+	dotImported := false
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return []string{"unresolvable Go import path in " + rel}
+		}
+		if importPath != "time" {
+			continue
+		}
+		switch {
+		case spec.Name == nil:
+			names["time"] = true
+		case spec.Name.Name == ".":
+			dotImported = true
+		case spec.Name.Name != "_":
+			names[spec.Name.Name] = true
+		}
+	}
+	if len(names) == 0 && !dotImported {
+		return nil
+	}
+	problem := "host timezone database authority is forbidden; pinned authority owner " + timezoneAuthorityOwner + ": " + rel
+	if dotImported {
+		return []string{problem}
+	}
+	var problems []string
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.SelectorExpr:
+			if identifier, ok := value.X.(*ast.Ident); ok && names[identifier.Name] && value.Sel.Name == "LoadLocation" {
+				problems = append(problems, problem)
+			}
+		}
+		return true
+	})
+	return problems
+}
+
 func checkGoBoundaries(root string) []string {
 	var problems []string
 	problems = append(problems, scanFiles(filepath.Join(root, "internal"), func(path, content string) []string {
@@ -10935,11 +10986,12 @@ func checkGoBoundaries(root string) []string {
 		}
 
 		rel := filepath.ToSlash(relative(root, path))
-		parsed, err := parser.ParseFile(token.NewFileSet(), path, content, parser.ImportsOnly)
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, content, 0)
 		if err != nil {
-			return []string{"cannot parse Go imports in " + rel + ": " + err.Error()}
+			return []string{"cannot parse Go source in " + rel + ": " + err.Error()}
 		}
 		var found []string
+		found = append(found, validateTimezoneAuthorityBoundary(rel, parsed)...)
 		if strings.Contains(content, "NewOIDCServiceAccess(") &&
 			rel != "internal/platform/database/database.go" &&
 			rel != "internal/platform/database/database_test.go" &&
@@ -10997,6 +11049,17 @@ func checkGoBoundaries(root string) []string {
 			}
 		}
 		return found
+	})...)
+	problems = append(problems, scanFiles(filepath.Join(root, "cmd"), func(path, content string) []string {
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		rel := filepath.ToSlash(relative(root, path))
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, content, 0)
+		if err != nil {
+			return []string{"cannot parse Go source in " + rel + ": " + err.Error()}
+		}
+		return validateTimezoneAuthorityBoundary(rel, parsed)
 	})...)
 	return problems
 }

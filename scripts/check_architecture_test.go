@@ -2326,6 +2326,94 @@ func TestTimezoneDataAssetMutationsAreRejected(t *testing.T) {
 	})
 }
 
+// TestGoBoundaryRejectsHostTimezoneAuthority proves the AST boundary that keeps
+// standard-library host timezone database authority out of every production
+// caller: normal, aliased and dot imports are rejected, including the exact
+// loader file, explicit TZif parsing and unrelated time APIs are accepted, and
+// unparseable Go fails closed.
+func TestGoBoundaryRejectsHostTimezoneAuthority(t *testing.T) {
+	bypassPath := "internal/tzperiod/bypass.go"
+	for name, bypass := range map[string]struct{ path, source string }{
+		"normal import": {bypassPath, `package tzperiod
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+		"aliased import": {bypassPath, `package tzperiod
+import clock "time"
+func at(name string) { _, _ = clock.LoadLocation(name) }
+`},
+		"dot import": {bypassPath, `package tzperiod
+import . "time"
+func at(name string) { _, _ = LoadLocation(name) }
+`},
+		"function value": {bypassPath, `package tzperiod
+import "time"
+var at = time.LoadLocation
+`},
+		"dot function value": {bypassPath, `package tzperiod
+import . "time"
+var at = LoadLocation
+`},
+		"sibling of the approved owner": {"internal/tzrules/sibling.go", `package tzrules
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+		"command caller": {"cmd/tzperiod/main.go", `package main
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+		"owner direct host lookup": {timezoneAuthorityOwner, `package tzrules
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixtureFile(t, root, bypass.path, []byte(bypass.source))
+			problems := checkGoBoundaries(root)
+			if len(problems) == 0 {
+				t.Fatal("host timezone database authority was accepted")
+			}
+			if !strings.Contains(problems[0], timezoneAuthorityOwner) {
+				t.Fatalf("rejection does not name the exact owner: %v", problems)
+			}
+		})
+	}
+	for name, approved := range map[string]struct{ path, source string }{
+		"TZif parser owner": {timezoneAuthorityOwner, `package tzrules
+import "time"
+func at(data []byte, name string) { _, _ = time.LoadLocationFromTZData(name, data) }
+`},
+		"unrelated time APIs": {bypassPath, `package tzperiod
+import "time"
+func zone() *time.Location { return time.FixedZone("fixed", 3600) }
+func now() time.Time { return time.Now().In(time.UTC) }
+`},
+		"internal tzrules Load caller": {bypassPath, `package tzperiod
+import (
+	"time"
+	"knowvault.local/verified-workspace/internal/tzrules"
+)
+func at(name string) (*time.Location, error) { return tzrules.Load(name) }
+`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixtureFile(t, root, approved.path, []byte(approved.source))
+			if problems := checkGoBoundaries(root); len(problems) != 0 {
+				t.Fatalf("approved timezone authority was rejected: %v", problems)
+			}
+		})
+	}
+	t.Run("unparseable source fails closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeFixtureFile(t, root, bypassPath, []byte("package tzperiod\n\nimport \"time\"\n\nfunc at() { _ = time.Now( }\n"))
+		if problems := checkGoBoundaries(root); len(problems) == 0 {
+			t.Fatal("unparseable Go source was accepted")
+		}
+	})
+}
+
 // TestSupplyChainGuardRejectsNonExactGoModuleVersions is the executable mutation
 // proof behind the architecture.supply.non-exact-version checker-native
 // invariant: the real module manifest reconciles to the exact version lock, and
