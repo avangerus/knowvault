@@ -500,7 +500,79 @@ func TestProposalV2SortKeysBoundsDuplicatesAndCopies(t *testing.T) {
 	}
 }
 
-func TestProposalV2ProposalAcceptsMeasureSortTarget(t *testing.T) {
+func TestProposalV2OperationAndOutputFieldsClosedVocabulary(t *testing.T) {
+	if !OperationAGGREGATE.Valid() || !OperationLOOKUP.Valid() {
+		t.Fatal("declared operation invalid")
+	}
+	for _, operation := range []Operation{"", "aggregate", "lookup", "SELECT", "AGGREGATE_LOOKUP"} {
+		if operation.Valid() {
+			t.Fatal(operation)
+		}
+	}
+	if MaxOutputFields != 8 {
+		t.Fatal(MaxOutputFields)
+	}
+	tokens := make([]FieldToken, 0, MaxOutputFields+1)
+	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"} {
+		token, e := NewFieldToken(name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		tokens = append(tokens, token)
+	}
+
+	var zero OutputFields
+	if zero.Valid() {
+		t.Fatal("zero output fields valid")
+	}
+	if fields, ok := zero.Fields(); ok || fields != nil {
+		t.Fatal("zero output fields readable")
+	}
+	for _, rejected := range [][]FieldToken{
+		{},
+		{FieldToken{}},
+		{tokens[0], tokens[0]},
+		{tokens[8], tokens[0], tokens[1], tokens[2], tokens[3], tokens[4], tokens[5], tokens[6], tokens[7]},
+	} {
+		_, e := NewOutputFields(rejected...)
+		pBad(t, e)
+	}
+	for _, forged := range []OutputFields{
+		{count: 1, initialized: true},
+		{fields: [MaxOutputFields]FieldToken{tokens[0]}, count: 0, initialized: true},
+		{fields: [MaxOutputFields]FieldToken{tokens[0], tokens[0]}, count: 2, initialized: true},
+		{fields: [MaxOutputFields]FieldToken{tokens[0]}, count: MaxOutputFields + 1, initialized: true},
+	} {
+		if forged.Valid() {
+			t.Fatal("forged output fields valid", forged)
+		}
+		if fields, ok := forged.Fields(); ok || fields != nil {
+			t.Fatal("forged output fields readable")
+		}
+	}
+
+	fields, e := NewOutputFields(tokens[:MaxOutputFields]...)
+	if e != nil || !fields.Valid() {
+		t.Fatal(e)
+	}
+	if got, ok := fields.Fields(); !ok || len(got) != MaxOutputFields || got[0] != tokens[0] || got[MaxOutputFields-1] != tokens[MaxOutputFields-1] {
+		t.Fatal(got, ok)
+	}
+	input := []FieldToken{tokens[0], tokens[1]}
+	outputFields, e := NewOutputFields(input...)
+	if e != nil || !outputFields.Valid() {
+		t.Fatal(e)
+	}
+	input[0] = tokens[2]
+	first, _ := outputFields.Fields()
+	first[0] = tokens[2]
+	second, _ := outputFields.Fields()
+	if second[0] != tokens[0] || second[1] != tokens[1] {
+		t.Fatal("output fields alias input or accessor")
+	}
+}
+
+func TestProposalV2AggregateProposalAcceptsMeasureSortTarget(t *testing.T) {
 	d, measure, p, f, dimensions, _, limit := validProposalV2Parts(t)
 	key, e := NewMeasureSortKey(measure, SortDESC)
 	if e != nil {
@@ -510,9 +582,24 @@ func TestProposalV2ProposalAcceptsMeasureSortTarget(t *testing.T) {
 	if e != nil || !sort.Valid() {
 		t.Fatal(e)
 	}
-	proposal, e := NewProposalV2(d, measure, p, f, dimensions, sort, limit, OutputRowset)
+	proposal, e := NewAggregateProposalV2(d, measure, p, f, dimensions, sort, limit, OutputRowset)
 	if e != nil || !proposal.Valid() {
 		t.Fatal(e)
+	}
+	if got, ok := proposal.Operation(); !ok || got != OperationAGGREGATE {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Measure(); !ok || got != measure {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Dimensions(); !ok || got != dimensions {
+		t.Fatal(got, ok)
+	}
+	if _, ok := proposal.OutputFields(); ok {
+		t.Fatal("aggregate output fields readable")
+	}
+	if got, ok := proposal.Output(); !ok || got != OutputRowset {
+		t.Fatal(got, ok)
 	}
 	got, ok := proposal.Sort()
 	if !ok {
@@ -632,6 +719,183 @@ func validProposalV2Parts(t *testing.T) (DatasetProfileRef, MeasureRef, PeriodPr
 	return dataset, measure, period, filters, dimensions, sort, limit
 }
 
+func validLookupProposalV2Parts(t *testing.T) (DatasetProfileRef, MeasureRef, PeriodProposal, Predicates, OutputFields, SortKeys, SortKeys, Limit) {
+	t.Helper()
+	dataset, measure, period, filters, _, sort, limit := validProposalV2Parts(t)
+	field, _ := NewFieldToken("team")
+	status, _ := NewFieldToken("status")
+	outputFields, e := NewOutputFields(field, status)
+	if e != nil {
+		t.Fatal(e)
+	}
+	key, e := NewMeasureSortKey(measure, SortDESC)
+	if e != nil {
+		t.Fatal(e)
+	}
+	measureSort, e := NewSortKeys(key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return dataset, measure, period, filters, outputFields, sort, measureSort, limit
+}
+
+func TestProposalV2LookupShape(t *testing.T) {
+	d, _, p, f, outputFields, sort, measureSort, limit := validLookupProposalV2Parts(t)
+	if !measureSort.Valid() || !sort.Valid() {
+		t.Fatal("fixture sort keys invalid")
+	}
+	team, _ := NewFieldToken("team")
+	status, _ := NewFieldToken("status")
+	if fields, ok := outputFields.Fields(); !ok || len(fields) != 2 || fields[0] != team || fields[1] != status {
+		t.Fatal(fields, ok)
+	}
+	proposal, e := NewLookupProposalV2(d, p, f, outputFields, sort, limit)
+	if e != nil || !proposal.Valid() {
+		t.Fatal(e)
+	}
+	if got, ok := proposal.Operation(); !ok || got != OperationLOOKUP {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Output(); !ok || got != OutputRowset {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.OutputFields(); !ok || got != outputFields {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Dataset(); !ok || got != d {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Period(); !ok || got != p {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Sort(); !ok || got != sort {
+		t.Fatal(got, ok)
+	}
+	if got, ok := proposal.Limit(); !ok || got != limit {
+		t.Fatal(got, ok)
+	}
+	if _, ok := proposal.Filters(); !ok {
+		t.Fatal("filters")
+	}
+	if got, ok := proposal.Measure(); ok {
+		t.Fatal("lookup measure readable", got)
+	}
+	if got, ok := proposal.Dimensions(); ok {
+		t.Fatal("lookup dimensions readable", got)
+	}
+	read, _ := proposal.OutputFields()
+	fields, ok := read.Fields()
+	if !ok || len(fields) != 2 {
+		t.Fatal(fields, ok)
+	}
+	fields[0], _ = NewFieldToken("mutated")
+	again, _ := proposal.OutputFields()
+	againFields, _ := again.Fields()
+	if againFields[0] != team || againFields[1] != status {
+		t.Fatal("lookup output fields alias accessor", againFields)
+	}
+
+	f.values[0].values[0], _ = TextScalar("mutated-input")
+	stored, ok := proposal.Filters()
+	if !ok {
+		t.Fatal("filters")
+	}
+	storedValues, _ := stored.Values()
+	if got, _ := storedValues[0].values[0].Text(); got != "support" {
+		t.Fatal("lookup filters alias input", got)
+	}
+}
+
+func TestProposalV2LookupRejectsMissingValuesAndMeasureSort(t *testing.T) {
+	d, _, p, f, outputFields, sort, measureSort, limit := validLookupProposalV2Parts(t)
+	for _, candidate := range []struct {
+		d            DatasetProfileRef
+		p            PeriodProposal
+		f            Predicates
+		outputFields OutputFields
+		sort         SortKeys
+		limit        Limit
+	}{
+		{p: p, f: f, outputFields: outputFields, sort: sort, limit: limit},
+		{d: d, f: f, outputFields: outputFields, sort: sort, limit: limit},
+		{d: d, p: p, outputFields: outputFields, sort: sort, limit: limit},
+		{d: d, p: p, f: f, sort: sort, limit: limit},
+		{d: d, p: p, f: f, outputFields: outputFields, limit: limit},
+		{d: d, p: p, f: f, outputFields: outputFields, sort: sort},
+		{d: d, p: p, f: f, outputFields: outputFields, sort: measureSort, limit: limit},
+	} {
+		_, e := NewLookupProposalV2(candidate.d, candidate.p, candidate.f, candidate.outputFields, candidate.sort, candidate.limit)
+		pBad(t, e)
+	}
+}
+
+func TestProposalV2ZeroAndForgedMixedShapesInvalid(t *testing.T) {
+	d, measure, p, f, dimensions, sort, limit := validProposalV2Parts(t)
+	_, _, _, _, outputFields, _, measureSort, _ := validLookupProposalV2Parts(t)
+	field, _ := NewFieldToken("team")
+	singleFields, e := NewOutputFields(field)
+	if e != nil {
+		t.Fatal(e)
+	}
+	forgedMeasure := MeasureRef{measureID: "open_tickets"}
+	forgedDimensions := Dimensions{fields: [MaxDimensions]FieldToken{field}, count: 0, initialized: true}
+	if !forgedMeasure.Valid() || !forgedDimensions.Valid() {
+		t.Fatal("forgery fixture rejected by its own type")
+	}
+	for _, forged := range []ProposalV2{
+		{dataset: d, measure: measure, period: p, filters: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: Operation("SELECT"), dataset: d, measure: measure, period: p, filters: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: OperationAGGREGATE, dataset: d, measure: measure, period: p, filters: f, dimensions: dimensions, outputFields: singleFields, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: OperationAGGREGATE, dataset: d, measure: measure, period: p, filters: f, outputFields: OutputFields{fields: [MaxOutputFields]FieldToken{field}, count: 1}, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: OperationAGGREGATE, dataset: d, measure: measure, period: p, filters: f, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: OperationAGGREGATE, dataset: d, period: p, filters: f, dimensions: dimensions, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: OperationAGGREGATE, dataset: d, measure: measure, period: p, filters: f, dimensions: dimensions, sort: sort, limit: limit, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, measure: measure, period: p, filters: f, outputFields: outputFields, sort: sort, limit: limit, output: OutputRowset, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, dimensions: dimensions, outputFields: outputFields, sort: sort, limit: limit, output: OutputRowset, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, measure: forgedMeasure, period: p, filters: f, outputFields: outputFields, sort: sort, limit: limit, output: OutputRowset, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, dimensions: forgedDimensions, outputFields: outputFields, sort: sort, limit: limit, output: OutputRowset, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, outputFields: outputFields, sort: sort, limit: limit, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, outputFields: outputFields, sort: sort, limit: limit, output: OutputValue, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, outputFields: outputFields, sort: measureSort, limit: limit, output: OutputRowset, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, sort: sort, limit: limit, output: OutputRowset, initialized: true},
+		{operation: OperationLOOKUP, dataset: d, period: p, filters: f, outputFields: OutputFields{count: 1, initialized: true}, sort: sort, limit: limit, output: OutputRowset, initialized: true},
+	} {
+		if forged.Valid() {
+			t.Fatal("forged proposal valid", forged)
+		}
+		if got, ok := forged.Operation(); ok || got != "" {
+			t.Fatal("forged operation readable", got)
+		}
+		if got, ok := forged.Dataset(); ok {
+			t.Fatal("forged dataset readable", got)
+		}
+		if got, ok := forged.Measure(); ok {
+			t.Fatal("forged measure readable", got)
+		}
+		if got, ok := forged.Period(); ok {
+			t.Fatal("forged period readable", got)
+		}
+		if got, ok := forged.Filters(); ok {
+			t.Fatal("forged filters readable", got)
+		}
+		if got, ok := forged.Dimensions(); ok {
+			t.Fatal("forged dimensions readable", got)
+		}
+		if got, ok := forged.OutputFields(); ok {
+			t.Fatal("forged output fields readable", got)
+		}
+		if got, ok := forged.Sort(); ok {
+			t.Fatal("forged sort readable", got)
+		}
+		if got, ok := forged.Limit(); ok {
+			t.Fatal("forged limit readable", got)
+		}
+		if got, ok := forged.Output(); ok {
+			t.Fatal("forged output readable", got)
+		}
+	}
+}
+
 func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 	d, measure, p, f, dimensions, sort, limit := validProposalV2Parts(t)
 	for _, candidate := range []struct {
@@ -651,14 +915,29 @@ func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 		{d: d, measure: measure, p: p, f: f, sort: sort, limit: limit, output: OutputValue},
 		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, limit: limit, output: OutputValue},
 		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, sort: sort, output: OutputValue},
+		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit},
 		{d: d, measure: measure, p: p, f: f, dimensions: dimensions, sort: sort, limit: limit, output: "TABLE"},
 	} {
-		_, err := NewProposalV2(candidate.d, candidate.measure, candidate.p, candidate.f, candidate.dimensions, candidate.sort, candidate.limit, candidate.output)
+		_, err := NewAggregateProposalV2(candidate.d, candidate.measure, candidate.p, candidate.f, candidate.dimensions, candidate.sort, candidate.limit, candidate.output)
 		pBad(t, err)
+	}
+	emptyDimensions, err := NewDimensions()
+	if err != nil || !emptyDimensions.Valid() {
+		t.Fatal(err)
+	}
+	unGrouped, err := NewAggregateProposalV2(d, measure, p, f, emptyDimensions, sort, limit, OutputValue)
+	if err != nil || !unGrouped.Valid() {
+		t.Fatal("empty dimensions rejected", err)
+	}
+	if got, ok := unGrouped.Output(); !ok || got != OutputValue {
+		t.Fatal(got, ok)
 	}
 	var zero ProposalV2
 	if zero.Valid() {
 		t.Fatal("zero proposal valid")
+	}
+	if got, ok := zero.Operation(); ok || got != "" {
+		t.Fatal("zero proposal operation readable")
 	}
 	if _, ok := zero.Dataset(); ok {
 		t.Fatal("zero dataset accessor succeeded")
@@ -675,6 +954,9 @@ func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 	if _, ok := zero.Dimensions(); ok {
 		t.Fatal("zero dimensions accessor succeeded")
 	}
+	if _, ok := zero.OutputFields(); ok {
+		t.Fatal("zero output fields accessor succeeded")
+	}
 	if _, ok := zero.Sort(); ok {
 		t.Fatal("zero sort accessor succeeded")
 	}
@@ -688,9 +970,15 @@ func TestProposalV2RejectsEveryInvalidNestedValueAndOutput(t *testing.T) {
 
 func TestProposalV2CompleteRoundTripAndFilterIsolation(t *testing.T) {
 	d, measure, p, f, dimensions, sort, limit := validProposalV2Parts(t)
-	proposal, err := NewProposalV2(d, measure, p, f, dimensions, sort, limit, OutputRowset)
+	proposal, err := NewAggregateProposalV2(d, measure, p, f, dimensions, sort, limit, OutputValue)
 	if err != nil || !proposal.Valid() {
 		t.Fatal(err)
+	}
+	if got, ok := proposal.Operation(); !ok || got != OperationAGGREGATE {
+		t.Fatal("operation", got, ok)
+	}
+	if _, ok := proposal.OutputFields(); ok {
+		t.Fatal("aggregate output fields readable")
 	}
 	f.values[0].values[0], _ = TextScalar("mutated-input")
 	if got, ok := proposal.Dataset(); !ok || got != d {
@@ -711,7 +999,7 @@ func TestProposalV2CompleteRoundTripAndFilterIsolation(t *testing.T) {
 	if got, ok := proposal.Limit(); !ok || got != limit {
 		t.Fatal("limit", got, ok)
 	}
-	if got, ok := proposal.Output(); !ok || got != OutputRowset {
+	if got, ok := proposal.Output(); !ok || got != OutputValue {
 		t.Fatal("output", got, ok)
 	}
 	read, ok := proposal.Filters()

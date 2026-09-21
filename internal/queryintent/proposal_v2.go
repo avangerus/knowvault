@@ -724,29 +724,164 @@ func clonePredicate(predicate Predicate) Predicate {
 	return predicate
 }
 
-type ProposalV2 struct {
-	dataset     DatasetProfileRef
-	measure     MeasureRef
-	period      PeriodProposal
-	filters     Predicates
-	dimensions  Dimensions
-	sort        SortKeys
-	limit       Limit
-	output      Output
+// Operation is the closed vocabulary of proposal shapes. A proposal is exactly
+// one shape: AGGREGATE names a measure over dimensions, LOOKUP names the fields
+// of a row set. The two never combine, and a shape is never inferred from the
+// values around it.
+type Operation string
+
+const (
+	OperationAGGREGATE Operation = "AGGREGATE"
+	OperationLOOKUP    Operation = "LOOKUP"
+)
+
+func (o Operation) Valid() bool { return o == OperationAGGREGATE || o == OperationLOOKUP }
+
+const MaxOutputFields = 8
+
+// OutputFields is the bounded, immutable field list of a LOOKUP proposal. Its
+// fields are private so a proposal can only carry what the constructor
+// accepted: between one and MaxOutputFields distinct names, copied on the way
+// in and on the way out.
+type OutputFields struct {
+	fields      [MaxOutputFields]FieldToken
+	count       uint8
 	initialized bool
 }
 
-func NewProposalV2(dataset DatasetProfileRef, measure MeasureRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
-	proposal := ProposalV2{dataset: dataset, measure: measure, period: period, filters: clonePredicates(filters), dimensions: dimensions, sort: sort, limit: limit, output: output, initialized: true}
+func NewOutputFields(fields ...FieldToken) (OutputFields, error) {
+	if len(fields) < 1 || len(fields) > MaxOutputFields {
+		return OutputFields{}, newRefusal(CodeInvalidProposal)
+	}
+	var outputFields OutputFields
+	for i, field := range fields {
+		if !field.Valid() || duplicateField(fields[:i], field) {
+			return OutputFields{}, newRefusal(CodeInvalidProposal)
+		}
+		outputFields.fields[i] = field
+	}
+	outputFields.count = uint8(len(fields))
+	outputFields.initialized = true
+	return outputFields, nil
+}
+
+func (o OutputFields) Valid() bool {
+	if !o.initialized || int(o.count) < 1 || int(o.count) > MaxOutputFields {
+		return false
+	}
+	for i := 0; i < int(o.count); i++ {
+		if !o.fields[i].Valid() || duplicateField(o.fields[:i], o.fields[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Fields returns a fresh copy of the requested fields in request order.
+func (o OutputFields) Fields() ([]FieldToken, bool) {
+	if !o.Valid() {
+		return nil, false
+	}
+	fields := make([]FieldToken, int(o.count))
+	copy(fields, o.fields[:o.count])
+	return fields, true
+}
+
+// ProposalV2 is a model-proposed analytic query in exactly one closed shape.
+// Both shapes carry the same dataset profile, period, filters, sort and limit;
+// they differ in what they ask for. An AGGREGATE proposal needs a measure and a
+// (possibly empty) dimension list and answers with the configured VALUE or
+// ROWSET output. A LOOKUP proposal has no measure and no dimensions: it returns
+// a ROWSET of output fields and may only order by dimensions, because a measure
+// it never selected has no column to sort by. The constructors fix the shape,
+// and Valid refuses a zero shape as well as one mixed by hand.
+type ProposalV2 struct {
+	operation    Operation
+	dataset      DatasetProfileRef
+	measure      MeasureRef
+	period       PeriodProposal
+	filters      Predicates
+	dimensions   Dimensions
+	outputFields OutputFields
+	sort         SortKeys
+	limit        Limit
+	output       Output
+	initialized  bool
+}
+
+// NewAggregateProposalV2 builds the AGGREGATE shape from a measure, a dimension
+// list and the requested VALUE or ROWSET output. Measure sort targets are
+// allowed because the measure is part of this shape.
+func NewAggregateProposalV2(dataset DatasetProfileRef, measure MeasureRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
+	proposal := ProposalV2{
+		operation:   OperationAGGREGATE,
+		dataset:     dataset,
+		measure:     measure,
+		period:      period,
+		filters:     clonePredicates(filters),
+		dimensions:  dimensions,
+		sort:        sort,
+		limit:       limit,
+		output:      output,
+		initialized: true,
+	}
 	if !proposal.Valid() {
 		return ProposalV2{}, newRefusal(CodeInvalidProposal)
 	}
 	return proposal, nil
 }
 
+// NewLookupProposalV2 builds the LOOKUP shape from the fields the caller wants
+// back. The output is always ROWSET, and sort keys must target dimensions only.
+func NewLookupProposalV2(dataset DatasetProfileRef, period PeriodProposal, filters Predicates, outputFields OutputFields, sort SortKeys, limit Limit) (ProposalV2, error) {
+	proposal := ProposalV2{
+		operation:    OperationLOOKUP,
+		dataset:      dataset,
+		period:       period,
+		filters:      clonePredicates(filters),
+		outputFields: outputFields,
+		sort:         sort,
+		limit:        limit,
+		output:       OutputRowset,
+		initialized:  true,
+	}
+	if !proposal.Valid() {
+		return ProposalV2{}, newRefusal(CodeInvalidProposal)
+	}
+	return proposal, nil
+}
+
+// Valid reports whether this is a constructed shape. Every shape requires the
+// dataset profile, period, filters, sort and limit; the slots that belong to
+// the other shape must stay untouched, so a struct mixed by hand is invalid
+// even when each of its parts would be valid on its own.
 func (p ProposalV2) Valid() bool {
-	return p.initialized && p.dataset.Valid() && p.measure.Valid() && p.period.Valid() && p.filters.Valid() &&
-		p.dimensions.Valid() && p.sort.Valid() && p.limit.Valid() && p.output.valid()
+	if !p.initialized || !p.operation.Valid() || !p.dataset.Valid() || !p.period.Valid() || !p.filters.Valid() || !p.sort.Valid() || !p.limit.Valid() {
+		return false
+	}
+	switch p.operation {
+	case OperationAGGREGATE:
+		return p.measure.Valid() && p.dimensions.Valid() && p.outputFields == OutputFields{} && p.output.valid()
+	case OperationLOOKUP:
+		return p.measure == MeasureRef{} && p.dimensions == Dimensions{} && p.outputFields.Valid() &&
+			p.output == OutputRowset && dimensionSortOnly(p.sort)
+	default:
+		return false
+	}
+}
+
+// dimensionSortOnly reports whether every sort key of a valid SortKeys targets
+// a dimension.
+func dimensionSortOnly(sort SortKeys) bool {
+	if !sort.Valid() {
+		return false
+	}
+	for i := 0; i < int(sort.count); i++ {
+		if kind, ok := sort.keys[i].TargetKind(); !ok || kind != SortTargetDIMENSION {
+			return false
+		}
+	}
+	return true
 }
 
 func clonePredicates(predicates Predicates) Predicates {
@@ -756,6 +891,14 @@ func clonePredicates(predicates Predicates) Predicates {
 	return predicates
 }
 
+// Operation is this proposal's closed shape.
+func (p ProposalV2) Operation() (Operation, bool) {
+	if !p.Valid() {
+		return "", false
+	}
+	return p.operation, true
+}
+
 func (p ProposalV2) Dataset() (DatasetProfileRef, bool) {
 	if !p.Valid() {
 		return DatasetProfileRef{}, false
@@ -763,8 +906,10 @@ func (p ProposalV2) Dataset() (DatasetProfileRef, bool) {
 	return p.dataset, true
 }
 
+// Measure is the AGGREGATE measure reference. A LOOKUP proposal has no
+// measure, so ok is false even though the proposal itself is valid.
 func (p ProposalV2) Measure() (MeasureRef, bool) {
-	if !p.Valid() {
+	if !p.Valid() || p.operation != OperationAGGREGATE {
 		return MeasureRef{}, false
 	}
 	return p.measure, true
@@ -777,11 +922,22 @@ func (p ProposalV2) Period() (PeriodProposal, bool) {
 	return p.period, true
 }
 
+// Dimensions are the AGGREGATE grouping fields, possibly empty. A LOOKUP
+// proposal has no dimensions.
 func (p ProposalV2) Dimensions() (Dimensions, bool) {
-	if !p.Valid() {
+	if !p.Valid() || p.operation != OperationAGGREGATE {
 		return Dimensions{}, false
 	}
 	return p.dimensions, true
+}
+
+// OutputFields are the LOOKUP fields in request order. An AGGREGATE proposal
+// has no output fields.
+func (p ProposalV2) OutputFields() (OutputFields, bool) {
+	if !p.Valid() || p.operation != OperationLOOKUP {
+		return OutputFields{}, false
+	}
+	return p.outputFields, true
 }
 
 func (p ProposalV2) Sort() (SortKeys, bool) {
@@ -798,6 +954,8 @@ func (p ProposalV2) Limit() (Limit, bool) {
 	return p.limit, true
 }
 
+// Output is the requested answer shape: the configured VALUE or ROWSET of an
+// AGGREGATE proposal, or always ROWSET for LOOKUP.
 func (p ProposalV2) Output() (Output, bool) {
 	if !p.Valid() {
 		return "", false
