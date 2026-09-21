@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"knowvault.local/verified-workspace/internal/analytic"
 )
@@ -79,7 +80,9 @@ func v2Profile(t *testing.T, datasetID string, version int64, coverage analytic.
 	if err != nil {
 		t.Fatal(err)
 	}
-	timePolicy, err := analytic.NewTimePolicy(analytic.TimePolicyInput{Kind: analytic.TimeNone})
+	timePolicy, err := analytic.NewTimePolicy(analytic.TimePolicyInput{
+		Kind: analytic.TimeBusinessDate, FieldToken: "business_day", ReportingTimezone: "UTC", Calendar: analytic.CalendarGregorian,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +363,15 @@ func v2Parts(t *testing.T, profile analytic.DatasetProfile, mutate func(*v2Aggre
 
 func v2Seal(t *testing.T, catalog analytic.DatasetProfileCatalog, profile analytic.DatasetProfile, proposal ProposalV2) ValidatedIntentV2 {
 	t.Helper()
-	sealed, err := newValidatedIntentV2(catalog, profile, proposal)
+	period, ok := proposal.Period()
+	if !ok {
+		t.Fatal("proposal has no period")
+	}
+	resolution, err := resolvePeriodForProfileV2(profile, period, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := newValidatedIntentV2(catalog, profile, proposal, resolution)
 	if err != nil || !sealed.Valid() {
 		t.Fatalf("seal failed: valid=%v err=%v", sealed.Valid(), err)
 	}
@@ -381,25 +392,27 @@ func v2AllAccessorsFail(t *testing.T, value ValidatedIntentV2) {
 	if value.Valid() {
 		t.Fatal("invalid value reported valid")
 	}
-	_, catalogIDOK := value.CatalogID()
-	_, catalogRevisionOK := value.CatalogRevision()
-	_, catalogHashOK := value.CatalogHash()
-	_, datasetOK := value.Dataset()
-	_, operationOK := value.Operation()
-	_, periodOK := value.Period()
-	_, filtersOK := value.Filters()
-	_, measureOK := value.Measure()
-	_, dimensionsOK := value.Dimensions()
-	_, outputFieldsOK := value.OutputFields()
-	_, sortOK := value.Sort()
-	_, limitOK := value.Limit()
-	_, outputOK := value.Output()
-	_, limitsOK := value.Limits()
-	_, coverageOK := value.Coverage()
+	catalogID, catalogIDOK := value.CatalogID()
+	catalogRevision, catalogRevisionOK := value.CatalogRevision()
+	catalogHash, catalogHashOK := value.CatalogHash()
+	dataset, datasetOK := value.Dataset()
+	operation, operationOK := value.Operation()
+	period, periodOK := value.Period()
+	resolvedPeriod, resolvedPeriodOK := value.ResolvedPeriod()
+	capturedAt, capturedAtOK := value.CapturedAt()
+	filters, filtersOK := value.Filters()
+	measure, measureOK := value.Measure()
+	dimensions, dimensionsOK := value.Dimensions()
+	outputFields, outputFieldsOK := value.OutputFields()
+	sort, sortOK := value.Sort()
+	limit, limitOK := value.Limit()
+	output, outputOK := value.Output()
+	limits, limitsOK := value.Limits()
+	coverage, coverageOK := value.Coverage()
 	digest, digestOK := value.Digest()
 	results := map[string]bool{
 		"CatalogID": catalogIDOK, "CatalogRevision": catalogRevisionOK, "CatalogHash": catalogHashOK,
-		"Dataset": datasetOK, "Operation": operationOK, "Period": periodOK, "Filters": filtersOK,
+		"Dataset": datasetOK, "Operation": operationOK, "Period": periodOK, "ResolvedPeriod": resolvedPeriodOK, "CapturedAt": capturedAtOK, "Filters": filtersOK,
 		"Measure": measureOK, "Dimensions": dimensionsOK, "OutputFields": outputFieldsOK,
 		"Sort": sortOK, "Limit": limitOK, "Output": outputOK, "Limits": limitsOK,
 		"Coverage": coverageOK, "Digest": digestOK,
@@ -411,6 +424,14 @@ func v2AllAccessorsFail(t *testing.T, value ValidatedIntentV2) {
 	}
 	if digest != "" {
 		t.Fatalf("Digest exposed %q by an invalid value", digest)
+	}
+	if catalogID != "" || catalogRevision != 0 || catalogHash != "" || !reflect.DeepEqual(dataset, DatasetProfileRef{}) ||
+		operation != "" || !reflect.DeepEqual(period, PeriodProposal{}) || !reflect.DeepEqual(resolvedPeriod, ResolvedPeriodV2{}) ||
+		capturedAt != "" || !reflect.DeepEqual(filters, Predicates{}) || !reflect.DeepEqual(measure, MeasureRef{}) ||
+		!reflect.DeepEqual(dimensions, Dimensions{}) || !reflect.DeepEqual(outputFields, OutputFields{}) ||
+		!reflect.DeepEqual(sort, SortKeys{}) || !reflect.DeepEqual(limit, Limit{}) || output != "" ||
+		!reflect.DeepEqual(limits, analytic.ProfileLimits{}) || coverage != "" {
+		t.Fatalf("invalid value exposed non-zero accessor values")
 	}
 }
 
@@ -572,31 +593,40 @@ func TestValidatedIntentV2ZeroAndForgedAreInvalid(t *testing.T) {
 func TestValidatedIntentV2SealRefusals(t *testing.T) {
 	catalog, profile := v2Base(t)
 	proposal := v2SealAggregate(t, v2AggregatePartsFor(t, profile))
+	period, periodOK := proposal.Period()
+	if !periodOK {
+		t.Fatal("baseline proposal has no period")
+	}
+	baseline, err := resolvePeriodForProfileV2(profile, period, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	other := v2Profile(t, "beta", 1, analytic.CoverageUnknown, v2Limits(t, 10000))
 
 	cases := []struct {
-		name     string
-		catalog  analytic.DatasetProfileCatalog
-		profile  analytic.DatasetProfile
-		proposal ProposalV2
+		name       string
+		catalog    analytic.DatasetProfileCatalog
+		profile    analytic.DatasetProfile
+		proposal   ProposalV2
+		resolution periodResolutionV2
 	}{
-		{"zero catalog", analytic.DatasetProfileCatalog{}, profile, proposal},
-		{"zero profile", catalog, analytic.DatasetProfile{}, proposal},
-		{"zero proposal", catalog, profile, ProposalV2{}},
-		{"retired profile", v2Catalog(t, "catalog.operations", 9, v2Retired(profile)), profile, proposal},
-		{"profile absent from catalog", v2Catalog(t, "catalog.other", 1, v2Active(other)), profile, proposal},
+		{"zero catalog", analytic.DatasetProfileCatalog{}, profile, proposal, baseline},
+		{"zero profile", catalog, analytic.DatasetProfile{}, proposal, baseline},
+		{"zero proposal", catalog, profile, ProposalV2{}, periodResolutionV2{}},
+		{"retired profile", v2Catalog(t, "catalog.operations", 9, v2Retired(profile)), profile, proposal, baseline},
+		{"profile absent from catalog", v2Catalog(t, "catalog.other", 1, v2Active(other)), profile, proposal, baseline},
 		{"proposal dataset mismatch", catalog, profile, v2SealAggregate(t, v2Parts(t, profile,
-			func(parts *v2AggregateParts) { parts.Dataset = v2RefFields(t, "beta", 1, profile.Hash()) }))},
+			func(parts *v2AggregateParts) { parts.Dataset = v2RefFields(t, "beta", 1, profile.Hash()) })), baseline},
 		{"proposal version mismatch", catalog, profile, v2SealAggregate(t, v2Parts(t, profile,
-			func(parts *v2AggregateParts) { parts.Dataset = v2RefFields(t, "alpha", 2, profile.Hash()) }))},
+			func(parts *v2AggregateParts) { parts.Dataset = v2RefFields(t, "alpha", 2, profile.Hash()) })), baseline},
 		{"proposal hash mismatch", catalog, profile, v2SealAggregate(t, v2Parts(t, profile,
 			func(parts *v2AggregateParts) {
 				parts.Dataset = v2RefFields(t, "alpha", 1, other.Hash())
-			}))},
+			})), baseline},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			sealed, err := newValidatedIntentV2(test.catalog, test.profile, test.proposal)
+			sealed, err := newValidatedIntentV2(test.catalog, test.profile, test.proposal, test.resolution)
 			if err == nil || CodeOf(err) != CodeInvalidProposal || err.Error() != string(CodeInvalidProposal) ||
 				ClarificationOf(err) == "" {
 				t.Fatalf("refusal code=%q text=%q err=%v", CodeOf(err), ClarificationOf(err), err)
@@ -610,6 +640,10 @@ func TestValidatedIntentV2SealRefusals(t *testing.T) {
 				t.Fatal("refusal returned a non-zero value")
 			}
 		})
+	}
+	sealed, err := newValidatedIntentV2(catalog, profile, proposal, periodResolutionV2{})
+	if err == nil || CodeOf(err) != CodeInvalidProposal || !reflect.DeepEqual(sealed, ValidatedIntentV2{}) {
+		t.Fatalf("zero resolution refusal=%v/%v", sealed, err)
 	}
 }
 
@@ -658,8 +692,8 @@ func TestValidatedIntentV2DigestSensitivity(t *testing.T) {
 		{"period bounds", catalog, profile, agg(func(parts *v2AggregateParts) {
 			parts.Period = v2Explicit(t, "2026-02-01", "2026-02-28")
 		})},
-		{"period mode", catalog, profile, agg(func(parts *v2AggregateParts) {
-			parts.Period = v2Relative(t, PeriodTODAY)
+		{"alternate period request", catalog, profile, agg(func(parts *v2AggregateParts) {
+			parts.Period = v2Explicit(t, "2026-02-01", "2026-02-27")
 		})},
 		{"filter value", catalog, profile, agg(func(parts *v2AggregateParts) {
 			parts.Filters = v2FiltersFor(t, "south")

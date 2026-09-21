@@ -1,6 +1,10 @@
 package queryintent
 
-import "knowvault.local/verified-workspace/internal/analytic"
+import (
+	"time"
+
+	"knowvault.local/verified-workspace/internal/analytic"
+)
 
 // CatalogBindingV2 is the caller-supplied identity of the catalog snapshot a
 // proposal claims was checked against. Its members are private, so only
@@ -73,11 +77,9 @@ func NewValidatorV2(catalog analytic.DatasetProfileCatalog) (ValidatorV2, error)
 
 // ValidateProposalV2 is the only path from a ProposalV2 to a ValidatedIntentV2.
 // The checks run in a fixed order: proposal shape, validator catalog, frozen
-// binding, exact profile resolution, measure authority for AGGREGATE, and then
-// the seal. Filter predicates and the result, grouping, sort and limit
-// semantics are resolved against the resolved profile before the seal; period
-// semantics are deliberately out of scope here, and the seal re-proves only the
-// catalog snapshot, the resolved profile and the proposal's dataset reference.
+// binding, exact profile resolution, measure authority for AGGREGATE, filters,
+// shape, period resolution and then the seal. Every semantic check runs against
+// the resolved profile before the sealed value is produced.
 func (validator ValidatorV2) ValidateProposalV2(proposal ProposalV2, frozen CatalogBindingV2) (ValidatedIntentV2, error) {
 	if !proposal.Valid() {
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
@@ -109,7 +111,15 @@ func (validator ValidatorV2) ValidateProposalV2(proposal ProposalV2, frozen Cata
 	if err := validateV2Shape(profile, proposal); err != nil {
 		return ValidatedIntentV2{}, err
 	}
-	sealed, err := newValidatedIntentV2(validator.catalog, profile, proposal)
+	period, periodOK := proposal.Period()
+	if !periodOK {
+		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
+	}
+	resolution, err := resolvePeriodForProfileV2(profile, period, time.Time{})
+	if err != nil {
+		return ValidatedIntentV2{}, err
+	}
+	sealed, err := newValidatedIntentV2(validator.catalog, profile, proposal, resolution)
 	if err != nil || !sealed.Valid() {
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
 	}

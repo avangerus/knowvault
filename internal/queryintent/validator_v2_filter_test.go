@@ -47,7 +47,8 @@ func v2FilterField(t *testing.T, token string, ordinal int, kind analytic.Scalar
 	t.Helper()
 	physical := map[analytic.ScalarType]analytic.PhysicalType{
 		analytic.ScalarBool: analytic.PhysicalPGBool, analytic.ScalarText: analytic.PhysicalPGText,
-		analytic.ScalarDate: analytic.PhysicalPGDate,
+		analytic.ScalarDate: analytic.PhysicalPGDate, analytic.ScalarTimestamp: analytic.PhysicalPGTimestamp,
+		analytic.ScalarTimestamptz: analytic.PhysicalPGTimestamptz,
 	}[kind]
 	field, err := analytic.NewFieldSpec(analytic.FieldSpecInput{
 		Token: token, SourceOrdinal: ordinal, PhysicalName: token, LogicalType: kind, PhysicalType: physical,
@@ -63,9 +64,9 @@ func v2FilterField(t *testing.T, token string, ordinal int, kind analytic.Scalar
 // v2FilterProfile seals the concise fixture the filter cases share: a filterable
 // DATE field granting EQ only, a filterable TEXT field granting EQ and IN, a
 // nullable BOOL field additionally granting IS_NULL, and a TEXT field no filter
-// may touch. A time kind other than NONE reserves business_day as the time
-// field, so the reserved-field case needs no other profile change.
-func v2FilterProfile(t *testing.T, timeKind analytic.TimeKind) analytic.DatasetProfile {
+// may touch. Both fixture variants use BUSINESS_DATE;
+// reserveBusinessDay selects whether business_day is the time field.
+func v2FilterProfile(t *testing.T, reserveBusinessDay bool) analytic.DatasetProfile {
 	t.Helper()
 	key, err := analytic.NewProfileKey("filters", 1)
 	if err != nil {
@@ -88,6 +89,7 @@ func v2FilterProfile(t *testing.T, timeKind analytic.TimeKind) analytic.DatasetP
 			{Token: "region", Label: "Region", Description: "Region", NullMeaning: "Not assigned"},
 			{Token: "status", Label: "Status", Description: "Status", NullMeaning: "Not known"},
 			{Token: "note", Label: "Note", Description: "Note", NullMeaning: "Not recorded"},
+			{Token: "event_day", Label: "Event day", Description: "Event date", NullMeaning: "Not recorded"},
 		},
 		Measures: []analytic.MeasureSemanticsInput{{ID: "amount", Label: "Amount", Description: "Row count"}},
 	})
@@ -108,9 +110,11 @@ func v2FilterProfile(t *testing.T, timeKind analytic.TimeKind) analytic.DatasetP
 	if err != nil {
 		t.Fatal(err)
 	}
-	timeInput := analytic.TimePolicyInput{Kind: timeKind}
-	if timeKind != analytic.TimeNone {
-		timeInput.FieldToken, timeInput.ReportingTimezone, timeInput.Calendar = "business_day", "UTC", analytic.CalendarGregorian
+	timeInput := analytic.TimePolicyInput{
+		Kind: analytic.TimeBusinessDate, FieldToken: "event_day", ReportingTimezone: "UTC", Calendar: analytic.CalendarGregorian,
+	}
+	if reserveBusinessDay {
+		timeInput.FieldToken = "business_day"
 	}
 	timePolicy, err := analytic.NewTimePolicy(timeInput)
 	if err != nil {
@@ -123,6 +127,7 @@ func v2FilterProfile(t *testing.T, timeKind analytic.TimeKind) analytic.DatasetP
 			v2FilterField(t, "region", 2, analytic.ScalarText, false, true, analytic.PredicateEQ, analytic.PredicateIN),
 			v2FilterField(t, "status", 3, analytic.ScalarBool, true, true, analytic.PredicateEQ, analytic.PredicateIN, analytic.PredicateISNull),
 			v2FilterField(t, "note", 4, analytic.ScalarText, false, false),
+			v2FilterField(t, "event_day", 5, analytic.ScalarDate, false, false),
 		},
 		Semantics: semantics, Grain: grain, Time: timePolicy, Coverage: analytic.CoverageUnknown,
 		Limits: v2Limits(t, 10000),
@@ -183,7 +188,7 @@ func TestValidatorV2AllowsAuthorizedFilters(t *testing.T) {
 	}
 	v2Digest(t, sealed)
 
-	plain, bound := v2FilterProfile(t, analytic.TimeNone), v2FilterProfile(t, analytic.TimeBusinessDate)
+	plain, bound := v2FilterProfile(t, false), v2FilterProfile(t, true)
 	cases := []struct {
 		name       string
 		profile    analytic.DatasetProfile
@@ -209,7 +214,7 @@ func TestValidatorV2AllowsAuthorizedFilters(t *testing.T) {
 // TestValidatorV2DeniesUnauthorizedFilters drives every semantic denial through
 // the validator and pins one content-free CodeFilterNotAllowed refusal each.
 func TestValidatorV2DeniesUnauthorizedFilters(t *testing.T) {
-	plain, bound := v2FilterProfile(t, analytic.TimeNone), v2FilterProfile(t, analytic.TimeBusinessDate)
+	plain, bound := v2FilterProfile(t, false), v2FilterProfile(t, true)
 	_, base := v2Base(t)
 	cases := []struct {
 		name      string
@@ -237,7 +242,7 @@ func TestValidatorV2DeniesUnauthorizedFilters(t *testing.T) {
 // TestValidatorV2SealsFilterOrder proves the two-predicate request order stays
 // unchanged in the sealed accessor and remains part of the sealed digest.
 func TestValidatorV2SealsFilterOrder(t *testing.T) {
-	profile := v2FilterProfile(t, analytic.TimeNone)
+	profile := v2FilterProfile(t, false)
 	validator, binding, proposal := v2FilterCase(t, profile,
 		v2Predicate(t, "region", OpEQ, v2Text(t, "east")),
 		v2Predicate(t, "business_day", OpEQ, v2Date(t, "2026-01-01")),

@@ -2,13 +2,14 @@ package queryintent
 
 import (
 	"strconv"
+	"time"
 
 	"knowvault.local/verified-workspace/internal/analytic"
 	"knowvault.local/verified-workspace/internal/source/canon"
 )
 
 // validatedIntentV2SchemaVersion is the literal tag of the digest projection.
-const validatedIntentV2SchemaVersion = "queryintent-validated-intent-v2"
+const validatedIntentV2SchemaVersion = "queryintent-validated-intent-v3"
 
 // ValidatedIntentV2 is a server-sealed analytic intent: one validated ProposalV2
 // bound to the catalog snapshot and dataset profile version that authorized it,
@@ -19,6 +20,7 @@ type ValidatedIntentV2 struct {
 	catalogRevision int64
 	catalogHash     string
 	proposal        ProposalV2
+	resolution      periodResolutionV2
 	limits          analytic.ProfileLimits
 	coverage        analytic.CoveragePolicy
 	digest          string
@@ -32,8 +34,16 @@ type ValidatedIntentV2 struct {
 // only from the catalog and profile, the digest is computed last over the sealed
 // members, and every failure returns the zero value with a content-free
 // CodeInvalidProposal refusal.
-func newValidatedIntentV2(catalog analytic.DatasetProfileCatalog, profile analytic.DatasetProfile, proposal ProposalV2) (ValidatedIntentV2, error) {
-	if !catalog.Valid() || !profile.Valid() || !proposal.Valid() {
+func newValidatedIntentV2(catalog analytic.DatasetProfileCatalog, profile analytic.DatasetProfile, proposal ProposalV2, resolution periodResolutionV2) (ValidatedIntentV2, error) {
+	if !catalog.Valid() || !profile.Valid() || !proposal.Valid() || !resolution.Valid() {
+		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
+	}
+	requestedPeriod, periodOK := proposal.Period()
+	if !periodOK {
+		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
+	}
+	if _, projectionOK := projectPeriodResolutionV2(requestedPeriod, resolution); !projectionOK ||
+		!periodResolutionMatchesProfileV2(profile, requestedPeriod, resolution) {
 		return ValidatedIntentV2{}, newRefusal(CodeInvalidProposal)
 	}
 	if _, active := catalog.ResolveActive(profile.Key(), profile.Hash()); !active {
@@ -58,6 +68,7 @@ func newValidatedIntentV2(catalog analytic.DatasetProfileCatalog, profile analyt
 		catalogRevision: catalog.Revision(),
 		catalogHash:     catalog.Hash(),
 		proposal:        proposal,
+		resolution:      resolution,
 		limits:          profile.Limits(),
 		coverage:        profile.Coverage(),
 		sealed:          true,
@@ -73,6 +84,19 @@ func newValidatedIntentV2(catalog analytic.DatasetProfileCatalog, profile analyt
 	return value, nil
 }
 
+func periodResolutionMatchesProfileV2(profile analytic.DatasetProfile, proposal PeriodProposal, resolution periodResolutionV2) bool {
+	capturedAt := time.Time{}
+	if trusted, ok := resolution.TrustedNowUTC(); ok {
+		parsed, err := time.Parse(time.RFC3339Nano, trusted)
+		if err != nil {
+			return false
+		}
+		capturedAt = parsed
+	}
+	expected, err := resolvePeriodForProfileV2(profile, proposal, capturedAt)
+	return err == nil && expected == resolution
+}
+
 // Valid reports whether this is a value this package sealed and nothing has
 // changed since. It rejects the zero value and every forged or tampered copy:
 // the catalog form, the proposal, the limits, the coverage and the seal flag are
@@ -81,7 +105,7 @@ func newValidatedIntentV2(catalog analytic.DatasetProfileCatalog, profile analyt
 func (value ValidatedIntentV2) Valid() bool {
 	if !value.sealed || !validLabel(value.catalogID, maxIDLength) || value.catalogRevision <= 0 ||
 		!validProfileHash(value.catalogHash) || !value.proposal.Valid() || !value.limits.Valid() ||
-		!value.coverage.Valid() || !validProfileHash(value.digest) {
+		!value.coverage.Valid() || !value.resolution.Valid() || !validProfileHash(value.digest) {
 		return false
 	}
 	digest, ok := value.canonicalDigest()
@@ -125,6 +149,17 @@ func (value ValidatedIntentV2) Operation() (Operation, bool) {
 // Period is the requested, still unresolved period.
 func (value ValidatedIntentV2) Period() (PeriodProposal, bool) {
 	return sealedAccessor(value, value.proposal.Period)
+}
+
+// ResolvedPeriod is the canonical period resolved against the approved profile.
+func (value ValidatedIntentV2) ResolvedPeriod() (ResolvedPeriodV2, bool) {
+	return sealedAccessor(value, value.resolution.ResolvedPeriod)
+}
+
+// CapturedAt returns the canonical trusted clock used for a relative period.
+// Explicit periods have no captured clock and report false.
+func (value ValidatedIntentV2) CapturedAt() (string, bool) {
+	return sealedAccessor(value, value.resolution.TrustedNowUTC)
 }
 
 // Filters is a detached copy of the predicates in request order.
@@ -183,19 +218,21 @@ func (value ValidatedIntentV2) Digest() (string, bool) {
 // targets, limit and output, all five profile limits and coverage. Every int64
 // member is exact base-10 text; an unselected arm is absent, never empty.
 type validatedIntentV2Projection struct {
-	SchemaVersion string                       `json:"schema_version"`
-	Catalog       validatedIntentV2Catalog     `json:"catalog"`
-	Dataset       validatedIntentV2Dataset     `json:"dataset"`
-	Operation     Operation                    `json:"operation"`
-	Period        validatedIntentV2Period      `json:"period"`
-	Filters       []validatedIntentV2Predicate `json:"filters"`
-	Aggregate     *validatedIntentV2Aggregate  `json:"aggregate,omitempty"`
-	Lookup        *validatedIntentV2Lookup     `json:"lookup,omitempty"`
-	Sort          []validatedIntentV2SortKey   `json:"sort"`
-	Limit         int                          `json:"limit"`
-	Output        Output                       `json:"output"`
-	Limits        validatedIntentV2Limits      `json:"limits"`
-	Coverage      analytic.CoveragePolicy      `json:"coverage"`
+	SchemaVersion  string                            `json:"schema_version"`
+	Catalog        validatedIntentV2Catalog          `json:"catalog"`
+	Dataset        validatedIntentV2Dataset          `json:"dataset"`
+	Operation      Operation                         `json:"operation"`
+	Period         validatedIntentV2Period           `json:"period"`
+	ResolvedPeriod periodResolutionV2ProjectedPeriod `json:"resolved_period"`
+	TrustedNow     *string                           `json:"trusted_now"`
+	Filters        []validatedIntentV2Predicate      `json:"filters"`
+	Aggregate      *validatedIntentV2Aggregate       `json:"aggregate,omitempty"`
+	Lookup         *validatedIntentV2Lookup          `json:"lookup,omitempty"`
+	Sort           []validatedIntentV2SortKey        `json:"sort"`
+	Limit          int                               `json:"limit"`
+	Output         Output                            `json:"output"`
+	Limits         validatedIntentV2Limits           `json:"limits"`
+	Coverage       analytic.CoveragePolicy           `json:"coverage"`
 }
 
 type validatedIntentV2Catalog struct {
@@ -260,6 +297,7 @@ func (value ValidatedIntentV2) canonicalProjection() (validatedIntentV2Projectio
 	dataset, datasetOK := value.proposal.Dataset()
 	operation, operationOK := value.proposal.Operation()
 	period, periodOK := value.proposal.Period()
+	resolved, resolvedOK := projectPeriodResolutionV2(period, value.resolution)
 	limit, limitOK := value.proposal.Limit()
 	limitValue, limitValueOK := limit.Value()
 	output, outputOK := value.proposal.Output()
@@ -269,7 +307,7 @@ func (value ValidatedIntentV2) canonicalProjection() (validatedIntentV2Projectio
 	sortKeys, sortOK := value.proposal.Sort()
 	sortKeyValues, sortKeyValuesOK := sortKeys.Values()
 	sort, sortProjectionOK := projectValidatedIntentV2SortKeys(sortKeyValues)
-	if !datasetOK || !operationOK || !periodOK || !limitOK || !limitValueOK || !outputOK ||
+	if !datasetOK || !operationOK || !periodOK || !resolvedOK || !limitOK || !limitValueOK || !outputOK ||
 		!predicatesOK || !predicateValuesOK || !filtersOK || !sortOK || !sortKeyValuesOK || !sortProjectionOK {
 		return validatedIntentV2Projection{}, false
 	}
@@ -293,12 +331,14 @@ func (value ValidatedIntentV2) canonicalProjection() (validatedIntentV2Projectio
 		Dataset: validatedIntentV2Dataset{
 			DatasetID: datasetID, Version: strconv.FormatInt(version, 10), ProfileHash: profileHash,
 		},
-		Operation: operation,
-		Period:    validatedIntentV2Period{Mode: mode, Start: start, End: end},
-		Filters:   filters,
-		Sort:      sort,
-		Limit:     limitValue,
-		Output:    output,
+		Operation:      operation,
+		Period:         validatedIntentV2Period{Mode: mode, Start: start, End: end},
+		ResolvedPeriod: resolved.ResolvedPeriod,
+		TrustedNow:     resolved.TrustedNow,
+		Filters:        filters,
+		Sort:           sort,
+		Limit:          limitValue,
+		Output:         output,
 		Limits: validatedIntentV2Limits{
 			MaxInputRows: strconv.FormatInt(limits.MaxInputRows, 10), MaxOutputGroups: limits.MaxOutputGroups,
 			MaxPeriodDays: limits.MaxPeriodDays, MaxResultBytes: strconv.FormatInt(limits.MaxResultBytes, 10),
