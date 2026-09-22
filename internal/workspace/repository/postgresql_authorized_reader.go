@@ -83,7 +83,6 @@ func opaqueRepositoryError(err error) error {
 
 func samePostgreSQLExecutionAuthority(left, right postgreSQLExecutionAuthority) bool {
 	return left.connectionID == right.connectionID &&
-		left.connectionRevision == right.connectionRevision &&
 		left.credentialReference == right.credentialReference &&
 		left.result.workspaceID == right.result.workspaceID &&
 		left.result.workspaceRevision == right.result.workspaceRevision &&
@@ -93,6 +92,7 @@ func samePostgreSQLExecutionAuthority(left, right postgreSQLExecutionAuthority) 
 		left.result.sourceScopeRevision == right.result.sourceScopeRevision &&
 		left.result.scopeConfigHash == right.result.scopeConfigHash &&
 		left.result.accessMode == right.result.accessMode &&
+		left.result.connectionRevision == right.result.connectionRevision &&
 		reflect.DeepEqual(left.result.projection, right.result.projection) &&
 		left.result.limits == right.result.limits
 }

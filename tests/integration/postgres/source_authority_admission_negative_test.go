@@ -142,7 +142,8 @@ func assertZeroAuthorityResult(t *testing.T, result workspacerepository.PostgreS
 	if result.WorkspaceID() != "" || result.WorkspaceRevision() != 0 ||
 		result.WorkspaceConfigurationHash() != "" || result.WorkspaceSourceID() != "" ||
 		result.SourceScopeID() != "" || result.SourceScopeRevision() != 0 ||
-		result.ScopeConfigHash() != "" || result.AccessMode() != "" {
+		result.ScopeConfigHash() != "" || result.AccessMode() != "" ||
+		result.ConnectionRevision() != 0 {
 		t.Fatalf("authority failure returned scalar accessors: %s", formatAuthorityResult(t, result))
 	}
 	if projection := result.Projection(); !reflect.DeepEqual(projection, postgresqlquery.Projection{}) {

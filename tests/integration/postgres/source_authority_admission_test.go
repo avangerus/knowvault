@@ -5,8 +5,9 @@ package postgres_test
 // workspace-managed PostgreSQL source is resolved through
 // Store.ResolvePostgreSQLAuthority, and the returned value must be an immutable,
 // accessor-only projection that exposes the current workspace revision and
-// configuration hash, the exact requested tuple, a valid detached
-// postgresqlquery.Projection, and valid server-owned postgresqlquery.Limits.
+// configuration hash, the exact requested tuple, the exact persisted
+// source-connection revision, a valid detached postgresqlquery.Projection, and
+// valid server-owned postgresqlquery.Limits.
 // The result must carry no connection credential/reference, DSN, SQL, rows,
 // model DTO or evidence receipt. No negative mutations are exercised here.
 
@@ -120,6 +121,21 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 	store := newAuthorityRuntime(t, ctx)
 	ownerAccess := authorityAccess(binding, regOwner, "req_admission_resolve")
 
+	// The expected connection revision is the exact persisted fact for this
+	// registered organization, scope and revision, read independently of the
+	// resolver that reports it.
+	var wantConnectionRevision int64
+	if err := admin.QueryRow(ctx, `
+		SELECT connection_revision
+		  FROM public.source_scope_revision
+		 WHERE organization_id = $1 AND source_scope_id = $2 AND revision = $3`,
+		regOrg, registered.SourceScopeID, req.ProjectionRevision).Scan(&wantConnectionRevision); err != nil {
+		t.Fatalf("load registered source connection revision: %v", err)
+	}
+	if wantConnectionRevision < 1 {
+		t.Fatalf("registered source connection revision = %d, want a positive revision", wantConnectionRevision)
+	}
+
 	got, err := store.ResolvePostgreSQLAuthority(ctx, ownerAccess, authorityRequest)
 	if err != nil {
 		t.Fatalf("resolve postgresql authority: %v", err)
@@ -139,6 +155,9 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 		got.SourceScopeID() != registered.SourceScopeID || got.SourceScopeRevision() != 1 ||
 		got.ScopeConfigHash() != registered.ScopeConfigHash || got.AccessMode() != "WORKSPACE_MANAGED" {
 		t.Fatalf("resolved tuple drifted: %#v", got)
+	}
+	if got.ConnectionRevision() != wantConnectionRevision {
+		t.Fatalf("connection revision = %d, want %d", got.ConnectionRevision(), wantConnectionRevision)
 	}
 
 	// Detached, validated projection and server-owned limits.
@@ -195,7 +214,8 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 		got.SourceScopeID() != again.SourceScopeID() ||
 		got.SourceScopeRevision() != again.SourceScopeRevision() ||
 		got.ScopeConfigHash() != again.ScopeConfigHash() ||
-		got.AccessMode() != again.AccessMode() {
+		got.AccessMode() != again.AccessMode() ||
+		got.ConnectionRevision() != again.ConnectionRevision() {
 		t.Fatalf("second resolution scalar accessors differ: first=%s second=%s", formatAuthorityResult(t, got), formatAuthorityResult(t, again))
 	}
 
@@ -271,7 +291,8 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 	if rejected.WorkspaceID() != "" || rejected.WorkspaceRevision() != 0 ||
 		rejected.WorkspaceConfigurationHash() != "" || rejected.WorkspaceSourceID() != "" ||
 		rejected.SourceScopeID() != "" || rejected.SourceScopeRevision() != 0 ||
-		rejected.ScopeConfigHash() != "" || rejected.AccessMode() != "" {
+		rejected.ScopeConfigHash() != "" || rejected.AccessMode() != "" ||
+		rejected.ConnectionRevision() != 0 {
 		t.Fatalf("projection privilege loss returned scalar authority accessors: %s", formatAuthorityResult(t, rejected))
 	}
 	safeError := strings.ToLower(rejectedErr.Error())
@@ -411,7 +432,8 @@ func TestPostgreSQLSourceAuthorityAdmission(t *testing.T) {
 	if outcome.result.WorkspaceID() != "" || outcome.result.WorkspaceRevision() != 0 ||
 		outcome.result.WorkspaceConfigurationHash() != "" || outcome.result.WorkspaceSourceID() != "" ||
 		outcome.result.SourceScopeID() != "" || outcome.result.SourceScopeRevision() != 0 ||
-		outcome.result.ScopeConfigHash() != "" || outcome.result.AccessMode() != "" {
+		outcome.result.ScopeConfigHash() != "" || outcome.result.AccessMode() != "" ||
+		outcome.result.ConnectionRevision() != 0 {
 		t.Fatalf("revoked principal returned scalar authority accessors: %s", formatAuthorityResult(t, outcome.result))
 	}
 }
@@ -440,8 +462,8 @@ func formatAuthorityResult(t *testing.T, got workspacerepository.PostgreSQLAutho
 	projection := got.Projection()
 	limits := got.Limits()
 	var out strings.Builder
-	fmt.Fprintf(&out, "workspace_revision=%d workspace_configuration_hash=%q workspace_id=%q workspace_source_id=%q source_scope_id=%q source_scope_revision=%d scope_config_hash=%q access_mode=%q ",
-		got.WorkspaceRevision(), got.WorkspaceConfigurationHash(), got.WorkspaceID(), got.WorkspaceSourceID(), got.SourceScopeID(), got.SourceScopeRevision(), got.ScopeConfigHash(), got.AccessMode())
+	fmt.Fprintf(&out, "workspace_revision=%d workspace_configuration_hash=%q workspace_id=%q workspace_source_id=%q source_scope_id=%q source_scope_revision=%d scope_config_hash=%q access_mode=%q connection_revision=%d ",
+		got.WorkspaceRevision(), got.WorkspaceConfigurationHash(), got.WorkspaceID(), got.WorkspaceSourceID(), got.SourceScopeID(), got.SourceScopeRevision(), got.ScopeConfigHash(), got.AccessMode(), got.ConnectionRevision())
 	fmt.Fprintf(&out, "projection connection_id=%q database_identity=%q lineage_id=%q revision=%d contract_hash=%q schema=%q relation=%q relation_kind=%q empty_snapshot_policy=%q ",
 		projection.ConnectionID, projection.DatabaseIdentity, projection.LineageID, projection.Revision, projection.ContractHash, projection.SchemaName, projection.RelationName, projection.RelationKind, projection.EmptySnapshotPolicy)
 	for _, column := range projection.Columns {

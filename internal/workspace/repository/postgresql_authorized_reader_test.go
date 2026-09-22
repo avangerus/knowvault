@@ -66,9 +66,15 @@ func TestPostgreSQLAuthorizedReaderStableAuthorityReadsExactlyOnce(t *testing.T)
 	resultType := reflect.TypeOf(authority.result)
 	for index := 0; index < resultType.NumField(); index++ {
 		field := resultType.Field(index)
-		if field.PkgPath == "" || strings.Contains(strings.ToLower(field.Name), "credential") || field.Name == "connectionRevision" {
+		if field.PkgPath == "" || strings.Contains(strings.ToLower(field.Name), "credential") {
 			t.Fatalf("public result exposes execution target field: %s", field.Name)
 		}
+	}
+	if revision := authority.result.ConnectionRevision(); revision != authorizedReaderConnectionRevision {
+		t.Fatalf("ConnectionRevision = %d, want %d", revision, authorizedReaderConnectionRevision)
+	}
+	if revision := (PostgreSQLAuthorityResult{}).ConnectionRevision(); revision != 0 {
+		t.Fatalf("zero result ConnectionRevision = %d, want 0", revision)
 	}
 	encoded, err := jsonv2.Marshal(authority.result)
 	if err != nil || string(encoded) != "{}" {
@@ -126,7 +132,7 @@ func TestPostgreSQLAuthorizedReaderRejectsEveryAuthorityAndTargetDrift(t *testin
 		{name: "workspace hash", mutate: func(value *postgreSQLExecutionAuthority) { value.result.workspaceConfigHash = "sha256:other" }},
 		{name: "source revision", mutate: func(value *postgreSQLExecutionAuthority) { value.result.sourceScopeRevision++ }},
 		{name: "connection id", mutate: func(value *postgreSQLExecutionAuthority) { value.connectionID = "connection_other" }},
-		{name: "connection revision", mutate: func(value *postgreSQLExecutionAuthority) { value.connectionRevision++ }},
+		{name: "connection revision", mutate: func(value *postgreSQLExecutionAuthority) { value.result.connectionRevision++ }},
 		{name: "credential", mutate: func(value *postgreSQLExecutionAuthority) { value.credentialReference = "cred_other" }},
 	}
 	for _, test := range tests {
@@ -179,6 +185,11 @@ func authorizedReaderWithOutcomes(connector PostgreSQLProjectionConnector, first
 	return reader, &index
 }
 
+// authorizedReaderConnectionRevision is the exact connection revision the
+// fixture resolves, so the envelope comparison and the result accessor are
+// both pinned to one value.
+const authorizedReaderConnectionRevision int64 = 5
+
 func authorizedReaderAuthority() postgreSQLExecutionAuthority {
 	projection := postgresqlquery.Projection{
 		ConnectionID:        "connection_001",
@@ -204,9 +215,10 @@ func authorizedReaderAuthority() postgreSQLExecutionAuthority {
 			workspaceID: "workspace_001", workspaceRevision: 7, workspaceConfigHash: "sha256:workspace",
 			workspaceSourceID: "binding_001", sourceScopeID: "scope_001", sourceScopeRevision: 3,
 			scopeConfigHash: "sha256:scope", accessMode: authorityAccessModeManaged,
-			projection: projection, limits: limits,
+			connectionRevision: authorizedReaderConnectionRevision,
+			projection:         projection, limits: limits,
 		},
-		connectionID: projection.ConnectionID, connectionRevision: 5, credentialReference: "cred_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		connectionID: projection.ConnectionID, credentialReference: "cred_01ARZ3NDEKTSV4RRFFQ69G5FAV",
 	}
 }
 

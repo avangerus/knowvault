@@ -51,17 +51,19 @@ type PostgreSQLAuthorityResult struct {
 	sourceScopeRevision int64
 	scopeConfigHash     string
 	accessMode          string
+	connectionRevision  int64
 	projection          postgresqlquery.Projection
 	limits              postgresqlquery.Limits
 }
 
 // postgreSQLExecutionAuthority is the private, in-process execution envelope.
-// Credential material and the exact connection revision never cross the
-// public authority result boundary.
+// It adds the exact connector target to the resolved authority decision: the
+// connection id and the credential reference the connector needs. The exact
+// connection revision is not duplicated here; the result carries it as a
+// neutral scalar.
 type postgreSQLExecutionAuthority struct {
 	result              PostgreSQLAuthorityResult
 	connectionID        string
-	connectionRevision  int64
 	credentialReference string
 }
 
@@ -82,6 +84,12 @@ func (r PostgreSQLAuthorityResult) SourceScopeRevision() int64 { return r.source
 func (r PostgreSQLAuthorityResult) ScopeConfigHash() string { return r.scopeConfigHash }
 
 func (r PostgreSQLAuthorityResult) AccessMode() string { return r.accessMode }
+
+// ConnectionRevision returns the exact persisted source-connection revision the
+// admission SELECT resolved for this source scope revision. It is a neutral
+// scalar fact: the connection id, the credential reference, the DSN and the SQL
+// stay outside the result. A zero result returns zero.
+func (r PostgreSQLAuthorityResult) ConnectionRevision() int64 { return r.connectionRevision }
 
 // Projection returns an independent copy of the resolved projection. A nil
 // Columns slice is preserved as the true zero value so that an unresolved
@@ -388,11 +396,11 @@ func (store *Store) resolvePostgreSQLExecutionAuthority(ctx context.Context, acc
 				sourceScopeRevision: scannedScopeRevision,
 				scopeConfigHash:     scannedScopeConfigHash,
 				accessMode:          scannedAccessMode,
+				connectionRevision:  scannedConnectionRevision,
 				projection:          projection,
 				limits:              limits,
 			},
 			connectionID:        scannedConnectionID,
-			connectionRevision:  scannedConnectionRevision,
 			credentialReference: scannedCredentialReference,
 		}
 		resolved = true
