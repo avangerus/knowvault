@@ -343,10 +343,13 @@ func TestResolverProductionSurfaceIsPrivateAndClosed(t *testing.T) {
 		t.Fatalf("package = %q, want analyticsource", parsed.Name.Name)
 	}
 
-	// Imports are pinned to exactly the two packages the plan needs, so no
-	// context, database, SQL, transport or execution package can enter here.
+	// Imports are pinned to exactly the four packages the plan and the three
+	// separately authorized reads need, so no SQL, transport, execution,
+	// logging or configuration package can enter here.
 	allowedImports := map[string]bool{
+		"context": true,
 		"knowvault.local/verified-workspace/internal/analytic":             true,
+		"knowvault.local/verified-workspace/internal/platform/database":    true,
 		"knowvault.local/verified-workspace/internal/workspace/repository": true,
 	}
 	imported := map[string]bool{}
@@ -462,10 +465,27 @@ func TestResolverProductionSurfaceIsPrivateAndClosed(t *testing.T) {
 		declaredMethods = append(declaredMethods, name)
 	}
 	slices.Sort(declaredMethods)
-	// Resolve belongs to B2.4g2: this card adds one private planning method.
-	if !slices.Equal(declaredMethods, []string{"plan"}) {
-		t.Fatalf("declared methods = %v, want exactly [plan]", declaredMethods)
+	// Resolve is the one callable entry point the resolver exposes; planning
+	// stays private, so no second name reaches a caller.
+	if !slices.Equal(declaredMethods, []string{"Resolve", "plan"}) {
+		t.Fatalf("declared methods = %v, want exactly [Resolve plan]", declaredMethods)
 	}
+	resolver := methods["Resolve"]
+	if receiver := astFieldInventory(resolver.Recv); len(receiver) != 1 || receiver[0][1] != "*Resolver" {
+		t.Fatalf("Resolve receiver = %v, want one *Resolver", receiver)
+	}
+	wantResolveParameters := [][2]string{
+		{"ctx", "context.Context"}, {"access", "database.AccessContext"}, {"request", "ResolveRequest"},
+	}
+	if parameters := astFieldInventory(resolver.Type.Params); !slices.Equal(parameters, wantResolveParameters) {
+		t.Fatalf("Resolve parameters = %v, want %v", parameters, wantResolveParameters)
+	}
+	wantResolveResults := [][2]string{{"", "Resolution"}, {"", "error"}}
+	if results := astFieldInventory(resolver.Type.Results); !slices.Equal(results, wantResolveResults) {
+		t.Fatalf("Resolve results = %v, want %v", results, wantResolveResults)
+	}
+	assertResolveBody(t, resolver.Body)
+
 	planner := methods["plan"]
 	if receiver := astFieldInventory(planner.Recv); len(receiver) != 1 || receiver[0][1] != "*Resolver" {
 		t.Fatalf("plan receiver = %v, want one *Resolver", receiver)
@@ -505,8 +525,18 @@ func TestResolverValuesRetainOnlyTheAcceptedMembers(t *testing.T) {
 			t.Fatalf("%s fields = %v, want %v", value, fields, want)
 		}
 	}
-	if reflect.TypeOf(Resolver{}).NumMethod() != 0 || reflect.TypeOf(&Resolver{}).NumMethod() != 0 {
-		t.Fatal("Resolver observes an exported method; the plan stays private")
+	// Only the pointer carries the one callable entry point: a copied resolver
+	// value exposes no method at all.
+	if reflect.TypeOf(Resolver{}).NumMethod() != 0 {
+		t.Fatal("Resolver observes an exported method; only *Resolver may expose Resolve")
+	}
+	pointer := reflect.TypeOf(&Resolver{})
+	exposed := make([]string, 0, pointer.NumMethod())
+	for index := 0; index < pointer.NumMethod(); index++ {
+		exposed = append(exposed, pointer.Method(index).Name)
+	}
+	if !slices.Equal(exposed, []string{"Resolve"}) {
+		t.Fatalf("*Resolver methods = %v, want exactly [Resolve]", exposed)
 	}
 	if reflect.TypeOf(ResolveRequest{}).NumMethod() != 0 {
 		t.Fatal("ResolveRequest observes a method")
@@ -559,4 +589,220 @@ func resolverRetention(literal *ast.CompositeLit) [][2]string {
 		retained = append(retained, [2]string{key.Name, value.Name})
 	}
 	return retained
+}
+
+// resolveStep is one call the Resolve body performs as the whole right-hand
+// side of a short variable declaration, with the identifiers that declaration
+// binds.
+type resolveStep struct {
+	callee string
+	names  []string
+	call   *ast.CallExpr
+}
+
+// assertResolveBody pins the fail-closed body of Resolve: the plan runs before
+// every repository read, the candidate the authority lookup returns is passed
+// to the authority resolver unchanged, the governed exposure read uses the
+// planned lookup, the binding is bound exactly once from the accepted request,
+// the authority result and the exposure result, and every failure — and only a
+// failure — returns the exact zero Resolution and the exact errMismatch.
+func assertResolveBody(t *testing.T, body *ast.BlockStmt) {
+	t.Helper()
+	wantSteps := []struct {
+		callee string
+		names  [2]string
+		args   []string
+	}{
+		{"resolver.plan", [2]string{"plan", "err"}, []string{"request"}},
+		{"resolver.store.ResolvePostgreSQLAuthorityRequest", [2]string{"candidate", "err"},
+			[]string{"ctx", "access", "plan.authority"}},
+		{"resolver.store.ResolvePostgreSQLAuthority", [2]string{"authority", "err"},
+			[]string{"ctx", "access", "candidate"}},
+		{"resolver.store.ResolveGovernedExposure", [2]string{"exposure", "err"},
+			[]string{"ctx", "access", "plan.exposure"}},
+		{"bindRepositoryResults", [2]string{"binding", "err"}, nil},
+	}
+	if len(body.List) != 2*len(wantSteps)+1 {
+		t.Fatalf("Resolve holds %d statements, want one guarded call per step plus the final return", len(body.List))
+	}
+	steps := make([]resolveStep, 0, len(wantSteps))
+	for index, want := range wantSteps {
+		step, ok := astCallAssignment(body.List[index*2])
+		if !ok {
+			t.Fatalf("Resolve step %d is not one call bound to two identifiers", index)
+		}
+		if step.callee != want.callee {
+			t.Fatalf("Resolve step %d calls %s, want %s", index, step.callee, want.callee)
+		}
+		if !slices.Equal(step.names, want.names[:]) {
+			t.Fatalf("Resolve step %d binds %v, want %v", index, step.names, want.names)
+		}
+		if want.args != nil {
+			args, ok := astCallArguments(step.call)
+			if !ok || !slices.Equal(args, want.args) {
+				t.Fatalf("Resolve step %d passes %v, want %v", index, args, want.args)
+			}
+		}
+		assertFailureGuard(t, index, body.List[index*2+1])
+		steps = append(steps, step)
+	}
+
+	// The binding is bound exactly once, from the expectation, the retained
+	// catalog, and the two results this body itself resolved.
+	binding := steps[len(steps)-1]
+	if len(binding.call.Args) != 4 {
+		t.Fatalf("bindRepositoryResults takes %d arguments, want the expectation, catalog, authority result and exposure result",
+			len(binding.call.Args))
+	}
+	for index, want := range []string{"resolver.catalog", "authority", "exposure"} {
+		text, ok := astExpressionText(binding.call.Args[index+1])
+		if !ok || text != want {
+			t.Fatalf("bindRepositoryResults argument %d = %q, want %s", index+1, text, want)
+		}
+	}
+	expectation, ok := binding.call.Args[0].(*ast.CompositeLit)
+	if !ok || astTypeName(expectation.Type) != "repositoryBindingExpectation" {
+		t.Fatal("bindRepositoryResults must receive one repositoryBindingExpectation literal")
+	}
+	wantExpectation := [][2]string{
+		{"workspaceID", "request.WorkspaceID"},
+		{"workspaceRevision", "authority.WorkspaceRevision()"},
+		{"workspaceConfigurationHash", "authority.WorkspaceConfigurationHash()"},
+		{"catalogID", "request.CatalogID"},
+		{"catalogRevision", "request.CatalogRevision"},
+		{"catalogHash", "request.CatalogHash"},
+		{"profileKey", "request.ProfileKey"},
+		{"profileHash", "request.ProfileHash"},
+	}
+	gotExpectation := make([][2]string, 0, len(expectation.Elts))
+	for _, element := range expectation.Elts {
+		pair, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			t.Fatal("the binding expectation holds a positional element")
+		}
+		key, keyOK := pair.Key.(*ast.Ident)
+		value, valueOK := astExpressionText(pair.Value)
+		if !keyOK || !valueOK {
+			t.Fatalf("the binding expectation holds one unsupported member %v", element)
+		}
+		gotExpectation = append(gotExpectation, [2]string{key.Name, value})
+	}
+	if !slices.Equal(gotExpectation, wantExpectation) {
+		t.Fatalf("binding expectation = %v, want %v", gotExpectation, wantExpectation)
+	}
+
+	final, ok := body.List[len(body.List)-1].(*ast.ReturnStmt)
+	if !ok || len(final.Results) != 2 {
+		t.Fatal("Resolve must end with one two-result return")
+	}
+	sealed, ok := final.Results[0].(*ast.CompositeLit)
+	if !ok || astTypeName(sealed.Type) != "Resolution" {
+		t.Fatalf("Resolve returns %v, want one Resolution literal", final.Results[0])
+	}
+	if retained := resolverRetention(sealed); !slices.Equal(retained, [][2]string{{"binding", "binding"}}) {
+		t.Fatalf("Resolve seals %v, want exactly the binding it bound", retained)
+	}
+	if accepted, ok := final.Results[1].(*ast.Ident); !ok || accepted.Name != "nil" {
+		t.Fatalf("Resolve returns %v as its error, want nil", final.Results[1])
+	}
+}
+
+// assertFailureGuard requires one statement to be exactly `if err != nil {
+// return Resolution{}, errMismatch }`: no initializer, no else, no second
+// branch, no wrapped or distinct error value.
+func assertFailureGuard(t *testing.T, step int, statement ast.Stmt) {
+	t.Helper()
+	guard, ok := statement.(*ast.IfStmt)
+	if !ok || guard.Init != nil || guard.Else != nil {
+		t.Fatalf("Resolve step %d is not one plain failure guard", step)
+	}
+	condition, ok := guard.Cond.(*ast.BinaryExpr)
+	if !ok || condition.Op != token.NEQ {
+		t.Fatalf("Resolve step %d guard condition is not a != comparison", step)
+	}
+	left, leftOK := condition.X.(*ast.Ident)
+	right, rightOK := condition.Y.(*ast.Ident)
+	if !leftOK || !rightOK || left.Name != "err" || right.Name != "nil" {
+		t.Fatalf("Resolve step %d guard does not compare err with nil", step)
+	}
+	if len(guard.Body.List) != 1 {
+		t.Fatalf("Resolve step %d guard holds %d statements, want exactly one refusal return",
+			step, len(guard.Body.List))
+	}
+	returned, ok := guard.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(returned.Results) != 2 {
+		t.Fatalf("Resolve step %d guard must return one zero resolution and one error", step)
+	}
+	zero, ok := returned.Results[0].(*ast.CompositeLit)
+	if !ok || astTypeName(zero.Type) != "Resolution" || len(zero.Elts) != 0 {
+		t.Fatalf("Resolve step %d returns %v, want the exact zero Resolution{}", step, returned.Results[0])
+	}
+	refusal, ok := returned.Results[1].(*ast.Ident)
+	if !ok || refusal.Name != "errMismatch" {
+		t.Fatalf("Resolve step %d returns %v, want the exact errMismatch", step, returned.Results[1])
+	}
+}
+
+// astCallAssignment returns the one call a statement performs as the whole
+// right-hand side of a short variable declaration, with the identifiers that
+// declaration binds.
+func astCallAssignment(statement ast.Stmt) (resolveStep, bool) {
+	assigned, ok := statement.(*ast.AssignStmt)
+	if !ok || assigned.Tok != token.DEFINE || len(assigned.Rhs) != 1 {
+		return resolveStep{}, false
+	}
+	call, ok := assigned.Rhs[0].(*ast.CallExpr)
+	if !ok {
+		return resolveStep{}, false
+	}
+	callee, ok := astExpressionText(call.Fun)
+	if !ok {
+		return resolveStep{}, false
+	}
+	names := make([]string, 0, len(assigned.Lhs))
+	for _, target := range assigned.Lhs {
+		identifier, ok := target.(*ast.Ident)
+		if !ok {
+			return resolveStep{}, false
+		}
+		names = append(names, identifier.Name)
+	}
+	return resolveStep{callee: callee, names: names, call: call}, true
+}
+
+// astCallArguments renders every call argument as text, so an argument the
+// resolver body changed is visible in the expectation comparison.
+func astCallArguments(call *ast.CallExpr) ([]string, bool) {
+	args := make([]string, 0, len(call.Args))
+	for _, argument := range call.Args {
+		text, ok := astExpressionText(argument)
+		if !ok {
+			return nil, false
+		}
+		args = append(args, text)
+	}
+	return args, true
+}
+
+// astExpressionText renders the identifier, selector and no-argument call forms
+// the resolver body is allowed to use.
+func astExpressionText(expression ast.Expr) (string, bool) {
+	switch typed := expression.(type) {
+	case *ast.Ident:
+		return typed.Name, true
+	case *ast.SelectorExpr:
+		owner, ok := astExpressionText(typed.X)
+		if !ok {
+			return "", false
+		}
+		return owner + "." + typed.Sel.Name, true
+	case *ast.CallExpr:
+		callee, ok := astExpressionText(typed.Fun)
+		if !ok || len(typed.Args) != 0 {
+			return "", false
+		}
+		return callee + "()", true
+	default:
+		return "", false
+	}
 }

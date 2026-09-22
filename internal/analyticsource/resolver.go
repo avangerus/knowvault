@@ -1,15 +1,18 @@
 package analyticsource
 
 import (
+	"context"
+
 	"knowvault.local/verified-workspace/internal/analytic"
+	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/workspace/repository"
 )
 
 // Resolver owns the immutable mounted catalog selection and the concrete
-// repository store one caller will later read fresh authority and exposure
-// facts through. It performs no I/O itself and grants nothing: retaining a
-// store is not a repository result, and retaining a valid catalog is not proof
-// that the catalog is still the mounted one.
+// repository store one caller reads fresh authority and exposure facts through.
+// Retaining a store is not a repository result, and retaining a valid catalog
+// is not proof that the catalog is still the mounted one, so the resolver holds
+// no resolved fact and every call re-reads the repository.
 type Resolver struct {
 	store   *repository.Store
 	catalog analytic.DatasetProfileCatalog
@@ -43,6 +46,61 @@ func NewResolver(store *repository.Store, catalog analytic.DatasetProfileCatalog
 		return nil, errMismatch
 	}
 	return &Resolver{store: store, catalog: catalog}, nil
+}
+
+// Resolve executes the frozen plan against the concrete repository and returns
+// the one sealed eligibility binding as an opaque Resolution, or the exact zero
+// Resolution and the exact unwrapped errMismatch.
+//
+// The sequence is fail closed. The plan is prepared before any repository I/O,
+// so a malformed or drifting request reads nothing. The three reads that follow
+// are separately authorized current reads — the authority candidate lookup, the
+// authority resolution of that exact returned candidate, and the governed
+// exposure lookup — and they do not form one atomic snapshot: no fact read
+// earlier is assumed to still hold in a later read, and the binding is sealed
+// only after the fresh authority and exposure facts matched the retained active
+// profile exactly.
+//
+// Nothing is retried, cached or parallelized, no repository cause, code or fact
+// is exposed or wrapped, and no source scope, connection, schema or relation is
+// caller-chosen. Every refusal — the plan, a repository read, the binding —
+// returns the same content-free value, so Resolve is neither an existence nor
+// an authorization oracle.
+func (resolver *Resolver) Resolve(
+	ctx context.Context,
+	access database.AccessContext,
+	request ResolveRequest,
+) (Resolution, error) {
+	plan, err := resolver.plan(request)
+	if err != nil {
+		return Resolution{}, errMismatch
+	}
+	candidate, err := resolver.store.ResolvePostgreSQLAuthorityRequest(ctx, access, plan.authority)
+	if err != nil {
+		return Resolution{}, errMismatch
+	}
+	authority, err := resolver.store.ResolvePostgreSQLAuthority(ctx, access, candidate)
+	if err != nil {
+		return Resolution{}, errMismatch
+	}
+	exposure, err := resolver.store.ResolveGovernedExposure(ctx, access, plan.exposure)
+	if err != nil {
+		return Resolution{}, errMismatch
+	}
+	binding, err := bindRepositoryResults(repositoryBindingExpectation{
+		workspaceID:                request.WorkspaceID,
+		workspaceRevision:          authority.WorkspaceRevision(),
+		workspaceConfigurationHash: authority.WorkspaceConfigurationHash(),
+		catalogID:                  request.CatalogID,
+		catalogRevision:            request.CatalogRevision,
+		catalogHash:                request.CatalogHash,
+		profileKey:                 request.ProfileKey,
+		profileHash:                request.ProfileHash,
+	}, resolver.catalog, authority, exposure)
+	if err != nil {
+		return Resolution{}, errMismatch
+	}
+	return Resolution{binding: binding}, nil
 }
 
 // resolutionPlan is the exact read plan one accepted ResolveRequest prepares:

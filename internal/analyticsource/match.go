@@ -1,6 +1,10 @@
-// Package analyticsource holds pure, fail-closed metadata matching between an
-// approved analytic projection and trusted source and exposure facts. It grants
-// no authority: it performs no I/O and returns no diagnostics.
+// Package analyticsource holds fail-closed metadata matching between an
+// approved analytic projection and trusted source and exposure facts, and the
+// resolver that reads those facts from the concrete repository under the
+// caller's access context. Matching is pure and returns no diagnostics; the
+// resolver returns one opaque sealed binding or the one content-free refusal.
+// Neither grants authority beyond the exact facts it matched: a sealed binding
+// is not execution, disclosure, freshness or still-mounted permission.
 package analyticsource
 
 import (
