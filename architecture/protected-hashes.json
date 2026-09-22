@@ -965,7 +965,7 @@
     "tests/integration/postgres/folder_connector_windows_test.go": "42997840aa9e8ee82bf1d3847632fd4189a721f7e3786248d4de2fa2c6b9a90c",
     "tests/integration/postgres/folder_reappearance_test.go": "e6d2ad7a8c959114e808db7eff5bc0b73e5ff96e5df34e8937787ace2b6cabc8",
     "tests/integration/postgres/fragment_reproject_fence_test.go": "15cd1ff39551347bde7d4e79bf3a1edbaa0a7ae1fbf4eb4139fa6031e39d4b95",
-    "tests/integration/postgres/governed_exposure_loader_test.go": "c3b6492436ebe3d3869801c76a0c03adb82194ca9a20d714b46f5705863f3e96",
+    "tests/integration/postgres/governed_exposure_loader_test.go": "d525c071227eb1cb1c00e2a20ad20fc203a7cafa1b0ab3dd19136d0dae98bf77",
     "tests/integration/postgres/governed_query_workspace_binding_test.go": "113f58ceaf8f4131ab6f0633a394d486f08331fe4fa7cca3dfe1abbe01653b2a",
     "tests/integration/postgres/keyed_text_digest_test.go": "229445575c549d866ad5e7b7362111d3ed03de029809f55cf604c5b33ddb2648",
     "tests/integration/postgres/knowledge_graph_ingestion_test.go": "543d8e1ddb078ad34d086cfb81aac30bb8c2eaf7179e072e8cb40a6ab9b2a301",

@@ -38,6 +38,19 @@ package postgres_test
 // while the connection's only exposure artifact holds no requested relation.
 // Both are malformed server facts, so both answer the identical true-zero,
 // cause-free CodePersistence rather than the decoder's CodeNotFound.
+//
+// B2.3c4 adds the current-binding precedence proof: the same positive read
+// surface, then the production RemoveSource command run with the fixture's
+// exact current workspace revision and hash, workspace-source identity, scope
+// revision and hash and WORKSPACE_MANAGED access mode. The PostgreSQL reads
+// afterwards prove only the stored facts: the workspace current revision
+// advanced, the historical revision keeps its enabled row for this scope, the
+// current revision carries that same scope's disabled row, the source scope and
+// its exposure artifact are untouched, and this workspace's
+// governed_query_workspace_binding for that connection still enables live
+// queries. The identical lookup then answers the ordinary true-zero, cause-free
+// CodeNotFound, so an enabled historical binding is never a fallback for the
+// binding removed at the current revision.
 
 import (
 	"context"
@@ -544,4 +557,165 @@ func TestResolveGovernedExposureRealPostgreSQLMalformedFacts(t *testing.T) {
 		result, err := fixture.store.ResolveGovernedExposure(ctx, fixture.access, lookup)
 		assertGovernedExposurePersistence(t, "malformed base fact outranks missing relation", result, err)
 	})
+}
+
+// TestResolveGovernedExposureRealPostgreSQLIgnoresStaleEnabledRevision is
+// B2.3c4: an old valid governed exposure cannot survive removal of its current
+// workspace source binding. The exact lookup resolves once as an explicit
+// positive precondition, then the production RemoveSource command disables the
+// binding at the fixture's exact current workspace revision. The reads that
+// follow prove the stored facts in PostgreSQL instead of inferring them from
+// the lookup result: the workspace current revision advanced, the historical
+// revision keeps its enabled row for this scope, the current revision carries
+// that same scope's disabled row, the source scope and its exposure artifact
+// are untouched, and this workspace's governed_query_workspace_binding for that
+// connection still enables live queries. The identical lookup then answers the
+// ordinary true-zero, cause-free CodeNotFound, so the historical enabled copy
+// is ignored and the current disabled copy wins.
+func TestResolveGovernedExposureRealPostgreSQLIgnoresStaleEnabledRevision(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAdmittedAuthorityFixture(t)
+	lookup := seedGovernedExposureReadSurface(t, ctx, fixture, true)
+
+	positive, err := fixture.store.ResolveGovernedExposure(ctx, fixture.access, lookup)
+	if err != nil {
+		t.Fatalf("resolve governed exposure before removing its binding: %v (code=%s)",
+			err, workspacerepository.CodeOf(err))
+	}
+	if !positive.Valid() {
+		t.Fatal("positive governed exposure precondition is not valid")
+	}
+	for _, scalar := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"workspace id", positive.WorkspaceID(), fixture.binding.workspaceID},
+		{"workspace source id", positive.WorkspaceSourceID(), fixture.binding.workspaceSourceID},
+		{"source scope id", positive.SourceScopeID(), fixture.request.SourceScopeID},
+		{"connection id", positive.ConnectionID(), lookup.ConnectionID},
+		{"schema", positive.SchemaName(), lookup.SchemaName},
+		{"relation", positive.RelationName(), lookup.RelationName},
+	} {
+		if scalar.got != scalar.want {
+			t.Fatalf("positive %s = %q, want %q", scalar.name, scalar.got, scalar.want)
+		}
+	}
+	for _, revision := range []struct {
+		name string
+		got  int64
+		want int64
+	}{
+		{"workspace revision", positive.WorkspaceRevision(), fixture.binding.workspaceRevision},
+		{"source scope revision", positive.SourceScopeRevision(), fixture.request.SourceScopeRevision},
+	} {
+		if revision.got != revision.want {
+			t.Fatalf("positive %s = %d, want %d", revision.name, revision.got, revision.want)
+		}
+	}
+	if !positive.LiveQueryEnabled() {
+		t.Fatal("positive live query flag = false, want this workspace's enabled binding")
+	}
+
+	if _, err := fixture.store.RemoveSource(ctx,
+		authorityAccess(fixture.binding, fixture.binding.ownerID, "req_governed_exposure_remove_source"),
+		workspacerepository.RemoveSourceRequest{
+			IdempotencyKey:            authorityIdempotencyKey("governed-exposure-remove-source"),
+			WorkspaceID:               fixture.binding.workspaceID,
+			ExpectedWorkspaceRevision: fixture.binding.workspaceRevision,
+			ExpectedConfigurationHash: fixture.binding.workspaceConfHash,
+			WorkspaceSourceID:         fixture.binding.workspaceSourceID,
+			SourceScopeID:             fixture.request.SourceScopeID,
+			SourceScopeRevision:       fixture.request.SourceScopeRevision,
+			ScopeConfigHash:           fixture.request.ScopeConfigHash,
+			AccessMode:                workspacerepository.SourceAccessWorkspaceManaged,
+		}); err != nil {
+		t.Fatalf("remove source binding: %v", err)
+	}
+
+	var currentRevision int64
+	if err := fixture.admin.QueryRow(ctx, `
+		SELECT current_revision FROM public.workspace
+		 WHERE organization_id = $1 AND id = $2`,
+		fixture.binding.organizationID, fixture.binding.workspaceID).Scan(&currentRevision); err != nil {
+		t.Fatalf("read current workspace revision: %v", err)
+	}
+	if want := fixture.binding.workspaceRevision + 1; currentRevision != want {
+		t.Fatalf("workspace current revision = %d after removal, want %d", currentRevision, want)
+	}
+
+	// One scope holds exactly one projection row per workspace revision, so the
+	// pair below is the whole currentness property: the superseded revision's
+	// row is still there and still enabled, while the current revision's row for
+	// the same scope is present and disabled.
+	readBinding := func(revision int64) (int64, bool) {
+		t.Helper()
+		var rows int64
+		var enabled bool
+		if err := fixture.admin.QueryRow(ctx, `
+			SELECT count(*), COALESCE(bool_and(enabled), false)
+			  FROM public.workspace_revision_source
+			 WHERE organization_id = $1 AND workspace_id = $2 AND workspace_revision = $3
+			   AND source_scope_id = $4`,
+			fixture.binding.organizationID, fixture.binding.workspaceID, revision,
+			fixture.request.SourceScopeID).Scan(&rows, &enabled); err != nil {
+			t.Fatalf("read workspace source binding at revision %d: %v", revision, err)
+		}
+		return rows, enabled
+	}
+	if rows, enabled := readBinding(fixture.binding.workspaceRevision); rows != 1 || !enabled {
+		t.Fatalf("historical revision %d holds %d binding rows enabled=%t, want one enabled row",
+			fixture.binding.workspaceRevision, rows, enabled)
+	}
+	if rows, enabled := readBinding(currentRevision); rows != 1 || enabled {
+		t.Fatalf("current revision %d holds %d binding rows enabled=%t, want one disabled row",
+			currentRevision, rows, enabled)
+	}
+
+	var activeRevision int64
+	if err := fixture.admin.QueryRow(ctx, `
+		SELECT active_revision FROM public.source_scope
+		 WHERE organization_id = $1 AND id = $2`,
+		fixture.binding.organizationID, fixture.request.SourceScopeID).Scan(&activeRevision); err != nil {
+		t.Fatalf("read source scope active revision: %v", err)
+	}
+	if activeRevision != fixture.request.SourceScopeRevision {
+		t.Fatalf("source scope active revision = %d after removal, want %d",
+			activeRevision, fixture.request.SourceScopeRevision)
+	}
+
+	var exposureRevisions int64
+	if err := fixture.admin.QueryRow(ctx, `
+		SELECT count(*) FROM public.governed_query_exposed_schema
+		 WHERE organization_id = $1 AND connection_id = $2`,
+		fixture.binding.organizationID, lookup.ConnectionID).Scan(&exposureRevisions); err != nil {
+		t.Fatalf("count governed exposure revisions: %v", err)
+	}
+	if exposureRevisions != 1 {
+		t.Fatalf("governed exposure revisions = %d after removal, want the seeded revision to remain",
+			exposureRevisions)
+	}
+
+	// Live queries for this workspace and connection are the separate
+	// governed_query_workspace_binding gate, which RemoveSource never touches:
+	// that exact row is still present and still enabled, so the disabled
+	// current workspace_revision_source row above is the only gate the removal
+	// closed.
+	var liveBindingRows int64
+	var liveBindingEnabled bool
+	if err := fixture.admin.QueryRow(ctx, `
+		SELECT count(*), COALESCE(bool_and(live_queries_enabled), false)
+		  FROM public.governed_query_workspace_binding
+		 WHERE organization_id = $1 AND connection_id = $2 AND workspace_id = $3`,
+		fixture.binding.organizationID, lookup.ConnectionID,
+		fixture.binding.workspaceID).Scan(&liveBindingRows, &liveBindingEnabled); err != nil {
+		t.Fatalf("read governed query workspace binding: %v", err)
+	}
+	if liveBindingRows != 1 || !liveBindingEnabled {
+		t.Fatalf("governed query workspace binding holds %d rows enabled=%t after removal, want one enabled row",
+			liveBindingRows, liveBindingEnabled)
+	}
+
+	result, err := fixture.store.ResolveGovernedExposure(ctx, fixture.access, lookup)
+	assertGovernedExposureNotFound(t, "binding removed at the current workspace revision", result, err)
 }
