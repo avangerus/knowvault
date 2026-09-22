@@ -3281,7 +3281,7 @@ func (service *Service) persistTerminalRunWithStructuredDependencies(ctx context
 	if governedQueryDependency != nil && !governedQueryDependency.validForRun(runID) {
 		return &Error{code: CodeInvalid}
 	}
-	if !governedQueryAnswerResultAllowedForStatus(status, governedQueryDependency, answerResult) {
+	if !governedQueryAnswerResultAllowedForStatus(status, governedQueryDependency, answerResult, toolLoopFromContext(ctx)) {
 		return &Error{code: CodeInvalid}
 	}
 	// R1: bind the citation grounding projection from the same authorized

@@ -192,6 +192,7 @@ func validateGovernedQueryAnswerResult(questionRunID string, dependency *governe
 	return err == nil && reflect.DeepEqual(expected, answerResult)
 }
 
-func governedQueryAnswerResultAllowedForStatus(status string, dependency *governedQueryDependency, answerResult *AnswerResult) bool {
-	return dependency == nil || answerResult != nil || status != "COMPLETED"
+func governedQueryAnswerResultAllowedForStatus(status string, dependency *governedQueryDependency, answerResult *AnswerResult, toolLoop *ToolLoopRecord) bool {
+	return dependency == nil || answerResult != nil || status != "COMPLETED" ||
+		(toolLoop != nil && toolLoop.StopReason == "CLARIFICATION")
 }

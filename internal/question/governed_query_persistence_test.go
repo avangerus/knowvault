@@ -271,9 +271,33 @@ func TestGovernedQueryAnswerResultRequiresExactSealedLiveProjection(t *testing.T
 	if _, err := decodeStructuredAnswer(livePersistenceRunID, withoutAnswer); err != nil {
 		t.Fatalf("nil AnswerResult trace should decode for later status gating: %v", err)
 	}
-	if governedQueryAnswerResultAllowedForStatus("COMPLETED", &dependency, nil) ||
-		!governedQueryAnswerResultAllowedForStatus("INSUFFICIENT_EVIDENCE", &dependency, nil) {
+	if governedQueryAnswerResultAllowedForStatus("COMPLETED", &dependency, nil, record) ||
+		!governedQueryAnswerResultAllowedForStatus("INSUFFICIENT_EVIDENCE", &dependency, nil, record) {
 		t.Fatal("terminal status did not restrict a missing live AnswerResult to non-success runs")
+	}
+}
+
+func TestGovernedQueryClarificationMayPersistWithoutLiveAnswerResult(t *testing.T) {
+	_, dependency, record := livePersistenceFixture(t)
+	record.StopReason = "CLARIFICATION"
+	if !governedQueryAnswerResultAllowedForStatus("COMPLETED", &dependency, nil, record) {
+		t.Fatal("terminal clarification was rejected without a live AnswerResult")
+	}
+	raw, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, &dependency, record)
+	if err != nil {
+		t.Fatalf("marshal clarification trace without AnswerResult: %v", err)
+	}
+	decoded, err := decodeStructuredAnswer(livePersistenceRunID, raw)
+	if err != nil || decoded.AnswerResult != nil || decoded.governedQueryDependency == nil || decoded.ToolLoop == nil || decoded.ToolLoop.StopReason != "CLARIFICATION" {
+		t.Fatalf("clarification artifact did not round-trip: answer=%#v err=%v", decoded, err)
+	}
+
+	record.StopReason = "ANSWER"
+	if governedQueryAnswerResultAllowedForStatus("COMPLETED", &dependency, nil, record) {
+		t.Fatal("ordinary completed live answer was allowed without its receipt")
+	}
+	if _, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, &dependency, record); err != nil {
+		t.Fatalf("artifact-level trace should remain representable for terminal status gating: %v", err)
 	}
 }
 
