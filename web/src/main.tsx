@@ -3964,8 +3964,12 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const corpusWarning = corpusStatusWarning(run.corpus_status);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
   const text = run.answer ?? run.clarification;
-  const resultValue = run.answer_result?.value
-    ? `${run.answer_result.value}${run.answer_result.unit ? ` ${run.answer_result.unit}` : ""}`
+  const liveResult = run.answer_result;
+  const liveObservationWindow = liveResult?.observation_window;
+  const liveReceiptDigest = liveResult?.receipt_digest;
+  const isLiveScalar = Boolean(liveObservationWindow && liveReceiptDigest);
+  const resultValue = liveResult?.value
+    ? `${liveResult.value}${liveResult.unit ? ` ${liveResult.unit}` : ""}`
     : null;
   const citationHref = (citation: QuestionCitation): string => buildEvidenceHash({
     workspace: workspaceID,
@@ -3980,7 +3984,26 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   return (
     <>
       <ToolCallsDisclosure run={run} showResults={false} />
-      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : text ? (
+      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : isLiveScalar ? (
+        <div className="answer-body live-calculation-answer">
+          <span className="badge badge-live"><IconCheckCircle />Verified live calculation</span>
+          {text ? (
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          ) : resultValue ? (
+            <span className="answer-live-summary">{resultValue}</span>
+          ) : null}
+          <details className="live-calculation-evidence">
+            <summary>Evidence for this calculation</summary>
+            <dl>
+              {liveResult?.period && <><dt>Period</dt><dd>{answerPeriodText(liveResult.period) ?? "—"}</dd></>}
+              {liveResult?.timezone && <><dt>Time zone</dt><dd>{liveResult.timezone}</dd></>}
+              <dt>Contributing rows</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
+              <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
+              <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
+            </dl>
+          </details>
+        </div>
+      ) : text ? (
         isQuote ? (
           <blockquote className="answer-quote">
             <span className="badge badge-quote"><IconCheckCircle />quote verified</span>
@@ -3998,7 +4021,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           {run.answer_result?.period?.label && <p className="msg-note">Period: {run.answer_result.period.label}</p>}
         </div>
       ) : <p className="msg-warning">No answer was returned. Check the sources and try again.</p>}
-      {text && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
+      {text && !isLiveScalar && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
       {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
       {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
       {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}

@@ -116,6 +116,10 @@ const answerSource = answerStart >= 0 && searchStart > answerStart ? mainSource.
 check((searchSource.match(/apiPost<QuestionRun>/g) ?? []).length === 1, "one question submit performs exactly one QuestionRun POST");
 check(!searchSource.includes("tools/search") && !searchSource.includes("apiGet<"), "question submit does not issue a preliminary document-search GET");
 check(searchSource.includes("<QuestionRunAnswer") && answerSource.includes("<AnswerBody") && answerSource.includes("run.citations") && answerSource.includes("onOpenEvidence"), "QuestionRun renders the existing answer, citations and evidence actions");
+check(answerSource.includes("isLiveScalar") && answerSource.includes("Verified live calculation") && answerSource.includes("live-calculation-evidence")
+  && answerSource.includes("Contributing rows") && answerSource.includes("Observed window") && answerSource.includes("Receipt digest"), "shipped QuestionRun live scalars render the compact verified-calculation disclosure");
+check(answerSource.includes("!isLiveScalar") && answerSource.includes("questionClaimGroundingLabel"), "live scalars suppress document claim-grounding labels while narrative answers retain them");
+check(!answerSource.includes("<AnswerResultBlock") && !answerSource.includes("<UnifiedAnswerRows"), "shipped QuestionRun does not mount the verbose structured-result panels");
 check(mainSource.includes('className="tool-trace"') && mainSource.includes("TOOL_CALLS_TITLE") && mainSource.includes("run.tool_loop.calls"), "QuestionRun uses the actual collapsed tool-call disclosure");
 check(searchSource.includes('className="search-model-select"') && searchSource.includes('aria-label="Model"'), "the configured model selector remains available");
 check(!searchSource.includes("<pre>") && !searchSource.includes("answer_hash") && !searchSource.includes("result_digest"), "the main answer surface does not render raw technical rows or hashes");

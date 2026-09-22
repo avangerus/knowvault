@@ -427,8 +427,16 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .badge-tell { background: var(--surface-2); color: var(--ink-secondary); border: 1px solid var(--line); }
 .badge-quote { background: var(--success-tint); color: var(--success); }
 .badge-quote svg { width: 12px; height: 12px; }
+.badge-live { background: var(--success-tint); color: var(--success); }
+.badge-live svg { width: 12px; height: 12px; }
 .answer-quote { margin: 0 0 10px; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); font-size: var(--fs-meta); line-height: 1.6; color: var(--ink); max-width: 64ch; }
 .answer-body { margin: 0 0 10px; max-width: 88ch; font-size: var(--fs-body-lg); line-height: 1.65; color: var(--ink); }
+.answer-live-summary { font-weight: 650; }
+.live-calculation-evidence { margin-top: 8px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.live-calculation-evidence summary { cursor: pointer; }
+.live-calculation-evidence dl { display: grid; gap: 3px 12px; grid-template-columns: max-content minmax(0, 1fr); margin: 6px 0 0; }
+.live-calculation-evidence dt { color: var(--ink-tertiary); }
+.live-calculation-evidence dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); }
 
 /* TXT-1: formatted answer body — paragraphs, lists, headings and inline
    emphasis parsed from the server's Markdown-lite answer text (main.tsx's
