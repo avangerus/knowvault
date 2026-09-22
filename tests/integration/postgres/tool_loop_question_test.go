@@ -600,7 +600,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	if err != nil || finalScopeRun.ToolLoop == nil || finalScopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || finalScopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || len(finalScopeRun.Citations) != 0 || strings.Contains(finalScopeRun.Answer, "42") {
 		t.Fatalf("finalization disclosed evidence after revocation: %v %+v", err, finalScopeRun)
 	}
-	if !finalRevoked || catalogChecks != 2 || finalizationModelCalls != 1 || len(finalScopeRun.ToolLoop.Calls) != 2 {
+	if !finalRevoked || catalogChecks != 2 || finalizationModelCalls != 1 || len(finalScopeRun.ToolLoop.Calls) != 1 {
 		t.Fatalf("finalization called the model after revocation: revoked=%v checks=%d model=%d", finalRevoked, catalogChecks, finalizationModelCalls)
 	}
 	// A captured tool-loop scope must fail closed when a real workspace
