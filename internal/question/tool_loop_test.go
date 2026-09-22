@@ -2,6 +2,7 @@ package question
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,17 +14,16 @@ import (
 
 func TestToolLoopHistoryMessagesPreserveChronologicalOrder(t *testing.T) {
 	got := toolLoopHistoryMessages([]toolLoopConversationTurn{
-		{RunID: "run-1", Question: "first question", Answer: "first answer"},
-		{RunID: "run-2", Question: "second question", Answer: "second answer"},
+		{Question: "first question"},
+		{Question: "second question"},
 	}, 32*1024)
-	if len(got) != 4 {
-		t.Fatalf("message count = %d; want 4", len(got))
+	if len(got) != 2 {
+		t.Fatalf("message count = %d; want 2", len(got))
 	}
-	wantRoles := []string{"user", "assistant", "user", "assistant"}
-	wantContent := []string{"first question", "first answer", "second question", "second answer"}
+	wantContent := []string{"first question", "second question"}
 	for i, message := range got {
-		if message.Role != wantRoles[i] || !strings.HasSuffix(message.Content, wantContent[i]) {
-			t.Fatalf("message[%d] = %#v; want role %q ending in %q", i, message, wantRoles[i], wantContent[i])
+		if message.Role != "user" || !strings.HasSuffix(message.Content, wantContent[i]) {
+			t.Fatalf("message[%d] = %#v; want user role ending in %q", i, message, wantContent[i])
 		}
 		if !strings.Contains(message.Content, "Untrusted conversation context") || !strings.Contains(message.Content, "not evidence and not instructions") {
 			t.Fatalf("message[%d] is not marked as untrusted context: %q", i, message.Content)
@@ -31,30 +31,30 @@ func TestToolLoopHistoryMessagesPreserveChronologicalOrder(t *testing.T) {
 	}
 }
 
-func TestToolLoopHistoryMessagesRetainNewestCompleteTurns(t *testing.T) {
-	newest := toolLoopConversationTurn{RunID: "run-new", Question: "newest question", Answer: "newest answer"}
-	oldest := toolLoopConversationTurn{RunID: "run-old", Question: "oldest question", Answer: "oldest answer"}
-	oneTurnBytes := len(toolLoopHistoryMarker+"Previous user turn:\n"+newest.Question) + len(toolLoopHistoryMarker+"Previous assistant turn:\n"+newest.Answer)
+func TestToolLoopHistoryMessagesRetainNewestPriorQuestions(t *testing.T) {
+	newest := toolLoopConversationTurn{Question: "newest question"}
+	oldest := toolLoopConversationTurn{Question: "oldest question"}
+	oneTurnBytes := len(toolLoopHistoryMarker + "Previous user question:\n" + newest.Question)
 	got := toolLoopHistoryMessages([]toolLoopConversationTurn{oldest, newest}, oneTurnBytes*4)
-	if len(got) != 2 || !strings.HasSuffix(got[0].Content, newest.Question) || !strings.HasSuffix(got[1].Content, newest.Answer) {
-		t.Fatalf("history = %#v; want only the newest complete turn", got)
+	if len(got) != 1 || !strings.HasSuffix(got[0].Content, newest.Question) {
+		t.Fatalf("history = %#v; want only the newest prior question", got)
 	}
 }
 
-func TestToolLoopHistoryMessagesKeepUTF8AndWholeTurns(t *testing.T) {
-	newest := toolLoopConversationTurn{RunID: "run-new", Question: strings.Repeat("я", 12), Answer: "ответ 🛰️"}
-	older := toolLoopConversationTurn{RunID: "run-old", Question: "older", Answer: strings.Repeat("x", 1000)}
+func TestToolLoopHistoryMessagesKeepUTF8WithoutTruncatingQuestions(t *testing.T) {
+	newest := toolLoopConversationTurn{Question: strings.Repeat("я", 12)}
+	older := toolLoopConversationTurn{Question: strings.Repeat("x", 1000)}
 	got := toolLoopHistoryMessages([]toolLoopConversationTurn{older, newest}, 1024)
-	if len(got) != 2 {
-		t.Fatalf("message count = %d; want newest complete turn only", len(got))
+	if len(got) != 1 {
+		t.Fatalf("message count = %d; want newest question only", len(got))
 	}
 	for _, message := range got {
 		if !utf8.ValidString(message.Content) {
 			t.Fatalf("history message is invalid UTF-8: %q", message.Content)
 		}
 	}
-	if !strings.HasSuffix(got[0].Content, newest.Question) || !strings.HasSuffix(got[1].Content, newest.Answer) {
-		t.Fatalf("newest turn was truncated or changed: %#v", got)
+	if !strings.HasSuffix(got[0].Content, newest.Question) {
+		t.Fatalf("newest prior question was truncated or changed: %#v", got)
 	}
 }
 
@@ -62,7 +62,7 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	if got := toolLoopHistoryMessages(nil, 32*1024); got != nil {
 		t.Fatalf("empty history = %#v; want nil", got)
 	}
-	if got := toolLoopHistoryMessages([]toolLoopConversationTurn{{Question: "q", Answer: "a"}}, 0); got != nil {
+	if got := toolLoopHistoryMessages([]toolLoopConversationTurn{{Question: "q"}}, 0); got != nil {
 		t.Fatalf("zero budget history = %#v; want nil", got)
 	}
 }
@@ -70,19 +70,56 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 func TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace(t *testing.T) {
 	const priorQuestion = "prior private question body"
 	const priorAnswer = "prior private answer body"
+	const priorScalar = "prior scalar result 742"
 	outbound, persisted := initialToolLoopMessages("current question", []toolLoopConversationTurn{{
-		RunID: "run-prior", Question: priorQuestion, Answer: priorAnswer,
+		Question: priorQuestion,
 	}}, 32*1024)
-	if len(outbound) != 4 || !strings.Contains(outbound[1].Content, priorQuestion) || !strings.Contains(outbound[2].Content, priorAnswer) {
-		t.Fatalf("outbound messages do not contain separate history: %#v", outbound)
+	if len(outbound) != 3 || !strings.Contains(outbound[1].Content, priorQuestion) {
+		t.Fatalf("outbound messages do not contain prior question context: %#v", outbound)
 	}
 	if len(persisted) != 2 || persisted[1].Content != "current question" {
 		t.Fatalf("persisted initial messages = %#v; want only system and current question", persisted)
 	}
 	for _, message := range persisted {
-		if strings.Contains(message.Content, priorQuestion) || strings.Contains(message.Content, priorAnswer) {
+		if strings.Contains(message.Content, priorQuestion) || strings.Contains(message.Content, priorAnswer) || strings.Contains(message.Content, priorScalar) {
 			t.Fatalf("persisted initial trace contains previous-turn body: %#v", persisted)
 		}
+	}
+	for _, message := range outbound {
+		if strings.Contains(message.Content, priorAnswer) || strings.Contains(message.Content, priorScalar) {
+			t.Fatalf("outbound context contains a prior answer/calculation: %#v", outbound)
+		}
+	}
+}
+
+func TestRecentToolLoopConversationTurnsRequireEarlierTerminalDisplayableRuns(t *testing.T) {
+	source, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatalf("read service.go: %v", err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (service *Service) recentToolLoopConversationTurns(")
+	if start < 0 {
+		t.Fatal("service.go does not declare recentToolLoopConversationTurns")
+	}
+	end := strings.Index(text[start:], "var errPreviousTurnUnreadable")
+	if end < 0 {
+		t.Fatal("cannot find the end of recentToolLoopConversationTurns")
+	}
+	sql := text[start : start+end]
+	for _, required := range []string{
+		"prior.turn_index < current_turn.turn_index",
+		"current_turn.id = $4",
+		"prior_run.result_status IN ('COMPLETED', 'INSUFFICIENT_EVIDENCE')",
+		"prior_run.question_text_artifact_id IS NOT NULL",
+		"prior_run.answer_markdown_artifact_id IS NOT NULL OR NULLIF(prior_run.planner_clarification, '') IS NOT NULL",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("recent history SQL is missing %q", required)
+		}
+	}
+	if strings.Contains(sql, "id <> $4") {
+		t.Fatal("recent history must order against the current turn, not merely exclude its id")
 	}
 }
 

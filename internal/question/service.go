@@ -3621,9 +3621,7 @@ func (service *Service) previousTurnQuestionText(ctx context.Context, access dat
 // to the tool loop. Its contents are included only after current-access checks
 // through GetBatch.
 type toolLoopConversationTurn struct {
-	RunID    string
 	Question string
-	Answer   string
 }
 
 // recentToolLoopConversationTurns loads the most recent readable turns before
@@ -3645,10 +3643,25 @@ func (service *Service) recentToolLoopConversationTurns(ctx context.Context, acc
 	var refs []turnRef
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		rows, queryErr := tx.Query(txCtx, `
-			SELECT id, question_run_id
-			  FROM public.conversation_turn
-			 WHERE organization_id = $1 AND conversation_id = $2 AND workspace_id = $3 AND id <> $4
-			 ORDER BY turn_index DESC
+			SELECT prior.id, prior.question_run_id
+			  FROM public.conversation_turn AS current_turn
+			  JOIN public.conversation_turn AS prior
+			    ON prior.organization_id = current_turn.organization_id
+			   AND prior.conversation_id = current_turn.conversation_id
+			   AND prior.workspace_id = current_turn.workspace_id
+			   AND prior.turn_index < current_turn.turn_index
+			  JOIN public.question_run AS prior_run
+			    ON prior_run.organization_id = prior.organization_id
+			   AND prior_run.id = prior.question_run_id
+			   AND prior_run.workspace_id = prior.workspace_id
+			 WHERE current_turn.organization_id = $1
+			   AND current_turn.conversation_id = $2
+			   AND current_turn.workspace_id = $3
+			   AND current_turn.id = $4
+			   AND prior_run.result_status IN ('COMPLETED', 'INSUFFICIENT_EVIDENCE')
+			   AND prior_run.question_text_artifact_id IS NOT NULL
+			   AND (prior_run.answer_markdown_artifact_id IS NOT NULL OR NULLIF(prior_run.planner_clarification, '') IS NOT NULL)
+			 ORDER BY prior.turn_index DESC
 			 LIMIT $5
 		`, access.OrganizationID, conversationID, workspaceID, excludeTurnID, limit)
 		if queryErr != nil {
@@ -3686,11 +3699,7 @@ func (service *Service) recentToolLoopConversationTurns(ctx context.Context, acc
 		if !ok {
 			continue
 		}
-		answer := run.Answer
-		if answer == "" {
-			answer = run.Clarification
-		}
-		turns = append(turns, toolLoopConversationTurn{RunID: run.ID, Question: run.Question, Answer: answer})
+		turns = append(turns, toolLoopConversationTurn{Question: run.Question})
 	}
 	return turns, nil
 }
