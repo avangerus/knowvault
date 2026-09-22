@@ -215,20 +215,30 @@ func repositoryCatalog(t *testing.T, profile analytic.DatasetProfile, state anal
 
 // repositoryProjection builds the exact valid projection the fake source
 // reports: the approved source identity and the complete physical inventory in
-// canonical order, with the first column carrying the identity role.
+// canonical order, each column carrying the discovery-shaped type facts of its
+// sealed field, with the first column carrying the identity role. The column
+// compatibility gate is called on the result, so every positive adapter fixture
+// proves it reports facts the gate accepts.
 func repositoryProjection(t *testing.T, profile analytic.DatasetProfile, columns []string) postgresqlquery.Projection {
 	t.Helper()
 	approved := profile.Source().Values()
+	fields := make(map[string]analytic.FieldSpecInput, len(columns))
+	for _, field := range profile.Fields() {
+		value := field.Values()
+		fields[value.PhysicalName] = value
+	}
 	projectionColumns := make([]postgresqlquery.Column, len(columns))
 	for index, name := range columns {
-		column := postgresqlquery.Column{
-			Ordinal: index + 1, Name: name, TypeFingerprint: "text",
-			LogicalType: postgresqlquery.TypeText,
-			Roles:       []postgresqlquery.Role{postgresqlquery.RoleEvidence}, MaxBytes: 1024,
+		field, found := fields[name]
+		if !found {
+			t.Fatalf("projection column %q has no sealed field", name)
 		}
+		column := postgresqlquery.Column{
+			Ordinal: index + 1, Name: name, Nullable: field.Nullable,
+			Roles: []postgresqlquery.Role{postgresqlquery.RoleEvidence},
+		}
+		repositoryDiscoveredColumnType(t, field.PhysicalType, &column)
 		if index == 0 {
-			column.TypeFingerprint = "int8"
-			column.LogicalType = postgresqlquery.TypeInt
 			column.Roles = []postgresqlquery.Role{postgresqlquery.RoleIdentity}
 		}
 		projectionColumns[index] = column
@@ -243,7 +253,42 @@ func repositoryProjection(t *testing.T, profile analytic.DatasetProfile, columns
 	if err := projection.Validate(); err != nil {
 		t.Fatalf("fixture projection rejected: %v", err)
 	}
+	if err := repositoryColumnCompatibility(profile, projection); err != nil {
+		t.Fatalf("fixture projection is not discovery-shaped: %v", err)
+	}
 	return projection
+}
+
+// repositoryDiscoveredColumnType writes the discovery-shaped type facts one
+// sealed physical type reports into column: the projection logical type, the
+// canonical fingerprint, the precision and scale, and the byte bound. The
+// fingerprints repeat the exact strings
+// internal/source/postgresqlquery/catalogType produces, so a fixture that drifts
+// from that grammar fails inside repositoryProjection.
+func repositoryDiscoveredColumnType(t *testing.T, physical analytic.PhysicalType, column *postgresqlquery.Column) {
+	t.Helper()
+	switch physical {
+	case analytic.PhysicalPGBool:
+		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeBool, "oid:16", 8
+	case analytic.PhysicalPGInt8:
+		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeInt, "oid:20", 32
+	case analytic.PhysicalPGText:
+		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeText, "oid:25", 1024
+	case analytic.PhysicalPGDate:
+		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeDate, "oid:1082", 32
+	case analytic.PhysicalPGNumeric:
+		column.LogicalType, column.Precision, column.Scale = postgresqlquery.TypeNumeric, 12, 3
+		column.TypeFingerprint = "oid:1700:p:" + strconv.Itoa(column.Precision) + ":s:" + strconv.Itoa(column.Scale)
+		column.MaxBytes = column.Precision + 32
+	case analytic.PhysicalPGTimestamp:
+		column.LogicalType, column.Precision, column.MaxBytes = postgresqlquery.TypeTimestamp, 3, 64
+		column.TypeFingerprint = "oid:1114:p:" + strconv.Itoa(column.Precision)
+	case analytic.PhysicalPGTimestamptz:
+		column.LogicalType, column.Precision, column.MaxBytes = postgresqlquery.TypeTimestamptz, 3, 64
+		column.TypeFingerprint = "oid:1184:p:" + strconv.Itoa(column.Precision)
+	default:
+		t.Fatalf("unmapped fixture physical type %q", physical)
+	}
 }
 
 // withoutProjectionColumn removes one column and renumbers the rest, so the
@@ -567,7 +612,7 @@ func TestBindRepositoryViewsAcceptsExtraColumnsAndInventoryOrder(t *testing.T) {
 	extended := repositoryFixtureFor(t, sealedFixtureProfile(t, false))
 	extended.source.projection.Columns = append(extended.source.projection.Columns, postgresqlquery.Column{
 		Ordinal: len(extended.source.projection.Columns) + 1, Name: "internal_note",
-		TypeFingerprint: "text", LogicalType: postgresqlquery.TypeText,
+		TypeFingerprint: "oid:25", LogicalType: postgresqlquery.TypeText,
 		Roles: []postgresqlquery.Role{postgresqlquery.RoleEvidence}, MaxBytes: 1024,
 	})
 	extended.exposure.columns = append(extended.exposure.columns, "internal_note", "unapproved_extra")

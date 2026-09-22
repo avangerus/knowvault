@@ -102,9 +102,10 @@ func bindRepositoryResults(
 // The order is fixed: the expectation shape, the catalog identity and activity,
 // the exact resolved active profile, both non-nil views reporting the expected
 // workspace identity independently, the source access mode, the exposure's
-// resolved and live state, the detached source projection, and finally the
-// independently mapped source and exposure facts. Every refusal returns the
-// exact zero eligibilityBinding and errMismatch.
+// resolved and live state, the detached source projection and its column
+// compatibility with that profile, and finally the independently mapped source
+// and exposure facts. Every refusal returns the exact zero eligibilityBinding
+// and errMismatch.
 func bindRepositoryViews(
 	expected repositoryBindingExpectation,
 	catalog analytic.DatasetProfileCatalog,
@@ -139,6 +140,9 @@ func bindRepositoryViews(
 	}
 	projection := source.Projection()
 	if err := projection.Validate(); err != nil {
+		return eligibilityBinding{}, errMismatch
+	}
+	if err := repositoryColumnCompatibility(profile, projection); err != nil {
 		return eligibilityBinding{}, errMismatch
 	}
 	sourceView, ok := repositorySourceFacts(source, projection)
