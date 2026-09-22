@@ -1,6 +1,8 @@
 package analyticsource
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -13,6 +15,7 @@ import (
 	"testing"
 
 	"knowvault.local/verified-workspace/internal/analytic"
+	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/workspace/repository"
 )
 
@@ -91,6 +94,45 @@ func assertResolutionPlanRefusal(t *testing.T, value resolutionPlan, err error) 
 	}
 	if err.Error() != errMismatch.Error() {
 		t.Fatalf("refusal has a distinct message: %q", err.Error())
+	}
+}
+
+// assertPublicResolveRefusal requires one public Resolve refusal to return the
+// exact zero Resolution and the one content-free sentinel, with no wrapped
+// cause, no JSON rendering of a retained value, and none of the supplied
+// values in the message. reflect.DeepEqual is required because the retained
+// binding carries slices, so a Resolution value is not comparable.
+func assertPublicResolveRefusal(t *testing.T, value Resolution, err error, disclosures []string) {
+	t.Helper()
+	if err != errMismatch || !errors.Is(err, errMismatch) {
+		t.Fatalf("refused resolution returned %v, want errMismatch", err)
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		t.Fatalf("refusal wraps %v, want the exact unwrapped errMismatch", unwrapped)
+	}
+	if !reflect.DeepEqual(value, Resolution{}) {
+		t.Fatalf("refusal did not return the exact zero Resolution: %+v", value)
+	}
+	if value.Valid() {
+		t.Fatal("the refused Resolution reports Valid")
+	}
+	encoded, marshalErr := json.Marshal(value)
+	if marshalErr != nil {
+		t.Fatalf("marshal the refused Resolution: %v", marshalErr)
+	}
+	if string(encoded) != "{}" {
+		t.Fatalf("refused Resolution marshaled to %s, want {}", encoded)
+	}
+	if err.Error() != errMismatch.Error() {
+		t.Fatalf("refusal has a distinct message: %q", err.Error())
+	}
+	for _, disclosure := range disclosures {
+		if disclosure == "" {
+			continue
+		}
+		if strings.Contains(err.Error(), disclosure) {
+			t.Fatalf("the refusal disclosed %q", disclosure)
+		}
 	}
 }
 
@@ -324,6 +366,79 @@ func TestResolverRefusalsDiscloseNoRequestCatalogOrProfileValue(t *testing.T) {
 					t.Fatalf("the refusal disclosed %q", disclosure)
 				}
 			}
+		})
+	}
+}
+
+// TestResolverResolveRefusesEveryPlanningRefusal proves the public entry point
+// returns exactly the normalized refusal for every selection the shared refusal
+// table already refuses. The table remains the one malformed-input matrix; the
+// nil context and zero access context passed here mean no call could return a
+// usable Resolution even if planning accepted it, and
+// TestResolverPlanRefusesEveryMalformedOrDriftingSelection owns the proof that
+// planning refuses every one of these cases before any repository read.
+func TestResolverResolveRefusesEveryPlanningRefusal(t *testing.T) {
+	fixture := resolverFixtureFor(t, sealedFixtureProfile(t, false), analytic.ProfileActive)
+	cases := resolverRefusalCases(t, fixture)
+	if len(cases) < 20 {
+		t.Fatalf("the refusal table carries only %d cases", len(cases))
+	}
+	disclosures := resolverDisclosures(fixture)
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := test.resolver.Resolve(nil, database.AccessContext{}, test.request)
+			assertPublicResolveRefusal(t, value, err, disclosures)
+		})
+	}
+}
+
+// TestResolverResolveRefusesAtTheRepositoryBoundary proves the public entry
+// point returns the same normalized refusal when an otherwise valid selection
+// passes planning and the retained store refuses the call itself: a nil call
+// context, a zero and an invalid access context, and the nil-database store the
+// fixture retains. AccessContext is an exported struct with exported fields and
+// an exported Validate, so the valid value below is an ordinary literal that
+// needs no production seam, and the retained store's database field is nil, so
+// every call stops at the store's own admission guard without a database and
+// without a mock.
+func TestResolverResolveRefusesAtTheRepositoryBoundary(t *testing.T) {
+	fixture := resolverFixtureFor(t, sealedFixtureProfile(t, false), analytic.ProfileActive)
+	valid := database.AccessContext{
+		OrganizationID: "resolver_org", PrincipalID: "resolver_principal", RequestID: "resolver_request",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("the fixture access context is not valid: %v", err)
+	}
+	invalid := valid
+	invalid.RequestID = " " + valid.RequestID
+	if invalid.Validate() == nil {
+		t.Fatal("the padded access context is valid, want an invalid one")
+	}
+
+	// The exact fixture request passes planning, so each refusal below belongs
+	// to the retained store and not to the plan.
+	plan, err := fixture.resolver.plan(fixture.request)
+	if err != nil {
+		t.Fatalf("the exact valid request did not reach the repository: %v", err)
+	}
+	assertPlanLookups(t, plan, fixture.profile)
+
+	disclosures := slices.Concat(resolverDisclosures(fixture), []string{
+		valid.OrganizationID, valid.PrincipalID, valid.RequestID, invalid.RequestID,
+	})
+	for _, test := range []struct {
+		name   string
+		ctx    context.Context
+		access database.AccessContext
+	}{
+		{"nil context with valid access", nil, valid},
+		{"zero access with a live context", context.Background(), database.AccessContext{}},
+		{"invalid access with a live context", context.Background(), invalid},
+		{"valid call context and access over the nil-database store", context.Background(), valid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := fixture.resolver.Resolve(test.ctx, test.access, fixture.request)
+			assertPublicResolveRefusal(t, value, err, disclosures)
 		})
 	}
 }
