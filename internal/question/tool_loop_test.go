@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"knowvault.local/verified-workspace/internal/address"
+	"knowvault.local/verified-workspace/internal/modelgateway"
 )
 
 func TestToolAnswerAcceptsOnlyAnEntireJSONFence(t *testing.T) {
@@ -98,6 +99,44 @@ func TestToolAnswerHasCitationSelector(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := toolAnswerHasCitationSelector(tc.answer); got != tc.want {
 				t.Fatalf("toolAnswerHasCitationSelector() = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestContainsWorkspaceToolRequestUsesCatalogAndCountsRefusedBatch(t *testing.T) {
+	makeCall := func(name string) modelgateway.ToolCall {
+		var call modelgateway.ToolCall
+		call.Function.Name = name
+		return call
+	}
+	catalog := map[string]struct{}{
+		"knowvault_search":     {},
+		analyticScalarToolName: {},
+		submitAnswerToolName:   {},
+	}
+	for _, tc := range []struct {
+		name  string
+		calls []modelgateway.ToolCall
+		want  bool
+	}{
+		{
+			name:  "recognized document call in refused batch",
+			calls: []modelgateway.ToolCall{makeCall("knowvault_search"), makeCall("unrecognized_tool")},
+			want:  true,
+		},
+		{
+			name:  "only unrecognized calls",
+			calls: []modelgateway.ToolCall{makeCall("unrecognized_tool")},
+		},
+		{
+			name:  "analytic and submit calls are special",
+			calls: []modelgateway.ToolCall{makeCall(analyticScalarToolName), makeCall(submitAnswerToolName)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := containsWorkspaceToolRequest(tc.calls, catalog); got != tc.want {
+				t.Fatalf("containsWorkspaceToolRequest() = %v; want %v", got, tc.want)
 			}
 		})
 	}

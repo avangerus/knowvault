@@ -264,6 +264,23 @@ func toolAnswerHasCitationSelector(answer toolAnswer) bool {
 	return false
 }
 
+// containsWorkspaceToolRequest recognizes document/data tool requests only
+// when their names came from this workspace's current authorized catalog.
+// Special and unrecognized tools cannot turn a scalar-only answer into a
+// mixed request, including calls later refused by the loop budget.
+func containsWorkspaceToolRequest(calls []modelgateway.ToolCall, catalogNames map[string]struct{}) bool {
+	for _, call := range calls {
+		name := call.Function.Name
+		if name == analyticScalarToolName || name == submitAnswerToolName {
+			continue
+		}
+		if _, recognized := catalogNames[name]; recognized {
+			return true
+		}
+	}
+	return false
+}
+
 type toolFormatInvalidCode string
 
 const (
@@ -683,10 +700,12 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 	}
 	definitions := make([]modelgateway.ToolDefinition, 0, len(catalog)+2)
+	workspaceToolNames := make(map[string]struct{}, len(catalog))
 	for _, tool := range catalog {
 		if tool.Name == submitAnswerToolName || tool.Name == analyticScalarToolName {
 			return &Error{code: CodeUnavailable}
 		}
+		workspaceToolNames[tool.Name] = struct{}{}
 		definitions = append(definitions, modelgateway.ToolDefinition{Type: "function", Function: modelgateway.ToolFunction{Name: tool.Name, Description: tool.Description, Parameters: tool.Schema}})
 	}
 	if scalarCapability.valid() {
@@ -711,7 +730,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	packing := &toolContextPacking{Representatives: make(map[readPageKey]*contextRepresentative)}
 	traceBytes := 0
 	scopeChanged := false
-	workspaceToolInvoked := false
+	workspaceToolRequested := false
 	var retainedAnalyticScalarPair *analyticScalarPair
 	invoke := func(id, name string, args json.RawMessage, system bool) (workspacetools.Result, error) {
 		if scopeChanged {
@@ -735,7 +754,6 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				}
 			}
 		} else {
-			workspaceToolInvoked = true
 			result, callErr = service.tools.Invoke(ctx, scope, name, args)
 		}
 		if callErr != nil {
@@ -861,6 +879,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		record.Usage.Total += response.Usage.Total
 		messages = append(messages, response.Message)
 		record.Messages = append(record.Messages, response.Message)
+		workspaceToolRequested = workspaceToolRequested || containsWorkspaceToolRequest(response.Message.ToolCalls, workspaceToolNames)
 		if response.FinishReason == "length" {
 			record.StopReason = "OUTPUT_LIMIT"
 			break
@@ -1084,7 +1103,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if presentationErr != nil {
 			return presentationErr
 		}
-		if workspaceToolInvoked || toolAnswerHasCitationSelector(*final) {
+		if workspaceToolRequested || toolAnswerHasCitationSelector(*final) {
 			if record.AllClaimsBound && len(citations) > 0 {
 				// The model supplies only grounded document prose. Keep the scalar
 				// in AnswerResult so clients render the server-owned value separately.
