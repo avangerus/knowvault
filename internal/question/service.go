@@ -33,6 +33,7 @@ import (
 	"knowvault.local/verified-workspace/internal/analyticsource"
 	artifactrepository "knowvault.local/verified-workspace/internal/artifact/repository"
 	"knowvault.local/verified-workspace/internal/audit"
+	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/planner"
 	"knowvault.local/verified-workspace/internal/platform/artifactcrypto"
@@ -521,6 +522,13 @@ func authorizationMemoFrom(ctx context.Context) *authorizationMemo {
 	return memo
 }
 
+// GovernedAsk is the narrow, optional live-data capability available to the
+// Question tool loop. Composition installs it only when ad hoc governed asks
+// are mounted and enabled.
+type GovernedAsk interface {
+	AskWorkspace(ctx context.Context, access database.AccessContext, workspaceID, question string) (governedask.AskResult, error)
+}
+
 // Service is the single Question Run authority used by all adapters.
 type Service struct {
 	tools          workspacetools.Runtime
@@ -618,6 +626,22 @@ type Service struct {
 	datasetProfileCatalog  analytic.DatasetProfileCatalog
 	analyticSourceResolver *analyticsource.Resolver
 	analyticScalarExecutor *analyticsource.ScalarExecutor
+	liveDataAsk            GovernedAsk
+}
+
+// EnableGovernedAsk installs the optional connection-free live-data capability
+// once, after composition has mounted and enabled ad hoc governed asks. A
+// missing mount leaves the Question tool loop unchanged.
+func (service *Service) EnableGovernedAsk(ask GovernedAsk) error {
+	if service == nil || ask == nil || service.liveDataAsk != nil {
+		return &Error{code: CodeInvalid}
+	}
+	value := reflect.ValueOf(ask)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return &Error{code: CodeInvalid}
+	}
+	service.liveDataAsk = ask
+	return nil
 }
 
 // EnableDatasetProfileCatalog installs the startup-loaded, immutable analytic

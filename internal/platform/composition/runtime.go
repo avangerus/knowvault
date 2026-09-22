@@ -450,6 +450,11 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		governedAskService.EnableGovernedQueryConfig(governedQueryConfig)
 		if generationAdapter != nil {
 			governedAskService.EnableGovernedQuery(governedQueryConfig, generationAdapter)
+			if !governedQueryConfig.PresetOnly {
+				if err := questions.EnableGovernedAsk(governedAskService); err != nil {
+					return fail(StartupStageWorkspaceHandler)
+				}
+			}
 		}
 	}
 	conversations, err := conversation.New(databaseStore, auditStore)

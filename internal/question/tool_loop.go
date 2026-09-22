@@ -739,21 +739,22 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		return &Error{code: CodeDenied, cause: err}
 	}
 	var scalarCapability analyticScalarCapability
-	if service.analyticScalarExecutor != nil && service.datasetProfileCatalog.Valid() && service.analyticSourceResolver != nil {
+	if service.liveDataAsk == nil && service.analyticScalarExecutor != nil && service.datasetProfileCatalog.Valid() && service.analyticSourceResolver != nil {
 		prepared, prepareErr := service.prepareAnalyticScalarCapability(ctx, access, run.WorkspaceID)
 		if prepareErr == nil {
 			scalarCapability = prepared
 		}
 	}
-	definitions := make([]modelgateway.ToolDefinition, 0, len(catalog)+2)
+	definitions := make([]modelgateway.ToolDefinition, 0, len(catalog)+3)
 	workspaceToolNames := make(map[string]struct{}, len(catalog))
 	for _, tool := range catalog {
-		if tool.Name == submitAnswerToolName || tool.Name == analyticScalarToolName {
+		if tool.Name == submitAnswerToolName || tool.Name == analyticScalarToolName || tool.Name == liveDataToolName {
 			return &Error{code: CodeUnavailable}
 		}
 		workspaceToolNames[tool.Name] = struct{}{}
 		definitions = append(definitions, modelgateway.ToolDefinition{Type: "function", Function: modelgateway.ToolFunction{Name: tool.Name, Description: tool.Description, Parameters: tool.Schema}})
 	}
+	definitions = append(definitions, liveDataToolDefinitions(service.liveDataAsk)...)
 	if scalarCapability.valid() {
 		definition, definitionErr := analyticScalarToolDefinition(scalarCapability)
 		if definitionErr != nil {
@@ -773,6 +774,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	scopeChanged := false
 	workspaceToolRequested := false
 	var retainedAnalyticScalarPair *analyticScalarPair
+	var liveDataState liveDataRunState
 	invoke := func(id, name string, args json.RawMessage, system bool) (workspacetools.Result, error) {
 		if scopeChanged {
 			return workspacetools.Result{IsError: true, Text: toolScopeChangedError}, workspacetools.ErrScopeChanged
@@ -784,8 +786,12 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		started := time.Now()
 		var result workspacetools.Result
 		var callErr error
-		if name == analyticScalarToolName {
-			if retainedAnalyticScalarPair != nil {
+		if name == liveDataToolName {
+			result, callErr = liveDataState.invoke(ctx, access, run.WorkspaceID, service.liveDataAsk, args, profile.MaxToolResultBytes)
+		} else if name == analyticScalarToolName {
+			if service.liveDataAsk != nil {
+				result = liveDataRefusal("ANALYTIC_TOOL_UNAVAILABLE")
+			} else if retainedAnalyticScalarPair != nil {
 				result = workspacetools.Result{IsError: true, Text: `{"error":"ANALYTIC_OBSERVATION_ALREADY_RECORDED","advice":"Finish the answer from the verified observation already returned."}`}
 			} else {
 				var pair *analyticScalarPair
