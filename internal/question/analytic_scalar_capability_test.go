@@ -72,11 +72,16 @@ func TestAnalyticScalarCapabilityProjectsOnlyCheckedProfiles(t *testing.T) {
 
 	t.Run("detached", func(t *testing.T) {
 		held := capability.projections[0].Fields[0].Aliases[0]
+		heldAllowed := capability.projections[0].Fields[1].AllowedValues[0]
 		projected[0].Fields[0].Aliases[0] = "mutated"
+		projected[0].Fields[1].AllowedValues[0] = "mutated"
 		projected[0] = modelDatasetProfile{}
 		projected[1].Measures[0].Aliases[0] = "mutated"
 		if capability.projections[0].Fields[0].Aliases[0] != held {
 			t.Fatal("mutating the returned projection reached the retained field aliases")
+		}
+		if capability.projections[0].Fields[1].AllowedValues[0] != heldAllowed {
+			t.Fatal("mutating the returned projection reached the retained allowed values")
 		}
 		if capability.projections[0].DatasetID != "alpha_orders" {
 			t.Fatal("mutating the returned slice reached the retained projection")
@@ -108,6 +113,33 @@ func TestAnalyticScalarCapabilityProjectsOnlyCheckedProfiles(t *testing.T) {
 	})
 }
 
+func TestAnalyticScalarCapabilityRefusesUnsatisfiableRequiredFilterCount(t *testing.T) {
+	entry := scalarCapabilityFixtureEntry(t, "orders", 1, analytic.ProfileActive)
+	spec := entry.Profile.Spec()
+	semantics := spec.Semantics.Values()
+	for index := 0; index < 3; index++ {
+		token := fmt.Sprintf("required_filter_%d", index+1)
+		field := scalarCapabilityFixtureField(t, token, token+"_phys", 4+index,
+			analytic.ScalarText, analytic.PhysicalPGText, []analytic.PredicateOperator{analytic.PredicateEQ}, "approved")
+		spec.Fields = append(spec.Fields, field)
+		semantics.Fields = append(semantics.Fields, analytic.FieldSemanticsInput{
+			Token: token, Label: token, Description: token, NullMeaning: "Not assigned",
+		})
+	}
+	var err error
+	spec.Semantics, err = analytic.NewProfileSemantics(semantics)
+	if err != nil {
+		t.Fatalf("rebuild semantics: %v", err)
+	}
+	entry.Profile, err = analytic.NewDatasetProfile(spec)
+	if err != nil {
+		t.Fatalf("rebuild over-filtered profile: %v", err)
+	}
+	catalog := scalarCapabilityFixtureCatalog(t, "catalog.scalar", 1, []analytic.CatalogEntryInput{entry})
+	refused, refuseErr := newAnalyticScalarCapability(catalog, []analyticCandidate{scalarCapabilityFromEntry(entry)})
+	assertScalarCapabilityConstructorRefusal(t, refused, refuseErr)
+}
+
 // TestAnalyticScalarCapabilityValidatesExplicitUngroupedValue proves one strict
 // ungrouped VALUE proposal over a checked profile is decoded, validated and
 // sealed against the capability's own catalog snapshot, and that the exact
@@ -120,9 +152,7 @@ func TestAnalyticScalarCapabilityValidatesExplicitUngroupedValue(t *testing.T) {
 		t.Fatalf("construct scalar capability: %v", err)
 	}
 
-	doc := scalarCapabilityDocReplace(t, scalarCapabilityAggregateDoc(orders),
-		`"filters":[]`,
-		`"filters":[{"field":"order_total","op":"EQ","values":[{"kind":"NUMERIC","value":"100"}]}]`)
+	doc := scalarCapabilityAggregateDoc(orders)
 	intent, selected, err := capability.validateProposal([]byte(doc))
 	if err != nil {
 		t.Fatalf("validate explicit ungrouped value proposal: %v", err)
@@ -177,8 +207,45 @@ func TestAnalyticScalarCapabilityValidatesExplicitUngroupedValue(t *testing.T) {
 		t.Fatal("intent carries no filters")
 	}
 	predicates, predicatesOK := filters.Values()
-	if !predicatesOK || len(predicates) != 1 {
-		t.Fatalf("intent filters = %v ok=%v want one predicate", predicates, predicatesOK)
+	if !predicatesOK || len(predicates) != 2 {
+		t.Fatalf("intent filters = %v ok=%v want both required non-time predicates", predicates, predicatesOK)
+	}
+}
+
+func TestAnalyticScalarCapabilityRequiresEveryExposedFilterExactlyOnce(t *testing.T) {
+	orders := scalarCapabilityFixtureEntry(t, "orders", 4, analytic.ProfileActive)
+	catalog := scalarCapabilityFixtureCatalog(t, "catalog.scalar", 1, []analytic.CatalogEntryInput{orders})
+	capability, err := newAnalyticScalarCapability(catalog, []analyticCandidate{scalarCapabilityFromEntry(orders)})
+	if err != nil {
+		t.Fatalf("construct scalar capability: %v", err)
+	}
+
+	complete := scalarCapabilityAggregateDoc(orders)
+	filterSet := scalarCapabilityRequiredFiltersMember()
+	cases := []struct {
+		name string
+		doc  string
+		ok   bool
+	}{
+		{name: "complete", doc: complete, ok: true},
+		{name: "missing", doc: scalarCapabilityDocReplace(t, complete, filterSet,
+			`"filters":[{"field":"order_total","op":"EQ","values":[{"kind":"NUMERIC","value":"100"}]}]`)},
+		{name: "duplicate", doc: scalarCapabilityDocReplace(t, complete, filterSet,
+			`"filters":[{"field":"order_total","op":"EQ","values":[{"kind":"NUMERIC","value":"100"}]},{"field":"order_total","op":"EQ","values":[{"kind":"NUMERIC","value":"200"}]}]`)},
+		{name: "value outside allowlist", doc: scalarCapabilityDocReplace(t, complete, `"value":"order-1"`, `"value":"order-9"`)},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			intent, selected, validateErr := capability.validateProposal([]byte(test.doc))
+			if test.ok {
+				if validateErr != nil || !intent.Valid() || !selected.Valid() {
+					t.Fatalf("complete predicate set refused: intent valid=%v selected valid=%v err=%v", intent.Valid(), selected.Valid(), validateErr)
+				}
+				return
+			}
+			assertScalarCapabilityRefusal(t, intent, selected, validateErr, CodeInvalid)
+		})
 	}
 }
 
@@ -252,7 +319,7 @@ func scalarCapabilityFixtureProfile(t *testing.T, datasetID string, version int6
 	businessDay := scalarCapabilityFixtureField(t, "business_day", "business_day_phys", 1,
 		analytic.ScalarDate, analytic.PhysicalPGDate, []analytic.PredicateOperator{analytic.PredicateEQ})
 	orderID := scalarCapabilityFixtureField(t, "order_id", "order_id_phys", 2,
-		analytic.ScalarText, analytic.PhysicalPGText, []analytic.PredicateOperator{analytic.PredicateEQ, analytic.PredicateIN})
+		analytic.ScalarText, analytic.PhysicalPGText, []analytic.PredicateOperator{analytic.PredicateEQ, analytic.PredicateIN}, "order-1", "order-2")
 	orderTotal := scalarCapabilityFixtureField(t, "order_total", "order_total_phys", 3,
 		analytic.ScalarNumeric, analytic.PhysicalPGNumeric, []analytic.PredicateOperator{analytic.PredicateEQ})
 
@@ -323,13 +390,14 @@ func scalarCapabilityFixtureField(
 	logical analytic.ScalarType,
 	physicalType analytic.PhysicalType,
 	allowedOps []analytic.PredicateOperator,
+	allowedValues ...string,
 ) analytic.FieldSpec {
 	t.Helper()
 	field, err := analytic.NewFieldSpec(analytic.FieldSpecInput{
 		Token: token, SourceOrdinal: ordinal, PhysicalName: physical,
 		LogicalType: logical, PhysicalType: physicalType, Nullable: false,
 		Filterable: true, Groupable: true, Sortable: true, OutputAllowed: true,
-		AllowedOps: allowedOps,
+		AllowedOps: allowedOps, AllowedValues: allowedValues,
 	})
 	if err != nil {
 		t.Fatalf("build scalar field %q: %v", token, err)
@@ -369,7 +437,7 @@ func scalarCapabilityAggregateDoc(entry analytic.CatalogEntryInput) string {
 		`"operation":"AGGREGATE"`,
 		scalarCapabilityDatasetMember(entry),
 		`"period":{"mode":"EXPLICIT","start":"2026-09-10","end":"2026-09-11"}`,
-		`"filters":[]`,
+		scalarCapabilityRequiredFiltersMember(),
 		`"sort":[]`,
 		`"limit":1`,
 		`"measure":"assigned_orders"`,
@@ -377,6 +445,10 @@ func scalarCapabilityAggregateDoc(entry analytic.CatalogEntryInput) string {
 		`"output":"VALUE"`,
 	}
 	return "{" + strings.Join(members, ",") + "}"
+}
+
+func scalarCapabilityRequiredFiltersMember() string {
+	return `"filters":[{"field":"order_id","op":"EQ","values":[{"kind":"TEXT","value":"order-1"}]},{"field":"order_total","op":"EQ","values":[{"kind":"NUMERIC","value":"100"}]}]`
 }
 
 // scalarCapabilityLookupDoc builds a strict LOOKUP document, the other closed

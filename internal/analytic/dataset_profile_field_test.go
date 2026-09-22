@@ -8,7 +8,7 @@ import (
 
 func TestDatasetProfileFieldEnumsAreClosed(t *testing.T) {
 	logical := []ScalarType{ScalarBool, ScalarInt, ScalarNumeric, ScalarText, ScalarDate, ScalarTimestamp, ScalarTimestamptz}
-	physical := []PhysicalType{PhysicalPGBool, PhysicalPGInt8, PhysicalPGNumeric, PhysicalPGText, PhysicalPGDate, PhysicalPGTimestamp, PhysicalPGTimestamptz}
+	physical := []PhysicalType{PhysicalPGBool, PhysicalPGInt8, PhysicalPGNumeric, PhysicalPGText, PhysicalPGVarchar, PhysicalPGDate, PhysicalPGTimestamp, PhysicalPGTimestamptz}
 	operators := []PredicateOperator{PredicateEQ, PredicateIN, PredicateGTE, PredicateLTE, PredicateISNull}
 	for _, value := range logical {
 		if !value.Valid() || ScalarType(strings.ToLower(string(value))).Valid() {
@@ -37,16 +37,20 @@ func TestDatasetProfileFieldExactTypeCompatibility(t *testing.T) {
 		physical PhysicalType
 	}{
 		{ScalarBool, PhysicalPGBool}, {ScalarInt, PhysicalPGInt8}, {ScalarNumeric, PhysicalPGNumeric},
-		{ScalarText, PhysicalPGText}, {ScalarDate, PhysicalPGDate}, {ScalarTimestamp, PhysicalPGTimestamp},
+		{ScalarText, PhysicalPGText}, {ScalarText, PhysicalPGVarchar},
+		{ScalarDate, PhysicalPGDate}, {ScalarTimestamp, PhysicalPGTimestamp},
 		{ScalarTimestamptz, PhysicalPGTimestamptz},
 	}
-	for index, pair := range pairs {
+	for _, pair := range pairs {
 		input := validFieldSpecInput()
 		input.LogicalType, input.PhysicalType = pair.logical, pair.physical
 		if spec, err := NewFieldSpec(input); err != nil || !spec.Valid() {
 			t.Fatalf("exact pair rejected: %s/%s: %v", pair.logical, pair.physical, err)
 		}
-		input.PhysicalType = pairs[(index+1)%len(pairs)].physical
+		input.PhysicalType = PhysicalPGBool
+		if input.LogicalType == ScalarBool {
+			input.PhysicalType = PhysicalPGNumeric
+		}
 		if _, err := NewFieldSpec(input); err == nil || CodeOf(err) != CodeInvalidRequest {
 			t.Fatalf("mismatched pair accepted: %s/%s", input.LogicalType, input.PhysicalType)
 		}
@@ -164,6 +168,66 @@ func TestDatasetProfileFieldInputAndOutputSlicesAreDetached(t *testing.T) {
 	first.AllowedOps[0] = PredicateLTE
 	if !reflect.DeepEqual(spec.Values().AllowedOps, []PredicateOperator{PredicateEQ, PredicateIN}) {
 		t.Fatal("returned slice mutation changed spec")
+	}
+}
+
+func TestDatasetProfileFieldSealsTextEQAllowedValues(t *testing.T) {
+	input := inputForLogicalType(ScalarText)
+	input.Filterable = true
+	input.AllowedOps = []PredicateOperator{PredicateIN, PredicateEQ}
+	input.AllowedValues = []string{"ACTIVE", "support.case.count"}
+	spec, err := NewFieldSpec(input)
+	if err != nil {
+		t.Fatalf("seal allowed values: %v", err)
+	}
+	want := []string{"ACTIVE", "support.case.count"}
+	if got := spec.Values().AllowedValues; !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowed values = %v, want canonical %v", got, want)
+	}
+	input.AllowedValues[0] = "mutated"
+	got := spec.Values()
+	got.AllowedValues[0] = "mutated-again"
+	if !reflect.DeepEqual(spec.Values().AllowedValues, want) {
+		t.Fatal("allowed values alias caller or returned slice")
+	}
+}
+
+func TestDatasetProfileFieldRejectsInvalidAllowedValues(t *testing.T) {
+	valid := func() FieldSpecInput {
+		input := inputForLogicalType(ScalarText)
+		input.Filterable = true
+		input.AllowedOps = []PredicateOperator{PredicateEQ}
+		input.AllowedValues = []string{"approved"}
+		return input
+	}
+	cases := map[string]func(*FieldSpecInput){
+		"non text": func(input *FieldSpecInput) {
+			input.LogicalType, input.PhysicalType = ScalarNumeric, PhysicalPGNumeric
+		},
+		"not filterable": func(input *FieldSpecInput) {
+			input.Filterable, input.AllowedOps = false, nil
+		},
+		"without EQ":  func(input *FieldSpecInput) { input.AllowedOps = []PredicateOperator{PredicateIN} },
+		"empty":       func(input *FieldSpecInput) { input.AllowedValues = []string{""} },
+		"whitespace":  func(input *FieldSpecInput) { input.AllowedValues = []string{" approved"} },
+		"newline":     func(input *FieldSpecInput) { input.AllowedValues = []string{"approved\nvalue"} },
+		"leading BOM": func(input *FieldSpecInput) { input.AllowedValues = []string{"\uFEFFapproved"} },
+		"non NFC":     func(input *FieldSpecInput) { input.AllowedValues = []string{"e\u0301"} },
+		"duplicate":   func(input *FieldSpecInput) { input.AllowedValues = []string{"approved", "approved"} },
+		"too long":    func(input *FieldSpecInput) { input.AllowedValues = []string{strings.Repeat("a", 257)} },
+		"too many": func(input *FieldSpecInput) {
+			input.AllowedValues = make([]string, maxFieldAllowedValues+1)
+			for index := range input.AllowedValues {
+				input.AllowedValues[index] = string(rune('a' + index))
+			}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			input := valid()
+			mutate(&input)
+			assertInvalidField(t, input)
+		})
 	}
 }
 

@@ -28,15 +28,19 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
 	}
 
 	var description strings.Builder
-	description.WriteString("v1: answer one exact numeric question with one approved read-only scalar aggregate. Use only the approved dataset/profile/hash, measures and filter fields below; provide an explicit half-open period [start,end), zero to four approved EQ filters, empty dimensions/sort, limit 1, and VALUE output. Dates use YYYY-MM-DD. For one day, for example 2026-09-10, use start=2026-09-10 and end=2026-09-11. Do not use this tool for a mixed document-and-data question.\n\nApproved profiles:\n")
+	description.WriteString("v1: answer one exact numeric question with one approved read-only scalar aggregate. Use only the approved dataset/profile/hash, measures and filter fields below; provide an explicit half-open period [start,end) and exactly one EQ predicate for every filter listed by the selected profile. Do not omit or duplicate a listed filter. Use empty dimensions/sort, limit 1, and VALUE output. Dates use YYYY-MM-DD. For one day, for example 2026-09-10, use start=2026-09-10 and end=2026-09-11. Do not use this tool for a mixed document-and-data question.\n\nApproved profiles:\n")
 	for _, profile := range profiles {
 		fmt.Fprintf(&description, "- %s (dataset_id=%s, profile_version=%d, profile_hash=%s): %s\n", profile.DatasetLabel, profile.DatasetID, profile.ProfileVersion, profile.ProfileHash, profile.DatasetDescription)
 		for _, measure := range profile.Measures {
 			fmt.Fprintf(&description, "  measure %s: %s (%s; unit=%s)\n", measure.ID, measure.Description, measure.Reducer, measure.Unit)
 		}
 		for _, field := range profile.Fields {
-			if field.Filterable && slices.Contains(field.AllowedOperators, "EQ") {
-				fmt.Fprintf(&description, "  filter %s: %s (%s; type=%s; operator=EQ)\n", field.Token, field.Description, field.Label, field.LogicalType)
+			if field.Token != profile.Time.FieldToken && field.Filterable && slices.Contains(field.AllowedOperators, "EQ") {
+				fmt.Fprintf(&description, "  filter %s: %s (%s; type=%s; operator=EQ", field.Token, field.Description, field.Label, field.LogicalType)
+				if len(field.AllowedValues) > 0 {
+					fmt.Fprintf(&description, "; allowed_values=%s", strings.Join(field.AllowedValues, ","))
+				}
+				description.WriteString(")\n")
 			}
 		}
 		fmt.Fprintf(&description, "  period: %s, reporting timezone %s, calendar %s\n", profile.Time.Kind, profile.Time.ReportingTimezone, profile.Time.Calendar)
@@ -107,63 +111,113 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
 // its own fields; this schema prevents the model from inventing a field,
 // operator, scalar kind or value shape before that boundary.
 func analyticScalarFilterSchema(profiles []modelDatasetProfile) map[string]any {
-	branches := make([]any, 0)
-	seen := make(map[string]struct{})
+	type mergedField struct {
+		field        modelDatasetProfileField
+		unrestricted bool
+		allowed      map[string]struct{}
+	}
+	merged := make(map[string]*mergedField)
+	orderedKeys := make([]string, 0)
+	minRequired := -1
+	maxRequired := 0
 	for _, profile := range profiles {
+		required := 0
 		for _, field := range profile.Fields {
-			if !field.Filterable || !slices.Contains(field.AllowedOperators, "EQ") {
+			if field.Token == profile.Time.FieldToken || !field.Filterable || !slices.Contains(field.AllowedOperators, "EQ") {
 				continue
 			}
-			valueType := "string"
+			required++
 			switch field.LogicalType {
-			case "BOOL":
-				valueType = "boolean"
-			case "INT":
-				valueType = "integer"
-			case "NUMERIC", "TEXT", "DATE", "TIMESTAMP", "TIMESTAMPTZ":
+			case "BOOL", "INT", "NUMERIC", "TEXT", "DATE", "TIMESTAMP", "TIMESTAMPTZ":
 			default:
 				continue
 			}
 			key := field.Token + "\x00" + field.LogicalType
-			if _, duplicate := seen[key]; duplicate {
+			entry, duplicate := merged[key]
+			if duplicate {
+				if len(field.AllowedValues) == 0 {
+					entry.unrestricted = true
+					entry.allowed = nil
+				} else if !entry.unrestricted {
+					for _, allowed := range field.AllowedValues {
+						entry.allowed[allowed] = struct{}{}
+					}
+				}
 				continue
 			}
-			seen[key] = struct{}{}
-			branches = append(branches, map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []string{"field", "op", "values"},
-				"properties": map[string]any{
-					"field": map[string]any{"const": field.Token},
-					"op":    map[string]any{"const": "EQ"},
-					"values": map[string]any{
-						"type": "array", "minItems": 1, "maxItems": 1,
-						"items": map[string]any{
-							"type":                 "object",
-							"additionalProperties": false,
-							"required":             []string{"kind", "value"},
-							"properties": map[string]any{
-								"kind":  map[string]any{"const": field.LogicalType},
-								"value": map[string]any{"type": valueType},
-							},
+			entry = &mergedField{field: field, unrestricted: len(field.AllowedValues) == 0}
+			if !entry.unrestricted {
+				entry.allowed = make(map[string]struct{}, len(field.AllowedValues))
+				for _, allowed := range field.AllowedValues {
+					entry.allowed[allowed] = struct{}{}
+				}
+			}
+			merged[key] = entry
+			orderedKeys = append(orderedKeys, key)
+		}
+		if minRequired < 0 || required < minRequired {
+			minRequired = required
+		}
+		if required > maxRequired {
+			maxRequired = required
+		}
+	}
+
+	branches := make([]any, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		entry := merged[key]
+		field := entry.field
+		valueType := "string"
+		switch field.LogicalType {
+		case "BOOL":
+			valueType = "boolean"
+		case "INT":
+			valueType = "integer"
+		}
+		valueSchema := map[string]any{"type": valueType}
+		if !entry.unrestricted {
+			allowedValues := make([]string, 0, len(entry.allowed))
+			for allowed := range entry.allowed {
+				allowedValues = append(allowedValues, allowed)
+			}
+			slices.Sort(allowedValues)
+			valueSchema["enum"] = allowedValues
+		}
+		branches = append(branches, map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"field", "op", "values"},
+			"properties": map[string]any{
+				"field": map[string]any{"const": field.Token},
+				"op":    map[string]any{"const": "EQ"},
+				"values": map[string]any{
+					"type": "array", "minItems": 1, "maxItems": 1,
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"required":             []string{"kind", "value"},
+						"properties": map[string]any{
+							"kind":  map[string]any{"const": field.LogicalType},
+							"value": valueSchema,
 						},
 					},
 				},
-			})
-		}
+			},
+		})
 	}
 	items := any(map[string]any{"type": "object", "additionalProperties": false})
 	if len(branches) > 0 {
 		items = map[string]any{"oneOf": branches}
 	}
-	maxItems := 0
-	if len(branches) > 0 {
-		maxItems = 4
+	if minRequired < 0 {
+		minRequired = 0
 	}
 	return map[string]any{
-		"type":     "array",
-		"maxItems": maxItems,
-		"items":    items,
+		"type":        "array",
+		"minItems":    minRequired,
+		"maxItems":    maxRequired,
+		"uniqueItems": true,
+		"items":       items,
 	}
 }
 

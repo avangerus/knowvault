@@ -19,6 +19,7 @@ type canonicalProfileField struct {
 	Sortable      bool                `json:"sortable"`
 	OutputAllowed bool                `json:"output_allowed"`
 	AllowedOps    []PredicateOperator `json:"allowed_ops"`
+	AllowedValues []string            `json:"allowed_values,omitempty"`
 }
 
 type canonicalProfileMeasure struct {
@@ -104,11 +105,13 @@ func canonicalDatasetProfile(value normalizedDatasetProfileSpec) ([]byte, string
 		item := field.Values()
 		allowed := make([]PredicateOperator, len(item.AllowedOps))
 		copy(allowed, item.AllowedOps)
+		allowedValues := cloneCanonicalStrings(item.AllowedValues)
 		fields[index] = canonicalProfileField{
 			Token: item.Token, SourceOrdinal: item.SourceOrdinal, PhysicalName: item.PhysicalName,
 			LogicalType: item.LogicalType, PhysicalType: item.PhysicalType,
 			Nullable: item.Nullable, Filterable: item.Filterable, Groupable: item.Groupable,
 			Sortable: item.Sortable, OutputAllowed: item.OutputAllowed, AllowedOps: allowed,
+			AllowedValues: allowedValues,
 		}
 	}
 	measures := make([]canonicalProfileMeasure, len(value.measures))

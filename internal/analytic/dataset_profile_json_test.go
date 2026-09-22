@@ -11,6 +11,11 @@ import (
 
 func TestDecodeDatasetProfileJSONRoundTripsCanonicalProfile(t *testing.T) {
 	spec := validDatasetProfileSpec(t)
+	mutateField(t, &spec, "object_id", func(value *FieldSpecInput) {
+		value.Filterable = true
+		value.AllowedOps = []PredicateOperator{PredicateEQ}
+		value.AllowedValues = []string{"secondary", "primary"}
+	})
 	semanticInput := spec.Semantics.Values()
 	semanticInput.Fields[0].Aliases = []string{"Total amount"}
 	spec.Semantics = mustProfileSemantics(t, semanticInput)
@@ -37,6 +42,35 @@ func TestDecodeDatasetProfileJSONRoundTripsCanonicalProfile(t *testing.T) {
 	if !profile.Valid() || profile.Hash() != expectedHash || reflect.DeepEqual(profile.Fields(), fields) ||
 		profile.Semantics().Values().Fields[0].Aliases[0] != "Total amount" {
 		t.Fatal("decoded profile exposed caller-owned nested values")
+	}
+	objectID, found := profile.Field("object_id")
+	if !found || !reflect.DeepEqual(objectID.Values().AllowedValues, []string{"primary", "secondary"}) {
+		t.Fatalf("decoded allowed values = %v found=%v", objectID.Values().AllowedValues, found)
+	}
+}
+
+func TestDecodeDatasetProfileJSONRejectsInvalidAllowedValues(t *testing.T) {
+	spec := validDatasetProfileSpec(t)
+	mutateField(t, &spec, "object_id", func(value *FieldSpecInput) {
+		value.Filterable = true
+		value.AllowedOps = []PredicateOperator{PredicateEQ}
+		value.AllowedValues = []string{"secondary", "primary"}
+	})
+	raw, _ := canonicalProfileForTest(t, spec)
+	member := `"allowed_ops":["EQ"],"allowed_values":["primary","secondary"]`
+	if !bytes.Contains(raw, []byte(member)) {
+		t.Fatalf("canonical profile omits allowed values: %s", raw)
+	}
+	cases := map[string][]byte{
+		"without EQ grant": replaceDatasetProfileJSON(t, raw, member,
+			`"allowed_ops":["IN"],"allowed_values":["primary","secondary"]`),
+		"duplicate": replaceDatasetProfileJSON(t, raw,
+			`"allowed_values":["primary","secondary"]`, `"allowed_values":["primary","primary"]`),
+		"non text value": replaceDatasetProfileJSON(t, raw,
+			`"allowed_values":["primary","secondary"]`, `"allowed_values":[1]`),
+	}
+	for name, candidate := range cases {
+		t.Run(name, func(t *testing.T) { assertInvalidDatasetProfileJSON(t, candidate) })
 	}
 }
 
@@ -89,6 +123,20 @@ func TestDecodeDatasetProfileJSONRejectsInvalidPhysicalLogicalAndBusinessSemanti
 	}
 	for name, candidate := range cases {
 		t.Run(name, func(t *testing.T) { assertInvalidDatasetProfileJSON(t, candidate) })
+	}
+}
+
+func TestDecodeDatasetProfileJSONAcceptsBoundedVarcharPhysicalType(t *testing.T) {
+	raw, _ := canonicalProfileForTest(t, validDatasetProfileSpec(t))
+	bounded := replaceDatasetProfileJSON(t, raw,
+		`"physical_type":"PG_TEXT"`, `"physical_type":"PG_VARCHAR"`)
+	profile, err := DecodeDatasetProfileJSON(bounded)
+	if err != nil || !profile.Valid() {
+		t.Fatalf("bounded varchar profile rejected: valid=%v err=%v", profile.Valid(), err)
+	}
+	field, found := profile.Field("object_id")
+	if !found || field.Values().PhysicalType != PhysicalPGVarchar {
+		t.Fatalf("decoded object_id physical type = %q, want %q", field.Values().PhysicalType, PhysicalPGVarchar)
 	}
 }
 

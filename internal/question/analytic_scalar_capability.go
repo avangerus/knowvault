@@ -3,6 +3,7 @@ package question
 import (
 	"context"
 	"reflect"
+	"slices"
 
 	"knowvault.local/verified-workspace/internal/analytic"
 	"knowvault.local/verified-workspace/internal/platform/database"
@@ -93,7 +94,7 @@ func newAnalyticScalarCapability(
 			return analyticScalarCapability{}, &Error{code: CodeInvalid}
 		}
 		profile, active := catalog.ResolveActive(candidates[next].profileKey, candidates[next].profileHash)
-		if !active {
+		if !active || scalarCapabilityRequiredFilterCount(profile) > queryintent.MaxPredicates {
 			return analyticScalarCapability{}, &Error{code: CodeInvalid}
 		}
 		projection, err := projectModelDatasetProfile(profile)
@@ -146,6 +147,9 @@ func (value analyticScalarCapability) valid() bool {
 		if !profile.Valid() || profile.Key() != candidate.profileKey || profile.Hash() != candidate.profileHash {
 			return false
 		}
+		if scalarCapabilityRequiredFilterCount(profile) > queryintent.MaxPredicates {
+			return false
+		}
 		projection, err := projectModelDatasetProfile(profile)
 		if err != nil || !reflect.DeepEqual(projection, value.projections[next]) {
 			return false
@@ -178,12 +182,28 @@ func cloneModelDatasetProfile(projection modelDatasetProfile) modelDatasetProfil
 	for index := range projection.Fields {
 		projection.Fields[index].Aliases = append([]string{}, projection.Fields[index].Aliases...)
 		projection.Fields[index].AllowedOperators = append([]string{}, projection.Fields[index].AllowedOperators...)
+		projection.Fields[index].AllowedValues = append([]string{}, projection.Fields[index].AllowedValues...)
 	}
 	projection.Measures = append([]modelDatasetProfileMeasure(nil), projection.Measures...)
 	for index := range projection.Measures {
 		projection.Measures[index].Aliases = append([]string{}, projection.Measures[index].Aliases...)
 	}
 	return projection
+}
+
+func scalarCapabilityRequiredFilterCount(profile analytic.DatasetProfile) int {
+	if !profile.Valid() {
+		return queryintent.MaxPredicates + 1
+	}
+	timeField := profile.Time().Values().FieldToken
+	count := 0
+	for _, field := range profile.Fields() {
+		values := field.Values()
+		if values.Token != timeField && values.Filterable && slices.Contains(values.AllowedOps, analytic.PredicateEQ) {
+			count++
+		}
+	}
+	return count
 }
 
 // validateProposal strictly decodes one model-proposed document and validates it
@@ -232,6 +252,9 @@ func (value analyticScalarCapability) validateProposal(
 	if err != nil {
 		return queryintent.ValidatedIntentV2{}, analytic.DatasetProfile{}, err
 	}
+	if !scalarCapabilityHasRequiredFilters(proposal, selected) {
+		return queryintent.ValidatedIntentV2{}, analytic.DatasetProfile{}, &Error{code: CodeInvalid}
+	}
 
 	binding, err := queryintent.NewCatalogBindingV2(value.catalog.ID(), value.catalog.Revision(), value.catalog.Hash())
 	if err != nil {
@@ -246,6 +269,61 @@ func (value analyticScalarCapability) validateProposal(
 		return queryintent.ValidatedIntentV2{}, analytic.DatasetProfile{}, &Error{code: CodeInvalid}
 	}
 	return intent, selected, nil
+}
+
+// scalarCapabilityHasRequiredFilters binds the model-proposed predicate set to
+// the selected profile. Every filterable field that grants EQ is model-facing
+// and therefore mandatory for this scalar capability: it must occur exactly
+// once with EQ, with no additional or duplicate predicates. This prevents an
+// omitted discriminator from silently aggregating several business measures.
+func scalarCapabilityHasRequiredFilters(proposal queryintent.ProposalV2, profile analytic.DatasetProfile) bool {
+	filters, ok := proposal.Filters()
+	if !ok {
+		return false
+	}
+	predicates, ok := filters.Values()
+	if !ok {
+		return false
+	}
+
+	required := make(map[string][]string)
+	timeField := profile.Time().Values().FieldToken
+	for _, field := range profile.Fields() {
+		values := field.Values()
+		if values.Token != timeField && values.Filterable && slices.Contains(values.AllowedOps, analytic.PredicateEQ) {
+			required[values.Token] = append([]string(nil), values.AllowedValues...)
+		}
+	}
+	if len(predicates) != len(required) {
+		return false
+	}
+
+	seen := make(map[string]struct{}, len(predicates))
+	for _, predicate := range predicates {
+		field, valid := predicate.Field().Value()
+		if !valid || predicate.Op() != queryintent.OpEQ {
+			return false
+		}
+		allowedValues, expected := required[field]
+		if !expected {
+			return false
+		}
+		if _, duplicate := seen[field]; duplicate {
+			return false
+		}
+		if len(allowedValues) > 0 {
+			values := predicate.Values()
+			if len(values) != 1 {
+				return false
+			}
+			text, textOK := values[0].Text()
+			if !textOK || !slices.Contains(allowedValues, text) {
+				return false
+			}
+		}
+		seen[field] = struct{}{}
+	}
+	return len(seen) == len(required)
 }
 
 // selectCheckedProfile returns the exact checked profile the proposal names, or

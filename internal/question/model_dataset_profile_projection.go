@@ -54,6 +54,7 @@ type modelDatasetProfileField struct {
 	Sortable         bool     `json:"sortable"`
 	OutputAllowed    bool     `json:"output_allowed"`
 	AllowedOperators []string `json:"allowed_operators"`
+	AllowedValues    []string `json:"allowed_values,omitempty"`
 }
 
 // modelDatasetProfileMeasure is the safe projection of one approved measure.
@@ -175,6 +176,7 @@ func projectModelDatasetProfileFields(
 			operators = append(operators, string(operator))
 		}
 		aliases := append([]string{}, field.Aliases...)
+		allowedValues := append([]string{}, values.AllowedValues...)
 		projectedFields = append(projectedFields, modelDatasetProfileField{
 			Token:            values.Token,
 			Label:            field.Label,
@@ -188,6 +190,7 @@ func projectModelDatasetProfileFields(
 			Sortable:         values.Sortable,
 			OutputAllowed:    values.OutputAllowed,
 			AllowedOperators: operators,
+			AllowedValues:    allowedValues,
 		})
 	}
 	sort.Slice(projectedFields, func(left, right int) bool {

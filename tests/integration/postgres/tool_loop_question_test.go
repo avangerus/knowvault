@@ -115,7 +115,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		requests++
 		if scenario == "scope_changed" {
 			scopeChangedModelCalls++
-			if scopeChangedModelCalls > 2 {
+			if scopeChangedModelCalls > 3 {
 				t.Errorf("model was called after scope change: call=%d", scopeChangedModelCalls)
 				http.Error(w, "unexpected model call after scope change", http.StatusInternalServerError)
 				return
@@ -169,6 +169,10 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		}
 		message := map[string]any{"role": "assistant", "reasoning_content": "PRIVATE_MODEL_REASONING"}
 		finish := "stop"
+		lastMessage := input.Messages[len(input.Messages)-1]
+		needsDocumentResearch := scenario == "answer" || scenario == "whole_page" ||
+			scenario == "address_only" || scenario == "fragment_reference" ||
+			scenario == "edited_quote" || scenario == "scope_changed"
 		if strings.HasPrefix(scenario, "final_") {
 			finalizationModelCalls++
 			if finalizationModelCalls == 1 {
@@ -205,6 +209,16 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					message["content"] = string(content)
 				}
 			}
+		} else if needsDocumentResearch && lastMessage.Role != "tool" {
+			if lastMessage.Role != "user" || strings.TrimSpace(lastMessage.Content) == "" {
+				t.Errorf("first research turn has no user question: role=%q content=%q", lastMessage.Role, lastMessage.Content)
+			}
+			args, _ := json.Marshal(map[string]any{"query": lastMessage.Content})
+			message["tool_calls"] = []any{map[string]any{
+				"id": "initial-search", "type": "function",
+				"function": map[string]any{"name": "knowvault_search", "arguments": string(args)},
+			}}
+			finish = "tool_calls"
 		} else if scenario != "answer" && scenario != "whole_page" && scenario != "address_only" && scenario != "fragment_reference" && scenario != "edited_quote" && scenario != "scope_changed" {
 			content := map[string]any{"no_data": true, "claims": []any{}}
 			if scenario == "clarification" {
@@ -250,7 +264,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		} else if input.Messages[len(input.Messages)-1].ToolCallID == "initial-search" {
 			last := input.Messages[len(input.Messages)-1]
 			if last.Role != "tool" || last.ToolCallID != "initial-search" {
-				t.Error("missing system first retrieval")
+				t.Error("missing model-requested first retrieval")
 			}
 			for _, line := range strings.Split(last.Content, "\n") {
 				if strings.Contains(line, "42") {
@@ -379,7 +393,9 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	if !reflect.DeepEqual(first.ModelProfile, wantProfile) || !reflect.DeepEqual(first.ToolLoop.ModelProfile, wantProfile) || first.ToolLoop.Profile.ID != "selected-fixture-loop" {
 		t.Fatalf("selected adapter or encrypted provenance was replaced by default: %+v", first.ModelProfile)
 	}
-	if requests != 2 || len(first.ToolLoop.Calls) != 2 || !first.ToolLoop.Calls[0].System || first.ToolLoop.Calls[1].Name != "knowvault_read" {
+	if requests != 3 || len(first.ToolLoop.Calls) != 2 || first.ToolLoop.Calls[0].System ||
+		first.ToolLoop.Calls[0].Name != "knowvault_search" || first.ToolLoop.Calls[0].ID != "initial-search" ||
+		first.ToolLoop.Calls[1].Name != "knowvault_read" {
 		t.Fatalf("unexpected calls: %d %+v", requests, first.ToolLoop.Calls)
 	}
 	if len(first.Citations) != 2 || first.Citations[0].Address != emittedAddress || first.Citations[1].Address != emittedAddress || first.GroundingStatus != question.GroundingConfirmedByFragment {
@@ -400,12 +416,12 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		t.Fatal("plaintext content in run metadata")
 	}
 	replay, err := questions.Create(ctx, access, request)
-	if err != nil || replay.ID != first.ID || requests != 2 || replay.ToolLoop == nil || !reflect.DeepEqual(replay.ModelProfile, wantProfile) {
+	if err != nil || replay.ID != first.ID || requests != 3 || replay.ToolLoop == nil || !reflect.DeepEqual(replay.ModelProfile, wantProfile) {
 		t.Fatalf("replay lost trace or called model: %v", err)
 	}
 	differentProfile := request
 	differentProfile.ModelProfileID = "default"
-	if _, err := questions.Create(ctx, access, differentProfile); question.CodeOf(err) != question.CodeIdempotencyConflict || requests != 2 {
+	if _, err := questions.Create(ctx, access, differentProfile); question.CodeOf(err) != question.CodeIdempotencyConflict || requests != 3 {
 		t.Fatalf("same idempotency key executed another profile: %v requests=%d", err, requests)
 	}
 	// The model may cite an address without reproducing source bytes. The
@@ -586,7 +602,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	if err != nil || scopeRun.ToolLoop == nil || scopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || scopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || scopeRun.Answer != "The workspace changed during the request. Please try again." || len(scopeRun.Citations) != 0 {
 		t.Fatalf("scope change was not surfaced safely: %v %+v", err, scopeRun)
 	}
-	if !scopeRevokeDone || scopeChangedModelCalls != 2 || len(scopeRun.ToolLoop.Calls) != 3 {
+	if !scopeRevokeDone || scopeChangedModelCalls != 3 || len(scopeRun.ToolLoop.Calls) != 3 {
 		t.Fatalf("scope change continued the loop: revoked=%v model_calls=%d tool_calls=%d", scopeRevokeDone, scopeChangedModelCalls, len(scopeRun.ToolLoop.Calls))
 	}
 	lastScopeCall := scopeRun.ToolLoop.Calls[len(scopeRun.ToolLoop.Calls)-1]

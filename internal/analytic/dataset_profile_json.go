@@ -76,6 +76,7 @@ type datasetProfileFieldJSON struct {
 	Sortable      *bool                `json:"sortable"`
 	OutputAllowed *bool                `json:"output_allowed"`
 	AllowedOps    *[]PredicateOperator `json:"allowed_ops"`
+	AllowedValues *[]string            `json:"allowed_values"`
 }
 
 type datasetProfileMeasureJSON struct {
@@ -216,7 +217,8 @@ func datasetProfileJSONFields(wires []datasetProfileFieldJSON) ([]FieldSpec, err
 			LogicalType: *wire.LogicalType, PhysicalType: *wire.PhysicalType,
 			Nullable: *wire.Nullable, Filterable: *wire.Filterable, Groupable: *wire.Groupable,
 			Sortable: *wire.Sortable, OutputAllowed: *wire.OutputAllowed,
-			AllowedOps: append([]PredicateOperator(nil), (*wire.AllowedOps)...),
+			AllowedOps:    append([]PredicateOperator(nil), (*wire.AllowedOps)...),
+			AllowedValues: cloneOptionalStrings(wire.AllowedValues),
 		})
 		if err != nil {
 			return nil, err
@@ -224,6 +226,13 @@ func datasetProfileJSONFields(wires []datasetProfileFieldJSON) ([]FieldSpec, err
 		values[index] = value
 	}
 	return values, nil
+}
+
+func cloneOptionalStrings(values *[]string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string(nil), (*values)...)
 }
 
 func datasetProfileJSONMeasures(wires []datasetProfileMeasureJSON) ([]MeasureSpec, error) {

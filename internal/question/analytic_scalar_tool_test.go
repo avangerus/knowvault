@@ -2,6 +2,7 @@ package question
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,16 +43,101 @@ func TestAnalyticScalarToolDefinitionIsClosedAndListsMountedProfile(t *testing.T
 		t.Fatalf("schema properties = %#v", schema["properties"])
 	}
 	filters, ok := properties["filters"].(map[string]any)
-	if !ok || filters["type"] != "array" || filters["maxItems"] != float64(4) || filters["const"] != nil {
-		t.Fatalf("filter schema = %#v, want up to four typed predicates", properties["filters"])
+	if !ok || filters["type"] != "array" || filters["minItems"] != float64(2) ||
+		filters["maxItems"] != float64(2) || filters["uniqueItems"] != true || filters["const"] != nil {
+		t.Fatalf("filter schema = %#v, want exactly the two profile-required non-time predicates", properties["filters"])
 	}
 	profile := capability.modelProfiles()[0]
 	for _, want := range []string{profile.DatasetID, profile.ProfileHash, profile.DatasetLabel, profile.DatasetDescription,
-		profile.Measures[0].ID, profile.Measures[0].Description, "filter order_total"} {
+		profile.Measures[0].ID, profile.Measures[0].Description, "filter order_total", "allowed_values=order-1,order-2"} {
 		if !strings.Contains(definition.Function.Description, want) {
 			t.Fatalf("tool description omits mounted profile detail %q: %s", want, definition.Function.Description)
 		}
 	}
+	items, ok := filters["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("filter items = %#v", filters["items"])
+	}
+	branches, ok := items["oneOf"].([]any)
+	if !ok {
+		t.Fatalf("filter branches = %#v", items["oneOf"])
+	}
+	foundAllowedValues := false
+	for _, rawBranch := range branches {
+		branch, _ := rawBranch.(map[string]any)
+		branchProperties, _ := branch["properties"].(map[string]any)
+		field, _ := branchProperties["field"].(map[string]any)
+		if field["const"] != "order_id" {
+			continue
+		}
+		values, _ := branchProperties["values"].(map[string]any)
+		valueItems, _ := values["items"].(map[string]any)
+		valueProperties, _ := valueItems["properties"].(map[string]any)
+		value, _ := valueProperties["value"].(map[string]any)
+		enum, _ := value["enum"].([]any)
+		foundAllowedValues = len(enum) == 2 && enum[0] == "order-1" && enum[1] == "order-2"
+	}
+	if !foundAllowedValues {
+		t.Fatalf("order_id filter schema omits sealed allowed values: %#v", filters)
+	}
+}
+
+func TestAnalyticScalarFilterSchemaMergesDuplicateProfileAllowlists(t *testing.T) {
+	profile := func(allowed ...string) modelDatasetProfile {
+		return modelDatasetProfile{Fields: []modelDatasetProfileField{{
+			Token: "code", LogicalType: "TEXT", Filterable: true,
+			AllowedOperators: []string{"EQ"}, AllowedValues: append([]string(nil), allowed...),
+		}}}
+	}
+
+	t.Run("disjoint enums are unioned", func(t *testing.T) {
+		value := analyticScalarFilterValueSchema(t, analyticScalarFilterSchema([]modelDatasetProfile{
+			profile("alpha", "beta"), profile("gamma"),
+		}), "code")
+		enum, ok := value["enum"].([]string)
+		if !ok || !slices.Equal(enum, []string{"alpha", "beta", "gamma"}) {
+			t.Fatalf("merged enum = %#v", value["enum"])
+		}
+	})
+
+	t.Run("one unrestricted profile makes the schema unrestricted", func(t *testing.T) {
+		value := analyticScalarFilterValueSchema(t, analyticScalarFilterSchema([]modelDatasetProfile{
+			profile("alpha"), profile(),
+		}), "code")
+		if _, constrained := value["enum"]; constrained {
+			t.Fatalf("unrestricted union retained enum: %#v", value)
+		}
+	})
+}
+
+func analyticScalarFilterValueSchema(t *testing.T, filters map[string]any, fieldToken string) map[string]any {
+	t.Helper()
+	items, ok := filters["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("filter items = %#v", filters["items"])
+	}
+	branches, ok := items["oneOf"].([]any)
+	if !ok {
+		t.Fatalf("filter branches = %#v", items["oneOf"])
+	}
+	for _, rawBranch := range branches {
+		branch, _ := rawBranch.(map[string]any)
+		properties, _ := branch["properties"].(map[string]any)
+		field, _ := properties["field"].(map[string]any)
+		if field["const"] != fieldToken {
+			continue
+		}
+		values, _ := properties["values"].(map[string]any)
+		valueItems, _ := values["items"].(map[string]any)
+		valueProperties, _ := valueItems["properties"].(map[string]any)
+		value, ok := valueProperties["value"].(map[string]any)
+		if !ok {
+			t.Fatalf("value schema = %#v", valueProperties["value"])
+		}
+		return value
+	}
+	t.Fatalf("field %q is absent from schema %#v", fieldToken, filters)
+	return nil
 }
 
 func TestAnalyticScalarPresentationIncludesAnswerProvenance(t *testing.T) {

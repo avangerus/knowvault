@@ -113,6 +113,13 @@ func TestDatasetProfileCanonicalEveryIdentityMemberChangesHash(t *testing.T) {
 		"filter and allowed ops": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.Filterable = true; v.AllowedOps = []PredicateOperator{PredicateEQ} })
 		},
+		"field allowed values": func(t *testing.T, spec *DatasetProfileSpec) {
+			mutateField(t, spec, "object_id", func(v *FieldSpecInput) {
+				v.Filterable = true
+				v.AllowedOps = []PredicateOperator{PredicateEQ}
+				v.AllowedValues = []string{"B", "A"}
+			})
+		},
 		"groupable": func(t *testing.T, spec *DatasetProfileSpec) {
 			mutateField(t, spec, "amount", func(v *FieldSpecInput) { v.Groupable = true })
 		},
@@ -184,6 +191,26 @@ func TestDatasetProfileCanonicalMeasureOperandChangesHash(t *testing.T) {
 	_, rightHash := canonicalProfileForTest(t, right)
 	if leftHash == rightHash {
 		t.Fatal("measure operand did not change hash")
+	}
+}
+
+func TestDatasetProfileCanonicalAllowedValuesChangeHash(t *testing.T) {
+	left := validDatasetProfileSpec(t)
+	right := validDatasetProfileSpec(t)
+	for _, spec := range []*DatasetProfileSpec{&left, &right} {
+		mutateField(t, spec, "object_id", func(value *FieldSpecInput) {
+			value.Filterable = true
+			value.AllowedOps = []PredicateOperator{PredicateEQ}
+			value.AllowedValues = []string{"primary"}
+		})
+	}
+	mutateField(t, &right, "object_id", func(value *FieldSpecInput) {
+		value.AllowedValues = []string{"secondary"}
+	})
+	leftBytes, leftHash := canonicalProfileForTest(t, left)
+	rightBytes, rightHash := canonicalProfileForTest(t, right)
+	if leftHash == rightHash || bytes.Equal(leftBytes, rightBytes) {
+		t.Fatal("allowed values did not change canonical profile identity")
 	}
 }
 

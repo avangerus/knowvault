@@ -274,6 +274,8 @@ func repositoryDiscoveredColumnType(t *testing.T, physical analytic.PhysicalType
 		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeInt, "oid:20", 32
 	case analytic.PhysicalPGText:
 		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeText, "oid:25", 1024
+	case analytic.PhysicalPGVarchar:
+		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeText, "oid:1043:len:256", 1024
 	case analytic.PhysicalPGDate:
 		column.LogicalType, column.TypeFingerprint, column.MaxBytes = postgresqlquery.TypeDate, "oid:1082", 32
 	case analytic.PhysicalPGNumeric:
