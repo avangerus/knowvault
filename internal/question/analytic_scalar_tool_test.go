@@ -37,9 +37,17 @@ func TestAnalyticScalarToolDefinitionIsClosedAndListsMountedProfile(t *testing.T
 			t.Fatalf("schema required fields omit %q", field)
 		}
 	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v", schema["properties"])
+	}
+	filters, ok := properties["filters"].(map[string]any)
+	if !ok || filters["type"] != "array" || filters["maxItems"] != float64(4) || filters["const"] != nil {
+		t.Fatalf("filter schema = %#v, want up to four typed predicates", properties["filters"])
+	}
 	profile := capability.modelProfiles()[0]
 	for _, want := range []string{profile.DatasetID, profile.ProfileHash, profile.DatasetLabel, profile.DatasetDescription,
-		profile.Measures[0].ID, profile.Measures[0].Description} {
+		profile.Measures[0].ID, profile.Measures[0].Description, "filter order_total"} {
 		if !strings.Contains(definition.Function.Description, want) {
 			t.Fatalf("tool description omits mounted profile detail %q: %s", want, definition.Function.Description)
 		}

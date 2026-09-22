@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -11,7 +12,6 @@ import (
 	"knowvault.local/verified-workspace/internal/analyticsource"
 	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/platform/database"
-	"knowvault.local/verified-workspace/internal/queryintent"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -28,11 +28,16 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
 	}
 
 	var description strings.Builder
-	description.WriteString("v1: answer one exact numeric question with one approved read-only scalar aggregate. Use only the approved dataset/profile/hash and measure descriptions below; provide an explicit half-open period [start,end), empty filters/dimensions/sort, limit 1, and VALUE output. Dates use YYYY-MM-DD. For one day, for example 2026-09-10, use start=2026-09-10 and end=2026-09-11. Do not use this tool for a mixed document-and-data question.\n\nApproved profiles:\n")
+	description.WriteString("v1: answer one exact numeric question with one approved read-only scalar aggregate. Use only the approved dataset/profile/hash, measures and filter fields below; provide an explicit half-open period [start,end), zero to four approved EQ filters, empty dimensions/sort, limit 1, and VALUE output. Dates use YYYY-MM-DD. For one day, for example 2026-09-10, use start=2026-09-10 and end=2026-09-11. Do not use this tool for a mixed document-and-data question.\n\nApproved profiles:\n")
 	for _, profile := range profiles {
 		fmt.Fprintf(&description, "- %s (dataset_id=%s, profile_version=%d, profile_hash=%s): %s\n", profile.DatasetLabel, profile.DatasetID, profile.ProfileVersion, profile.ProfileHash, profile.DatasetDescription)
 		for _, measure := range profile.Measures {
 			fmt.Fprintf(&description, "  measure %s: %s (%s; unit=%s)\n", measure.ID, measure.Description, measure.Reducer, measure.Unit)
+		}
+		for _, field := range profile.Fields {
+			if field.Filterable && slices.Contains(field.AllowedOperators, "EQ") {
+				fmt.Fprintf(&description, "  filter %s: %s (%s; type=%s; operator=EQ)\n", field.Token, field.Description, field.Label, field.LogicalType)
+			}
 		}
 		fmt.Fprintf(&description, "  period: %s, reporting timezone %s, calendar %s\n", profile.Time.Kind, profile.Time.ReportingTimezone, profile.Time.Calendar)
 	}
@@ -64,7 +69,7 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
 		"end":{"type":"string","format":"date","description":"Exclusive end in YYYY-MM-DD. For one day, use the following date."}
       }
     },
-    "filters":{"const":[]},
+	"filters":{},
     "sort":{"const":[]},
     "limit":{"const":1},
     "measure":{"type":"string","minLength":1},
@@ -72,6 +77,20 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
     "output":{"const":"VALUE"}
   }
 }`)
+	var schemaDocument map[string]any
+	if err := json.Unmarshal(schema, &schemaDocument); err != nil {
+		return modelgateway.ToolDefinition{}, &Error{code: CodeInvalid}
+	}
+	properties, ok := schemaDocument["properties"].(map[string]any)
+	if !ok {
+		return modelgateway.ToolDefinition{}, &Error{code: CodeInvalid}
+	}
+	properties["filters"] = analyticScalarFilterSchema(profiles)
+	encodedSchema, err := json.Marshal(schemaDocument)
+	if err != nil {
+		return modelgateway.ToolDefinition{}, &Error{code: CodeInvalid}
+	}
+	schema = json.RawMessage(encodedSchema)
 	return modelgateway.ToolDefinition{
 		Type: "function",
 		Function: modelgateway.ToolFunction{
@@ -80,6 +99,72 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
 			Parameters:  schema,
 		},
 	}, nil
+}
+
+// analyticScalarFilterSchema advertises only the model-facing fields that an
+// approved profile marks filterable with EQ. The frozen proposal validator is
+// still authoritative, including the binding between a selected dataset and
+// its own fields; this schema prevents the model from inventing a field,
+// operator, scalar kind or value shape before that boundary.
+func analyticScalarFilterSchema(profiles []modelDatasetProfile) map[string]any {
+	branches := make([]any, 0)
+	seen := make(map[string]struct{})
+	for _, profile := range profiles {
+		for _, field := range profile.Fields {
+			if !field.Filterable || !slices.Contains(field.AllowedOperators, "EQ") {
+				continue
+			}
+			valueType := "string"
+			switch field.LogicalType {
+			case "BOOL":
+				valueType = "boolean"
+			case "INT":
+				valueType = "integer"
+			case "NUMERIC", "TEXT", "DATE", "TIMESTAMP", "TIMESTAMPTZ":
+			default:
+				continue
+			}
+			key := field.Token + "\x00" + field.LogicalType
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			branches = append(branches, map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"field", "op", "values"},
+				"properties": map[string]any{
+					"field": map[string]any{"const": field.Token},
+					"op":    map[string]any{"const": "EQ"},
+					"values": map[string]any{
+						"type": "array", "minItems": 1, "maxItems": 1,
+						"items": map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"required":             []string{"kind", "value"},
+							"properties": map[string]any{
+								"kind":  map[string]any{"const": field.LogicalType},
+								"value": map[string]any{"type": valueType},
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+	items := any(map[string]any{"type": "object", "additionalProperties": false})
+	if len(branches) > 0 {
+		items = map[string]any{"oneOf": branches}
+	}
+	maxItems := 0
+	if len(branches) > 0 {
+		maxItems = 4
+	}
+	return map[string]any{
+		"type":     "array",
+		"maxItems": maxItems,
+		"items":    items,
+	}
 }
 
 // invokeAnalyticScalarTool is the sole Question-side invocation boundary. It
@@ -102,7 +187,7 @@ func (service *Service) invokeAnalyticScalarTool(
 		return failure()
 	}
 	intent, _, err := cap.validateProposal(raw)
-	if err != nil || !analyticScalarProposalHasNoFilters(intent) {
+	if err != nil {
 		return failure()
 	}
 	read, err := service.analyticScalarExecutor.Execute(ctx, access, workspaceID, intent)
@@ -127,15 +212,6 @@ func (service *Service) invokeAnalyticScalarTool(
 	}
 	owned := json.RawMessage(append([]byte(nil), payload...))
 	return workspacetools.Result{Text: string(owned), Structured: owned}, &pair
-}
-
-func analyticScalarProposalHasNoFilters(intent queryintent.ValidatedIntentV2) bool {
-	filters, ok := intent.Filters()
-	if !ok {
-		return false
-	}
-	values, ok := filters.Values()
-	return ok && len(values) == 0
 }
 
 // analyticScalarPresentation renders the same server-owned answer shape in
