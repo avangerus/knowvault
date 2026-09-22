@@ -340,13 +340,15 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	// (analyticcatalog.LoadMounted), exactly like the generation mount
 	// below. A wholly absent mount keeps the document-only capability; a
 	// present-but-invalid mount is a startup failure so drift can never look
-	// like a safe partial deployment.
+	// like a safe partial deployment. The same mounted catalog value and the
+	// already constructed workspaceStore install together, so no later path
+	// can hold a different catalog or an independently supplied resolver.
 	datasetProfileCatalog, datasetProfileMountErr := analyticcatalog.LoadMounted()
 	if datasetProfileMountErr != nil {
 		if analyticcatalog.CodeOf(datasetProfileMountErr) != analyticcatalog.CodeMountUnavailable {
 			return fail(StartupStageDatasetProfileMount)
 		}
-	} else if err := questions.EnableDatasetProfileCatalog(datasetProfileCatalog); err != nil {
+	} else if err := questions.EnableDatasetProfileCatalog(datasetProfileCatalog, workspaceStore); err != nil {
 		return fail(StartupStageDatasetProfileMount)
 	}
 	// GEN-2 (ADR-0088): the interim GENERATIVE adapter/verifier are wired only

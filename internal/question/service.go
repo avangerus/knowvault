@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"unicode/utf8"
 
 	"knowvault.local/verified-workspace/internal/analytic"
+	"knowvault.local/verified-workspace/internal/analyticsource"
 	artifactrepository "knowvault.local/verified-workspace/internal/artifact/repository"
 	"knowvault.local/verified-workspace/internal/audit"
 	"knowvault.local/verified-workspace/internal/modelgateway"
@@ -40,6 +42,7 @@ import (
 	"knowvault.local/verified-workspace/internal/source/canon"
 	"knowvault.local/verified-workspace/internal/source/evidence"
 	"knowvault.local/verified-workspace/internal/source/ids"
+	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -603,21 +606,40 @@ type Service struct {
 
 	// datasetProfileCatalog is the trusted, immutable analytic
 	// DatasetProfile snapshot loaded by composition at startup
-	// (internal/platform/analyticcatalog). It is the zero value until
-	// EnableDatasetProfileCatalog installs it exactly once; R1.1 stores the
-	// value only, and no path reads it yet.
-	datasetProfileCatalog analytic.DatasetProfileCatalog
+	// (internal/platform/analyticcatalog), and analyticSourceResolver is the
+	// resolver bound to that exact snapshot and to the same concrete workspace
+	// repository store (internal/analyticsource). Both are the zero value until
+	// the single EnableDatasetProfileCatalog install sets them together; R1.1
+	// stores them only, and no path reads either yet.
+	datasetProfileCatalog  analytic.DatasetProfileCatalog
+	analyticSourceResolver *analyticsource.Resolver
 }
 
 // EnableDatasetProfileCatalog installs the startup-loaded, immutable analytic
-// DatasetProfile catalog. It is a one-shot install: a nil Service, an
-// invalid/zero catalog, or a second install returns a content-free CodeInvalid
-// refusal, and a refused call leaves any already-installed value untouched.
-func (service *Service) EnableDatasetProfileCatalog(catalog analytic.DatasetProfileCatalog) error {
-	if service == nil || !catalog.Valid() || service.datasetProfileCatalog.Valid() {
+// DatasetProfile catalog together with the resolver that re-reads current
+// workspace authority and governed exposure for that exact catalog. It is a
+// one-shot install: a nil Service, an invalid/zero catalog, a nil concrete
+// store, a retained catalog slot that is not the exact Go zero value, a
+// non-nil retained resolver, or a resolver construction refusal returns a
+// content-free CodeInvalid refusal, and a refused call leaves both slots
+// exactly as they were.
+func (service *Service) EnableDatasetProfileCatalog(catalog analytic.DatasetProfileCatalog, store *workspacerepository.Store) error {
+	// The retained catalog carries a sealed entry slice, so it is not
+	// Go-comparable: its emptiness is an explicit comparison against the zero
+	// value. Valid() cannot stand in for that comparison because it is also
+	// false for a non-zero invalid value, which must stay an occupied slot
+	// instead of being overwritten.
+	if service == nil || !catalog.Valid() || store == nil ||
+		!reflect.DeepEqual(service.datasetProfileCatalog, analytic.DatasetProfileCatalog{}) ||
+		service.analyticSourceResolver != nil {
+		return &Error{code: CodeInvalid}
+	}
+	resolver, err := analyticsource.NewResolver(store, catalog)
+	if err != nil {
 		return &Error{code: CodeInvalid}
 	}
 	service.datasetProfileCatalog = catalog
+	service.analyticSourceResolver = resolver
 	return nil
 }
 
