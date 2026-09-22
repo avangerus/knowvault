@@ -3169,6 +3169,11 @@ function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; sh
   );
 }
 
+export function hasLiveDataReceipt(run: Pick<QuestionRun, "status" | "answer_result">): boolean {
+  const result = run.answer_result;
+  return run.status === "COMPLETED" && Boolean(result?.receipt_digest || (result?.result_digest && result.execution_id));
+}
+
 function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
   run: QuestionRun;
   turnId: string;
@@ -3187,6 +3192,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   // branch below are untouched.
   const showUnifiedFallback = run.status === "COMPLETED" && (run.planning_operation === "AGGREGATE" || run.planning_operation === "LIST") && !run.answer_result;
   const hasInsufficientEvidence = run.uncertainties.some((item) => item.code === "INSUFFICIENT_EVIDENCE");
+  const hasLiveReceipt = hasLiveDataReceipt(run);
   // TXT-1 §2: a citation whose "[N]" marker was actually found and woven
   // into the running text (FootnoteMark, inside AnswerBody) needs no second
   // mention. Only a citation the text never referenced — which real server
@@ -3238,7 +3244,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
           {run.uncertainties.filter((item) => !(corpusWarning && item.code === "CORPUS_PARTIAL")).map((item) => (
             <p className="msg-note" key={item.code}>{item.message ?? item.code}</p>
           ))}
-          {run.citations.length === 0 ? (
+          {run.citations.length === 0 && !hasLiveReceipt ? (
             <>
               <p className="msg-warning">This answer has no supporting citations: relevant fragments were not found or are unavailable.</p>
               {hasInsufficientEvidence && run.searched && run.searched.length > 0 && <SearchedList searched={run.searched} />}
@@ -4227,6 +4233,10 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
   );
 }
 
+export function initialConversationWorkspaceOwner(initialConversationID: string | null, requestedWorkspaceID: string | null): string | null {
+  return initialConversationID ? requestedWorkspaceID : null;
+}
+
 function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
   workspaceTitle: string;
   onOpenSources: () => void;
@@ -4557,7 +4567,12 @@ function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialC
   // R2 refresh-fix: the workspace whose protected chat state this component
   // currently shows. Written by the reset effect's definite-change branch and
   // read by the same-workspace refresh check.
-  const ownedWorkspaceIDRef = useRef<string | null>(null);
+  // A deep-linked conversation has an owner before the workspace snapshot
+  // finishes its first authorized hydration. Treat that first load as this
+  // workspace's loading window so the reset path cannot clear the opaque
+  // selection before the conversation GET runs. A normal first visit still
+  // starts ownerless, and a later different workspace still resets.
+  const ownedWorkspaceIDRef = useRef<string | null>(initialConversationWorkspaceOwner(initialConversationID, requestedWorkspaceID));
 
   useEffect(() => {
     const owner = ownedWorkspaceIDRef.current;

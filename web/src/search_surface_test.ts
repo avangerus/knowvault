@@ -5,6 +5,8 @@ import {
   SearchView,
   authorizedSourcesForAsk,
   buildSearchHash,
+  hasLiveDataReceipt,
+  initialConversationWorkspaceOwner,
   parseSearchHash,
   questionClaimGroundingLabel,
   questionRunPayload,
@@ -152,6 +154,13 @@ check(mainSource.includes('className="tool-trace"') && mainSource.includes("rece
 check(buildSearchHash("workspace-1", "conv_01") === "#search/workspace-1?conversation=conv_01", "conversation selection is encoded as an opaque search hash parameter");
 check(JSON.stringify(parseSearchHash("#search/workspace-1?conversation=conv_01")) === JSON.stringify({ workspace: "workspace-1", conversation: "conv_01" }), "reload parsing restores the selected conversation");
 check(parseSearchHash("#search/workspace-1?conversation=one&other=two") === null, "search routing rejects unknown conversation parameters");
+check(initialConversationWorkspaceOwner("conv_01", "workspace-1") === "workspace-1", "first authorized workspace hydration owns a deep-linked conversation before the reset effect runs");
+check(initialConversationWorkspaceOwner(null, "workspace-1") === null, "a normal first visit remains ownerless and takes the ordinary initial-load reset path");
+check(mainSource.includes("initialConversationWorkspaceOwner(initialConversationID, requestedWorkspaceID)") && mainSource.includes("sameRequestedWorkspace"), "the first-hydration owner feeds the existing same-workspace reload guard rather than bypassing a real workspace-change reset");
+const receiptRun = { status: "COMPLETED", answer_result: { receipt_digest: "sha256:receipt" } } as never;
+const documentRun = { status: "COMPLETED", answer_result: undefined } as never;
+check(hasLiveDataReceipt(receiptRun) && !hasLiveDataReceipt(documentRun), "a completed receipt-backed live answer suppresses only the document-citation warning");
+check(mainSource.includes("run.citations.length === 0 && !hasLiveReceipt"), "TurnAnswer keeps the no-citation warning for unsupported document claims");
 check(!askOwnerSource.includes('aria-label="Search source"') && !askOwnerSource.includes("Workspace search") && !askOwnerSource.includes("Live database"), "Ask owner contains no execution-mode labels");
 check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "the governed host remains available for a future Diagnostics surface");
 
