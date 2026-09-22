@@ -72,6 +72,23 @@ func (connector *LiveConnector) ReadProjection(ctx context.Context, connectionID
 	return ReadProjection(ctx, connection, projection, limits)
 }
 
+// ReadFilteredProjection opens one credential-backed connection and executes a
+// closed, server-owned parameterized projection read. Like ReadProjection it
+// reuses the single transport opener and requires the caller's connection ID to
+// equal the Projection's; no credential, schema, SQL or identifier crosses this
+// boundary from the request.
+func (connector *LiveConnector) ReadFilteredProjection(ctx context.Context, connectionID, credentialReference string, request FilteredProjectionRequest, limits Limits) (Snapshot, error) {
+	if connector == nil || connector.Resolver == nil || connector.Roots == nil || ctx == nil || connectionID != request.Projection.ConnectionID || credentialReference == "" {
+		return Snapshot{}, &Error{code: CodeExternalFailure}
+	}
+	connection, err := connector.openConnection(ctx, credentialReference, queryApplicationName)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer connection.Close(ctx)
+	return ReadFilteredProjection(ctx, connection, request, limits)
+}
+
 // openConnection resolves one protected credential reference and applies the
 // connector's single PostgreSQL transport policy. Callers choose only one of
 // the package-owned application names; no caller-provided session settings or

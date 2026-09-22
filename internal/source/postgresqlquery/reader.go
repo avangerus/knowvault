@@ -79,6 +79,18 @@ func ReadProjection(ctx context.Context, connection *pgx.Conn, projection Projec
 	if err != nil {
 		return Snapshot{}, err
 	}
+	return readBoundedProjection(ctx, connection, statement, nil, projection.Columns, limits)
+}
+
+// readBoundedProjection owns the one bounded read transaction shared by every
+// projection read: the SERIALIZABLE READ ONLY DEFERRABLE transaction, the
+// connector-fixed session settings and timeouts, the JSON text-format result
+// selection, the streaming bounded-value loop, CanonicalizeRow, SnapshotSetHash
+// and the commit/error semantics. The statement is always server-generated and
+// args carry only canonicalized scalar values; columns are the ordered 1..N
+// projection columns that statement selects. A cap+1 row or any failure returns
+// the zero Snapshot with an existing content-free code and never partial data.
+func readBoundedProjection(ctx context.Context, connection *pgx.Conn, statement string, args []any, columns []Column, limits Limits) (Snapshot, error) {
 	tx, err := connection.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel: pgx.Serializable, AccessMode: pgx.ReadOnly, DeferrableMode: pgx.Deferrable,
 	})
@@ -124,14 +136,19 @@ func ReadProjection(ctx context.Context, connection *pgx.Conn, projection Projec
 	// canonicalization. pgx's decoded `any` path turns JSON numbers into
 	// float64/map values, which can lose precision before Evidence is hashed;
 	// the raw text path preserves exact canonical JSON business-object leaves.
-	rows, err := tx.Query(ctx, statement, pgx.QueryResultFormatsByOID{
+	// pgx only recognizes a QueryResultFormats option at the head of the
+	// argument list, so the option precedes the canonicalized scalar args.
+	queryArgs := make([]any, 0, len(args)+1)
+	queryArgs = append(queryArgs, pgx.QueryResultFormatsByOID{
 		pgtype.JSONOID: pgx.TextFormatCode, pgtype.JSONBOID: pgx.TextFormatCode,
 	})
+	queryArgs = append(queryArgs, args...)
+	rows, err := tx.Query(ctx, statement, queryArgs...)
 	if err != nil {
 		return Snapshot{}, &Error{code: CodeExternalFailure, cause: err}
 	}
 	defer rows.Close()
-	if len(rows.FieldDescriptions()) != len(projection.Columns) || len(projection.Columns) > limits.MaxColumns {
+	if len(rows.FieldDescriptions()) != len(columns) || len(columns) > limits.MaxColumns {
 		return Snapshot{}, &Error{code: CodeInvalidProjection}
 	}
 	var result Snapshot
@@ -147,12 +164,12 @@ func ReadProjection(ctx context.Context, connection *pgx.Conn, projection Projec
 		if len(rawValues) != len(raw) {
 			return Snapshot{}, &Error{code: CodeInvalidProjection}
 		}
-		for index, column := range projection.Columns {
+		for index, column := range columns {
 			if column.LogicalType == TypeJSON || column.LogicalType == TypeJSONB {
 				raw[index] = append([]byte(nil), rawValues[index]...)
 			}
 		}
-		if len(raw) != len(projection.Columns) {
+		if len(raw) != len(columns) {
 			return Snapshot{}, &Error{code: CodeInvalidProjection}
 		}
 		rowBytes := 0
@@ -163,7 +180,7 @@ func ReadProjection(ctx context.Context, connection *pgx.Conn, projection Projec
 			}
 			rowBytes += fieldBytes
 		}
-		row, err := CanonicalizeRow(projection.Columns, raw)
+		row, err := CanonicalizeRow(columns, raw)
 		if err != nil {
 			return Snapshot{}, err
 		}

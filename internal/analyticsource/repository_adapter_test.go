@@ -367,6 +367,16 @@ func TestBindRepositoryViewsConstructsExactBinding(t *testing.T) {
 	if value.binding != fixture.binding {
 		t.Fatalf("binding = %+v, want the exact twelve-field tuple", value.binding)
 	}
+	wantExecution := executionFacts{
+		projectionLineageID:    fixture.source.projection.LineageID,
+		projectionRevision:     fixture.source.projection.Revision,
+		projectionContractHash: fixture.source.projection.ContractHash,
+		exposedSchemaRevision:  fixture.exposure.exposureRevision,
+		exposedSchemaHash:      fixture.exposure.exposureArtifactHash,
+	}
+	if value.execution != wantExecution {
+		t.Fatalf("execution = %+v, want the exact five source/exposure execution facts", value.execution)
+	}
 	if value.seal == ([32]byte{}) {
 		t.Fatal("constructed binding carries a zero seal")
 	}
@@ -634,10 +644,11 @@ func TestBindRepositoryViewsRetainsNoCallerSlices(t *testing.T) {
 	// Mutating the fake inputs after binding cannot reach the binding.
 	mutated := repositoryFixtureFor(t, sealedFixtureProfile(t, false))
 	value := repositoryBinding(t, mutated)
-	seal, binding, hash := value.seal, value.binding, value.profile.Hash()
+	seal, binding, execution, hash := value.seal, value.binding, value.execution, value.profile.Hash()
 	mutated.source.projection.Columns[0].Name = "mutated_column"
 	mutated.exposure.columns[0] = "mutated_column"
-	if value.seal != seal || value.binding != binding || value.profile.Hash() != hash || !value.valid() {
+	if value.seal != seal || value.binding != binding || value.execution != execution ||
+		value.profile.Hash() != hash || !value.valid() {
 		t.Fatal("mutating the fake inputs changed the constructed binding")
 	}
 

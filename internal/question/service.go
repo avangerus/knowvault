@@ -1403,6 +1403,12 @@ func (service *Service) Get(ctx context.Context, access database.AccessContext, 
 // no content.
 func (service *Service) readStoredRun(ctx context.Context, access database.AccessContext, workspaceID, runID string) (Run, error) {
 	var result Run
+	// retainedAnalyticScalarPair is the one private copy of the decoded scalar
+	// observation and its opaque dependency. It stays a local of this method
+	// (never a Run field, context value, Service state or transport field) and
+	// is assigned inside the artifact transaction only so the authorization
+	// gate can run after that transaction has ended and released its connection.
+	var retainedAnalyticScalarPair *analyticScalarPair
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		var readable bool
 		if err := tx.QueryRow(txCtx, `SELECT app.question_run_readable($1, $2)`, runID, workspaceID).Scan(&readable); err != nil {
@@ -1522,21 +1528,31 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 			if openErr != nil {
 				return openErr
 			}
-			var structured structuredAnswer
-			if decodeErr := jsonv2.Unmarshal(plain, &structured, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); decodeErr == nil {
-				result.AnswerResult = structured.AnswerResult
-				result.Understood = structured.Understood
-				result.ToolLoop = structured.ToolLoop
-				if structured.ToolLoop != nil {
-					result.ModelProfile = copyModelProfile(structured.ToolLoop.ModelProfile)
-				}
-				// R1: only the grounding projection (SOURCE_QUOTE + state) is
-				// recovered from the sealed server-written artifact; the wire
-				// excerpt/anchor/deep link keep coming from their own gated
-				// citation artifacts below.
-				structuredCitations = structured.Citations
+			structured, decodeErr := decodeStructuredAnswerCleared(runID, plain)
+			if decodeErr != nil {
+				// A present structured artifact that fails its strict decode
+				// closes the whole read before any decrypted question, answer or
+				// citation is returned; the plaintext was already cleared by the
+				// decode boundary and the error stays the content-free
+				// CodeUnavailable.
+				return &Error{code: CodeUnavailable}
 			}
-			clear(plain)
+			result.AnswerResult = structured.AnswerResult
+			result.Understood = structured.Understood
+			result.ToolLoop = structured.ToolLoop
+			if structured.ToolLoop != nil {
+				result.ModelProfile = copyModelProfile(structured.ToolLoop.ModelProfile)
+			}
+			// R1: only the grounding projection (SOURCE_QUOTE + state) is
+			// recovered from the sealed server-written artifact; the wire
+			// excerpt/anchor/deep link keep coming from their own gated
+			// citation artifacts below.
+			structuredCitations = structured.Citations
+			// Retain the decoded private pair in this method's local, outside
+			// the transaction, so the disclosure gate can reauthorize it after
+			// the read transaction has committed/rolled back and released its
+			// connection. It is never projected onto the Run.
+			retainedAnalyticScalarPair = structured.analyticScalarPair
 		}
 		structuredByCitationID := make(map[string]Citation, len(structuredCitations))
 		for _, citation := range structuredCitations {
@@ -1634,6 +1650,15 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 		}
 		return Run{}, &Error{code: CodeUnavailable, cause: err}
 	}
+	// The artifact transaction above has finished and released its connection:
+	// the current-access scalar disclosure gate runs now, after all error
+	// mapping and immediately before the Run is returned. A nil pair is the
+	// legacy absence and returns nil with no resolver call. Any refusal returns
+	// the exact zero Run plus the gate's content-free CodeNotFound/CodeUnavailable
+	// unchanged, so a revoked dependency can never yield a populated Run.
+	if err := service.authorizeAnalyticScalarDisclosure(ctx, access, workspaceID, runID, retainedAnalyticScalarPair); err != nil {
+		return Run{}, err
+	}
 	return result, nil
 }
 
@@ -1719,6 +1744,13 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 	type artifactRefs struct {
 		questionArtifact, answerArtifact, structuredArtifact sql.NullString
 	}
+	// retainedAnalyticScalarPairs is the one private copy of every decoded scalar
+	// pair keyed by its trusted Question Run id. It stays a local of this method
+	// (never a Run field, context value, Service state or transport field) and is
+	// populated inside the artifact transaction only so the batch disclosure gate
+	// can reauthorize every surviving pair after that transaction has ended and
+	// released its connection.
+	var retainedAnalyticScalarPairs map[string]*analyticScalarPair = make(map[string]*analyticScalarPair, len(runIDs))
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		rows, err := tx.Query(txCtx, `
 			SELECT id, workspace_revision, conversation_id, conversation_turn_id,
@@ -1875,17 +1907,28 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 					}
 					return fetchErr
 				}
-				var structured structuredAnswer
-				if decodeErr := jsonv2.Unmarshal(plain, &structured, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); decodeErr == nil {
-					run.AnswerResult = structured.AnswerResult
-					run.Understood = structured.Understood
-					run.ToolLoop = structured.ToolLoop
-					if structured.ToolLoop != nil {
-						run.ModelProfile = copyModelProfile(structured.ToolLoop.ModelProfile)
-					}
-					structuredCitationsByRun[runID] = structured.Citations
+				structured, decodeErr := decodeStructuredAnswerCleared(runID, plain)
+				if decodeErr != nil {
+					// A present structured artifact that fails its strict decode
+					// fails the whole batched read closed: the plaintext was
+					// already cleared by the decode boundary and no partially
+					// projected Question Run, answer or citation is returned.
+					return &Error{code: CodeUnavailable}
 				}
-				clear(plain)
+				run.AnswerResult = structured.AnswerResult
+				run.Understood = structured.Understood
+				run.ToolLoop = structured.ToolLoop
+				if structured.ToolLoop != nil {
+					run.ModelProfile = copyModelProfile(structured.ToolLoop.ModelProfile)
+				}
+				structuredCitationsByRun[runID] = structured.Citations
+				// Retain the decoded private pair in this method's local outside
+				// the transaction, so the batch disclosure gate can reauthorize
+				// it after the read transaction has committed/rolled back and
+				// released its connection. It is never projected onto the Run.
+				if structured.analyticScalarPair != nil {
+					retainedAnalyticScalarPairs[runID] = structured.analyticScalarPair
+				}
 			}
 			if run.AnswerResult != nil {
 				run.AnswerResult.Snapshot.CapturedAt = run.Freshness.CapturedAt
@@ -2010,6 +2053,29 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 	})
 	if err != nil {
 		return nil, &Error{code: CodeUnavailable, cause: err}
+	}
+	// The artifact transaction above has finished and released its connection:
+	// the batch current-access scalar disclosure gate runs now, after all error
+	// mapping and immediately before the surviving runs are returned. Candidate
+	// ids are derived only from the final surviving result map, so a run dropped
+	// earlier in this read is never a candidate and its retained pair is never
+	// checked; the deterministic helper sorts and dedups the ids itself.
+	candidateRunIDs := make([]string, 0, len(result))
+	for runID := range result {
+		candidateRunIDs = append(candidateRunIDs, runID)
+	}
+	denied, err := service.authorizeAnalyticScalarDisclosureBatch(ctx, access, workspaceID, candidateRunIDs, retainedAnalyticScalarPairs)
+	if err != nil {
+		// A fatal gate error returns no partial map and the exact bare error,
+		// before any denied run is deleted or audited.
+		return nil, err
+	}
+	for _, runID := range denied {
+		delete(result, runID)
+		// One content-free denied read outcome per removed whole run, using a
+		// fresh bare CodeNotFound cause: the run's scalar pair is unreadable now
+		// even though its content was already projected in this read.
+		service.recordStoredRunReadFailure(ctx, access, workspaceID, runID, &Error{code: CodeNotFound})
 	}
 	return result, nil
 }
@@ -3162,8 +3228,22 @@ func (service *Service) persistGenerativeCompletion(ctx context.Context, access 
 // rather than sharing code with it, so a future change to one rendering path
 // cannot silently change the other's disclosure behaviour. answerResult is
 // FIX-2 #1's structured AGGREGATE/LIST projection: nil for every caller
-// except answerStructuredAggregate.
+// except answerStructuredAggregate. It preserves its existing signature and
+// delegates with no analytic scalar.
 func (service *Service) persistTerminalRun(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult) error {
+	return service.persistTerminalRunWithAnalyticScalarPair(ctx, access, runID, workspaceID, answer, citations, selected, status, partial, uncertainties, conflicts, answerResult, nil)
+}
+
+// persistTerminalRunWithAnalyticScalarPair carries the one inseparable trusted
+// scalar pair from a future analytic producer into the existing encrypted
+// structured artifact. A non-nil pair whose observation is invalid is refused
+// content-free before the database write begins; every other behaviour is
+// identical to persistTerminalRun, including the single transaction, the single
+// AnswerStructured artifact and rollback on any failure.
+func (service *Service) persistTerminalRunWithAnalyticScalarPair(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult, analyticScalarPair *analyticScalarPair) error {
+	if analyticScalarPair != nil && !analyticScalarPair.observation.valid() {
+		return &Error{code: CodeInvalid}
+	}
 	// R1: bind the citation grounding projection from the same authorized
 	// candidates this run persists. A GENERATIVE claim paraphrase never matches
 	// a stored span and therefore stays UNCONFIRMED.
@@ -3219,7 +3299,7 @@ func (service *Service) persistTerminalRun(ctx context.Context, access database.
 			}
 			citations[index].CitationID = citationID
 		}
-		structuredBytes, err := marshalStructuredAnswer(runID, answerHash, citations, answerResult, understoodFromContext(ctx), toolLoopFromContext(ctx))
+		structuredBytes, err := marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash, citations, answerResult, understoodFromContext(ctx), analyticScalarPair, toolLoopFromContext(ctx))
 		if err != nil {
 			return &Error{code: CodeUnavailable, cause: err}
 		}
@@ -4431,13 +4511,44 @@ type structuredAnswer struct {
 	// them nil, never an error.
 	AnswerResult *AnswerResult `json:"answer_result,omitempty"`
 	Understood   *Understood   `json:"understood,omitempty"`
+
+	AnalyticScalar *analyticScalarObservation `json:"analytic_scalar,omitempty"`
+	// AnalyticScalarDependency is the opaque, sealed partner of
+	// AnalyticScalar. It is artifact-only: it is written into this one
+	// encrypted document and is never copied into Run, REST, MCP, model
+	// context, logs or audit metadata, and its bytes are never echoed in
+	// failure output.
+	AnalyticScalarDependency jsontext.Value `json:"analytic_scalar_dependency,omitempty"`
+
+	// analyticScalarPair is the private, non-JSON copy of the validated pair
+	// recovered by decodeStructuredAnswer. It is retained only for the next
+	// reader-gate card; it is never marshaled and never projected.
+	analyticScalarPair *analyticScalarPair
 }
 
 func marshalStructuredAnswer(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, toolLoops ...*ToolLoopRecord) ([]byte, error) {
+	return marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash, citations, answerResult, understood, nil, toolLoops...)
+}
+
+// marshalStructuredAnswerWithAnalyticScalarPair is marshalStructuredAnswer plus
+// the one inseparable trusted scalar pair. A present pair is encoded exactly
+// once through encodeAnalyticScalarPair; both returned members are written into
+// the same structured answer before the single JSON marshal, so a scalar can
+// never be persisted without its exact dependency or vice versa. Any pair
+// refusal returns the content-free CodeInvalid and no artifact bytes.
+func marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, pair *analyticScalarPair, toolLoops ...*ToolLoopRecord) ([]byte, error) {
 	structured := structuredAnswer{
 		SchemaVersion: "extractive-answer-v1", QuestionRunID: runID, AnswerMode: answerMode,
 		VerificationMethod: verification, AnswerHash: answerHash, Claims: make([]structuredClaim, 0, len(citations)),
 		Citations: citations, AnswerResult: answerResult, Understood: understood,
+	}
+	if pair != nil {
+		observation, dependency, err := encodeAnalyticScalarPair(runID, *pair)
+		if err != nil {
+			return nil, &Error{code: CodeInvalid}
+		}
+		structured.AnalyticScalar = &observation
+		structured.AnalyticScalarDependency = dependency
 	}
 	if len(toolLoops) > 0 && toolLoops[0] != nil {
 		structured.ToolLoop = toolLoops[0]
@@ -4449,6 +4560,83 @@ func marshalStructuredAnswer(runID, answerHash string, citations []Citation, ans
 		})
 	}
 	return jsonv2.Marshal(structured)
+}
+
+// structuredAnswerScalarPresence is the small private presence-aware wire shape
+// for the two optional scalar members. structuredAnswer itself cannot tell them
+// apart: an absent member and an explicit JSON null both decode to the same Go
+// zero value (a nil observation pointer and empty dependency bytes). This shadow
+// decodes each member to its raw JSON value instead, so nil bytes mean the
+// member name was absent while jsontext.KindNull means the name was literally
+// present as null. It is decode-only, unexported and never marshaled.
+type structuredAnswerScalarPresence struct {
+	AnalyticScalar           jsontext.Value `json:"analytic_scalar"`
+	AnalyticScalarDependency jsontext.Value `json:"analytic_scalar_dependency"`
+}
+
+// analyticScalarNull reports whether either scalar member name was present as
+// the JSON null literal. The strict structuredAnswer decode has already refused
+// unknown and duplicate names before this runs, so the presence decode only has
+// to recover which members the document named and with which raw kind.
+func (presence structuredAnswerScalarPresence) analyticScalarNull() bool {
+	return presence.AnalyticScalar.Kind() == jsontext.KindNull ||
+		presence.AnalyticScalarDependency.Kind() == jsontext.KindNull
+}
+
+// decodeStructuredAnswer is the single strict read back of the server-written
+// structured answer artifact: the supplied trusted Question Run must be a valid
+// opaque identity and must equal the artifact's own QuestionRunID byte for byte,
+// unknown members and duplicate names are refused, and the scalar and its opaque
+// dependency must decode together as the exact pair bound to that run. Any run
+// or pair failure returns the exact zero structured answer plus a content-free
+// CodeUnavailable, so a corrupt artifact can never expose a partial, unpaired or
+// unvalidated scalar. Both pair members absent is the sole legacy absence and
+// succeeds; either member present as JSON null is refused in every half/null
+// combination, and a present pair is retained privately for the next
+// reader-gate card. The pair decoder is invoked exactly once for every artifact
+// that passes the outer decode and run match, including the explicit-null
+// refusals, so the presence rule and the pair rule are both decided against the
+// same single decode attempt.
+func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer, error) {
+	if !validOpaque(expectedRunID) {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
+	var structured structuredAnswer
+	if err := jsonv2.Unmarshal(raw, &structured, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
+	if structured.QuestionRunID != expectedRunID {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
+	var presence structuredAnswerScalarPresence
+	if err := jsonv2.Unmarshal(raw, &presence, jsontext.AllowDuplicateNames(false)); err != nil {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
+	pair, pairErr := decodeAnalyticScalarPair(expectedRunID, structured.AnalyticScalar, structured.AnalyticScalarDependency)
+	if presence.analyticScalarNull() || pairErr != nil {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
+	if pair != nil {
+		structured.AnalyticScalar = &pair.observation
+		structured.analyticScalarPair = pair
+	}
+	return structured, nil
+}
+
+// decodeStructuredAnswerCleared is the governed-reader boundary around
+// decodeStructuredAnswer. It always clears the decrypted structured-answer
+// plaintext before returning, on both the accepted and the refused path, and
+// every strict refusal becomes the exact zero structured answer plus the
+// content-free CodeUnavailable. Both readStoredRun and readStoredRunBatch use
+// it, so a present artifact that fails decode can never leave its plaintext
+// live in a caller's buffer next to a partially projected Run.
+func decodeStructuredAnswerCleared(expectedRunID string, plain []byte) (structuredAnswer, error) {
+	structured, err := decodeStructuredAnswer(expectedRunID, plain)
+	clear(plain)
+	if err != nil {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
+	return structured, nil
 }
 
 func renderAnswer(workspaceID, questionText string, selected []candidate) (string, []Citation) {
