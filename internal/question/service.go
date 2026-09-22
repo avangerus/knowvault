@@ -3617,6 +3617,84 @@ func (service *Service) previousTurnQuestionText(ctx context.Context, access dat
 	return questionText, runID, nil
 }
 
+// toolLoopConversationTurn is the bounded conversation context made available
+// to the tool loop. Its contents are included only after current-access checks
+// through GetBatch.
+type toolLoopConversationTurn struct {
+	RunID    string
+	Question string
+	Answer   string
+}
+
+// recentToolLoopConversationTurns loads the most recent readable turns before
+// excludeTurnID, then returns them in chronological order for model context.
+// It deliberately keeps the history small and uses GetBatch's governed,
+// audited read path for all question and answer content.
+func (service *Service) recentToolLoopConversationTurns(ctx context.Context, access database.AccessContext, workspaceID, conversationID, excludeTurnID string, limit int) ([]toolLoopConversationTurn, error) {
+	if limit <= 0 {
+		return []toolLoopConversationTurn{}, nil
+	}
+	if limit > 4 {
+		limit = 4
+	}
+
+	type turnRef struct {
+		turnID string
+		runID  string
+	}
+	var refs []turnRef
+	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
+		rows, queryErr := tx.Query(txCtx, `
+			SELECT id, question_run_id
+			  FROM public.conversation_turn
+			 WHERE organization_id = $1 AND conversation_id = $2 AND workspace_id = $3 AND id <> $4
+			 ORDER BY turn_index DESC
+			 LIMIT $5
+		`, access.OrganizationID, conversationID, workspaceID, excludeTurnID, limit)
+		if queryErr != nil {
+			return queryErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ref turnRef
+			if scanErr := rows.Scan(&ref.turnID, &ref.runID); scanErr != nil {
+				return scanErr
+			}
+			refs = append(refs, ref)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, &Error{code: CodeUnavailable, cause: err}
+	}
+	if len(refs) == 0 {
+		return []toolLoopConversationTurn{}, nil
+	}
+
+	runIDs := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		runIDs = append(runIDs, ref.runID)
+	}
+	runs, err := service.GetBatch(ctx, access, workspaceID, runIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	turns := make([]toolLoopConversationTurn, 0, len(refs))
+	for i := len(refs) - 1; i >= 0; i-- {
+		run, ok := runs[refs[i].runID]
+		if !ok {
+			continue
+		}
+		answer := run.Answer
+		if answer == "" {
+			answer = run.Clarification
+		}
+		turns = append(turns, toolLoopConversationTurn{RunID: run.ID, Question: run.Question, Answer: answer})
+	}
+	return turns, nil
+}
+
 var errPreviousTurnUnreadable = errors.New("question: previous turn not currently readable")
 
 func (service *Service) loadScopeBindings(ctx context.Context, tx database.Transaction, organizationID, workspaceID string, revision int64) ([]scopeBinding, error) {
