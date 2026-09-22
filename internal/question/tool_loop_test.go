@@ -67,18 +67,58 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	}
 }
 
-func TestLiveOnlyAndMixedToolClaimsNeedTheRightBacking(t *testing.T) {
-	if !toolClaimHasSupport(false, 0, true, true) || !toolLiveAnswerHasCompleteSupport(true, true) {
-		t.Fatal("citation-free interpretation of a validated live table was refused")
+func TestSuccessfulLiveReadPlusRefusedDocumentRequestRejectsUncitedClaim(t *testing.T) {
+	projection, dependency, liveRecord := livePersistenceFixture(t)
+	liveRecord.Calls = append(liveRecord.Calls, ToolCallRecord{ID: "doc-call-1", Name: "knowvault_read", Outcome: "REFUSED"})
+	if !validateGovernedQueryToolBinding(livePersistenceRunID, &dependency, liveRecord) {
+		t.Fatal("successful live table did not remain valid alongside a refused document read")
 	}
-	if !toolClaimHasSupport(true, 1, true, true) || !toolClaimHasSupport(false, 0, true, true) ||
-		!toolLiveAnswerHasCompleteSupport(true, true) {
-		t.Fatal("mixed document and live claims did not pass with their matching evidence")
+	liveAnswer := livePersistenceAnswer(t, projection, dependency)
+	if liveAnswer.Kind != "LIVE_TABLE" || len(liveAnswer.Keys) != 0 {
+		t.Fatalf("server-owned live result was not kept separate from prose: %#v", liveAnswer)
 	}
-	if toolClaimHasSupport(true, 0, false, true) || toolLiveAnswerHasCompleteSupport(true, false) {
+
+	call := modelgateway.ToolCall{}
+	call.Function.Name = "knowvault_read"
+	workspaceToolRequested := containsWorkspaceToolRequest([]modelgateway.ToolCall{call}, map[string]struct{}{"knowvault_read": {}})
+	if !workspaceToolRequested {
+		t.Fatal("document read request was not counted before its refused result")
+	}
+	liveOnly := toolLiveOnlyInterpretationAllowed(true, workspaceToolRequested, false)
+	allClaimsBound := toolClaimHasSupport(false, 0, true, liveOnly)
+	status := "COMPLETED"
+	if !toolAnswerHasCompleteSupport(0, true, allClaimsBound) {
+		status = "INSUFFICIENT_EVIDENCE"
+	}
+	if status != "INSUFFICIENT_EVIDENCE" || allClaimsBound {
+		t.Fatalf("uncited invented document rule escaped after a refused read: status=%s all_claims_bound=%v", status, allClaimsBound)
+	}
+}
+
+func TestPureLiveAndMixedDocumentClaimsUseSeparateSupport(t *testing.T) {
+	projection, dependency, liveRecord := livePersistenceFixture(t)
+	if !validateGovernedQueryToolBinding(livePersistenceRunID, &dependency, liveRecord) {
+		t.Fatal("pure-live successful table did not validate")
+	}
+	liveAnswer := livePersistenceAnswer(t, projection, dependency)
+	if liveAnswer.Kind != "LIVE_TABLE" || !toolLiveOnlyInterpretationAllowed(true, false, false) ||
+		!toolClaimHasSupport(false, 0, true, true) || !toolAnswerHasCompleteSupport(0, true, true) {
+		t.Fatal("citation-free interpretation without document tools was refused")
+	}
+
+	answerWithDocumentSelector := toolAnswer{Claims: []toolClaim{{Text: "Document rule", Citations: []toolCitation{{FragmentID: "fragment_1"}}}}}
+	if toolLiveOnlyInterpretationAllowed(true, true, false) ||
+		toolLiveOnlyInterpretationAllowed(true, false, toolAnswerHasCitationSelector(answerWithDocumentSelector)) {
+		t.Fatal("live-only exception remained available in a mixed or cited answer")
+	}
+	if !toolClaimHasSupport(true, 1, true, false) || liveAnswer.Kind != "LIVE_TABLE" ||
+		!toolAnswerHasCompleteSupport(1, true, true) {
+		t.Fatal("cited document prose with a separate live receipt was refused")
+	}
+	if toolClaimHasSupport(true, 0, false, false) || toolAnswerHasCompleteSupport(1, true, false) {
 		t.Fatal("invalid document references were rescued by the live table")
 	}
-	if toolClaimHasSupport(false, 0, true, false) {
+	if toolLiveOnlyInterpretationAllowed(false, false, false) || toolClaimHasSupport(false, 0, true, false) {
 		t.Fatal("citation-free claim without a live result was treated as supported")
 	}
 }

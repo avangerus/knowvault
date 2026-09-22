@@ -3281,6 +3281,9 @@ func (service *Service) persistTerminalRunWithStructuredDependencies(ctx context
 	if governedQueryDependency != nil && !governedQueryDependency.validForRun(runID) {
 		return &Error{code: CodeInvalid}
 	}
+	if !governedQueryAnswerResultAllowedForStatus(status, governedQueryDependency, answerResult) {
+		return &Error{code: CodeInvalid}
+	}
 	// R1: bind the citation grounding projection from the same authorized
 	// candidates this run persists. A GENERATIVE claim paraphrase never matches
 	// a stored span and therefore stays UNCONFIRMED.
@@ -4691,7 +4694,7 @@ func marshalStructuredAnswerWithDependencies(runID, answerHash string, citations
 		structured.ToolLoop = toolLoop
 		structured.AnswerMode, structured.VerificationMethod = AnswerModeToolLoop, verificationAddress
 	}
-	if !validateGovernedQueryToolBinding(runID, dependency, toolLoop) {
+	if !validateGovernedQueryAnswerResult(runID, dependency, toolLoop, answerResult) {
 		return nil, &Error{code: CodeInvalid}
 	}
 	if dependency != nil {
@@ -4762,7 +4765,7 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
 	governedDependency, governedErr := decodeGovernedQueryDependency(expectedRunID, structured.GovernedQueryDependency)
-	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryToolBinding(expectedRunID, governedDependency, structured.ToolLoop) {
+	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryAnswerResult(expectedRunID, governedDependency, structured.ToolLoop, structured.AnswerResult) {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
 	if pair != nil {

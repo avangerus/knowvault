@@ -33,6 +33,15 @@ func livePersistenceFixture(t *testing.T) (liveDataProjection, governedQueryDepe
 	return projection, dependency, record
 }
 
+func livePersistenceAnswer(t *testing.T, projection liveDataProjection, dependency governedQueryDependency) *AnswerResult {
+	t.Helper()
+	answer, err := liveDataAnswerResult(livePersistenceRunID, liveDataExecution{projection: projection, dependency: dependency})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return answer
+}
+
 func TestGovernedQueryDependencyCodecLegacyAndToolBinding(t *testing.T) {
 	legacy, err := marshalStructuredAnswer(livePersistenceRunID, "answer-hash", nil, nil, nil)
 	if err != nil {
@@ -43,8 +52,9 @@ func TestGovernedQueryDependencyCodecLegacyAndToolBinding(t *testing.T) {
 		t.Fatalf("legacy artifact decode = %#v, %v", decoded, err)
 	}
 
-	_, dependency, record := livePersistenceFixture(t)
-	raw, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, &dependency, record)
+	projection, dependency, record := livePersistenceFixture(t)
+	answer := livePersistenceAnswer(t, projection, dependency)
+	raw, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, answer, nil, nil, &dependency, record)
 	if err != nil {
 		t.Fatalf("marshal paired successful live call: %v", err)
 	}
@@ -69,8 +79,9 @@ func TestGovernedQueryDependencyCodecLegacyAndToolBinding(t *testing.T) {
 }
 
 func TestGovernedQueryDependencyCodecRefusesMalformedArtifacts(t *testing.T) {
-	_, dependency, record := livePersistenceFixture(t)
-	validRaw, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, &dependency, record)
+	projection, dependency, record := livePersistenceFixture(t)
+	answer := livePersistenceAnswer(t, projection, dependency)
+	validRaw, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, answer, nil, nil, &dependency, record)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +213,112 @@ func TestGovernedQueryToolBindingRejectsTamperAndMultipleSuccesses(t *testing.T)
 	}
 }
 
+func TestGovernedQueryAnswerResultRequiresExactSealedLiveProjection(t *testing.T) {
+	projection, dependency, record := livePersistenceFixture(t)
+	answer := livePersistenceAnswer(t, projection, dependency)
+	validRaw, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, answer, nil, nil, &dependency, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeStructuredAnswer(livePersistenceRunID, validRaw); err != nil {
+		t.Fatalf("exact live answer receipt did not decode: %v", err)
+	}
+
+	for _, example := range []struct {
+		name   string
+		mutate func(*AnswerResult)
+	}{
+		{name: "foreign run", mutate: func(value *AnswerResult) { value.RunID = "qrun_live_foreign" }},
+		{name: "attempt", mutate: func(value *AnswerResult) { value.ExecutionID = "gqat_foreign" }},
+		{name: "result digest", mutate: func(value *AnswerResult) { value.ResultDigest = "sha256:" + strings.Repeat("b", 64) }},
+		{name: "receipt digest", mutate: func(value *AnswerResult) { value.ReceiptDigest = "sha256:" + strings.Repeat("b", 64) }},
+		{name: "row count", mutate: func(value *AnswerResult) { value.Snapshot.RowCount++ }},
+		{name: "operation", mutate: func(value *AnswerResult) { value.Operation = "AGGREGATE" }},
+		{name: "rule", mutate: func(value *AnswerResult) { value.Rule = "changed rule" }},
+		{name: "completeness", mutate: func(value *AnswerResult) { value.Completeness = "PARTIAL" }},
+		{name: "observation window", mutate: func(value *AnswerResult) { value.ObservationWindow.Basis = "CLIENT_READ_CALL" }},
+		{name: "unexpected value", mutate: func(value *AnswerResult) { value.Value = "model prose as database fact" }},
+		{name: "unexpected keys", mutate: func(value *AnswerResult) { value.Keys = []AnswerKey{{Key: "secret"}} }},
+		{name: "non-live result kind", mutate: func(value *AnswerResult) { value.Kind = "AGGREGATE" }},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			changed := copyLiveAnswerResult(t, answer)
+			example.mutate(changed)
+			if _, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, changed, nil, nil, &dependency, record); CodeOf(err) != CodeInvalid {
+				t.Fatalf("marshal accepted changed LIVE_TABLE result: %v", err)
+			}
+			changedRaw := replaceAnswerResultMember(t, validRaw, changed)
+			decoded, err := decodeStructuredAnswer(livePersistenceRunID, changedRaw)
+			if CodeOf(err) != CodeUnavailable || !reflect.DeepEqual(decoded, structuredAnswer{}) {
+				t.Fatalf("decode accepted changed LIVE_TABLE result: answer=%#v err=%v", decoded, err)
+			}
+		})
+	}
+
+	if _, err := marshalStructuredAnswer(livePersistenceRunID, "answer-hash", nil, answer, nil); CodeOf(err) != CodeInvalid {
+		t.Fatalf("LIVE_TABLE without dependency/tool was marshaled: %v", err)
+	}
+	withoutDependency := removeGovernedDependencyMember(t, validRaw)
+	withoutTool := removeStructuredMember(t, withoutDependency, "tool_loop")
+	if decoded, err := decodeStructuredAnswer(livePersistenceRunID, withoutTool); CodeOf(err) != CodeUnavailable || !reflect.DeepEqual(decoded, structuredAnswer{}) {
+		t.Fatalf("LIVE_TABLE without dependency/tool decoded: answer=%#v err=%v", decoded, err)
+	}
+
+	withoutAnswer, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, &dependency, record)
+	if err != nil {
+		t.Fatalf("non-success trace without AnswerResult should remain representable: %v", err)
+	}
+	if _, err := decodeStructuredAnswer(livePersistenceRunID, withoutAnswer); err != nil {
+		t.Fatalf("nil AnswerResult trace should decode for later status gating: %v", err)
+	}
+	if governedQueryAnswerResultAllowedForStatus("COMPLETED", &dependency, nil) ||
+		!governedQueryAnswerResultAllowedForStatus("INSUFFICIENT_EVIDENCE", &dependency, nil) {
+		t.Fatal("terminal status did not restrict a missing live AnswerResult to non-success runs")
+	}
+}
+
+func copyLiveAnswerResult(t *testing.T, source *AnswerResult) *AnswerResult {
+	t.Helper()
+	copy := *source
+	if source.ObservationWindow != nil {
+		window := *source.ObservationWindow
+		copy.ObservationWindow = &window
+	}
+	return &copy
+}
+
+func replaceAnswerResultMember(t *testing.T, raw []byte, answer *AnswerResult) []byte {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object["answer_result"] = encoded
+	result, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func removeStructuredMember(t *testing.T, raw []byte, member string) []byte {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatal(err)
+	}
+	delete(object, member)
+	result, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
 func TestLiveTableAnswerResultCarriesReceiptWithoutRows(t *testing.T) {
 	projection, dependency, _ := livePersistenceFixture(t)
 	answer, err := liveDataAnswerResult(livePersistenceRunID, liveDataExecution{projection: projection, dependency: dependency})
@@ -241,7 +358,7 @@ func TestLiveDependencyStaysOutOfPublicReflectionAndJSON(t *testing.T) {
 			}
 		}
 	}
-	_, dependency, record := livePersistenceFixture(t)
+	projection, dependency, record := livePersistenceFixture(t)
 	dependencyType := reflect.TypeOf(dependency)
 	for index := 0; index < dependencyType.NumField(); index++ {
 		if dependencyType.Field(index).PkgPath == "" {
@@ -252,7 +369,8 @@ func TestLiveDependencyStaysOutOfPublicReflectionAndJSON(t *testing.T) {
 	if err != nil || string(dependencyJSON) != "{}" {
 		t.Fatalf("generic dependency JSON was not inert: %s, err=%v", dependencyJSON, err)
 	}
-	if _, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, &dependency, record); err != nil {
+	answer := livePersistenceAnswer(t, projection, dependency)
+	if _, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, answer, nil, nil, &dependency, record); err != nil {
 		t.Fatal(err)
 	}
 	publicRun, err := json.Marshal(Run{ID: livePersistenceRunID, ToolLoop: record})

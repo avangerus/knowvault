@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 
@@ -124,11 +125,11 @@ func decodeGovernedQueryDependency(questionRunID string, encoded jsontext.Value)
 	return dependency, nil
 }
 
-// validateGovernedQueryToolBinding requires every successful synthetic live
-// tool call to have exactly one complete, digest-valid projection and exactly
-// one private dependency bound to the same Question Run and result metadata.
+// governedQueryToolProjection requires every successful synthetic live tool
+// call to have exactly one complete, digest-valid projection and exactly one
+// private dependency bound to the same Question Run and result metadata.
 // Failed live calls are allowed without a dependency.
-func validateGovernedQueryToolBinding(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord) bool {
+func governedQueryToolProjection(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord) (liveDataProjection, bool, bool) {
 	successes := 0
 	var successful liveDataProjection
 	if record != nil {
@@ -138,29 +139,59 @@ func validateGovernedQueryToolBinding(questionRunID string, dependency *governed
 			}
 			if call.Outcome == "REFUSED" {
 				if !call.Result.IsError {
-					return false
+					return liveDataProjection{}, false, false
 				}
 				continue
 			}
 			if call.Outcome != "SUCCEEDED" || call.Result.IsError || len(call.Result.Structured) == 0 ||
 				call.Result.Text != string(call.Result.Structured) || record.Profile.MaxToolResultBytes < 1 ||
 				len(call.Result.Structured) > record.Profile.MaxToolResultBytes {
-				return false
+				return liveDataProjection{}, false, false
 			}
 			projection, ok := decodeLiveDataProjection(call.Result.Structured)
 			if !ok {
-				return false
+				return liveDataProjection{}, false, false
 			}
 			successes++
 			successful = projection
 		}
 	}
 	if successes == 0 {
-		return dependency == nil
+		return liveDataProjection{}, false, dependency == nil
 	}
 	if successes != 1 || dependency == nil || !dependency.validForRun(questionRunID) {
+		return liveDataProjection{}, false, false
+	}
+	if successful.AttemptID != dependency.attemptID || successful.SQLHash != dependency.sqlHash ||
+		successful.ExposedSchemaRevision != dependency.exposedSchemaRevision || successful.ResultDigest != dependency.resultDigest {
+		return liveDataProjection{}, false, false
+	}
+	return successful, true, true
+}
+
+func validateGovernedQueryToolBinding(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord) bool {
+	_, _, valid := governedQueryToolProjection(questionRunID, dependency, record)
+	return valid
+}
+
+func validateGovernedQueryAnswerResult(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord, answerResult *AnswerResult) bool {
+	projection, successful, valid := governedQueryToolProjection(questionRunID, dependency, record)
+	if !valid {
 		return false
 	}
-	return successful.AttemptID == dependency.attemptID && successful.SQLHash == dependency.sqlHash &&
-		successful.ExposedSchemaRevision == dependency.exposedSchemaRevision && successful.ResultDigest == dependency.resultDigest
+	if answerResult == nil {
+		return true
+	}
+	if answerResult.Kind != "LIVE_TABLE" {
+		return !successful && dependency == nil
+	}
+	if !successful || dependency == nil {
+		return false
+	}
+	expected, err := liveDataAnswerResult(questionRunID, liveDataExecution{projection: projection, dependency: *dependency})
+	return err == nil && reflect.DeepEqual(expected, answerResult)
+}
+
+func governedQueryAnswerResultAllowedForStatus(status string, dependency *governedQueryDependency, answerResult *AnswerResult) bool {
+	return dependency == nil || answerResult != nil || status != "COMPLETED"
 }
