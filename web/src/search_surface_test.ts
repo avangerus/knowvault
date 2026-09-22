@@ -127,7 +127,7 @@ const documentContextStart = answerSource.indexOf('className="answer-body docume
 const liveCardSource = liveCardStart >= 0 && documentContextStart > liveCardStart ? answerSource.slice(liveCardStart, documentContextStart) : "";
 check(answerSource.includes("isCombinedLiveResult") && answerSource.includes("document-grounded context / paraphrase")
   && documentContextStart > liveCardStart && liveCardSource.includes("isCombinedLiveResult && resultValue"), "combined live answers keep the verified calculation and document-grounded context as separate blocks");
-check(answerSource.includes("(!isLiveScalar || hasDocumentGroundedContext)") && answerSource.includes("questionClaimGroundingLabel"), "scalar-only answers suppress document grounding while combined answers disclose their separate document context");
+check(answerSource.includes("(!hasLiveReceipt || hasDocumentGroundedContext)") && answerSource.includes("questionClaimGroundingLabel"), "receipt-backed answers suppress document grounding while combined answers disclose their separate document context");
 check(!answerSource.includes("<AnswerResultBlock") && !answerSource.includes("<UnifiedAnswerRows"), "shipped QuestionRun does not mount the verbose structured-result panels");
 check(mainSource.includes('className="tool-trace"') && mainSource.includes("TOOL_CALLS_TITLE") && mainSource.includes("run.tool_loop.calls"), "QuestionRun uses the actual collapsed tool-call disclosure");
 check(searchSource.includes('className="search-model-select"') && searchSource.includes('aria-label="Model"'), "the configured model selector remains available");
