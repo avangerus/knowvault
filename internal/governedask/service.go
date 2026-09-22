@@ -180,6 +180,10 @@ type Service struct {
 	// tests can drive discloseExecutedAttempt without a live database; nil in
 	// production, where the real checks always run.
 	disclosureCheck func(context.Context, database.AccessContext, string) error
+	// attemptLoader is a package-test seam for ReauthorizeAttempt. Production
+	// always uses loadExecutedAttempt, which scopes the append-only record to
+	// the caller organization, workspace and mounted connection.
+	attemptLoader func(context.Context, database.AccessContext, string, string) (governedquery.ExecutedAttempt, error)
 }
 
 func New(db *database.Store, auditor auditAppender) (*Service, error) {
