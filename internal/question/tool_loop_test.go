@@ -177,6 +177,52 @@ func TestRecentToolLoopConversationTurnsRequireEarlierTerminalDisplayableRuns(t 
 	if strings.Contains(sql, "id <> $4") {
 		t.Fatal("recent history must order against the current turn, not merely exclude its id")
 	}
+	for _, required := range []string{
+		"runs, err := service.GetBatch(ctx, access, workspaceID, runIDs)",
+		"return toolLoopConversationTurnsFromBatch(runIDs, runs), nil",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("recent history does not use the governed surviving-run map: missing %q", required)
+		}
+	}
+	helperStart := strings.Index(text, "func toolLoopConversationTurnsFromBatch(")
+	if helperStart < 0 {
+		t.Fatal("service.go does not declare the surviving-run history projection")
+	}
+	helperEnd := strings.Index(text[helperStart:], "var errPreviousTurnUnreadable")
+	if helperEnd < 0 {
+		t.Fatal("cannot find the end of toolLoopConversationTurnsFromBatch")
+	}
+	helper := text[helperStart : helperStart+helperEnd]
+	for _, required := range []string{"run, ok := runs[runIDs[i]]", "if !ok {\n\t\t\tcontinue", "toolLoopConversationTurn{Question: run.Question}"} {
+		if !strings.Contains(helper, required) {
+			t.Fatalf("surviving-run projection is missing %q", required)
+		}
+	}
+}
+
+func TestRevokedGovernedPriorQuestionIsOmittedFromNextModelPrompt(t *testing.T) {
+	const revokedQuestion = "revoked governed prior question"
+	const readableQuestion = "still readable prior question"
+	// recentToolLoopConversationTurns receives this map from GetBatch. A
+	// governed-denied prior run is removed from that map; exercise the exact
+	// projection it uses and then the production prompt builder.
+	runIDs := []string{"run_readable_prior", "run_revoked_governed_prior"}
+	history := toolLoopConversationTurnsFromBatch(runIDs, map[string]Run{
+		"run_readable_prior": {Question: readableQuestion},
+	})
+	if len(history) != 1 || history[0].Question != readableQuestion {
+		t.Fatalf("history = %#v, want only the surviving prior run", history)
+	}
+	outbound, _ := initialToolLoopMessages("next model question", history, 32*1024)
+	foundReadable, foundRevoked := false, false
+	for _, message := range outbound {
+		foundReadable = foundReadable || strings.Contains(message.Content, readableQuestion)
+		foundRevoked = foundRevoked || strings.Contains(message.Content, revokedQuestion)
+	}
+	if !foundReadable || foundRevoked {
+		t.Fatalf("next prompt readable=%v revoked=%v messages=%#v", foundReadable, foundRevoked, outbound)
+	}
 }
 
 func TestToolAnswerAcceptsOnlyAnEntireJSONFence(t *testing.T) {

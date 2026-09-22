@@ -1439,6 +1439,10 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 	// is assigned inside the artifact transaction only so the authorization
 	// gate can run after that transaction has ended and released its connection.
 	var retainedAnalyticScalarPair *analyticScalarPair
+	// retainedGovernedQueryDependency keeps the opaque live-query reference
+	// method-local until the same post-transaction disclosure point. It is never
+	// projected onto Run or retained by Service.
+	var retainedGovernedQueryDependency *governedQueryDependency
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		var readable bool
 		if err := tx.QueryRow(txCtx, `SELECT app.question_run_readable($1, $2)`, runID, workspaceID).Scan(&readable); err != nil {
@@ -1567,6 +1571,9 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 				// CodeUnavailable.
 				return &Error{code: CodeUnavailable}
 			}
+			if !governedQueryAnswerResultAllowedForStatus(status, structured.governedQueryDependency, structured.AnswerResult, structured.ToolLoop) {
+				return &Error{code: CodeUnavailable}
+			}
 			result.AnswerResult = structured.AnswerResult
 			result.Understood = structured.Understood
 			result.ToolLoop = structured.ToolLoop
@@ -1583,6 +1590,7 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 			// the read transaction has committed/rolled back and released its
 			// connection. It is never projected onto the Run.
 			retainedAnalyticScalarPair = structured.analyticScalarPair
+			retainedGovernedQueryDependency = structured.governedQueryDependency
 		}
 		structuredByCitationID := make(map[string]Citation, len(structuredCitations))
 		for _, citation := range structuredCitations {
@@ -1689,6 +1697,9 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 	if err := service.authorizeAnalyticScalarDisclosure(ctx, access, workspaceID, runID, retainedAnalyticScalarPair); err != nil {
 		return Run{}, err
 	}
+	if err := service.authorizeGovernedQueryDisclosure(ctx, access, workspaceID, runID, retainedGovernedQueryDependency); err != nil {
+		return Run{}, err
+	}
 	return result, nil
 }
 
@@ -1781,6 +1792,10 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 	// can reauthorize every surviving pair after that transaction has ended and
 	// released its connection.
 	var retainedAnalyticScalarPairs map[string]*analyticScalarPair = make(map[string]*analyticScalarPair, len(runIDs))
+	// retainedGovernedQueryDependencies holds the decoded opaque references only
+	// for this method, keyed by their trusted run ids, until after the artifact
+	// transaction and the existing scalar disclosure gate have completed.
+	retainedGovernedQueryDependencies := make(map[string]*governedQueryDependency, len(runIDs))
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		rows, err := tx.Query(txCtx, `
 			SELECT id, workspace_revision, conversation_id, conversation_turn_id,
@@ -1945,6 +1960,9 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 					// projected Question Run, answer or citation is returned.
 					return &Error{code: CodeUnavailable}
 				}
+				if !governedQueryAnswerResultAllowedForStatus(run.ResultStatus, structured.governedQueryDependency, structured.AnswerResult, structured.ToolLoop) {
+					return &Error{code: CodeUnavailable}
+				}
 				run.AnswerResult = structured.AnswerResult
 				run.Understood = structured.Understood
 				run.ToolLoop = structured.ToolLoop
@@ -1959,6 +1977,7 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 				if structured.analyticScalarPair != nil {
 					retainedAnalyticScalarPairs[runID] = structured.analyticScalarPair
 				}
+				retainedGovernedQueryDependencies[runID] = structured.governedQueryDependency
 			}
 			if run.AnswerResult != nil {
 				run.AnswerResult.Snapshot.CapturedAt = run.Freshness.CapturedAt
@@ -2105,6 +2124,22 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 		// One content-free denied read outcome per removed whole run, using a
 		// fresh bare CodeNotFound cause: the run's scalar pair is unreadable now
 		// even though its content was already projected in this read.
+		service.recordStoredRunReadFailure(ctx, access, workspaceID, runID, &Error{code: CodeNotFound})
+	}
+	governedCandidateRunIDs := make([]string, 0, len(result))
+	for runID := range result {
+		governedCandidateRunIDs = append(governedCandidateRunIDs, runID)
+	}
+	governedDenied, err := service.authorizeGovernedQueryDisclosureBatch(
+		ctx, access, workspaceID, governedCandidateRunIDs, retainedGovernedQueryDependencies,
+	)
+	if err != nil {
+		// A fatal governed disclosure error returns no partial map and the exact
+		// content-free gate error before any governed-denied run is audited.
+		return nil, err
+	}
+	for _, runID := range governedDenied {
+		delete(result, runID)
 		service.recordStoredRunReadFailure(ctx, access, workspaceID, runID, &Error{code: CodeNotFound})
 	}
 	return result, nil
@@ -3726,16 +3761,23 @@ func (service *Service) recentToolLoopConversationTurns(ctx context.Context, acc
 	if err != nil {
 		return nil, err
 	}
+	return toolLoopConversationTurnsFromBatch(runIDs, runs), nil
+}
 
-	turns := make([]toolLoopConversationTurn, 0, len(refs))
-	for i := len(refs) - 1; i >= 0; i-- {
-		run, ok := runs[refs[i].runID]
+// toolLoopConversationTurnsFromBatch projects only runs that survived the
+// governed GetBatch read. In particular, a live-query run denied during
+// current-access reauthorization has no map entry and its question cannot be
+// supplied as context to the next model call.
+func toolLoopConversationTurnsFromBatch(runIDs []string, runs map[string]Run) []toolLoopConversationTurn {
+	turns := make([]toolLoopConversationTurn, 0, len(runIDs))
+	for i := len(runIDs) - 1; i >= 0; i-- {
+		run, ok := runs[runIDs[i]]
 		if !ok {
 			continue
 		}
 		turns = append(turns, toolLoopConversationTurn{Question: run.Question})
 	}
-	return turns, nil
+	return turns
 }
 
 var errPreviousTurnUnreadable = errors.New("question: previous turn not currently readable")
