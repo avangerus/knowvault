@@ -910,6 +910,7 @@
     "tests/integration/parserv2harness/harness_config_linux_test.go": "36322de7c6b781464133e6de81bbb1aac1fa6c9259e0341555e5f13d31b8255a",
     "tests/integration/parserv2harness/harness_linux.go": "0f2ea418dcd73230d6203e998fc8766b70ac16206685c78e2f8b1c639c8fd151",
     "tests/integration/parserv2harness/harness_other.go": "890aca9ecff7fa5c2f9105fb36191db02c6da84859953120452365099756cae8",
+    "tests/integration/postgres/analyticsource_fixture_test.go": "a79e3eb51325195f2b1b96698ade5d8066c8307fb8efd95e9029e52be8959f7a",
     "tests/integration/postgres/answer_document_amendment_test.go": "d94a5ad15f0a44d1ced2daf81e65239b181df1e3faab4057b8be0f10a8f2ac76",
     "tests/integration/postgres/artifact_outbox_test.go": "d11507b36f63dcf7c99227105be3685ed3ee8b915e239c6cfd2265269805b3ff",
     "tests/integration/postgres/audit_before_data_test.go": "c4c4ec7579cd0843f8087c6c26fc471d6f0b92ce29e721eb7197a829c9581da1",
