@@ -999,6 +999,7 @@
     "tests/integration/postgres/question_budget_test.go": "bec9c7a8ad6052a46b4a3cf944769f757b8375a688855edcac46ee87915af22b",
     "tests/integration/postgres/question_cancellation_test.go": "b7db8b309790ceeaddbd26ee6ec03bc686b48b5927bade3e8fb798b4fd32989c",
     "tests/integration/postgres/question_run_test.go": "3d82c0a92176495913a4fef81cae0b5229c069234bbeb45bcde505a4cd590b19",
+    "tests/integration/postgres/question_scalar_reopen_test.go": "6ef71db5b8c9ec4e02789d73fc231c56b570ea4264fd4515ddba7ebb47543b1f",
     "tests/integration/postgres/question_topic_memory_test.go": "25a53164b0c9dd7d3cf7864f718f99c3e7ded4171d94f37ff4cce1a6eaa3d9d4",
     "tests/integration/postgres/r3a1_acc2_degraded_repair_test.go": "c7511527897fbccdff2ac206640f888996c557c8c43b40021e46c6558585a1ca",
     "tests/integration/postgres/r3a1_code_source_ref_integration_test.go": "8a0291c6e88475d9e3780c0ef3a34bd72b86ab3d8f8a0427c9f2103e452c27c8",
