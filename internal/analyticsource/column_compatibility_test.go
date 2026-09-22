@@ -98,6 +98,31 @@ func compatibilityNullabilityProfile(t *testing.T) analytic.DatasetProfile {
 	return profile
 }
 
+// compatibilityVarcharProfile reseals one TEXT field as the distinct bounded
+// VARCHAR physical type while keeping its logical and business semantics.
+func compatibilityVarcharProfile(t *testing.T) analytic.DatasetProfile {
+	t.Helper()
+	spec := compatibilityProfile(t).Spec()
+	fields := make([]analytic.FieldSpec, len(spec.Fields))
+	for index, field := range spec.Fields {
+		value := field.Values()
+		if value.Token == "visible_token" {
+			value.PhysicalType = analytic.PhysicalPGVarchar
+		}
+		rebuilt, err := analytic.NewFieldSpec(value)
+		if err != nil {
+			t.Fatalf("varchar field %q rejected: %v", value.Token, err)
+		}
+		fields[index] = rebuilt
+	}
+	spec.Fields = fields
+	profile, err := analytic.NewDatasetProfile(spec)
+	if err != nil {
+		t.Fatalf("varchar profile rejected: %v", err)
+	}
+	return profile
+}
+
 // compatibilityFixture returns the sealed all-pairs profile with the
 // discovery-shaped projection the adapter fixture builder reports for its
 // complete inventory.
@@ -224,6 +249,64 @@ func TestRepositoryColumnCompatibilityAcceptsBoundaryMetadata(t *testing.T) {
 			if err := repositoryColumnCompatibility(profile, mutated); err != nil {
 				t.Fatalf("boundary metadata refused: %v", err)
 			}
+		})
+	}
+}
+
+func TestRepositoryColumnCompatibilityAcceptsOnlyExactBoundedVarchar(t *testing.T) {
+	profile := compatibilityVarcharProfile(t)
+	columns, err := requiredColumns(profile)
+	if err != nil {
+		t.Fatalf("varchar inventory refused: %v", err)
+	}
+	projection := repositoryProjection(t, profile, columns)
+	if err := repositoryColumnCompatibility(profile, projection); err != nil {
+		t.Fatalf("canonical varchar refused: %v", err)
+	}
+
+	for _, boundary := range []struct {
+		name       string
+		characters int
+	}{
+		{name: "one character", characters: 1},
+		{name: "postgresql maximum", characters: 10485760},
+	} {
+		t.Run(boundary.name, func(t *testing.T) {
+			candidate := withCompatibilityColumn(t, projection, "visible_column", func(column *postgresqlquery.Column) {
+				column.MaxBytes = boundary.characters * 4
+				column.TypeFingerprint = "oid:1043:len:" + strconv.Itoa(boundary.characters)
+			})
+			if err := repositoryColumnCompatibility(profile, candidate); err != nil {
+				t.Fatalf("boundary varchar refused: %v", err)
+			}
+		})
+	}
+
+	refusals := []struct {
+		name   string
+		mutate func(*postgresqlquery.Column)
+	}{
+		{name: "text oid", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:25" }},
+		{name: "bare varchar", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:1043" }},
+		{name: "bpchar", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:1042:len:256" }},
+		{name: "domain", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:16385:len:256" }},
+		{name: "leading zero length", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:1043:len:0256" }},
+		{name: "signed length", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:1043:len:+256" }},
+		{name: "length mismatch", mutate: func(column *postgresqlquery.Column) { column.TypeFingerprint = "oid:1043:len:255" }},
+		{name: "byte bound mismatch", mutate: func(column *postgresqlquery.Column) { column.MaxBytes = 1020 }},
+		{name: "non integral character bound", mutate: func(column *postgresqlquery.Column) { column.MaxBytes = 1023 }},
+		{name: "zero character bound", mutate: func(column *postgresqlquery.Column) { column.MaxBytes = 3 }},
+		{name: "above postgresql maximum", mutate: func(column *postgresqlquery.Column) {
+			column.MaxBytes = 41943044
+			column.TypeFingerprint = "oid:1043:len:10485761"
+		}},
+		{name: "precision", mutate: func(column *postgresqlquery.Column) { column.Precision = 1 }},
+		{name: "scale", mutate: func(column *postgresqlquery.Column) { column.Scale = 1 }},
+	}
+	for _, refusal := range refusals {
+		t.Run(refusal.name, func(t *testing.T) {
+			candidate := withCompatibilityColumn(t, projection, "visible_column", refusal.mutate)
+			assertColumnCompatibilityRefusal(t, repositoryColumnCompatibility(profile, candidate))
 		})
 	}
 }

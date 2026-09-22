@@ -1,6 +1,7 @@
 package queryintent
 
 import (
+	"slices"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/analytic"
@@ -249,6 +250,14 @@ func filterAllowedV2(profile analytic.DatasetProfile, time analytic.TimePolicyIn
 	for _, value := range values {
 		if !filterScalarMatchesV2(value.Kind(), spec.LogicalType) {
 			return false
+		}
+	}
+	if len(spec.AllowedValues) > 0 && (operator == analytic.PredicateEQ || operator == analytic.PredicateIN) {
+		for _, value := range values {
+			text, textOK := value.Text()
+			if !textOK || !slices.Contains(spec.AllowedValues, text) {
+				return false
+			}
 		}
 	}
 	return true

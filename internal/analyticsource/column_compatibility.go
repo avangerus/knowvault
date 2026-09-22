@@ -32,7 +32,10 @@ func repositoryColumnCompatibility(profile analytic.DatasetProfile, projection p
 		if !found || column.Nullable != approved.Nullable {
 			return errMismatch
 		}
-		logicalType, fingerprint, ok := repositoryColumnExpectation(approved.LogicalType, approved.PhysicalType, column.Precision, column.Scale)
+		logicalType, fingerprint, ok := repositoryColumnExpectation(
+			approved.LogicalType, approved.PhysicalType,
+			column.Precision, column.Scale, column.MaxBytes,
+		)
 		if !ok || column.LogicalType != logicalType || column.TypeFingerprint != fingerprint {
 			return errMismatch
 		}
@@ -62,7 +65,7 @@ func repositoryProjectionColumn(columns []postgresqlquery.Column, name string) (
 // zero, or length-suffixed text OID never matches. Both temporal fingerprints
 // are precision-suffixed: discovery reports precision 6 for the default typmod,
 // so a bare temporal OID is never canonical.
-func repositoryColumnExpectation(logical analytic.ScalarType, physical analytic.PhysicalType, precision, scale int) (postgresqlquery.LogicalType, string, bool) {
+func repositoryColumnExpectation(logical analytic.ScalarType, physical analytic.PhysicalType, precision, scale, maxBytes int) (postgresqlquery.LogicalType, string, bool) {
 	switch physical {
 	case analytic.PhysicalPGBool:
 		return postgresqlquery.TypeBool, "oid:16", logical == analytic.ScalarBool && precision == 0 && scale == 0
@@ -70,6 +73,19 @@ func repositoryColumnExpectation(logical analytic.ScalarType, physical analytic.
 		return postgresqlquery.TypeInt, "oid:20", logical == analytic.ScalarInt && precision == 0 && scale == 0
 	case analytic.PhysicalPGText:
 		return postgresqlquery.TypeText, "oid:25", logical == analytic.ScalarText && precision == 0 && scale == 0
+	case analytic.PhysicalPGVarchar:
+		// PostgreSQL discovery reports varchar(n) as oid:1043:len:n and
+		// reserves four UTF-8 bytes per declared character in MaxBytes. Bind
+		// both facts so a bare varchar, bpchar, domain, malformed length, or a
+		// fingerprint whose length disagrees with the persisted byte bound
+		// cannot alias the approved physical type. PostgreSQL bounds n at
+		// 10,485,760 characters, so the capped discovery representation is
+		// never ambiguous for a real varchar(n).
+		if logical != analytic.ScalarText || precision != 0 || scale != 0 ||
+			maxBytes < 4 || maxBytes%4 != 0 || maxBytes/4 > 10485760 {
+			return "", "", false
+		}
+		return postgresqlquery.TypeText, "oid:1043:len:" + strconv.Itoa(maxBytes/4), true
 	case analytic.PhysicalPGDate:
 		return postgresqlquery.TypeDate, "oid:1082", logical == analytic.ScalarDate && precision == 0 && scale == 0
 	case analytic.PhysicalPGNumeric:

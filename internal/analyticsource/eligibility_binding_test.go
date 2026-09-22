@@ -43,7 +43,8 @@ func assertEligibilityRefusal(t *testing.T, value eligibilityBinding, err error)
 	if err != errMismatch || !errors.Is(err, errMismatch) {
 		t.Fatalf("refused construction returned %v, want errMismatch", err)
 	}
-	if value.profile.Hash() != "" || value.binding != (bindingFacts{}) || value.seal != ([32]byte{}) {
+	if value.profile.Hash() != "" || value.binding != (bindingFacts{}) ||
+		value.execution != (executionFacts{}) || value.seal != ([32]byte{}) {
 		t.Fatal("refusal did not return the exact zero eligibilityBinding")
 	}
 	if err.Error() != errMismatch.Error() {
@@ -105,6 +106,16 @@ func TestEligibilityBindingConstructsFromExactFacts(t *testing.T) {
 	}
 	if value.binding != facts.source.binding {
 		t.Fatal("stored tuple is not the matched common binding")
+	}
+	wantExecution := executionFacts{
+		projectionLineageID:    facts.source.projectionLineageID,
+		projectionRevision:     facts.source.projectionRevision,
+		projectionContractHash: facts.source.projectionContractHash,
+		exposedSchemaRevision:  facts.exposure.exposedSchemaRevision,
+		exposedSchemaHash:      facts.exposure.exposedSchemaHash,
+	}
+	if value.execution != wantExecution {
+		t.Fatalf("execution = %+v, want the exact five retained execution facts", value.execution)
 	}
 	if value.seal == ([32]byte{}) {
 		t.Fatal("constructed binding carries a zero seal")
@@ -173,6 +184,37 @@ func TestEligibilityBindingDetectsRetainedFieldDrift(t *testing.T) {
 	}
 }
 
+func TestEligibilityBindingDetectsRetainedExecutionDrift(t *testing.T) {
+	drifts := []struct {
+		name   string
+		mutate func(*executionFacts)
+	}{
+		{"projection lineage", func(execution *executionFacts) {
+			execution.projectionLineageID = "eligibility-execution-drift"
+		}},
+		{"projection revision", func(execution *executionFacts) { execution.projectionRevision++ }},
+		{"projection contract hash", func(execution *executionFacts) {
+			execution.projectionContractHash = validHash("0")
+		}},
+		{"exposed schema revision", func(execution *executionFacts) { execution.exposedSchemaRevision++ }},
+		{"exposed schema hash", func(execution *executionFacts) { execution.exposedSchemaHash = validHash("0") }},
+	}
+	for _, drift := range drifts {
+		t.Run(drift.name, func(t *testing.T) {
+			value, _, _ := sealedEligibility(t)
+			drift.mutate(&value.execution)
+			// A self-consistent seal proves the refusal cannot rest on the seal alone.
+			value.seal = eligibilityBindingSeal(value.profile, value.binding, value.execution)
+			if value.valid() {
+				t.Fatal("changed retained execution fact still validates")
+			}
+			if value.equal(value) {
+				t.Fatal("changed retained execution fact is still self-equal")
+			}
+		})
+	}
+}
+
 func TestEligibilityBindingDetectsStoredProfileSubstitution(t *testing.T) {
 	value, _, profile := sealedEligibility(t)
 	substituted := alternateFixtureProfile(t, profile)
@@ -204,7 +246,7 @@ func TestEligibilityBindingValidRejectsForgedMembers(t *testing.T) {
 			value, _, _ := sealedEligibility(t)
 			forgery.forge(&value)
 			// A self-consistent seal proves the refusal cannot rest on the seal alone.
-			value.seal = eligibilityBindingSeal(value.profile, value.binding)
+			value.seal = eligibilityBindingSeal(value.profile, value.binding, value.execution)
 			if value.valid() {
 				t.Fatal("forged binding still validates")
 			}
@@ -270,6 +312,27 @@ func TestEligibilityBindingEqualityRequiresValidExactValues(t *testing.T) {
 		t.Fatal("changed binding hash compared equal")
 	}
 
+	// Independently constructed exact execution facts compare equal, while
+	// projection and exposure execution drift never does.
+	executionDrift := first
+	executionDrift.execution.projectionRevision++
+	executionDrift.seal = eligibilityBindingSeal(executionDrift.profile, executionDrift.binding, executionDrift.execution)
+	if executionDrift.valid() {
+		t.Fatal("drifted projection revision still validates")
+	}
+	if first.equal(executionDrift) || executionDrift.equal(first) {
+		t.Fatal("drifted projection revision compared equal")
+	}
+	exposureDrift := first
+	exposureDrift.execution.exposedSchemaHash = validHash("0")
+	exposureDrift.seal = eligibilityBindingSeal(exposureDrift.profile, exposureDrift.binding, exposureDrift.execution)
+	if exposureDrift.valid() {
+		t.Fatal("drifted exposure hash still validates")
+	}
+	if first.equal(exposureDrift) || exposureDrift.equal(first) {
+		t.Fatal("drifted exposure hash compared equal")
+	}
+
 	var zero eligibilityBinding
 	if zero.equal(zero) || first.equal(zero) || zero.equal(first) {
 		t.Fatal("zero binding compared equal")
@@ -309,7 +372,7 @@ func TestEligibilityBindingIgnoresExtraColumnsAndInventoryOrder(t *testing.T) {
 
 func TestEligibilityBindingRetainsNoCallerState(t *testing.T) {
 	value, facts, profile := sealedEligibility(t)
-	seal, binding, hash := value.seal, value.binding, value.profile.Hash()
+	seal, binding, execution, hash := value.seal, value.binding, value.execution, value.profile.Hash()
 	profileHash := profile.Hash()
 
 	facts.source.binding.workspaceID = "mutated_workspace"
@@ -328,7 +391,7 @@ func TestEligibilityBindingRetainsNoCallerState(t *testing.T) {
 	ownedSpec := value.profile.Spec()
 	ownedSpec.Fields[0] = ownedSpec.Fields[1]
 
-	if value.seal != seal || value.binding != binding || value.profile.Hash() != hash {
+	if value.seal != seal || value.binding != binding || value.execution != execution || value.profile.Hash() != hash {
 		t.Fatal("caller mutation changed the stored binding")
 	}
 	if !value.valid() {
@@ -347,6 +410,7 @@ func TestEligibilityBindingPrivateSurfaceIsClosed(t *testing.T) {
 	}{
 		{"profile", reflect.TypeOf(analytic.DatasetProfile{})},
 		{"binding", reflect.TypeOf(bindingFacts{})},
+		{"execution", reflect.TypeOf(executionFacts{})},
 		{"seal", reflect.TypeOf([32]byte{})},
 	}
 	if valueType.NumField() != len(expected) {

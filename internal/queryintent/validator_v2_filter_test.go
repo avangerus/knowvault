@@ -138,6 +138,35 @@ func v2FilterProfile(t *testing.T, reserveBusinessDay bool) analytic.DatasetProf
 	return profile
 }
 
+func v2FilterProfileWithRegionAllowedValues(t *testing.T) analytic.DatasetProfile {
+	t.Helper()
+	spec := v2FilterProfile(t, false).Spec()
+	for index, field := range spec.Fields {
+		values := field.Values()
+		switch values.Token {
+		case "region":
+			values.AllowedValues = []string{"east", "west"}
+		case "note":
+			values.Nullable = true
+			values.Filterable = true
+			values.AllowedOps = []analytic.PredicateOperator{analytic.PredicateEQ, analytic.PredicateISNull}
+			values.AllowedValues = []string{"memo"}
+		default:
+			continue
+		}
+		var err error
+		spec.Fields[index], err = analytic.NewFieldSpec(values)
+		if err != nil {
+			t.Fatalf("seal allowed region field: %v", err)
+		}
+	}
+	profile, err := analytic.NewDatasetProfile(spec)
+	if err != nil {
+		t.Fatalf("seal allowed region profile: %v", err)
+	}
+	return profile
+}
+
 // v2FilterCase seals one AGGREGATE proposal over profile with exactly the given
 // filter set, together with the validator and binding that authorize it.
 func v2FilterCase(t *testing.T, profile analytic.DatasetProfile, predicates ...Predicate) (ValidatorV2, CatalogBindingV2, ProposalV2) {
@@ -208,6 +237,38 @@ func TestValidatorV2AllowsAuthorizedFilters(t *testing.T) {
 			t.Fatalf("%s refused: valid=%v err=%v", test.name, sealed.Valid(), err)
 		}
 		v2Digest(t, sealed)
+	}
+}
+
+func TestValidatorV2EnforcesSealedTextAllowedValues(t *testing.T) {
+	profile := v2FilterProfileWithRegionAllowedValues(t)
+	allowed := []struct {
+		name      string
+		predicate Predicate
+	}{
+		{"EQ inside allowlist", v2Predicate(t, "region", OpEQ, v2Text(t, "east"))},
+		{"IN inside allowlist", v2Predicate(t, "region", OpIN, v2Text(t, "west"), v2Text(t, "east"))},
+		{"IS_NULL remains independent", v2Predicate(t, "note", OpISNull, BoolScalar(true))},
+	}
+	for _, test := range allowed {
+		validator, binding, proposal := v2FilterCase(t, profile, test.predicate)
+		sealed, err := validator.ValidateProposalV2(proposal, binding)
+		if err != nil || !sealed.Valid() {
+			t.Fatalf("%s refused: valid=%v err=%v", test.name, sealed.Valid(), err)
+		}
+	}
+
+	denied := []struct {
+		name      string
+		predicate Predicate
+	}{
+		{"EQ outside allowlist", v2Predicate(t, "region", OpEQ, v2Text(t, "north"))},
+		{"IN partly outside allowlist", v2Predicate(t, "region", OpIN, v2Text(t, "east"), v2Text(t, "north"))},
+	}
+	for _, test := range denied {
+		validator, binding, proposal := v2FilterCase(t, profile, test.predicate)
+		sealed, err := validator.ValidateProposalV2(proposal, binding)
+		v2FilterDenied(t, test.name, sealed, err)
 	}
 }
 

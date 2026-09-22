@@ -180,6 +180,25 @@ async function main(): Promise<void> {
   check(minimalMarkup.includes("42") && minimalMarkup.includes("\u0448\u0442"), "AnswerResultBlock did not render the present value/unit");
   check(minimalMarkup.includes(ANSWER_NO_DATA), "AnswerResultBlock did not render 'no data' for absent unified fields");
 
+  const liveResult = {
+    kind: "AGGREGATE",
+    operation: "AGGREGATE",
+    rule: "live rule",
+    snapshot: { row_count: 407 },
+    completeness: "COMPLETE",
+    observation_window: {
+      basis: "CLIENT_READ_CALL",
+      started_at: "2026-09-10T00:00:01Z",
+      completed_at: "2026-09-10T00:00:03Z",
+    },
+    receipt_digest: "sha256:receipt",
+  } as AnswerResult;
+  const liveMarkup = renderToStaticMarkup(createElement(AnswerResultBlock, { result: liveResult }));
+  check(liveMarkup.includes("<dt>Observed</dt>") && liveMarkup.includes("CLIENT_READ_CALL"), "live observation window was not rendered");
+  check(liveMarkup.includes("<dt>Evidence receipt</dt>") && liveMarkup.includes("sha256:receipt"), "live evidence receipt was not rendered");
+  check(liveMarkup.includes("<dt>Rows read</dt><dd>407</dd>"), "live contributing row count was not rendered");
+  check(!liveMarkup.includes("current"), "live observation was labeled as the current snapshot");
+
   // --- 3. PARTIAL stays non-full ------------------------------------------
   const partialResult = { kind: "AGGREGATE", operation: "AGGREGATE", rule: "r", snapshot: { row_count: 0 }, completeness: "PARTIAL" } as AnswerResult;
   const partialTexts = answerResultFieldTexts(partialResult);

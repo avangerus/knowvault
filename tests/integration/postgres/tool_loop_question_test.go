@@ -115,7 +115,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		requests++
 		if scenario == "scope_changed" {
 			scopeChangedModelCalls++
-			if scopeChangedModelCalls > 2 {
+			if scopeChangedModelCalls > 3 {
 				t.Errorf("model was called after scope change: call=%d", scopeChangedModelCalls)
 				http.Error(w, "unexpected model call after scope change", http.StatusInternalServerError)
 				return
@@ -169,6 +169,10 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		}
 		message := map[string]any{"role": "assistant", "reasoning_content": "PRIVATE_MODEL_REASONING"}
 		finish := "stop"
+		lastMessage := input.Messages[len(input.Messages)-1]
+		needsDocumentResearch := scenario == "answer" || scenario == "whole_page" ||
+			scenario == "address_only" || scenario == "fragment_reference" ||
+			scenario == "edited_quote" || scenario == "scope_changed"
 		if strings.HasPrefix(scenario, "final_") {
 			finalizationModelCalls++
 			if finalizationModelCalls == 1 {
@@ -184,10 +188,16 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					name := "knowvault_read"
 					args, _ := json.Marshal(map[string]any{"address": emittedAddress})
 					if count > 1 {
-						// Deliberately omit reading: the final citation must still
-						// take the authorized automatic binding path.
-						name = "knowvault_list_objects"
-						args = json.RawMessage(`{"limit":1}`)
+						// The first call observes the exact address in this run. The
+						// remaining calls consume the research budget so the final
+						// citation must take the authorized automatic binding path.
+						if i == 0 {
+							name = "knowvault_search"
+							args, _ = json.Marshal(map[string]any{"query": lastMessage.Content})
+						} else {
+							name = "knowvault_list_objects"
+							args = json.RawMessage(`{"limit":1}`)
+						}
 					}
 					calls = append(calls, map[string]any{"id": fmt.Sprintf("final-research-%d", i), "type": "function", "function": map[string]any{"name": name, "arguments": string(args)}})
 				}
@@ -201,10 +211,37 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					message["tool_calls"] = []any{map[string]any{"id": "final-forbidden-read", "type": "function", "function": map[string]any{"name": "knowvault_read", "arguments": `{"address":"` + emittedAddress + `"}`}}}
 					finish = "tool_calls"
 				} else {
-					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.", "citations": []any{map[string]any{"address": emittedAddress}}}}})
+					citeAddress := emittedAddress
+					if scenario == "final_batch" || scenario == "final_refusal" {
+						citeAddress = ""
+						for _, entry := range input.Messages {
+							if entry.Role != "tool" || entry.ToolCallID != "final-research-0" {
+								continue
+							}
+							for _, line := range strings.Split(entry.Content, "\n") {
+								if strings.Contains(line, "42") {
+									citeAddress = regexp.MustCompile(`kv1:[^\s]+`).FindString(line)
+								}
+							}
+						}
+						if citeAddress == "" {
+							t.Error("bounded batch search returned no readable address")
+						}
+					}
+					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.", "citations": []any{map[string]any{"address": citeAddress}}}}})
 					message["content"] = string(content)
 				}
 			}
+		} else if needsDocumentResearch && lastMessage.Role != "tool" {
+			if lastMessage.Role != "user" || strings.TrimSpace(lastMessage.Content) == "" {
+				t.Errorf("first research turn has no user question: role=%q content=%q", lastMessage.Role, lastMessage.Content)
+			}
+			args, _ := json.Marshal(map[string]any{"query": lastMessage.Content})
+			message["tool_calls"] = []any{map[string]any{
+				"id": "initial-search", "type": "function",
+				"function": map[string]any{"name": "knowvault_search", "arguments": string(args)},
+			}}
+			finish = "tool_calls"
 		} else if scenario != "answer" && scenario != "whole_page" && scenario != "address_only" && scenario != "fragment_reference" && scenario != "edited_quote" && scenario != "scope_changed" {
 			content := map[string]any{"no_data": true, "claims": []any{}}
 			if scenario == "clarification" {
@@ -250,7 +287,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		} else if input.Messages[len(input.Messages)-1].ToolCallID == "initial-search" {
 			last := input.Messages[len(input.Messages)-1]
 			if last.Role != "tool" || last.ToolCallID != "initial-search" {
-				t.Error("missing system first retrieval")
+				t.Error("missing model-requested first retrieval")
 			}
 			for _, line := range strings.Split(last.Content, "\n") {
 				if strings.Contains(line, "42") {
@@ -379,7 +416,9 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	if !reflect.DeepEqual(first.ModelProfile, wantProfile) || !reflect.DeepEqual(first.ToolLoop.ModelProfile, wantProfile) || first.ToolLoop.Profile.ID != "selected-fixture-loop" {
 		t.Fatalf("selected adapter or encrypted provenance was replaced by default: %+v", first.ModelProfile)
 	}
-	if requests != 2 || len(first.ToolLoop.Calls) != 2 || !first.ToolLoop.Calls[0].System || first.ToolLoop.Calls[1].Name != "knowvault_read" {
+	if requests != 3 || len(first.ToolLoop.Calls) != 2 || first.ToolLoop.Calls[0].System ||
+		first.ToolLoop.Calls[0].Name != "knowvault_search" || first.ToolLoop.Calls[0].ID != "initial-search" ||
+		first.ToolLoop.Calls[1].Name != "knowvault_read" {
 		t.Fatalf("unexpected calls: %d %+v", requests, first.ToolLoop.Calls)
 	}
 	if len(first.Citations) != 2 || first.Citations[0].Address != emittedAddress || first.Citations[1].Address != emittedAddress || first.GroundingStatus != question.GroundingConfirmedByFragment {
@@ -400,12 +439,12 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		t.Fatal("plaintext content in run metadata")
 	}
 	replay, err := questions.Create(ctx, access, request)
-	if err != nil || replay.ID != first.ID || requests != 2 || replay.ToolLoop == nil || !reflect.DeepEqual(replay.ModelProfile, wantProfile) {
+	if err != nil || replay.ID != first.ID || requests != 3 || replay.ToolLoop == nil || !reflect.DeepEqual(replay.ModelProfile, wantProfile) {
 		t.Fatalf("replay lost trace or called model: %v", err)
 	}
 	differentProfile := request
 	differentProfile.ModelProfileID = "default"
-	if _, err := questions.Create(ctx, access, differentProfile); question.CodeOf(err) != question.CodeIdempotencyConflict || requests != 2 {
+	if _, err := questions.Create(ctx, access, differentProfile); question.CodeOf(err) != question.CodeIdempotencyConflict || requests != 3 {
 		t.Fatalf("same idempotency key executed another profile: %v requests=%d", err, requests)
 	}
 	// The model may cite an address without reproducing source bytes. The
@@ -435,8 +474,8 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		name, profile              string
 		turns, calls, bindingReads int
 	}{
-		{"final_turn", "turn-limit", 2, 2, 0},
-		{"final_small", "small-budget", 2, 2, 0},
+		{"final_turn", "turn-limit", 2, 1, 0},
+		{"final_small", "small-budget", 2, 1, 0},
 		{"final_batch", "batch-budget", 2, 4, 1},
 		{"final_refusal", "batch-budget", 3, 4, 1},
 	} {
@@ -453,7 +492,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 			}
 			bindingReads := 0
 			for _, call := range run.ToolLoop.Calls {
-				if call.ID == "final-forbidden-read" || call.ID == "final-research-2" || call.ID == "final-research-3" || call.ID == "final-research-4" {
+				if call.ID == "final-forbidden-read" || call.ID == "final-research-3" || call.ID == "final-research-4" {
 					t.Fatalf("refused finalization call reached data: %s", call.ID)
 				}
 				if call.Name == "knowvault_read" && call.System {
@@ -491,7 +530,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	mixedKey := make([]byte, 32)
 	mixedKey[0] = 33
 	mixed, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(mixedKey)})
-	if err != nil || mixed.ToolLoop == nil || mixed.ToolLoop.StopReason != "FORMAT_INVALID" || len(mixed.ToolLoop.Calls) != 1 || len(mixed.Citations) != 0 {
+	if err != nil || mixed.ToolLoop == nil || mixed.ToolLoop.StopReason != "FORMAT_INVALID" || len(mixed.ToolLoop.Calls) != 0 || len(mixed.Citations) != 0 {
 		t.Fatalf("mixed final action executed knowledge calls or disclosed claims: %v %+v", err, mixed)
 	}
 	catalog, err := runtime.Catalog(ctx, scope)
@@ -561,7 +600,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	if err != nil || finalScopeRun.ToolLoop == nil || finalScopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || finalScopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || len(finalScopeRun.Citations) != 0 || strings.Contains(finalScopeRun.Answer, "42") {
 		t.Fatalf("finalization disclosed evidence after revocation: %v %+v", err, finalScopeRun)
 	}
-	if !finalRevoked || catalogChecks != 2 || finalizationModelCalls != 1 || len(finalScopeRun.ToolLoop.Calls) != 2 {
+	if !finalRevoked || catalogChecks != 2 || finalizationModelCalls != 1 || len(finalScopeRun.ToolLoop.Calls) != 1 {
 		t.Fatalf("finalization called the model after revocation: revoked=%v checks=%d model=%d", finalRevoked, catalogChecks, finalizationModelCalls)
 	}
 	// A captured tool-loop scope must fail closed when a real workspace
@@ -586,7 +625,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	if err != nil || scopeRun.ToolLoop == nil || scopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || scopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || scopeRun.Answer != "The workspace changed during the request. Please try again." || len(scopeRun.Citations) != 0 {
 		t.Fatalf("scope change was not surfaced safely: %v %+v", err, scopeRun)
 	}
-	if !scopeRevokeDone || scopeChangedModelCalls != 2 || len(scopeRun.ToolLoop.Calls) != 3 {
+	if !scopeRevokeDone || scopeChangedModelCalls != 3 || len(scopeRun.ToolLoop.Calls) != 3 {
 		t.Fatalf("scope change continued the loop: revoked=%v model_calls=%d tool_calls=%d", scopeRevokeDone, scopeChangedModelCalls, len(scopeRun.ToolLoop.Calls))
 	}
 	lastScopeCall := scopeRun.ToolLoop.Calls[len(scopeRun.ToolLoop.Calls)-1]

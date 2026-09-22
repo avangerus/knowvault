@@ -77,16 +77,27 @@ type AnswerResult struct {
 	// snapshot/execution identity the result digest is keyed by (never the
 	// per-run id, so two runs of the same intent over the same snapshot tie
 	// out); result_digest is the canonical hash of the result content.
-	RunID         string           `json:"run_id,omitempty"`
-	Intent        *AnswerIntent    `json:"intent,omitempty"`
-	RowsetRef     string           `json:"rowset_ref,omitempty"`
-	MetricVersion string           `json:"metric_version,omitempty"`
-	SnapshotID    string           `json:"snapshot_id,omitempty"`
-	ExecutionID   string           `json:"execution_id,omitempty"`
-	ResultDigest  string           `json:"result_digest,omitempty"`
-	Freshness     *CorpusFreshness `json:"freshness,omitempty"`
-	EvidenceRefs  []string         `json:"evidence_refs,omitempty"`
-	AuditReceipt  []string         `json:"audit_receipt,omitempty"`
+	RunID             string                   `json:"run_id,omitempty"`
+	Intent            *AnswerIntent            `json:"intent,omitempty"`
+	RowsetRef         string                   `json:"rowset_ref,omitempty"`
+	MetricVersion     string                   `json:"metric_version,omitempty"`
+	SnapshotID        string                   `json:"snapshot_id,omitempty"`
+	ExecutionID       string                   `json:"execution_id,omitempty"`
+	ResultDigest      string                   `json:"result_digest,omitempty"`
+	Freshness         *CorpusFreshness         `json:"freshness,omitempty"`
+	EvidenceRefs      []string                 `json:"evidence_refs,omitempty"`
+	AuditReceipt      []string                 `json:"audit_receipt,omitempty"`
+	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
+	ReceiptDigest     string                   `json:"receipt_digest,omitempty"`
+}
+
+// AnswerObservationWindow is the server-observed wall-clock window around a
+// bounded live analytic read. It is provenance for the read call, not a source
+// modification timestamp and not a client-supplied freshness claim.
+type AnswerObservationWindow struct {
+	Basis       string `json:"basis,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
 }
 
 // AnswerIntent is R2 Outcome 3's read-only projection of the QueryIntent the
@@ -263,12 +274,12 @@ var searchedMessages = map[string]string{
 // the four typed Conflict codes). A code outside this table still gets a
 // safe, content-free fallback rather than an empty string.
 var uncertaintyMessages = map[string]string{
-	UncertaintyPlannerUnknown:       "The question could not be interpreted as a specific task. Please make it more precise.",
-	UncertaintyPlannerClarification: "The question has more than one interpretation and needs clarification.",
-	UncertaintyCorpusPartial:        "The source corpus is incomplete: the answer does not cover all data available in the workspace.",
+	UncertaintyPlannerUnknown:            "The question could not be interpreted as a specific task. Please make it more precise.",
+	UncertaintyPlannerClarification:      "The question has more than one interpretation and needs clarification.",
+	UncertaintyCorpusPartial:             "The source corpus is incomplete: the answer does not cover all data available in the workspace.",
 	UncertaintyInsufficientEvidence:      "Relevant evidence was not found or is unavailable for display.",
 	UncertaintyAmbiguousStructuredSource: "The question could not be unambiguously matched to one enabled structured source.",
-	"GENERATION_UNAVAILABLE":        "Model-generated answers are unavailable for this request; try EXTRACTIVE mode.",
+	"GENERATION_UNAVAILABLE":             "Model-generated answers are unavailable for this request; try EXTRACTIVE mode.",
 }
 
 var conflictMessages = map[string]string{

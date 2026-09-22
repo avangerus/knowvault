@@ -640,18 +640,19 @@ func TestResolverValuesRetainOnlyTheAcceptedMembers(t *testing.T) {
 			t.Fatalf("%s fields = %v, want %v", value, fields, want)
 		}
 	}
-	// Only the pointer carries the one callable entry point: a copied resolver
-	// value exposes no method at all.
+	// Only the pointer carries the callable entry points: a copied resolver
+	// value exposes no method at all. Reflection lists the methods in Go
+	// method order, so ReauthorizeScalarDependency precedes Resolve.
 	if reflect.TypeOf(Resolver{}).NumMethod() != 0 {
-		t.Fatal("Resolver observes an exported method; only *Resolver may expose Resolve")
+		t.Fatal("Resolver observes an exported method; only *Resolver may expose ReauthorizeScalarDependency and Resolve")
 	}
 	pointer := reflect.TypeOf(&Resolver{})
 	exposed := make([]string, 0, pointer.NumMethod())
 	for index := 0; index < pointer.NumMethod(); index++ {
 		exposed = append(exposed, pointer.Method(index).Name)
 	}
-	if !slices.Equal(exposed, []string{"Resolve"}) {
-		t.Fatalf("*Resolver methods = %v, want exactly [Resolve]", exposed)
+	if !slices.Equal(exposed, []string{"ReauthorizeScalarDependency", "Resolve"}) {
+		t.Fatalf("*Resolver methods = %v, want exactly [ReauthorizeScalarDependency Resolve]", exposed)
 	}
 	if reflect.TypeOf(ResolveRequest{}).NumMethod() != 0 {
 		t.Fatal("ResolveRequest observes a method")
@@ -814,8 +815,8 @@ func assertResolveBody(t *testing.T, body *ast.BlockStmt) {
 	if !ok || astTypeName(sealed.Type) != "Resolution" {
 		t.Fatalf("Resolve returns %v, want one Resolution literal", final.Results[0])
 	}
-	if retained := resolverRetention(sealed); !slices.Equal(retained, [][2]string{{"binding", "binding"}}) {
-		t.Fatalf("Resolve seals %v, want exactly the binding it bound", retained)
+	if retained := resolverRetention(sealed); !slices.Equal(retained, [][2]string{{"binding", "binding"}, {"authority", "authority"}}) {
+		t.Fatalf("Resolve seals %v, want exactly the binding and authority it resolved", retained)
 	}
 	if accepted, ok := final.Results[1].(*ast.Ident); !ok || accepted.Name != "nil" {
 		t.Fatalf("Resolve returns %v as its error, want nil", final.Results[1])

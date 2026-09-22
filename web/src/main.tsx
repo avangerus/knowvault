@@ -640,6 +640,12 @@ type AnswerFreshness = {
   last_successful_sync_at?: string;
 };
 
+type AnswerObservationWindow = {
+  basis?: string;
+  started_at?: string;
+  completed_at?: string;
+};
+
 export type AnswerResult = {
   kind: string;
   value?: string;
@@ -664,6 +670,8 @@ export type AnswerResult = {
   freshness?: AnswerFreshness;
   evidence_refs?: Array<string | number>;
   audit_receipt?: Array<string | number>;
+  observation_window?: AnswerObservationWindow;
+  receipt_digest?: string;
 };
 
 // FIX-2 #2 ("Understood as"): populated only when Create spliced a bare period
@@ -2520,6 +2528,19 @@ function answerCompletenessIsPartial(completeness: string | undefined | null): b
   return typeof completeness === "string" && completeness.trim() === "PARTIAL";
 }
 
+function answerObservationWindowText(window: AnswerObservationWindow): string {
+  const parts: string[] = [];
+  if (window.basis) parts.push(window.basis);
+  if (window.started_at && window.completed_at) {
+    parts.push(`${formatTime(window.started_at)} – ${formatTime(window.completed_at)}`);
+  } else if (window.started_at) {
+    parts.push(`started ${formatTime(window.started_at)}`);
+  } else if (window.completed_at) {
+    parts.push(`completed ${formatTime(window.completed_at)}`);
+  }
+  return parts.join(" · ");
+}
+
 // The validated QueryIntent, rendered from the fields the server actually
 // sent: no metric id, version, period, filter, output or as_of is guessed.
 function unifiedIntentText(intent: AnswerIntent | undefined): string {
@@ -2627,6 +2648,7 @@ export function UnifiedAnswerRows({ result }: { result?: AnswerResult }) {
 // is invented when the server left a field absent.
 export function AnswerResultBlock({ result }: { result: AnswerResult }) {
   const periodText = answerPeriodText(result.period);
+  const hasObservationWindow = Boolean(result.observation_window);
   const snapshotText = result.snapshot.captured_at
     ? formatTime(result.snapshot.captured_at)
     : result.snapshot.id ?? null;
@@ -2649,7 +2671,16 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
           )}
           {periodText && (<><dt>Period</dt><dd>{periodText}</dd></>)}
           {result.timezone && (<><dt>Time zone</dt><dd>{result.timezone}</dd></>)}
-          {(snapshotText || result.snapshot.row_count > 0) && (
+          {result.observation_window && (
+            <><dt>Observed</dt><dd>{answerObservationWindowText(result.observation_window)}</dd></>
+          )}
+          {result.receipt_digest && (
+            <><dt>Evidence receipt</dt><dd>{result.receipt_digest}</dd></>
+          )}
+          {hasObservationWindow && result.snapshot.row_count > 0 && (
+            <><dt>Rows read</dt><dd>{result.snapshot.row_count}</dd></>
+          )}
+          {(snapshotText || (!hasObservationWindow && result.snapshot.row_count > 0)) && (
             <>
               <dt>Snapshot</dt>
               <dd>{snapshotText ?? "current"}{result.snapshot.row_count > 0 ? `, ${result.snapshot.row_count} rows` : ""}</dd>
@@ -3933,8 +3964,12 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const corpusWarning = corpusStatusWarning(run.corpus_status);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
   const text = run.answer ?? run.clarification;
-  const resultValue = run.answer_result?.value
-    ? `${run.answer_result.value}${run.answer_result.unit ? ` ${run.answer_result.unit}` : ""}`
+  const liveResult = run.answer_result;
+  const liveObservationWindow = liveResult?.observation_window;
+  const liveReceiptDigest = liveResult?.receipt_digest;
+  const isLiveScalar = Boolean(liveObservationWindow && liveReceiptDigest);
+  const resultValue = liveResult?.value
+    ? `${liveResult.value}${liveResult.unit ? ` ${liveResult.unit}` : ""}`
     : null;
   const citationHref = (citation: QuestionCitation): string => buildEvidenceHash({
     workspace: workspaceID,
@@ -3949,7 +3984,26 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   return (
     <>
       <ToolCallsDisclosure run={run} showResults={false} />
-      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : text ? (
+      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : isLiveScalar ? (
+        <div className="answer-body live-calculation-answer">
+          <span className="badge badge-live"><IconCheckCircle />Verified live calculation</span>
+          {text ? (
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          ) : resultValue ? (
+            <span className="answer-live-summary">{resultValue}</span>
+          ) : null}
+          <details className="live-calculation-evidence">
+            <summary>Evidence for this calculation</summary>
+            <dl>
+              {liveResult?.period && <><dt>Period</dt><dd>{answerPeriodText(liveResult.period) ?? "—"}</dd></>}
+              {liveResult?.timezone && <><dt>Time zone</dt><dd>{liveResult.timezone}</dd></>}
+              <dt>Contributing rows</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
+              <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
+              <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
+            </dl>
+          </details>
+        </div>
+      ) : text ? (
         isQuote ? (
           <blockquote className="answer-quote">
             <span className="badge badge-quote"><IconCheckCircle />quote verified</span>
@@ -3967,7 +4021,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           {run.answer_result?.period?.label && <p className="msg-note">Period: {run.answer_result.period.label}</p>}
         </div>
       ) : <p className="msg-warning">No answer was returned. Check the sources and try again.</p>}
-      {text && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
+      {text && !isLiveScalar && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
       {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
       {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
       {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}

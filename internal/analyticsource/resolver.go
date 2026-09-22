@@ -100,7 +100,7 @@ func (resolver *Resolver) Resolve(
 	if err != nil {
 		return Resolution{}, errMismatch
 	}
-	return Resolution{binding: binding}, nil
+	return Resolution{binding: binding, authority: authority}, nil
 }
 
 // resolutionPlan is the exact read plan one accepted ResolveRequest prepares:

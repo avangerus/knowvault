@@ -41,6 +41,7 @@ import (
 	"knowvault.local/verified-workspace/internal/serviceprincipal"
 	sourcediscovery "knowvault.local/verified-workspace/internal/source/discovery"
 	"knowvault.local/verified-workspace/internal/source/evidence"
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	"knowvault.local/verified-workspace/internal/source/registration"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
@@ -348,8 +349,29 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		if analyticcatalog.CodeOf(datasetProfileMountErr) != analyticcatalog.CodeMountUnavailable {
 			return fail(StartupStageDatasetProfileMount)
 		}
-	} else if err := questions.EnableDatasetProfileCatalog(datasetProfileCatalog, workspaceStore); err != nil {
-		return fail(StartupStageDatasetProfileMount)
+	} else {
+		sourceBundle, sourceTrustErr := trustbundle.LoadSourceMounted()
+		if sourceTrustErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		sourceDatabaseRoots, sourceRootsErr := sourceBundle.DatabaseRoots()
+		if sourceRootsErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		connector, connectorErr := postgresqlquery.NewLiveConnectorWithTrust(secrets, sourceDatabaseRoots)
+		if connectorErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		authorizedReader, readerErr := workspacerepository.NewPostgreSQLAuthorizedReader(workspaceStore, connector)
+		if readerErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		if err := questions.EnableDatasetProfileCatalog(datasetProfileCatalog, workspaceStore); err != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		if err := questions.EnableAnalyticScalarExecutor(authorizedReader); err != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
 	}
 	// GEN-2 (ADR-0088): the interim GENERATIVE adapter/verifier are wired only
 	// behind their own explicit administrator mount, exactly like the

@@ -43,6 +43,7 @@ type PostgreSQLAuthorityRequest struct {
 // fields are private so that callers can only observe the resolved values
 // through the accessor methods.
 type PostgreSQLAuthorityResult struct {
+	organizationID      string
 	workspaceID         string
 	workspaceRevision   int64
 	workspaceConfigHash string
@@ -388,6 +389,7 @@ func (store *Store) resolvePostgreSQLExecutionAuthority(ctx context.Context, acc
 		}
 		result = postgreSQLExecutionAuthority{
 			result: PostgreSQLAuthorityResult{
+				organizationID:      access.OrganizationID,
 				workspaceID:         request.WorkspaceID,
 				workspaceRevision:   snapshot.Revision,
 				workspaceConfigHash: storedHash,
