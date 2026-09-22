@@ -1047,7 +1047,7 @@
     "tests/integration/postgres/source_version_purge_queue_test.go": "4eb58e19738a57c5e16d75287ad864795c5e3148edd682929938e070d8844c91",
     "tests/integration/postgres/structured_rowset_scope_test.go": "0a1d2555cbcdd827e67219f625f6408506fa88110060744bec5da19124bc3510",
     "tests/integration/postgres/structured_rowset_scoped_source_test.go": "753b017686fb891479561b19eabc9ae95b8f5e7bc686026fbabde0668c62eb3d",
-    "tests/integration/postgres/tool_loop_question_test.go": "64816305300f8a0af6105c11f4683347b8a7437c239616e313ce34eeaaee6d24",
+    "tests/integration/postgres/tool_loop_question_test.go": "e1db3aa964b21cc0b8a53f82d7c61cfc33cf43806812d31baed8f13d4a0cbaa8",
     "tests/integration/postgres/upl1_upload_document_test.go": "b830bd57b3c215f9b286e37c03ee6b2d5db3175961ed4c7984e0ad0b795947c4",
     "tests/integration/postgres/worker_authorize_gate_test.go": "335060d81bc30e11603bb4e69c2bf0bb5140680786aa9f3369651d938efc8b7c",
     "tests/integration/postgres/workspace_degraded_repair_test.go": "9caa3339d5eb002e5958808a0c02a7d9f133635f401459788a24d39ef367f2ae",

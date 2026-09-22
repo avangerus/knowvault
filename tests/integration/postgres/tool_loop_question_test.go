@@ -188,10 +188,16 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					name := "knowvault_read"
 					args, _ := json.Marshal(map[string]any{"address": emittedAddress})
 					if count > 1 {
-						// Deliberately omit reading: the final citation must still
-						// take the authorized automatic binding path.
-						name = "knowvault_list_objects"
-						args = json.RawMessage(`{"limit":1}`)
+						// The first call observes the exact address in this run. The
+						// remaining calls consume the research budget so the final
+						// citation must take the authorized automatic binding path.
+						if i == 0 {
+							name = "knowvault_search"
+							args, _ = json.Marshal(map[string]any{"query": lastMessage.Content})
+						} else {
+							name = "knowvault_list_objects"
+							args = json.RawMessage(`{"limit":1}`)
+						}
 					}
 					calls = append(calls, map[string]any{"id": fmt.Sprintf("final-research-%d", i), "type": "function", "function": map[string]any{"name": name, "arguments": string(args)}})
 				}
@@ -205,7 +211,24 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					message["tool_calls"] = []any{map[string]any{"id": "final-forbidden-read", "type": "function", "function": map[string]any{"name": "knowvault_read", "arguments": `{"address":"` + emittedAddress + `"}`}}}
 					finish = "tool_calls"
 				} else {
-					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.", "citations": []any{map[string]any{"address": emittedAddress}}}}})
+					citeAddress := emittedAddress
+					if scenario == "final_batch" || scenario == "final_refusal" {
+						citeAddress = ""
+						for _, entry := range input.Messages {
+							if entry.Role != "tool" || entry.ToolCallID != "final-research-0" {
+								continue
+							}
+							for _, line := range strings.Split(entry.Content, "\n") {
+								if strings.Contains(line, "42") {
+									citeAddress = regexp.MustCompile(`kv1:[^\s]+`).FindString(line)
+								}
+							}
+						}
+						if citeAddress == "" {
+							t.Error("bounded batch search returned no readable address")
+						}
+					}
+					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.", "citations": []any{map[string]any{"address": citeAddress}}}}})
 					message["content"] = string(content)
 				}
 			}
@@ -451,8 +474,8 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		name, profile              string
 		turns, calls, bindingReads int
 	}{
-		{"final_turn", "turn-limit", 2, 2, 0},
-		{"final_small", "small-budget", 2, 2, 0},
+		{"final_turn", "turn-limit", 2, 1, 0},
+		{"final_small", "small-budget", 2, 1, 0},
 		{"final_batch", "batch-budget", 2, 4, 1},
 		{"final_refusal", "batch-budget", 3, 4, 1},
 	} {
@@ -469,7 +492,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 			}
 			bindingReads := 0
 			for _, call := range run.ToolLoop.Calls {
-				if call.ID == "final-forbidden-read" || call.ID == "final-research-2" || call.ID == "final-research-3" || call.ID == "final-research-4" {
+				if call.ID == "final-forbidden-read" || call.ID == "final-research-3" || call.ID == "final-research-4" {
 					t.Fatalf("refused finalization call reached data: %s", call.ID)
 				}
 				if call.Name == "knowvault_read" && call.System {
@@ -507,7 +530,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	mixedKey := make([]byte, 32)
 	mixedKey[0] = 33
 	mixed, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(mixedKey)})
-	if err != nil || mixed.ToolLoop == nil || mixed.ToolLoop.StopReason != "FORMAT_INVALID" || len(mixed.ToolLoop.Calls) != 1 || len(mixed.Citations) != 0 {
+	if err != nil || mixed.ToolLoop == nil || mixed.ToolLoop.StopReason != "FORMAT_INVALID" || len(mixed.ToolLoop.Calls) != 0 || len(mixed.Citations) != 0 {
 		t.Fatalf("mixed final action executed knowledge calls or disclosed claims: %v %+v", err, mixed)
 	}
 	catalog, err := runtime.Catalog(ctx, scope)
