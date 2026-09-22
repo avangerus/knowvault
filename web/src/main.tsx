@@ -640,6 +640,12 @@ type AnswerFreshness = {
   last_successful_sync_at?: string;
 };
 
+type AnswerObservationWindow = {
+  basis?: string;
+  started_at?: string;
+  completed_at?: string;
+};
+
 export type AnswerResult = {
   kind: string;
   value?: string;
@@ -664,6 +670,8 @@ export type AnswerResult = {
   freshness?: AnswerFreshness;
   evidence_refs?: Array<string | number>;
   audit_receipt?: Array<string | number>;
+  observation_window?: AnswerObservationWindow;
+  receipt_digest?: string;
 };
 
 // FIX-2 #2 ("Understood as"): populated only when Create spliced a bare period
@@ -2520,6 +2528,19 @@ function answerCompletenessIsPartial(completeness: string | undefined | null): b
   return typeof completeness === "string" && completeness.trim() === "PARTIAL";
 }
 
+function answerObservationWindowText(window: AnswerObservationWindow): string {
+  const parts: string[] = [];
+  if (window.basis) parts.push(window.basis);
+  if (window.started_at && window.completed_at) {
+    parts.push(`${formatTime(window.started_at)} – ${formatTime(window.completed_at)}`);
+  } else if (window.started_at) {
+    parts.push(`started ${formatTime(window.started_at)}`);
+  } else if (window.completed_at) {
+    parts.push(`completed ${formatTime(window.completed_at)}`);
+  }
+  return parts.join(" · ");
+}
+
 // The validated QueryIntent, rendered from the fields the server actually
 // sent: no metric id, version, period, filter, output or as_of is guessed.
 function unifiedIntentText(intent: AnswerIntent | undefined): string {
@@ -2627,6 +2648,7 @@ export function UnifiedAnswerRows({ result }: { result?: AnswerResult }) {
 // is invented when the server left a field absent.
 export function AnswerResultBlock({ result }: { result: AnswerResult }) {
   const periodText = answerPeriodText(result.period);
+  const hasObservationWindow = Boolean(result.observation_window);
   const snapshotText = result.snapshot.captured_at
     ? formatTime(result.snapshot.captured_at)
     : result.snapshot.id ?? null;
@@ -2649,7 +2671,16 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
           )}
           {periodText && (<><dt>Period</dt><dd>{periodText}</dd></>)}
           {result.timezone && (<><dt>Time zone</dt><dd>{result.timezone}</dd></>)}
-          {(snapshotText || result.snapshot.row_count > 0) && (
+          {result.observation_window && (
+            <><dt>Observed</dt><dd>{answerObservationWindowText(result.observation_window)}</dd></>
+          )}
+          {result.receipt_digest && (
+            <><dt>Evidence receipt</dt><dd>{result.receipt_digest}</dd></>
+          )}
+          {hasObservationWindow && result.snapshot.row_count > 0 && (
+            <><dt>Rows read</dt><dd>{result.snapshot.row_count}</dd></>
+          )}
+          {(snapshotText || (!hasObservationWindow && result.snapshot.row_count > 0)) && (
             <>
               <dt>Snapshot</dt>
               <dd>{snapshotText ?? "current"}{result.snapshot.row_count > 0 ? `, ${result.snapshot.row_count} rows` : ""}</dd>

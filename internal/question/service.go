@@ -610,9 +610,14 @@ type Service struct {
 	// resolver bound to that exact snapshot and to the same concrete workspace
 	// repository store (internal/analyticsource). Both are the zero value until
 	// the single EnableDatasetProfileCatalog install sets them together; R1.1
-	// stores them only, and no path reads either yet.
+	// stores them for the Question tool loop's optional analytic capability.
+	//
+	// analyticScalarExecutor is the one-shot executor that
+	// installAnalyticScalarExecutor builds from that installed resolver and one
+	// concrete authorized reader. It stays nil until that install succeeds.
 	datasetProfileCatalog  analytic.DatasetProfileCatalog
 	analyticSourceResolver *analyticsource.Resolver
+	analyticScalarExecutor *analyticsource.ScalarExecutor
 }
 
 // EnableDatasetProfileCatalog installs the startup-loaded, immutable analytic
@@ -620,9 +625,9 @@ type Service struct {
 // workspace authority and governed exposure for that exact catalog. It is a
 // one-shot install: a nil Service, an invalid/zero catalog, a nil concrete
 // store, a retained catalog slot that is not the exact Go zero value, a
-// non-nil retained resolver, or a resolver construction refusal returns a
-// content-free CodeInvalid refusal, and a refused call leaves both slots
-// exactly as they were.
+// non-nil retained resolver, a non-nil retained scalar executor, or a resolver
+// construction refusal returns a content-free CodeInvalid refusal, and a
+// refused call leaves every slot exactly as it was.
 func (service *Service) EnableDatasetProfileCatalog(catalog analytic.DatasetProfileCatalog, store *workspacerepository.Store) error {
 	// The retained catalog carries a sealed entry slice, so it is not
 	// Go-comparable: its emptiness is an explicit comparison against the zero
@@ -631,7 +636,8 @@ func (service *Service) EnableDatasetProfileCatalog(catalog analytic.DatasetProf
 	// instead of being overwritten.
 	if service == nil || !catalog.Valid() || store == nil ||
 		!reflect.DeepEqual(service.datasetProfileCatalog, analytic.DatasetProfileCatalog{}) ||
-		service.analyticSourceResolver != nil {
+		service.analyticSourceResolver != nil ||
+		service.analyticScalarExecutor != nil {
 		return &Error{code: CodeInvalid}
 	}
 	resolver, err := analyticsource.NewResolver(store, catalog)
