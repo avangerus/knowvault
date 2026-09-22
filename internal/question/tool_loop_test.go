@@ -67,6 +67,25 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	}
 }
 
+func TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace(t *testing.T) {
+	const priorQuestion = "prior private question body"
+	const priorAnswer = "prior private answer body"
+	outbound, persisted := initialToolLoopMessages("current question", []toolLoopConversationTurn{{
+		RunID: "run-prior", Question: priorQuestion, Answer: priorAnswer,
+	}}, 32*1024)
+	if len(outbound) != 4 || !strings.Contains(outbound[1].Content, priorQuestion) || !strings.Contains(outbound[2].Content, priorAnswer) {
+		t.Fatalf("outbound messages do not contain separate history: %#v", outbound)
+	}
+	if len(persisted) != 2 || persisted[1].Content != "current question" {
+		t.Fatalf("persisted initial messages = %#v; want only system and current question", persisted)
+	}
+	for _, message := range persisted {
+		if strings.Contains(message.Content, priorQuestion) || strings.Contains(message.Content, priorAnswer) {
+			t.Fatalf("persisted initial trace contains previous-turn body: %#v", persisted)
+		}
+	}
+}
+
 func TestToolAnswerAcceptsOnlyAnEntireJSONFence(t *testing.T) {
 	const payload = `{"no_data":false,"claims":[{"text":"A source-backed fact.","citations":[{"fragment_id":"fragment_1"}]}]}`
 	want, ok := parseToolAnswer(payload)
