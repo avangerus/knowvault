@@ -906,14 +906,6 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			if scopeChanged {
 				break
 			}
-			// A successful analytic call already produced the complete, sealed
-			// scalar answer and receipt. Finish immediately: a second model call
-			// cannot strengthen that evidence and only adds latency or an
-			// opportunity to rewrite the server-owned result.
-			if retainedAnalyticScalarPair != nil {
-				record.StopReason = "ANSWER"
-				break
-			}
 			continue
 		}
 		answer, formatCode := parseToolAnswerDetailed(response.Message.Content)
@@ -1069,7 +1061,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		status = "INSUFFICIENT_EVIDENCE"
 	}
 	var answerResult *AnswerResult
-	if !scopeChanged && retainedAnalyticScalarPair != nil {
+	if !scopeChanged && retainedAnalyticScalarPair != nil && final != nil && !final.NoData && final.Clarification == "" {
 		presented, structured, presentationErr := analyticScalarPresentation(questionText, retainedAnalyticScalarPair.observation)
 		if presentationErr != nil {
 			return presentationErr
