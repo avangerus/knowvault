@@ -3968,6 +3968,11 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const liveObservationWindow = liveResult?.observation_window;
   const liveReceiptDigest = liveResult?.receipt_digest;
   const isLiveScalar = Boolean(liveObservationWindow && liveReceiptDigest);
+  // A live calculation and cited document prose prove different things. Keep
+  // their presentation separate so the model's document context is never
+  // mistaken for the server-owned calculation and receipt.
+  const isCombinedLiveResult = isLiveScalar && run.citations.length > 0;
+  const hasDocumentGroundedContext = isCombinedLiveResult && Boolean(text);
   const resultValue = liveResult?.value
     ? `${liveResult.value}${liveResult.unit ? ` ${liveResult.unit}` : ""}`
     : null;
@@ -3987,7 +3992,9 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
       {statusMessage ? <p className="msg-warning">{statusMessage}</p> : isLiveScalar ? (
         <div className="answer-body live-calculation-answer">
           <span className="badge badge-live"><IconCheckCircle />Verified live calculation</span>
-          {text ? (
+          {isCombinedLiveResult && resultValue ? (
+            <span className="answer-live-summary">{resultValue}</span>
+          ) : text ? (
             <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
           ) : resultValue ? (
             <span className="answer-live-summary">{resultValue}</span>
@@ -4021,7 +4028,13 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           {run.answer_result?.period?.label && <p className="msg-note">Period: {run.answer_result.period.label}</p>}
         </div>
       ) : <p className="msg-warning">No answer was returned. Check the sources and try again.</p>}
-      {text && !isLiveScalar && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
+      {hasDocumentGroundedContext && (
+        <div className="answer-body document-grounded-context">
+          <span className="badge badge-tell">document-grounded context / paraphrase</span>
+          <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text!} turnId={run.question_run_id} />
+        </div>
+      )}
+      {text && (!isLiveScalar || hasDocumentGroundedContext) && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
       {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
       {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
       {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
