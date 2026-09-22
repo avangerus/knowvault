@@ -3271,7 +3271,14 @@ func (service *Service) persistTerminalRun(ctx context.Context, access database.
 // identical to persistTerminalRun, including the single transaction, the single
 // AnswerStructured artifact and rollback on any failure.
 func (service *Service) persistTerminalRunWithAnalyticScalarPair(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult, analyticScalarPair *analyticScalarPair) error {
+	return service.persistTerminalRunWithStructuredDependencies(ctx, access, runID, workspaceID, answer, citations, selected, status, partial, uncertainties, conflicts, answerResult, analyticScalarPair, nil)
+}
+
+func (service *Service) persistTerminalRunWithStructuredDependencies(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult, analyticScalarPair *analyticScalarPair, governedQueryDependency *governedQueryDependency) error {
 	if analyticScalarPair != nil && !analyticScalarPair.observation.valid() {
+		return &Error{code: CodeInvalid}
+	}
+	if governedQueryDependency != nil && !governedQueryDependency.validForRun(runID) {
 		return &Error{code: CodeInvalid}
 	}
 	// R1: bind the citation grounding projection from the same authorized
@@ -3329,7 +3336,7 @@ func (service *Service) persistTerminalRunWithAnalyticScalarPair(ctx context.Con
 			}
 			citations[index].CitationID = citationID
 		}
-		structuredBytes, err := marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash, citations, answerResult, understoodFromContext(ctx), analyticScalarPair, toolLoopFromContext(ctx))
+		structuredBytes, err := marshalStructuredAnswerWithDependencies(runID, answerHash, citations, answerResult, understoodFromContext(ctx), analyticScalarPair, governedQueryDependency, toolLoopFromContext(ctx))
 		if err != nil {
 			return &Error{code: CodeUnavailable, cause: err}
 		}
@@ -4636,11 +4643,15 @@ type structuredAnswer struct {
 	// context, logs or audit metadata, and its bytes are never echoed in
 	// failure output.
 	AnalyticScalarDependency jsontext.Value `json:"analytic_scalar_dependency,omitempty"`
+	// GovernedQueryDependency is the opaque sealed dependency for a complete
+	// live-table result in ToolLoop. It is private artifact content and never a
+	// public Run, REST, MCP, service-state, log or audit projection.
+	GovernedQueryDependency jsontext.Value `json:"governed_query_dependency,omitempty"`
 
-	// analyticScalarPair is the private, non-JSON copy of the validated pair
-	// recovered by decodeStructuredAnswer. It is retained only for the next
-	// reader-gate card; it is never marshaled and never projected.
-	analyticScalarPair *analyticScalarPair
+	// These private copies are retained only for the later source reader gate;
+	// they are never marshaled or projected.
+	analyticScalarPair      *analyticScalarPair
+	governedQueryDependency *governedQueryDependency
 }
 
 func marshalStructuredAnswer(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, toolLoops ...*ToolLoopRecord) ([]byte, error) {
@@ -4654,6 +4665,13 @@ func marshalStructuredAnswer(runID, answerHash string, citations []Citation, ans
 // never be persisted without its exact dependency or vice versa. Any pair
 // refusal returns the content-free CodeInvalid and no artifact bytes.
 func marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, pair *analyticScalarPair, toolLoops ...*ToolLoopRecord) ([]byte, error) {
+	return marshalStructuredAnswerWithDependencies(runID, answerHash, citations, answerResult, understood, pair, nil, toolLoops...)
+}
+
+func marshalStructuredAnswerWithDependencies(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, pair *analyticScalarPair, dependency *governedQueryDependency, toolLoops ...*ToolLoopRecord) ([]byte, error) {
+	if !validOpaque(runID) || len(toolLoops) > 1 {
+		return nil, &Error{code: CodeInvalid}
+	}
 	structured := structuredAnswer{
 		SchemaVersion: "extractive-answer-v1", QuestionRunID: runID, AnswerMode: answerMode,
 		VerificationMethod: verification, AnswerHash: answerHash, Claims: make([]structuredClaim, 0, len(citations)),
@@ -4667,9 +4685,21 @@ func marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash string, cit
 		structured.AnalyticScalar = &observation
 		structured.AnalyticScalarDependency = dependency
 	}
+	var toolLoop *ToolLoopRecord
 	if len(toolLoops) > 0 && toolLoops[0] != nil {
-		structured.ToolLoop = toolLoops[0]
+		toolLoop = toolLoops[0]
+		structured.ToolLoop = toolLoop
 		structured.AnswerMode, structured.VerificationMethod = AnswerModeToolLoop, verificationAddress
+	}
+	if !validateGovernedQueryToolBinding(runID, dependency, toolLoop) {
+		return nil, &Error{code: CodeInvalid}
+	}
+	if dependency != nil {
+		encoded, err := encodeGovernedQueryDependency(runID, *dependency)
+		if err != nil {
+			return nil, &Error{code: CodeInvalid}
+		}
+		structured.GovernedQueryDependency = encoded
 	}
 	for _, citation := range citations {
 		structured.Claims = append(structured.Claims, structuredClaim{
@@ -4679,41 +4709,39 @@ func marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash string, cit
 	return jsonv2.Marshal(structured)
 }
 
-// structuredAnswerScalarPresence is the small private presence-aware wire shape
-// for the two optional scalar members. structuredAnswer itself cannot tell them
-// apart: an absent member and an explicit JSON null both decode to the same Go
-// zero value (a nil observation pointer and empty dependency bytes). This shadow
-// decodes each member to its raw JSON value instead, so nil bytes mean the
-// member name was absent while jsontext.KindNull means the name was literally
-// present as null. It is decode-only, unexported and never marshaled.
-type structuredAnswerScalarPresence struct {
+// structuredAnswerDependencyPresence distinguishes an absent dependency from
+// an explicit JSON null. structuredAnswer itself cannot tell them apart because
+// both decode to an empty jsontext.Value. This shadow keeps the raw member value
+// long enough to apply the legacy-absence rule; it is decode-only and never
+// marshaled.
+type structuredAnswerDependencyPresence struct {
 	AnalyticScalar           jsontext.Value `json:"analytic_scalar"`
 	AnalyticScalarDependency jsontext.Value `json:"analytic_scalar_dependency"`
+	GovernedQueryDependency  jsontext.Value `json:"governed_query_dependency"`
 }
 
 // analyticScalarNull reports whether either scalar member name was present as
 // the JSON null literal. The strict structuredAnswer decode has already refused
 // unknown and duplicate names before this runs, so the presence decode only has
 // to recover which members the document named and with which raw kind.
-func (presence structuredAnswerScalarPresence) analyticScalarNull() bool {
+func (presence structuredAnswerDependencyPresence) analyticScalarNull() bool {
 	return presence.AnalyticScalar.Kind() == jsontext.KindNull ||
 		presence.AnalyticScalarDependency.Kind() == jsontext.KindNull
+}
+
+func (presence structuredAnswerDependencyPresence) governedQueryNull() bool {
+	return presence.GovernedQueryDependency.Kind() == jsontext.KindNull
 }
 
 // decodeStructuredAnswer is the single strict read back of the server-written
 // structured answer artifact: the supplied trusted Question Run must be a valid
 // opaque identity and must equal the artifact's own QuestionRunID byte for byte,
-// unknown members and duplicate names are refused, and the scalar and its opaque
-// dependency must decode together as the exact pair bound to that run. Any run
-// or pair failure returns the exact zero structured answer plus a content-free
-// CodeUnavailable, so a corrupt artifact can never expose a partial, unpaired or
-// unvalidated scalar. Both pair members absent is the sole legacy absence and
-// succeeds; either member present as JSON null is refused in every half/null
-// combination, and a present pair is retained privately for the next
-// reader-gate card. The pair decoder is invoked exactly once for every artifact
-// that passes the outer decode and run match, including the explicit-null
-// refusals, so the presence rule and the pair rule are both decided against the
-// same single decode attempt.
+// unknown members and duplicate names are refused, and each optional source
+// dependency must match its own sealed result. Any run or dependency failure
+// returns the exact zero structured answer plus a content-free CodeUnavailable.
+// Both halves of the scalar pair absent and the governed dependency absent are
+// legacy-compatible; explicit null or an unmatched successful live call is
+// refused. Valid dependencies are retained privately for the later reader gate.
 func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer, error) {
 	if !validOpaque(expectedRunID) {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
@@ -4725,7 +4753,7 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 	if structured.QuestionRunID != expectedRunID {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
-	var presence structuredAnswerScalarPresence
+	var presence structuredAnswerDependencyPresence
 	if err := jsonv2.Unmarshal(raw, &presence, jsontext.AllowDuplicateNames(false)); err != nil {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
@@ -4733,10 +4761,15 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 	if presence.analyticScalarNull() || pairErr != nil {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
+	governedDependency, governedErr := decodeGovernedQueryDependency(expectedRunID, structured.GovernedQueryDependency)
+	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryToolBinding(expectedRunID, governedDependency, structured.ToolLoop) {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
 	if pair != nil {
 		structured.AnalyticScalar = &pair.observation
 		structured.analyticScalarPair = pair
 	}
+	structured.governedQueryDependency = governedDependency
 	return structured, nil
 }
 

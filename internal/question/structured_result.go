@@ -52,11 +52,10 @@ func (service *Service) ProcessingMode(workspaceID string) (string, string) {
 	return ProcessingModeInternal, provider
 }
 
-// AnswerResult is the structured counterpart of an AGGREGATE/LIST answer
-// produced by the snapshot reducer (snapshot_aggregate.go). It is populated
-// only for a run answered through answerStructuredAggregate; every other
-// operation leaves QuestionRun's answer_result absent, exactly like today's
-// answer_hash/manifest_hash are absent before a run completes.
+// AnswerResult is the structured counterpart of a server-owned snapshot
+// calculation or governed live-table result. It is populated only when the
+// terminal answer has a validated structured result; other runs leave it
+// absent, like answer_hash and manifest_hash before completion.
 type AnswerResult struct {
 	Kind         string         `json:"kind"`
 	Value        string         `json:"value,omitempty"`
@@ -73,26 +72,26 @@ type AnswerResult struct {
 	// Every one is optional and every one is populated only from data this
 	// same run already computed; a genuinely absent value stays empty so the
 	// UI renders "no data" rather than an invented value. run_id is the
-	// run this answer belongs to; execution_id/snapshot_id are the stable
-	// snapshot/execution identity the result digest is keyed by (never the
-	// per-run id, so two runs of the same intent over the same snapshot tie
-	// out); result_digest is the canonical hash of the result content.
-	RunID             string                   `json:"run_id,omitempty"`
-	Intent            *AnswerIntent            `json:"intent,omitempty"`
-	RowsetRef         string                   `json:"rowset_ref,omitempty"`
-	MetricVersion     string                   `json:"metric_version,omitempty"`
-	SnapshotID        string                   `json:"snapshot_id,omitempty"`
-	ExecutionID       string                   `json:"execution_id,omitempty"`
-	ResultDigest      string                   `json:"result_digest,omitempty"`
-	Freshness         *CorpusFreshness         `json:"freshness,omitempty"`
-	EvidenceRefs      []string                 `json:"evidence_refs,omitempty"`
-	AuditReceipt      []string                 `json:"audit_receipt,omitempty"`
+	// run this answer belongs to. Snapshot-calculation digests use the stable
+	// snapshot/execution identity; LIVE_TABLE carries the exact digest of its
+	// complete governed text-table result.
+	RunID         string           `json:"run_id,omitempty"`
+	Intent        *AnswerIntent    `json:"intent,omitempty"`
+	RowsetRef     string           `json:"rowset_ref,omitempty"`
+	MetricVersion string           `json:"metric_version,omitempty"`
+	SnapshotID    string           `json:"snapshot_id,omitempty"`
+	ExecutionID   string           `json:"execution_id,omitempty"`
+	ResultDigest  string           `json:"result_digest,omitempty"`
+	Freshness     *CorpusFreshness `json:"freshness,omitempty"`
+	EvidenceRefs  []string         `json:"evidence_refs,omitempty"`
+	AuditReceipt  []string         `json:"audit_receipt,omitempty"`
+	// Governed live read receipt fields (additive; absent for legacy answers).
 	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
 	ReceiptDigest     string                   `json:"receipt_digest,omitempty"`
 }
 
 // AnswerObservationWindow is the server-observed wall-clock window around a
-// bounded live analytic read. It is provenance for the read call, not a source
+// bounded live governed read. It is provenance for the read call, not a source
 // modification timestamp and not a client-supplied freshness claim.
 type AnswerObservationWindow struct {
 	Basis       string `json:"basis,omitempty"`
@@ -154,15 +153,11 @@ type AnswerKey struct {
 	Fields map[string]string `json:"fields,omitempty"`
 }
 
-// canonicalResultDigest returns R2 Outcome 3's result_digest: the SHA-256 of
-// the canonical (RFC 8785/JCS) projection of exactly the answer content plus
-// the stable snapshot/execution identity and metric version the run already
-// held. The per-run run_id, the display-only freshness and the audit/evidence
-// references are deliberately excluded, so two runs of the same validated
-// intent over the same snapshot tie out byte-for-byte while a different value,
-// period, filter set, completeness, metric version or snapshot necessarily
-// changes the digest. An uncanonicalizable value yields "" rather than a
-// fabricated digest.
+// canonicalResultDigest returns the snapshot-calculation digest: the SHA-256
+// of the canonical (RFC 8785/JCS) projection of the answer content plus its
+// stable snapshot/execution identity and metric version. LIVE_TABLE uses the
+// governedquery text-table digest instead, since its rows are sealed in the
+// tool trace and are intentionally absent from AnswerResult.
 func canonicalResultDigest(answer *AnswerResult) string {
 	if answer == nil {
 		return ""
@@ -195,11 +190,13 @@ func canonicalResultDigest(answer *AnswerResult) string {
 	return canon.Hash(raw)
 }
 
-// CanonicalDigest exposes R2 Outcome 3's deterministic result digest for
-// callers (and tests) outside this package without letting them re-implement
-// the canonical projection. It is exactly the value persisted in
-// AnswerResult.ResultDigest.
+// CanonicalDigest returns this result's server-owned digest. Snapshot
+// calculations are canonicalized here; LIVE_TABLE returns its independently
+// verified exact table digest, whose rows remain sealed in ToolLoop.
 func (answer *AnswerResult) CanonicalDigest() string {
+	if answer != nil && answer.Kind == "LIVE_TABLE" {
+		return answer.ResultDigest
+	}
 	return canonicalResultDigest(answer)
 }
 

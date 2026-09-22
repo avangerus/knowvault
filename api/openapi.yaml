@@ -5106,14 +5106,15 @@ components:
       properties:
         kind:
           type: string
-          enum: [CALCULATION]
+          description: CALCULATION is a deterministic snapshot reduction; LIVE_TABLE is a complete governed live read whose rows remain in the encrypted tool trace.
+          enum: [CALCULATION, LIVE_TABLE]
         value:
           type: string
         unit:
           type: string
         operation:
           type: string
-          enum: [COUNT, SUM, LIST]
+          enum: [COUNT, SUM, LIST, GOVERNED_READ]
         rule:
           type: string
         filters:
@@ -5175,10 +5176,20 @@ components:
           maxLength: 128
         result_digest:
           description: >-
-            R2 Outcome 3: SHA-256 of the canonical (RFC 8785/JCS) projection
-            of the result content plus the stable snapshot/execution identity
-            and metric version. Two runs of the same validated intent over the
-            same snapshot yield the same digest.
+            For CALCULATION, SHA-256 of the canonical (RFC 8785/JCS)
+            calculation projection and its stable identity. For LIVE_TABLE,
+            the exact governedquery digest of {format, columns, row_count, rows}.
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        observation_window:
+          $ref: "#/components/schemas/QuestionAnswerObservationWindow"
+        receipt_digest:
+          description: >-
+            SHA-256 of the canonical (RFC 8785/JCS) server receipt projection.
+            For LIVE_TABLE this binds the Question Run, operation, attempt,
+            SQL hash, exposed-schema revision, database identity, exact result
+            digest, row count, completeness and server execution window. It
+            contains no SQL text or connection id.
           type: string
           pattern: '^sha256:[0-9a-f]{64}$'
         freshness:
@@ -5196,6 +5207,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OpaqueID"
+    QuestionAnswerObservationWindow:
+      type: object
+      additionalProperties: false
+      properties:
+        basis:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
     QuestionAnswerIntent:
       description: >-
         R2 Outcome 3: read-only projection of the QueryIntent the server validated against an

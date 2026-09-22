@@ -67,6 +67,22 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	}
 }
 
+func TestLiveOnlyAndMixedToolClaimsNeedTheRightBacking(t *testing.T) {
+	if !toolClaimHasSupport(false, 0, true, true) || !toolLiveAnswerHasCompleteSupport(true, true) {
+		t.Fatal("citation-free interpretation of a validated live table was refused")
+	}
+	if !toolClaimHasSupport(true, 1, true, true) || !toolClaimHasSupport(false, 0, true, true) ||
+		!toolLiveAnswerHasCompleteSupport(true, true) {
+		t.Fatal("mixed document and live claims did not pass with their matching evidence")
+	}
+	if toolClaimHasSupport(true, 0, false, true) || toolLiveAnswerHasCompleteSupport(true, false) {
+		t.Fatal("invalid document references were rescued by the live table")
+	}
+	if toolClaimHasSupport(false, 0, true, false) {
+		t.Fatal("citation-free claim without a live result was treated as supported")
+	}
+}
+
 func TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace(t *testing.T) {
 	const priorQuestion = "prior private question body"
 	const priorAnswer = "prior private answer body"

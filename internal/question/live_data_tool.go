@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/source/canon"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -22,6 +25,7 @@ const (
 	liveDataMaxCellBytes   = 4096
 	liveDataMaxColumnBytes = 128
 	liveDataQuestionBytes  = 4000
+	liveDataResultFormat   = "postgres-text-table-v1"
 )
 
 const liveDataToolSchema = `{"type":"object","additionalProperties":false,"required":["question"],"properties":{"question":{"type":"string"}}}`
@@ -55,15 +59,18 @@ type liveDataReadWindow struct {
 // liveDataProjection is deliberately a new allow-listed shape. In particular,
 // it has no SQL, connection id, cost, credentials or internal error field.
 type liveDataProjection struct {
+	Format                string             `json:"format"`
 	Columns               []string           `json:"columns"`
 	Rows                  [][]*string        `json:"rows"`
 	RowCount              int                `json:"row_count"`
-	AttemptID             string             `json:"attempt_id,omitempty"`
-	SQLHash               string             `json:"sql_hash,omitempty"`
-	ExposedSchemaRevision int64              `json:"exposed_schema_revision,omitempty"`
-	ResultDigest          string             `json:"result_digest,omitempty"`
+	AttemptID             string             `json:"attempt_id"`
+	SQLHash               string             `json:"sql_hash"`
+	ExposedSchemaRevision int64              `json:"exposed_schema_revision"`
+	ResultDigest          string             `json:"result_digest"`
 	ReadWindow            liveDataReadWindow `json:"read_window"`
-	DatabaseIdentity      string             `json:"database_identity,omitempty"`
+	DatabaseIdentity      string             `json:"database_identity"`
+	ExecutionStartedAt    string             `json:"execution_started_at"`
+	ExecutionCompletedAt  string             `json:"execution_completed_at"`
 	Complete              bool               `json:"complete"`
 }
 
@@ -95,12 +102,23 @@ func parseLiveDataQuestion(raw json.RawMessage) (string, bool) {
 }
 
 func projectLiveDataResult(result governedask.AskResult, maxBytes int) (liveDataProjection, []byte, bool) {
+	projection, payload, ok, _ := projectLiveDataResultDetailed(result, maxBytes)
+	return projection, payload, ok
+}
+
+func projectLiveDataResultDetailed(result governedask.AskResult, maxBytes int) (liveDataProjection, []byte, bool, string) {
 	if maxBytes < 1 || result.RowCount < 0 || result.RowCount > liveDataMaxRows ||
 		len(result.Columns) == 0 || len(result.Columns) > liveDataMaxColumns ||
 		result.RowCount != len(result.Rows) || len(result.Rows)*len(result.Columns) > liveDataMaxCells {
-		return liveDataProjection{}, nil, false
+		return liveDataProjection{}, nil, false, "LIVE_DATA_RESULT_TOO_LARGE"
+	}
+	startedAt, completedAt, timesOK := liveDataExecutionTimes(result.ExecutionStartedAt, result.ExecutionCompletedAt, time.Now().UTC())
+	if !timesOK || result.ResultFormat != liveDataResultFormat || !validLiveDataAttemptID(result.AttemptID) || !validGovernedID(result.ConnectionID) ||
+		!validGovernedSHA256(result.SQLHash) || result.ExposedSchemaRevision < 1 || !validGovernedID(result.DatabaseIdentity) {
+		return liveDataProjection{}, nil, false, "LIVE_DATA_UNAVAILABLE"
 	}
 	projection := liveDataProjection{
+		Format:                liveDataResultFormat,
 		Columns:               append([]string(nil), result.Columns...),
 		Rows:                  make([][]*string, len(result.Rows)),
 		RowCount:              result.RowCount,
@@ -110,16 +128,18 @@ func projectLiveDataResult(result governedask.AskResult, maxBytes int) (liveData
 		ResultDigest:          result.ResultDigest,
 		ReadWindow:            liveDataReadWindow{Offset: 0, Limit: result.RowCount, ReturnedRows: result.RowCount, TotalRows: result.RowCount, Complete: true},
 		DatabaseIdentity:      result.DatabaseIdentity,
+		ExecutionStartedAt:    startedAt,
+		ExecutionCompletedAt:  completedAt,
 		Complete:              true,
 	}
 	for _, column := range projection.Columns {
 		if !utf8.ValidString(column) || len(column) == 0 || len(column) > liveDataMaxColumnBytes {
-			return liveDataProjection{}, nil, false
+			return liveDataProjection{}, nil, false, "LIVE_DATA_RESULT_TOO_LARGE"
 		}
 	}
 	for rowIndex, row := range result.Rows {
 		if len(row) != len(projection.Columns) {
-			return liveDataProjection{}, nil, false
+			return liveDataProjection{}, nil, false, "LIVE_DATA_RESULT_TOO_LARGE"
 		}
 		projection.Rows[rowIndex] = make([]*string, len(row))
 		for cellIndex, cell := range row {
@@ -127,25 +147,82 @@ func projectLiveDataResult(result governedask.AskResult, maxBytes int) (liveData
 				continue
 			}
 			if !utf8.ValidString(*cell) || len(*cell) > liveDataMaxCellBytes {
-				return liveDataProjection{}, nil, false
+				return liveDataProjection{}, nil, false, "LIVE_DATA_RESULT_TOO_LARGE"
 			}
 			value := *cell
 			projection.Rows[rowIndex][cellIndex] = &value
 		}
 	}
-	for _, value := range []string{projection.AttemptID, projection.SQLHash, projection.ResultDigest, projection.DatabaseIdentity} {
-		if !utf8.ValidString(value) || len(value) > 256 {
-			return liveDataProjection{}, nil, false
-		}
-	}
-	if projection.ExposedSchemaRevision < 0 {
-		return liveDataProjection{}, nil, false
+	if !governedask.VerifyTextTableResultDigest(projection.Columns, projection.RowCount, projection.Rows, projection.ResultDigest) {
+		return liveDataProjection{}, nil, false, "LIVE_DATA_UNAVAILABLE"
 	}
 	payload, err := json.Marshal(projection)
 	if err != nil || len(payload) > maxBytes {
-		return liveDataProjection{}, nil, false
+		return liveDataProjection{}, nil, false, "LIVE_DATA_RESULT_TOO_LARGE"
 	}
-	return projection, payload, true
+	return projection, payload, true, ""
+}
+
+func liveDataExecutionTimes(started, completed, now time.Time) (string, string, bool) {
+	if started.IsZero() || completed.IsZero() || completed.Before(started) || completed.After(now) {
+		return "", "", false
+	}
+	return started.UTC().Format(time.RFC3339Nano), completed.UTC().Format(time.RFC3339Nano), true
+}
+
+func validLiveDataAttemptID(value string) bool {
+	return strings.HasPrefix(value, "gqat_") && validGovernedID(value)
+}
+
+func decodeLiveDataProjection(raw []byte) (liveDataProjection, bool) {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return liveDataProjection{}, false
+	}
+	var projection liveDataProjection
+	if err := jsonv2.Unmarshal(raw, &projection, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
+		return liveDataProjection{}, false
+	}
+	if !validLiveDataProjection(projection, time.Now().UTC()) {
+		return liveDataProjection{}, false
+	}
+	return projection, true
+}
+
+func validLiveDataProjection(projection liveDataProjection, now time.Time) bool {
+	if projection.Format != liveDataResultFormat || !projection.Complete || projection.RowCount < 0 ||
+		projection.RowCount > liveDataMaxRows || projection.Columns == nil || len(projection.Columns) == 0 ||
+		len(projection.Columns) > liveDataMaxColumns || projection.Rows == nil || projection.RowCount != len(projection.Rows) ||
+		projection.RowCount*len(projection.Columns) > liveDataMaxCells || !validLiveDataAttemptID(projection.AttemptID) ||
+		!validGovernedSHA256(projection.SQLHash) || projection.ExposedSchemaRevision < 1 ||
+		!validGovernedSHA256(projection.ResultDigest) || !validGovernedID(projection.DatabaseIdentity) ||
+		projection.ReadWindow != (liveDataReadWindow{Offset: 0, Limit: projection.RowCount, ReturnedRows: projection.RowCount, TotalRows: projection.RowCount, Complete: true}) {
+		return false
+	}
+	for _, column := range projection.Columns {
+		if !utf8.ValidString(column) || len(column) == 0 || len(column) > liveDataMaxColumnBytes {
+			return false
+		}
+	}
+	for _, row := range projection.Rows {
+		if len(row) != len(projection.Columns) {
+			return false
+		}
+		for _, cell := range row {
+			if cell != nil && (!utf8.ValidString(*cell) || len(*cell) > liveDataMaxCellBytes) {
+				return false
+			}
+		}
+	}
+	started, err := time.Parse(time.RFC3339Nano, projection.ExecutionStartedAt)
+	if err != nil || started.UTC().Format(time.RFC3339Nano) != projection.ExecutionStartedAt {
+		return false
+	}
+	completed, err := time.Parse(time.RFC3339Nano, projection.ExecutionCompletedAt)
+	if err != nil || completed.UTC().Format(time.RFC3339Nano) != projection.ExecutionCompletedAt ||
+		completed.Before(started) || completed.After(now) {
+		return false
+	}
+	return governedask.VerifyTextTableResultDigest(projection.Columns, projection.RowCount, projection.Rows, projection.ResultDigest)
 }
 
 func invokeLiveDataTool(
@@ -156,46 +233,139 @@ func invokeLiveDataTool(
 	raw json.RawMessage,
 	maxResultBytes int,
 ) (workspacetools.Result, error) {
+	result, _, err := invokeLiveDataToolRetained(ctx, access, workspaceID, "live_data_unbound", ask, raw, maxResultBytes)
+	return result, err
+}
+
+func invokeLiveDataToolRetained(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID, questionRunID string,
+	ask GovernedAsk,
+	raw json.RawMessage,
+	maxResultBytes int,
+) (workspacetools.Result, *liveDataExecution, error) {
 	if ctx == nil || ask == nil {
-		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), err
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, err
 	}
 	question, ok := parseLiveDataQuestion(raw)
 	if !ok {
-		return liveDataRefusal("LIVE_DATA_INVALID_ARGUMENTS"), nil
+		return liveDataRefusal("LIVE_DATA_INVALID_ARGUMENTS"), nil, nil
 	}
 	result, err := ask.AskWorkspace(ctx, access, workspaceID, question)
 	if err != nil {
-		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), err
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), err
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, err
 	}
-	_, payload, ok := projectLiveDataResult(result, maxResultBytes)
+	projection, payload, ok, refusal := projectLiveDataResultDetailed(result, maxResultBytes)
 	if !ok {
+		if refusal != "LIVE_DATA_RESULT_TOO_LARGE" {
+			return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
+		}
 		return workspacetools.Result{
 			Text:       `{"error":"LIVE_DATA_RESULT_TOO_LARGE","advice":"Narrow the question or add filters; no partial rows were returned."}`,
 			Structured: json.RawMessage(`{"error":"LIVE_DATA_RESULT_TOO_LARGE","advice":"Narrow the question or add filters; no partial rows were returned."}`),
 			IsError:    true,
-		}, nil
+		}, nil, nil
+	}
+	if !validOpaque(questionRunID) {
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
+	}
+	dependency := governedQueryDependency{
+		questionRunID: questionRunID, attemptID: projection.AttemptID, connectionID: result.ConnectionID,
+		sqlHash: projection.SQLHash, exposedSchemaRevision: projection.ExposedSchemaRevision,
+		resultDigest: projection.ResultDigest,
+	}
+	if !dependency.validForRun(questionRunID) {
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
 	}
 	owned := append(json.RawMessage(nil), payload...)
-	return workspacetools.Result{Text: string(owned), Structured: owned}, nil
+	return workspacetools.Result{Text: string(owned), Structured: owned}, &liveDataExecution{projection: projection, dependency: dependency}, nil
 }
 
-// liveDataRunState is local to executeToolLoop. It prevents a second successful
-// live result in one Question run and leaves private dependency persistence to
-// the later G3c seam.
+type liveDataExecution struct {
+	projection liveDataProjection
+	dependency governedQueryDependency
+}
+
+type liveTableReceiptProjection struct {
+	Schema                string                  `json:"schema"`
+	RunID                 string                  `json:"run_id"`
+	Kind                  string                  `json:"kind"`
+	Operation             string                  `json:"operation"`
+	Rule                  string                  `json:"rule"`
+	Format                string                  `json:"format"`
+	AttemptID             string                  `json:"attempt_id"`
+	SQLHash               string                  `json:"sql_hash"`
+	ExposedSchemaRevision int64                   `json:"exposed_schema_revision"`
+	DatabaseIdentity      string                  `json:"database_identity"`
+	ResultDigest          string                  `json:"result_digest"`
+	RowCount              int                     `json:"row_count"`
+	Completeness          string                  `json:"completeness"`
+	ObservationWindow     AnswerObservationWindow `json:"observation_window"`
+}
+
+func liveDataAnswerResult(questionRunID string, execution liveDataExecution) (*AnswerResult, error) {
+	projection := execution.projection
+	if !validOpaque(questionRunID) || !validLiveDataProjection(projection, time.Now().UTC()) ||
+		!execution.dependency.validForRun(questionRunID) ||
+		projection.AttemptID != execution.dependency.attemptID || projection.SQLHash != execution.dependency.sqlHash ||
+		projection.ExposedSchemaRevision != execution.dependency.exposedSchemaRevision ||
+		projection.ResultDigest != execution.dependency.resultDigest {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	window := AnswerObservationWindow{
+		Basis:       "SERVER_GOVERNED_QUERY_EXECUTION",
+		StartedAt:   projection.ExecutionStartedAt,
+		CompletedAt: projection.ExecutionCompletedAt,
+	}
+	result := &AnswerResult{
+		Kind:              "LIVE_TABLE",
+		Operation:         "GOVERNED_READ",
+		Rule:              "Complete administrator-governed live table; prose is an interpretation of these returned rows.",
+		RunID:             questionRunID,
+		Snapshot:          AnswerSnapshot{RowCount: projection.RowCount},
+		Completeness:      "COMPLETE",
+		ExecutionID:       projection.AttemptID,
+		ResultDigest:      projection.ResultDigest,
+		ObservationWindow: &window,
+	}
+	receipt := liveTableReceiptProjection{
+		Schema: "knowvault.question.live-table-receipt.v1", RunID: questionRunID,
+		Kind: result.Kind, Operation: result.Operation, Rule: result.Rule,
+		Format: projection.Format, AttemptID: projection.AttemptID, SQLHash: projection.SQLHash,
+		ExposedSchemaRevision: projection.ExposedSchemaRevision, DatabaseIdentity: projection.DatabaseIdentity,
+		ResultDigest: projection.ResultDigest, RowCount: projection.RowCount, Completeness: result.Completeness,
+		ObservationWindow: window,
+	}
+	canonical, err := canon.CanonicalJSON(receipt)
+	if err != nil || len(canonical) == 0 {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	result.ReceiptDigest = canon.Hash(canonical)
+	if result.ReceiptDigest == "" {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	return result, nil
+}
+
+// liveDataRunState is local to executeToolLoop. It retains the complete
+// validated result and its private dependency from one successful call.
 type liveDataRunState struct {
-	retained bool
+	successfulCall bool
+	retained       *liveDataExecution
 }
 
 func (state *liveDataRunState) invoke(
 	ctx context.Context,
 	access database.AccessContext,
 	workspaceID string,
+	questionRunID string,
 	ask GovernedAsk,
 	raw json.RawMessage,
 	maxResultBytes int,
@@ -203,12 +373,19 @@ func (state *liveDataRunState) invoke(
 	if state == nil {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil
 	}
-	if state.retained {
+	if state.successfulCall {
 		return liveDataRefusal("LIVE_DATA_ALREADY_RECORDED"), nil
 	}
-	result, err := invokeLiveDataTool(ctx, access, workspaceID, ask, raw, maxResultBytes)
-	if err == nil && !result.IsError {
-		state.retained = true
+	result, execution, err := invokeLiveDataToolRetained(ctx, access, workspaceID, questionRunID, ask, raw, maxResultBytes)
+	if err == nil && !result.IsError && execution != nil {
+		state.successfulCall = true
+		state.retained = execution
 	}
 	return result, err
+}
+
+func (state *liveDataRunState) discardRetainedResult() {
+	if state != nil {
+		state.retained = nil
+	}
 }

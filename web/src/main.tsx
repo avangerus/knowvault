@@ -611,11 +611,10 @@ type QuestionFreshness = {
   last_successful_sync_at?: string;
 };
 
-// FIX-2 #1: structured counterpart of an AGGREGATE/LIST answer -- see
+// Structured result beside rendered prose -- see
 // internal/question/structured_result.go's AnswerResult and its nested
-// types. Populated only for a run answered by the snapshot reducer; every
-// other operation leaves it absent, and no field here is shown unless the
-// server actually sent it.
+// types. It carries snapshot reductions and governed live-read receipts; no
+// field here is shown unless the server actually sent it.
 type AnswerFilter = { name: string; value: string };
 type AnswerPeriod = { from?: string; to?: string; label?: string };
 type AnswerKey = { key: string; fields?: Record<string, string> };
@@ -2677,7 +2676,7 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
           {result.receipt_digest && (
             <><dt>Evidence receipt</dt><dd>{result.receipt_digest}</dd></>
           )}
-          {hasObservationWindow && result.snapshot.row_count > 0 && (
+          {hasObservationWindow && (result.snapshot.row_count > 0 || result.kind === "LIVE_TABLE") && (
             <><dt>Rows read</dt><dd>{result.snapshot.row_count}</dd></>
           )}
           {(snapshotText || (!hasObservationWindow && result.snapshot.row_count > 0)) && (
@@ -2687,7 +2686,9 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
             </>
           )}
         </dl>
-        <p className="how-cap"><IconCheckCircle />a server calculation using the snapshot</p>
+        <p className="how-cap"><IconCheckCircle />{result.kind === "LIVE_TABLE"
+          ? "a complete governed live table read; the prose answer interprets its rows"
+          : "a server calculation using the snapshot"}</p>
       </div>
       <UnifiedAnswerRows result={result} />
       {answerCompletenessIsPartial(result.completeness) && (
@@ -3967,7 +3968,9 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const liveResult = run.answer_result;
   const liveObservationWindow = liveResult?.observation_window;
   const liveReceiptDigest = liveResult?.receipt_digest;
-  const isLiveScalar = Boolean(liveObservationWindow && liveReceiptDigest);
+  const hasLiveReceipt = Boolean(liveObservationWindow && liveReceiptDigest);
+  const isLiveTable = liveResult?.kind === "LIVE_TABLE";
+  const isLiveScalar = hasLiveReceipt && !isLiveTable;
   // A live calculation and cited document prose prove different things. Keep
   // their presentation separate so the model's document context is never
   // mistaken for the server-owned calculation and receipt.
@@ -3989,9 +3992,9 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   return (
     <>
       <ToolCallsDisclosure run={run} showResults={false} />
-      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : isLiveScalar ? (
+      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : hasLiveReceipt ? (
         <div className="answer-body live-calculation-answer">
-          <span className="badge badge-live"><IconCheckCircle />Verified live calculation</span>
+          <span className="badge badge-live"><IconCheckCircle />{isLiveTable ? "Model interpretation of the complete live table" : "Verified live calculation"}</span>
           {isCombinedLiveResult && resultValue ? (
             <span className="answer-live-summary">{resultValue}</span>
           ) : text ? (
@@ -4000,11 +4003,11 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
             <span className="answer-live-summary">{resultValue}</span>
           ) : null}
           <details className="live-calculation-evidence">
-            <summary>Evidence for this calculation</summary>
+            <summary>{isLiveTable ? "Live table receipt" : "Evidence for this calculation"}</summary>
             <dl>
               {liveResult?.period && <><dt>Period</dt><dd>{answerPeriodText(liveResult.period) ?? "—"}</dd></>}
               {liveResult?.timezone && <><dt>Time zone</dt><dd>{liveResult.timezone}</dd></>}
-              <dt>Contributing rows</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
+              <dt>{isLiveTable ? "Rows returned" : "Contributing rows"}</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
               <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
               <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
             </dl>
@@ -4034,7 +4037,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text!} turnId={run.question_run_id} />
         </div>
       )}
-      {text && (!isLiveScalar || hasDocumentGroundedContext) && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
+      {text && (!hasLiveReceipt || hasDocumentGroundedContext) && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
       {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
       {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
       {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}

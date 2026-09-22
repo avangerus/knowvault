@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/platform/database"
@@ -98,7 +99,7 @@ func TestInvokeLiveDataToolDelegatesCurrentScopeAndProjectsOnlySafeFields(t *tes
 	access := database.AccessContext{OrganizationID: "org_current", PrincipalID: "usr_current", RequestID: "req_current"}
 	probe := &liveDataAskProbe{result: liveDataResultFixture()}
 	state := &liveDataRunState{}
-	result, err := state.invoke(ctx, access, "workspace_current", probe, json.RawMessage(`{"question":"How many records?"}`), 8192)
+	result, err := state.invoke(ctx, access, "workspace_current", "qrun_live_current", probe, json.RawMessage(`{"question":"How many records?"}`), 8192)
 	if err != nil || result.IsError {
 		t.Fatalf("invoke result = %#v, err = %v", result, err)
 	}
@@ -109,7 +110,7 @@ func TestInvokeLiveDataToolDelegatesCurrentScopeAndProjectsOnlySafeFields(t *tes
 	if err := json.Unmarshal(result.Structured, &projected); err != nil {
 		t.Fatalf("decode projection: %v", err)
 	}
-	for _, key := range []string{"columns", "rows", "row_count", "attempt_id", "sql_hash", "exposed_schema_revision", "result_digest", "read_window", "database_identity", "complete"} {
+	for _, key := range []string{"format", "columns", "rows", "row_count", "attempt_id", "sql_hash", "exposed_schema_revision", "result_digest", "read_window", "database_identity", "execution_started_at", "execution_completed_at", "complete"} {
 		if _, ok := projected[key]; !ok {
 			t.Fatalf("projection missing %q: %s", key, result.Text)
 		}
@@ -138,11 +139,11 @@ func TestLiveDataRunStateRefusesSecondSuccessfulResult(t *testing.T) {
 	probe := &liveDataAskProbe{result: liveDataResultFixture()}
 	state := &liveDataRunState{}
 	args := json.RawMessage(`{"question":"first"}`)
-	first, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", probe, args, 8192)
+	first, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe, args, 8192)
 	if err != nil || first.IsError {
 		t.Fatalf("first invoke = %#v, err %v", first, err)
 	}
-	second, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", probe, json.RawMessage(`{"question":"second"}`), 8192)
+	second, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe, json.RawMessage(`{"question":"second"}`), 8192)
 	if err != nil || !second.IsError || probe.calls != 1 {
 		t.Fatalf("second invoke = %#v, err %v, ask calls %d", second, err, probe.calls)
 	}
@@ -190,10 +191,34 @@ func TestLiveDataProjectionRefusesOversizedResultsWithoutTruncating(t *testing.T
 	}
 }
 
+func TestLiveDataRunStateDoesNotRetainFailedOrOversizedResults(t *testing.T) {
+	oversized := liveDataResultFixture()
+	oversized.RowCount = liveDataMaxRows + 1
+	oversized.Rows = make([][]*string, oversized.RowCount)
+	for index := range oversized.Rows {
+		value := fmt.Sprintf("private_row_%d", index)
+		oversized.Rows[index] = []*string{&value}
+	}
+	for _, probe := range []*liveDataAskProbe{
+		{err: errors.New("private failure")},
+		{result: oversized},
+	} {
+		state := &liveDataRunState{}
+		result, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe, json.RawMessage(`{"question":"q"}`), 8192)
+		if err == nil && !result.IsError {
+			t.Fatalf("invalid invocation unexpectedly succeeded: %#v", result)
+		}
+		if state.retained != nil || state.successfulCall {
+			t.Fatalf("refused result retained a private live dependency: %#v", state)
+		}
+	}
+}
+
 func TestLiveDataZeroRowsRemainACompleteSuccess(t *testing.T) {
 	result := liveDataResultFixture()
 	result.Rows = nil
 	result.RowCount = 0
+	result.ResultDigest = "sha256:cb4866cde14981d9bcf537b509093aad146e66bfb2aa1df1c6a90f2a62d56ce6"
 	probe := &liveDataAskProbe{result: result}
 	got, err := invokeLiveDataTool(context.Background(), database.AccessContext{}, "workspace_current", probe, json.RawMessage(`{"question":"q"}`), 8192)
 	if err != nil || got.IsError {
@@ -210,6 +235,34 @@ func TestLiveDataZeroRowsRemainACompleteSuccess(t *testing.T) {
 	}
 	if projected.Rows == nil || len(projected.Rows) != 0 || projected.RowCount != 0 || !projected.Complete || !projected.ReadWindow.Complete {
 		t.Fatalf("zero-row projection = %#v", projected)
+	}
+}
+
+func TestLiveDataToolRefusesInvalidGovernedReceiptMetadata(t *testing.T) {
+	for _, example := range []struct {
+		name   string
+		mutate func(*governedask.AskResult)
+	}{
+		{name: "digest mismatch", mutate: func(result *governedask.AskResult) { result.ResultDigest = "sha256:" + strings.Repeat("0", 64) }},
+		{name: "malformed attempt", mutate: func(result *governedask.AskResult) { result.AttemptID = "attempt_bad" }},
+		{name: "malformed connection", mutate: func(result *governedask.AskResult) { result.ConnectionID = "bad connection" }},
+		{name: "malformed sql hash", mutate: func(result *governedask.AskResult) { result.SQLHash = "sha256:abc" }},
+		{name: "invalid schema revision", mutate: func(result *governedask.AskResult) { result.ExposedSchemaRevision = 0 }},
+		{name: "invalid result format", mutate: func(result *governedask.AskResult) { result.ResultFormat = "json" }},
+		{name: "missing timestamp", mutate: func(result *governedask.AskResult) { result.ExecutionStartedAt = time.Time{} }},
+		{name: "reversed timestamps", mutate: func(result *governedask.AskResult) {
+			result.ExecutionCompletedAt = result.ExecutionStartedAt.Add(-time.Second)
+		}},
+		{name: "future timestamp", mutate: func(result *governedask.AskResult) { result.ExecutionCompletedAt = time.Now().UTC().Add(time.Hour) }},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			invalid := liveDataResultFixture()
+			example.mutate(&invalid)
+			got, err := invokeLiveDataTool(context.Background(), database.AccessContext{}, "workspace_current", &liveDataAskProbe{result: invalid}, json.RawMessage(`{"question":"q"}`), 8192)
+			if err != nil || !got.IsError || strings.Contains(got.Text, "private") {
+				t.Fatalf("invalid receipt result = %#v, err = %v", got, err)
+			}
+		})
 	}
 }
 
@@ -240,15 +293,18 @@ func liveDataResultFixture() governedask.AskResult {
 	return governedask.AskResult{
 		AttemptID:             "gqat_01ARZ3NDEKTSV4RRFFQ69G5FAV",
 		SQL:                   "SELECT private_sql_secret",
-		SQLHash:               "sha256:abc",
+		SQLHash:               "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Columns:               []string{"record_name", "count"},
 		Rows:                  [][]*string{{stringPointer("private_row_value"), &count}},
 		RowCount:              1,
 		Answer:                "private answer",
-		ConnectionID:          "private_connection_secret",
+		ConnectionID:          "conn_private_secret",
 		DatabaseIdentity:      "demo_company_database",
 		ExposedSchemaRevision: 7,
-		ResultDigest:          "sha256:result-digest",
+		ResultFormat:          liveDataResultFormat,
+		ResultDigest:          "sha256:ab5c0f39cdfeb8036ddd3404514f6d4ec2d4cc4dc5d03dd8a272aa025b651e03",
+		ExecutionStartedAt:    time.Date(2026, 9, 10, 0, 0, 1, 0, time.UTC),
+		ExecutionCompletedAt:  time.Date(2026, 9, 10, 0, 0, 2, 0, time.UTC),
 	}
 }
 
