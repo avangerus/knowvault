@@ -277,13 +277,23 @@ function decodeEvidencePathSegment(value: string): string | null {
   }
 }
 
-function buildSearchHash(workspaceID: string): string {
-  return `#search/${encodeURIComponent(workspaceID)}`;
+export type SearchTarget = { workspace: string; conversation?: string };
+
+export function buildSearchHash(workspaceID: string, conversationID?: string | null): string {
+  const base = `#search/${encodeURIComponent(workspaceID)}`;
+  return conversationID ? `${base}?${new URLSearchParams({ conversation: conversationID }).toString()}` : base;
 }
 
-function parseSearchHash(hash: string): string | null {
-  const match = hash.match(/^#search\/([^/?#]+)$/);
-  return match ? decodeEvidencePathSegment(match[1]) : null;
+export function parseSearchHash(hash: string): SearchTarget | null {
+  const match = hash.match(/^#search\/([^/?#]+)(?:\?(.*))?$/);
+  if (!match) return null;
+  const workspace = decodeEvidencePathSegment(match[1]);
+  if (!workspace) return null;
+  if (!match[2]) return { workspace };
+  const params = new URLSearchParams(match[2]);
+  if ([...params.keys()].length !== 1 || params.getAll("conversation").length !== 1) return null;
+  const conversation = params.get("conversation");
+  return conversation ? { workspace, conversation } : null;
 }
 
 export function parseEvidenceHash(hash: string): EvidenceTarget | null {
@@ -1844,7 +1854,9 @@ function App() {
   const [sessionCode, setSessionCode] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceID, setSelectedWorkspaceID] = useState<string | null>(() =>
-    parseEvidenceHash(window.location.hash)?.workspace ?? parseSearchHash(window.location.hash));
+    parseEvidenceHash(window.location.hash)?.workspace ?? parseSearchHash(window.location.hash)?.workspace ?? null);
+  const [selectedConversationID, setSelectedConversationID] = useState<string | null>(() =>
+    parseSearchHash(window.location.hash)?.conversation ?? null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0);
@@ -1873,6 +1885,7 @@ function App() {
     setSessionCode("");
     setWorkspaces([]);
     setSelectedWorkspaceID(null);
+    setSelectedConversationID(null);
     setSwitcherOpen(false);
     setCreateWorkspaceOpen(false);
     setWorkspaceRefreshVersion((version) => version + 1);
@@ -1904,9 +1917,11 @@ function App() {
     if (routeHash.current === hash) return;
     const previousEvidence = parseEvidenceHash(routeHash.current);
     const target = parseEvidenceHash(hash);
-    const workspaceID = target?.workspace ?? parseSearchHash(hash);
+    const searchTarget = parseSearchHash(hash);
+    const workspaceID = target?.workspace ?? searchTarget?.workspace;
     routeHash.current = hash;
     if (workspaceID) setSelectedWorkspaceID(workspaceID);
+    setSelectedConversationID(target ? null : searchTarget?.conversation ?? null);
     if (!target && previousEvidence) {
       setSection("search");
       setWorkspaceRefreshVersion((version) => version + 1);
@@ -1919,7 +1934,7 @@ function App() {
   function openEvidence(hash: string) {
     const target = parseEvidenceHash(hash);
     if (!target || sessionStateRef.current !== "signedIn") return;
-    const searchHash = buildSearchHash(selectedWorkspaceID ?? target.workspace);
+    const searchHash = buildSearchHash(selectedWorkspaceID ?? target.workspace, selectedConversationID);
     const base = `${window.location.pathname}${window.location.search}`;
     // History holds navigation identity only. Queries, answers and source text
     // stay in the mounted, session-scoped SearchView and never enter storage.
@@ -2064,6 +2079,7 @@ function App() {
               }}
               onSelect={(id) => {
                 setSelectedWorkspaceID(id);
+                setSelectedConversationID(null);
                 setSwitcherOpen(false);
                 window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${buildSearchHash(id)}`);
                 routeHash.current = window.location.hash;
@@ -2165,6 +2181,15 @@ function App() {
               key={`${selectedWorkspaceID}:${searchResetEpoch}`}
               onOpenEvidence={openEvidence}
               onOpenSources={() => { dismissFootnoteTooltip(); setSection("sources"); }}
+              onConversationChange={(conversationID) => {
+                setSelectedConversationID(conversationID);
+                if (!selectedWorkspaceID) return;
+                const hash = buildSearchHash(selectedWorkspaceID, conversationID);
+                window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+                routeHash.current = hash;
+              }}
+              initialConversationID={selectedConversationID}
+              pushToast={pushToast}
               requestedWorkspaceID={selectedWorkspaceID}
               state={data}
             />
@@ -3910,10 +3935,13 @@ export function askExecutionVisibility(mode: AskExecutionMode): { workspaceSearc
 /** The single question surface. Governed preset checks remain an admin-only
  * component for a future Diagnostics surface; they are deliberately not
  * mounted beside the user question composer. */
-export function AskSurface({ active, onOpenEvidence, onOpenSources, state, requestedWorkspaceID }: {
+export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversationChange, initialConversationID, pushToast, state, requestedWorkspaceID }: {
   active: boolean;
   onOpenEvidence: (hash: string) => void;
   onOpenSources: () => void;
+  onConversationChange?: (conversationID: string | null) => void;
+  initialConversationID?: string | null;
+  pushToast?: (kind: "success" | "error", text: string) => void;
   // Retained as optional compatibility props for callers that used the
   // retired governed panel host. The main Ask surface no longer mounts it.
   onSessionExpired?: () => void;
@@ -3933,11 +3961,14 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, state, reque
           {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
         </div>
       </header>
-      <SearchView
-        active={active}
-        onOpenEvidence={onOpenEvidence}
+      <AskView
+        initialConversationID={initialConversationID ?? null}
+        onConversationChange={onConversationChange ?? (() => {})}
+        onOpenSources={onOpenSources}
         requestedWorkspaceID={requestedWorkspaceID}
         state={state}
+        pushToast={pushToast ?? (() => {})}
+        workspaceTitle={state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value.name : "Workspace"}
       />
     </div>
   );
@@ -4196,9 +4227,11 @@ export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active
   );
 }
 
-function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWorkspaceID }: {
+function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
   workspaceTitle: string;
   onOpenSources: () => void;
+  onConversationChange: (conversationID: string | null) => void;
+  initialConversationID: string | null;
   state: WorkspaceDataState;
   pushToast: (kind: "success" | "error", text: string) => void;
   // The workspace the parent currently has selected. It is available even when
@@ -4208,6 +4241,7 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   requestedWorkspaceID: string | null;
 }) {
   const [question, setQuestion] = useState("");
+  const [selectedModelID, setSelectedModelID] = useState<string | null>(null);
   // The server selects the configured workspace mode. Explicit legacy modes
   // remain available through the API; the chat follows the mounted profile.
   const [submitting, setSubmitting] = useState(false);
@@ -4252,7 +4286,8 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   // loadMoreTopics. A first page that succeeded replaces rows and cursor, and
   // "invalid" still asks for an explicit refresh of a refused cursor.
   const [topicsContinuation, setTopicsContinuation] = useState<"idle" | "pending" | "error" | "refresh-error" | "invalid">("idle");
-  const [selectedConversationID, setSelectedConversationID] = useState<string | null>(null);
+  const [selectedConversationID, setSelectedConversationID] = useState<string | null>(initialConversationID);
+  const routedConversationRef = useRef<string | null>(initialConversationID);
   const [conversation, setConversation] = useState<ApiResult<ConversationEnvelope> | null>(null);
   const [localTurns, setLocalTurns] = useState<ConversationTurn[]>([]);
   const [lastFailure, setLastFailure] = useState<{ question: string; result: ApiFailure | ApiBroken } | null>(null);
@@ -4307,6 +4342,10 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   const snapshotResult = state.phase === "loaded" ? state.snapshot : null;
   const snapshot = snapshotResult !== null && snapshotResult.kind === "ok" ? snapshotResult.value : null;
   const workspaceID = snapshot?.id ?? null;
+  const models = snapshot?.model_profiles ?? [];
+  const selectedModel = selectedModelID === null
+    ? models.find((model) => model.is_default) ?? models[0]
+    : models.find((model) => model.id === selectedModelID);
   const workspaceClosed = snapshot !== null && (snapshot.status === "ARCHIVED" || snapshot.status === "REVOKED");
   // The momentary reload window: the workspace snapshot is being (re)fetched, so
   // a null workspaceID does NOT mean the workspace changed. Only this
@@ -4324,6 +4363,15 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   const allSources = state.phase === "loaded" && state.sources.kind === "ok" ? state.sources.value.sources : [];
   const activeSources = allSources.filter((source) => source.enabled && source.confirmation_state === "ACTIVE");
   const sourceNameByConnection = new Map(allSources.map((source) => [source.connection_id, source.connection_name]));
+
+  useEffect(() => {
+    if (routedConversationRef.current === initialConversationID) return;
+    routedConversationRef.current = initialConversationID;
+    setSelectedConversationID(initialConversationID);
+    setConversation(null);
+    setLocalTurns([]);
+    setPanelTarget(null);
+  }, [initialConversationID]);
 
   // First page of the topics list. Server pagination replaces the old
   // unpaginated GET and the client-side 30-row cap, so a continuation can
@@ -4789,7 +4837,7 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
     setPendingQuestion(trimmed);
     const result = await apiPost<QuestionRun>(
       `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/questions`,
-      { question: trimmed, conversation_id: selectedConversationID },
+      { ...questionRunPayload(trimmed, selectedModel), ...(selectedConversationID ? { conversation_id: selectedConversationID } : {}) },
       newIdempotencyKey(),
     );
     // R3: before ANY post-await mutation, drop an answer that belongs to a
@@ -4813,6 +4861,8 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
       setFullscreen(false);
       if (result.value.conversation_id && result.value.conversation_id !== selectedConversationID) {
         setSelectedConversationID(result.value.conversation_id);
+        routedConversationRef.current = result.value.conversation_id;
+        onConversationChange(result.value.conversation_id);
       }
       // A successful answer can create a topic or add a turn to the selected
       // topic. Refresh the authorized first server page (limit=50) in both
@@ -4840,6 +4890,8 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   function startNewConversation() {
     dismissFootnoteTooltip();
     setSelectedConversationID(null);
+    routedConversationRef.current = null;
+    onConversationChange(null);
     setConversation(null);
     setLocalTurns([]);
     setLastFailure(null);
@@ -4855,6 +4907,8 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
     setLastFailure(null);
     setLocalTurns([]);
     setSelectedConversationID(conversationID);
+    routedConversationRef.current = conversationID;
+    onConversationChange(conversationID);
   }
 
   async function archiveConversation() {
@@ -5088,6 +5142,15 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
               {submitting ? "…" : "→"}
             </button>
           </form>
+          {models.length > 0 && (
+            <label className="question-model">
+              <span>Model</span>
+              <select aria-label="Model" className="search-model-select" value={selectedModel?.id ?? ""} onChange={(event) => setSelectedModelID(event.target.value)}>
+                {!selectedModel && <option disabled value="">Select a model</option>}
+                {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
+              </select>
+            </label>
+          )}
           <p className="hint" id="ask-keyboard-hint">Enter to ask · Shift + Enter for a new line</p>
           {feedTurns.length > 0 && <p className="hint">When continuing a conversation, repeat any important conditions or facts from earlier answers that you want to use.</p>}
           <p className="hint">This question uses the “{workspaceTitle}” workspace. Switching workspaces starts a new conversation. <button className="text-button" onClick={onOpenSources} type="button">Sources →</button></p>

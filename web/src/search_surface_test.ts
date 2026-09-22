@@ -4,6 +4,8 @@ import {
   AskSurface,
   SearchView,
   authorizedSourcesForAsk,
+  buildSearchHash,
+  parseSearchHash,
   questionClaimGroundingLabel,
   questionRunPayload,
   relySourceSummary,
@@ -98,10 +100,10 @@ check(!renderAsk(pendingState).includes("rely-summary") && !renderAsk(deniedStat
 check((searchMarkup.match(/<h1>Ask<\/h1>/g) ?? []).length === 1, "the Ask surface has one page heading");
 check(!searchMarkup.includes("Live database") && !searchMarkup.includes("Workspace search") && !searchMarkup.includes("Search source"), "the Ask surface has no user-facing execution-mode selector");
 check(!searchMarkup.includes("GovernedPresetPanelHost") && !searchMarkup.includes("Reviewed checks"), "governed checks are not placed beside the question");
-check(searchMarkup.includes('placeholder="Ask a question"') && searchMarkup.includes(">Ask<"), "Workspace search uses the compact Ask composer");
+check(searchMarkup.includes('placeholder="Ask as you would ask a colleague"') && searchMarkup.includes('id="ask-question"'), "Ask mounts the conversational composer");
 check((searchMarkup.match(/<form/g) ?? []).length === 1, "Ask surface exposes exactly one question composer");
-check((searchMarkup.match(/<input[^>]*id="pilot-question"/g) ?? []).length === 1, "Ask surface exposes one visible question input");
-check(searchMarkup.includes("Sources: ") && searchMarkup.includes("<b>0</b>") && !searchMarkup.includes("No sources are connected yet"), "authorized empty sources use the compact Sources: 0 pill");
+check((searchMarkup.match(/<textarea[^>]*id="ask-question"/g) ?? []).length === 1, "Ask surface exposes one visible question textarea");
+check(searchMarkup.includes("Sources: ") && searchMarkup.includes("<b>0</b>"), "authorized empty sources use the compact Sources: 0 pill");
 check(mainSource.includes("authorizedSourcesForAsk") && mainSource.includes("askSources && <RelyBar onManageSources={onOpenSources}"), "Ask RelyBar is gated by workspace authorization and offers source management");
 check(!mainSource.includes('<button className="text-button" onClick={onOpenSources} type="button">Sources</button>'), "the duplicate header Sources button is removed");
 check(mainSource.includes("sourceLabel(source)") && mainSource.includes("sourceHeadline(source)"), "the source popover renders real labels and freshness headlines");
@@ -144,7 +146,12 @@ check(!mainSource.includes("document-search-disclosure"), "the old document-sear
 const ownerStart = mainSource.indexOf("export function AskSurface");
 const ownerEnd = mainSource.indexOf("// The Ask surface sends one governed question run", ownerStart);
 const askOwnerSource = ownerStart >= 0 && ownerEnd > ownerStart ? mainSource.slice(ownerStart, ownerEnd) : "";
-check(askOwnerSource.includes("<SearchView") && !askOwnerSource.includes("<GovernedPresetPanelHost"), "Ask owns one question surface and keeps governed checks out of the main flow");
+check(askOwnerSource.includes("<AskView") && !askOwnerSource.includes("<SearchView") && !askOwnerSource.includes("<GovernedPresetPanelHost"), "Ask owns one conversational surface and keeps governed checks out of the main flow");
+check(askOwnerSource.includes("onConversationChange") && mainSource.includes("...(selectedConversationID ? { conversation_id: selectedConversationID } : {})") && mainSource.includes("questionRunPayload(trimmed, selectedModel)"), "conversation follow-ups retain their server id and selected model in the one QuestionRun request");
+check(mainSource.includes('className="tool-trace"') && mainSource.includes("receipt_digest") && mainSource.includes("run.citations"), "conversation turns retain tool disclosure, receipt, and citation rendering");
+check(buildSearchHash("workspace-1", "conv_01") === "#search/workspace-1?conversation=conv_01", "conversation selection is encoded as an opaque search hash parameter");
+check(JSON.stringify(parseSearchHash("#search/workspace-1?conversation=conv_01")) === JSON.stringify({ workspace: "workspace-1", conversation: "conv_01" }), "reload parsing restores the selected conversation");
+check(parseSearchHash("#search/workspace-1?conversation=one&other=two") === null, "search routing rejects unknown conversation parameters");
 check(!askOwnerSource.includes('aria-label="Search source"') && !askOwnerSource.includes("Workspace search") && !askOwnerSource.includes("Live database"), "Ask owner contains no execution-mode labels");
 check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "the governed host remains available for a future Diagnostics surface");
 
