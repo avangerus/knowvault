@@ -118,7 +118,12 @@ check(!searchSource.includes("tools/search") && !searchSource.includes("apiGet<"
 check(searchSource.includes("<QuestionRunAnswer") && answerSource.includes("<AnswerBody") && answerSource.includes("run.citations") && answerSource.includes("onOpenEvidence"), "QuestionRun renders the existing answer, citations and evidence actions");
 check(answerSource.includes("isLiveScalar") && answerSource.includes("Verified live calculation") && answerSource.includes("live-calculation-evidence")
   && answerSource.includes("Contributing rows") && answerSource.includes("Observed window") && answerSource.includes("Receipt digest"), "shipped QuestionRun live scalars render the compact verified-calculation disclosure");
-check(answerSource.includes("!isLiveScalar") && answerSource.includes("questionClaimGroundingLabel"), "live scalars suppress document claim-grounding labels while narrative answers retain them");
+const liveCardStart = answerSource.indexOf('className="answer-body live-calculation-answer"');
+const documentContextStart = answerSource.indexOf('className="answer-body document-grounded-context"');
+const liveCardSource = liveCardStart >= 0 && documentContextStart > liveCardStart ? answerSource.slice(liveCardStart, documentContextStart) : "";
+check(answerSource.includes("isCombinedLiveResult") && answerSource.includes("document-grounded context / paraphrase")
+  && documentContextStart > liveCardStart && liveCardSource.includes("isCombinedLiveResult && resultValue"), "combined live answers keep the verified calculation and document-grounded context as separate blocks");
+check(answerSource.includes("(!isLiveScalar || hasDocumentGroundedContext)") && answerSource.includes("questionClaimGroundingLabel"), "scalar-only answers suppress document grounding while combined answers disclose their separate document context");
 check(!answerSource.includes("<AnswerResultBlock") && !answerSource.includes("<UnifiedAnswerRows"), "shipped QuestionRun does not mount the verbose structured-result panels");
 check(mainSource.includes('className="tool-trace"') && mainSource.includes("TOOL_CALLS_TITLE") && mainSource.includes("run.tool_loop.calls"), "QuestionRun uses the actual collapsed tool-call disclosure");
 check(searchSource.includes('className="search-model-select"') && searchSource.includes('aria-label="Model"'), "the configured model selector remains available");

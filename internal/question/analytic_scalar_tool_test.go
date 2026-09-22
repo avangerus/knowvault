@@ -49,10 +49,14 @@ func TestAnalyticScalarToolDefinitionIsClosedAndListsMountedProfile(t *testing.T
 	}
 	profile := capability.modelProfiles()[0]
 	for _, want := range []string{profile.DatasetID, profile.ProfileHash, profile.DatasetLabel, profile.DatasetDescription,
-		profile.Measures[0].ID, profile.Measures[0].Description, "filter order_total", "allowed_values=order-1,order-2"} {
+		profile.Measures[0].ID, profile.Measures[0].Description, "filter order_total", "allowed_values=order-1,order-2",
+		"This scalar can be one step in a mixed document-and-data question", "use document tools and citations for document claims"} {
 		if !strings.Contains(definition.Function.Description, want) {
 			t.Fatalf("tool description omits mounted profile detail %q: %s", want, definition.Function.Description)
 		}
+	}
+	if strings.Contains(definition.Function.Description, "Do not use this tool for a mixed document-and-data question") {
+		t.Fatalf("tool description still prohibits mixed document-and-data use: %s", definition.Function.Description)
 	}
 	items, ok := filters["items"].(map[string]any)
 	if !ok {

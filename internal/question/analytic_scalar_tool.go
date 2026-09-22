@@ -28,7 +28,7 @@ func analyticScalarToolDefinition(cap analyticScalarCapability) (modelgateway.To
 	}
 
 	var description strings.Builder
-	description.WriteString("v1: answer one exact numeric question with one approved read-only scalar aggregate. Use only the approved dataset/profile/hash, measures and filter fields below; provide an explicit half-open period [start,end) and exactly one EQ predicate for every filter listed by the selected profile. Do not omit or duplicate a listed filter. Use empty dimensions/sort, limit 1, and VALUE output. Dates use YYYY-MM-DD. For one day, for example 2026-09-10, use start=2026-09-10 and end=2026-09-11. Do not use this tool for a mixed document-and-data question.\n\nApproved profiles:\n")
+	description.WriteString("v1: answer one exact numeric question with one approved read-only scalar aggregate. This scalar can be one step in a mixed document-and-data question; use document tools and citations for document claims. Use only the approved dataset/profile/hash, measures and filter fields below; provide an explicit half-open period [start,end) and exactly one EQ predicate for every filter listed by the selected profile. Do not omit or duplicate a listed filter. Use empty dimensions/sort, limit 1, and VALUE output. Dates use YYYY-MM-DD. For one day, for example 2026-09-10, use start=2026-09-10 and end=2026-09-11.\n\nApproved profiles:\n")
 	for _, profile := range profiles {
 		fmt.Fprintf(&description, "- %s (dataset_id=%s, profile_version=%d, profile_hash=%s): %s\n", profile.DatasetLabel, profile.DatasetID, profile.ProfileVersion, profile.ProfileHash, profile.DatasetDescription)
 		for _, measure := range profile.Measures {
