@@ -288,6 +288,31 @@ func (service *Service) Ask(ctx context.Context, access database.AccessContext, 
 	})
 }
 
+// AskWorkspace is the connection-free entry point for a server-owned caller
+// such as the Question tool loop. The caller supplies only workspace scope and
+// natural-language question; this service binds the request to its one
+// administrator-mounted connection and retains Ask's authorization, audit,
+// execution and disclosure gates. Preset-only mounts deliberately expose no
+// ad-hoc path, even to an in-process caller.
+func (service *Service) AskWorkspace(ctx context.Context, access database.AccessContext, workspaceID, question string) (AskResult, error) {
+	return service.askWorkspaceWith(ctx, access, workspaceID, question, service.Ask)
+}
+
+// askWorkspaceWith keeps the server-owned connection binding explicit and
+// provides a narrow package-test seam without retaining a replaceable runtime
+// callback on Service.
+func (service *Service) askWorkspaceWith(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID, question string,
+	ask func(context.Context, database.AccessContext, string, string, string) (AskResult, error),
+) (AskResult, error) {
+	if service == nil || !service.enabled || service.adapter == nil || service.config.PresetOnly || ask == nil {
+		return AskResult{}, &Error{code: CodeUnavailable}
+	}
+	return ask(ctx, access, workspaceID, service.config.ConnectionID, question)
+}
+
 // askAdmitted is Ask()'s governed body: it runs only after the mandatory
 // admission event is durable and performs every governed read and execution.
 func (service *Service) askAdmitted(ctx context.Context, access database.AccessContext, workspaceID, question string) (AskResult, error) {
