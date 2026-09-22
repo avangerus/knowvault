@@ -65,6 +65,44 @@ func TestToolAnswerDetailedClassifiesFormatFailures(t *testing.T) {
 	}
 }
 
+func TestToolAnswerHasCitationSelector(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		answer toolAnswer
+		want   bool
+	}{
+		{
+			name:   "fragment id",
+			answer: toolAnswer{Claims: []toolClaim{{Citations: []toolCitation{{FragmentID: "fragment_1"}}}}},
+			want:   true,
+		},
+		{
+			name:   "address",
+			answer: toolAnswer{Claims: []toolClaim{{Citations: []toolCitation{{Address: "kv1:object/fragment"}}}}},
+			want:   true,
+		},
+		{
+			name:   "selector in later claim",
+			answer: toolAnswer{Claims: []toolClaim{{Text: "Uncited text."}, {Citations: []toolCitation{{FragmentID: "fragment_2"}}}}},
+			want:   true,
+		},
+		{
+			name:   "citation without selector",
+			answer: toolAnswer{Claims: []toolClaim{{Citations: []toolCitation{{Quote: "text"}}}}},
+		},
+		{
+			name:   "no claims",
+			answer: toolAnswer{NoData: true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toolAnswerHasCitationSelector(tc.answer); got != tc.want {
+				t.Fatalf("toolAnswerHasCitationSelector() = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestToolLoopFormatDiagnosticsAreBoundedAndContentFree(t *testing.T) {
 	record := &ToolLoopRecord{StopReason: "FORMAT_INVALID"}
 	appendToolFormatDiagnostic(record, 1, toolFormatChannelContent, toolFormatContentWrapperOrNonJSON)
