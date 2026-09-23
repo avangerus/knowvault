@@ -141,8 +141,14 @@ const orderedProgress = pendingActionFromEvents([
   { type: "action", sequence: 1, phase: "action_started", label: "document_search" },
   { type: "action", sequence: 2, phase: "action_started", label: "document_read" },
 ]);
-check(orderedProgress.current === "working" && JSON.stringify(orderedProgress.completed) === JSON.stringify(["reading"]),
-"progress follows server sequence and shows only observed successful actions");
+check(orderedProgress.current === "working" && JSON.stringify(orderedProgress.completed) === JSON.stringify([{ kind: "reading", outcome: "succeeded" }]),
+"progress follows server sequence and shows observed outcomes");
+const failedProgress = pendingActionFromEvents([
+  { type: "action", sequence: 4, phase: "action_finished", label: "document_search", outcome: "failed", duration_ms: 3 },
+  { type: "action", sequence: 5, phase: "action_started", label: "model" },
+]);
+check(failedProgress.current === "model" && JSON.stringify(failedProgress.completed) === JSON.stringify([{ kind: "searching", outcome: "failed" }]),
+"a failed tool attempt stays in history while the next model step is neutral");
 check(searchSource.includes("<QuestionRunAnswer") && answerSource.includes("<AnswerBody") && answerSource.includes("run.citations") && answerSource.includes("onOpenEvidence"), "QuestionRun renders the existing answer, citations and evidence actions");
 check(answerSource.includes("isLiveScalar") && answerSource.includes("Verified live calculation") && answerSource.includes("live-calculation-evidence")
   && answerSource.includes("Contributing rows") && answerSource.includes("Observed window") && answerSource.includes("Receipt digest"), "shipped QuestionRun live scalars render the compact verified-calculation disclosure");

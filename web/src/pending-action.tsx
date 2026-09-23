@@ -1,12 +1,13 @@
-export type PendingActionKind = "working" | "searching" | "reading" | "checking_data" | "comparing" | "answering";
+export type PendingActionKind = "working" | "model" | "searching" | "reading" | "checking_data" | "comparing" | "answering";
 
 export type PendingActionState = {
   current: PendingActionKind;
-  completed: readonly PendingActionKind[];
+  completed: readonly { kind: PendingActionKind; outcome: "succeeded" | "failed" }[];
 };
 
 const actionLabels: Record<PendingActionKind, string> = {
   working: "Working on your question",
+  model: "Model is working",
   searching: "Searching sources",
   reading: "Reading evidence",
   checking_data: "Checking live data",
@@ -25,8 +26,8 @@ export function PendingAction({ state, elapsedSeconds }: { state: PendingActionS
       </div>
       {state.completed.length > 0 && (
         <details className="pending-action-history">
-          <summary>{state.completed.length} completed {state.completed.length === 1 ? "action" : "actions"}</summary>
-          <ol>{state.completed.map((action, index) => <li key={`${action}-${index}`}>{actionLabels[action]}</li>)}</ol>
+          <summary>{state.completed.length} finished {state.completed.length === 1 ? "action" : "actions"}</summary>
+          <ol>{state.completed.map((action, index) => <li key={`${action.kind}-${index}`}>{actionLabels[action.kind]}{action.outcome === "failed" ? " · failed" : ""}</li>)}</ol>
         </details>
       )}
     </div>

@@ -966,14 +966,14 @@ async function apiPostQuestionStream(
 }
 
 const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["current"]> = {
-  model: "answering", document_search: "searching", document_read: "reading",
+  model: "model", document_search: "searching", document_read: "reading",
   live_data: "checking_data", trusted_comparison: "comparing", other_tool: "working",
 };
 
 export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
   const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
-  const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome === "succeeded")
-    .map((event) => pendingKindByAction[event.label]);
+  const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome)
+    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome! }));
   const latest = ordered.at(-1);
   return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
 }
