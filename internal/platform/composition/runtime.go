@@ -475,6 +475,9 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		if err := governedAskService.EnableMetricComparison(metricComparisonMount.WorkspaceID, metricComparisonMount.Profile); err != nil {
 			return fail(StartupStageMetricCompareMount)
 		}
+		if err := questions.EnableTrustedMetricComparison(governedAskService); err != nil {
+			return fail(StartupStageMetricCompareMount)
+		}
 	}
 	conversations, err := conversation.New(databaseStore, auditStore)
 	if err != nil {
