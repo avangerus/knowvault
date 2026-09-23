@@ -16,12 +16,12 @@ import (
 
 const questionCancellationAdvisoryKey int64 = 91312012
 
-// TestQuestionRunCancellationPersistsFailure proves that a request cancellation
-// after the run is committed still leaves a terminal failure and one failure
+// TestQuestionRunCancellationPersistsCancellation proves that a request cancellation
+// after the run is committed still leaves a terminal cancellation and one failure
 // audit event. The test-only trigger gates the terminal update, while
 // LISTEN/NOTIFY synchronizes cancellation with the committed run without a
 // polling loop or a timing assumption.
-func TestQuestionRunCancellationPersistsFailure(t *testing.T) {
+func TestQuestionRunCancellationPersistsCancellation(t *testing.T) {
 	ctx := context.Background()
 	admin := resetStage1Database(t)
 	codec := s1dCodec(t, s1dOrg)
@@ -164,8 +164,8 @@ func TestQuestionRunCancellationPersistsFailure(t *testing.T) {
 	`, s1dOrg, notification.Payload).Scan(&status, &failureCode, &completedAt); err != nil {
 		t.Fatalf("read canceled question run: %v", err)
 	}
-	if status != "FAILED" || failureCode == nil || *failureCode != "QUESTION_EXECUTION_FAILED" || completedAt == nil {
-		t.Fatalf("canceled question terminal state=%s/%v/%v, want FAILED/QUESTION_EXECUTION_FAILED/non-null", status, failureCode, completedAt)
+	if status != "CANCELLED" || failureCode == nil || *failureCode != "QUESTION_CANCELLED" || completedAt == nil {
+		t.Fatalf("canceled question terminal state=%s/%v/%v, want CANCELLED/QUESTION_CANCELLED/non-null", status, failureCode, completedAt)
 	}
 
 	var failedAuditCount int
@@ -174,7 +174,7 @@ func TestQuestionRunCancellationPersistsFailure(t *testing.T) {
 		  FROM public.audit_event
 		 WHERE organization_id=$1 AND resource_type='QUESTION_RUN' AND resource_id=$2
 		   AND action=$3 AND outcome='FAILED' AND error_code=$4
-	`, s1dOrg, notification.Payload, string(audit.ActionQuestionFailed), "QUESTION_EXECUTION_FAILED").Scan(&failedAuditCount); err != nil {
+	`, s1dOrg, notification.Payload, string(audit.ActionQuestionFailed), "QUESTION_CANCELLED").Scan(&failedAuditCount); err != nil {
 		t.Fatalf("count canceled question failure audit: %v", err)
 	}
 	if failedAuditCount != 1 {
@@ -196,15 +196,15 @@ func TestQuestionRunCancellationPersistsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay canceled question: %v", err)
 	}
-	if replay.ID != notification.Payload || replay.ResultStatus != "FAILED" {
-		t.Fatalf("replay projection=%s/%s, want %s/FAILED", replay.ID, replay.ResultStatus, notification.Payload)
+	if replay.ID != notification.Payload || replay.ResultStatus != "CANCELLED" {
+		t.Fatalf("replay projection=%s/%s, want %s/CANCELLED", replay.ID, replay.ResultStatus, notification.Payload)
 	}
 	if err := admin.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM public.audit_event
 		 WHERE organization_id=$1 AND resource_type='QUESTION_RUN' AND resource_id=$2
 		   AND action=$3 AND outcome='FAILED' AND error_code=$4
-	`, s1dOrg, notification.Payload, string(audit.ActionQuestionFailed), "QUESTION_EXECUTION_FAILED").Scan(&failedAuditCount); err != nil {
+	`, s1dOrg, notification.Payload, string(audit.ActionQuestionFailed), "QUESTION_CANCELLED").Scan(&failedAuditCount); err != nil {
 		t.Fatalf("recount canceled question failure audit: %v", err)
 	}
 	if failedAuditCount != 1 {

@@ -1000,7 +1000,7 @@
     "tests/integration/postgres/prepare-ocr-worker.sh": "4104e8b4cdd8c58d8494f0529a87e51016d45fc7cded0ccff34b0a63a97057d4",
     "tests/integration/postgres/prepare-office-worker.sh": "50d68dface70348b735328e1ddea7261925fe94e522c33da3969bd0a9d3eaed6",
     "tests/integration/postgres/question_budget_test.go": "bec9c7a8ad6052a46b4a3cf944769f757b8375a688855edcac46ee87915af22b",
-    "tests/integration/postgres/question_cancellation_test.go": "b7db8b309790ceeaddbd26ee6ec03bc686b48b5927bade3e8fb798b4fd32989c",
+    "tests/integration/postgres/question_cancellation_test.go": "aca496a28f2cf6412b08dde31d3475d1916acb828a682b31261d855690eced10",
     "tests/integration/postgres/question_run_test.go": "3d82c0a92176495913a4fef81cae0b5229c069234bbeb45bcde505a4cd590b19",
     "tests/integration/postgres/question_scalar_reopen_test.go": "6ef71db5b8c9ec4e02789d73fc231c56b570ea4264fd4515ddba7ebb47543b1f",
     "tests/integration/postgres/question_topic_memory_test.go": "25a53164b0c9dd7d3cf7864f718f99c3e7ded4171d94f37ff4cce1a6eaa3d9d4",
