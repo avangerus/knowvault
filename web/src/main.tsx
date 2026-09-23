@@ -5,6 +5,7 @@ import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
 import { PendingAction, type PendingActionState } from "./pending-action";
+import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
 // ---------------------------------------------------------------------------
@@ -803,6 +804,7 @@ type QuestionRun = {
     calls: Array<{
       id: string;
       name: string;
+      arguments?: unknown;
       system: boolean;
       outcome: string;
       duration_ms: number;
@@ -3281,7 +3283,9 @@ function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; sh
     <details className="tool-trace">
       <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
       <ol>
-        {run.tool_loop.calls.map((call, index) => (
+        {run.tool_loop.calls.map((call, index) => {
+          const summary = toolCallSummary(call);
+          return (
           <li key={`${call.id}-${index}`}>
             {showResults ? (
               <details>
@@ -3289,10 +3293,14 @@ function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; sh
                 <pre>{call.result.text}</pre>
               </details>
             ) : (
-              <span>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</span>
+              <span>
+                {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
+                <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
+              </span>
             )}
           </li>
-        ))}
+          );
+        })}
       </ol>
     </details>
   );
