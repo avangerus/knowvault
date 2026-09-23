@@ -5,6 +5,7 @@ import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
 import { PendingAction, type PendingActionState } from "./pending-action";
+import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
 // ---------------------------------------------------------------------------
@@ -810,6 +811,7 @@ type QuestionRun = {
     calls: Array<{
       id: string;
       name: string;
+      arguments?: unknown;
       system: boolean;
       outcome: string;
       duration_ms: number;
@@ -980,7 +982,7 @@ const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["curre
 export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
   const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
   const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome)
-    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome! }));
+    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome!, durationMS: event.duration_ms }));
   const latest = ordered.at(-1);
   return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
 }
@@ -3285,21 +3287,27 @@ export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitat
 function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
   if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
   return (
-    <details className="tool-trace">
+    <details className="tool-trace" open>
       <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
       <ol>
-        {run.tool_loop.calls.map((call, index) => (
-          <li key={`${call.id}-${index}`}>
-            {showResults ? (
-              <details>
-                <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
-                <pre>{call.result.text}</pre>
-              </details>
-            ) : (
-              <span>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</span>
-            )}
-          </li>
-        ))}
+        {run.tool_loop.calls.map((call, index) => {
+          const summary = toolCallSummary(call);
+          return (
+            <li key={`${call.id}-${index}`}>
+              {showResults ? (
+                <details>
+                  <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
+                  <pre>{call.result.text}</pre>
+                </details>
+              ) : (
+                <span>
+                  {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
+                  <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ol>
     </details>
   );

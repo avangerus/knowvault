@@ -11,10 +11,12 @@ export function citationGroundingText(status: string | undefined): string {
 export const KNOWLEDGE_TOOL_LABELS: Record<string, string> = {
   knowvault_search: "Search sources",
   knowvault_read: "Read document",
+  knowvault_evidence_get: "Open evidence",
   knowvault_grep: "Find exact text",
   knowvault_related: "Related materials",
   knowvault_list_objects: "List documents",
   knowvault_sources: "Source status",
   knowvault_refresh: "Refresh sources",
   knowvault_compare_metric: "Compare metric",
+  knowvault_ask_live_data: "Read live data",
 };
