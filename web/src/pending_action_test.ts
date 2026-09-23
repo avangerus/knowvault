@@ -15,12 +15,12 @@ check(initial.includes("0s"), "elapsed seconds are visible");
 check(!initial.includes("<details"), "unobserved tool actions are not invented");
 
 const observed: PendingActionState = { current: "model", completed: [
-  { kind: "searching", outcome: "succeeded" }, { kind: "reading", outcome: "failed" },
+  { kind: "searching", outcome: "succeeded", durationMS: 1230 }, { kind: "reading", outcome: "failed" },
 ] };
 const history = renderToStaticMarkup(createElement(PendingAction, { state: observed, elapsedSeconds: 74.8 }));
 check(history.includes("Model is working") && !history.includes("Preparing answer"), "ordinary model activity is not labelled as finalization");
 check(history.includes("74s"), "elapsed seconds round down");
-check(history.includes("<details") && history.includes("2 finished actions"), "finished actions are expandable");
-check(history.includes("Searching sources") && history.includes("Reading evidence · failed"), "supplied failed tool outcomes remain visible");
+check(history.includes('<ol class="pending-action-history"') && !history.includes("<details"), "observed actions are visible without opening a disclosure");
+check(history.includes("Searching sources · done · 1.2s") && history.includes("Reading evidence · failed"), "outcome and elapsed time remain visible");
 
 console.log("pending action presentation: ok");

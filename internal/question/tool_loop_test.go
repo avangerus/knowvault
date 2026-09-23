@@ -277,9 +277,15 @@ func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
 		t.Fatalf("fallback with successful comparison = %q; want %q", got, noWorkspaceData)
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
-		Name: "knowvault_search", Outcome: "REFUSED",
+		Name: liveDataToolName, Outcome: "REFUSED",
+		Result: workspacetools.Result{Text: `{"error":"TOOL_UNAVAILABLE"}`},
+	}}}, false); got != unreadableWorkspaceData {
+		t.Fatalf("fallback for an unavailable live read = %q; want %q", got, unreadableWorkspaceData)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: "knowvault_search", Outcome: "SUCCEEDED",
 	}}}, false); got != noWorkspaceData {
-		t.Fatalf("fallback for another refused tool = %q; want %q", got, noWorkspaceData)
+		t.Fatalf("fallback for an empty successful search = %q; want %q", got, noWorkspaceData)
 	}
 }
 

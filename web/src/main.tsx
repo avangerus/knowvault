@@ -5,6 +5,7 @@ import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
 import { PendingAction, type PendingActionState } from "./pending-action";
+import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
 // ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ export type EvidenceQuoteSelector = {
   anchor: string;
 };
 
-export type EvidenceTarget = { workspace: string; fragment: string; canonicalAddress?: string; selector?: EvidenceQuoteSelector };
+export type EvidenceTarget = { workspace: string; fragment: string; canonicalAddress?: string; selector?: EvidenceQuoteSelector; returnConversation?: string };
 
 export type VerifiedEvidenceQuote = { start: number; end: number; text: string };
 
@@ -208,6 +209,7 @@ export function buildEvidenceHash(target: EvidenceTarget): string {
   const base = `#evidence/${encodeURIComponent(target.workspace)}/${encodeURIComponent(target.fragment)}`;
   const params = new URLSearchParams();
   if (target.canonicalAddress !== undefined) params.set("address", target.canonicalAddress);
+  if (target.returnConversation) params.set("from", target.returnConversation);
   if (!target.selector || !isEvidenceQuoteSelector(target.selector)) return params.size ? `${base}?${params.toString()}` : base;
   params.set("quote_start", String(target.selector.start));
   params.set("quote_end", String(target.selector.end));
@@ -232,7 +234,7 @@ export function evidenceRequestPath(target: Pick<EvidenceTarget, "workspace" | "
 // fragment address returned by the server, so their address strings can differ.
 export function evidencePageHref(
   evidence: EvidenceData,
-  request: Pick<EvidenceTarget, "workspace" | "fragment" | "canonicalAddress">,
+  request: Pick<EvidenceTarget, "workspace" | "fragment" | "canonicalAddress" | "returnConversation">,
   selector: EvidenceQuoteSelector | null,
   legacyBase?: string,
 ): string | null {
@@ -243,6 +245,7 @@ export function evidencePageHref(
     fragment: request.fragment,
     ...(evidence.canonical_address !== undefined ? { canonicalAddress: evidence.canonical_address } : {}),
     ...(selector ? { selector } : {}),
+    ...(request.returnConversation ? { returnConversation: request.returnConversation } : {}),
   };
   const hasServerURL = Object.prototype.hasOwnProperty.call(evidence, "source_page_url");
   if (hasServerURL) {
@@ -337,6 +340,11 @@ export function parseEvidenceHash(hash: string): EvidenceTarget | null {
     if (params.getAll("address").length !== 1 || !params.get("address")) return null;
     target.canonicalAddress = params.get("address")!;
     params.delete("address");
+  }
+  if (params.has("from")) {
+    if (params.getAll("from").length !== 1 || !params.get("from")) return null;
+    target.returnConversation = params.get("from")!;
+    params.delete("from");
   }
   const keys = [...params.keys()];
   if (keys.length !== evidenceSelectorKeys.length || keys.some((key) => !evidenceSelectorKeys.includes(key as typeof evidenceSelectorKeys[number]))) return target;
@@ -803,6 +811,7 @@ type QuestionRun = {
     calls: Array<{
       id: string;
       name: string;
+      arguments?: unknown;
       system: boolean;
       outcome: string;
       duration_ms: number;
@@ -973,7 +982,7 @@ const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["curre
 export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
   const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
   const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome)
-    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome! }));
+    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome!, durationMS: event.duration_ms }));
   const latest = ordered.at(-1);
   return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
 }
@@ -2064,7 +2073,7 @@ function App() {
       window.history.back();
       return;
     }
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${buildSearchHash(evidenceTarget.workspace)}`);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${buildSearchHash(evidenceTarget.workspace, evidenceTarget.returnConversation)}`);
     syncLocation();
   }
 
@@ -2273,7 +2282,7 @@ function App() {
               key={JSON.stringify(evidenceTarget)}
               onAccessDenied={invalidateRetainedSearch}
               onReturn={returnFromEvidence}
-              returnHref={buildSearchHash(evidenceTarget.workspace)}
+              returnHref={buildSearchHash(evidenceTarget.workspace, evidenceTarget.returnConversation)}
               target={evidenceTarget}
               workspaceName={workspaces.find((workspace) => workspace.id === evidenceTarget.workspace)?.name ?? "Workspace"}
             />
@@ -3278,21 +3287,27 @@ export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitat
 function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
   if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
   return (
-    <details className="tool-trace">
+    <details className="tool-trace" open>
       <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
       <ol>
-        {run.tool_loop.calls.map((call, index) => (
-          <li key={`${call.id}-${index}`}>
-            {showResults ? (
-              <details>
-                <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
-                <pre>{call.result.text}</pre>
-              </details>
-            ) : (
-              <span>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</span>
-            )}
-          </li>
-        ))}
+        {run.tool_loop.calls.map((call, index) => {
+          const summary = toolCallSummary(call);
+          return (
+            <li key={`${call.id}-${index}`}>
+              {showResults ? (
+                <details>
+                  <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
+                  <pre>{call.result.text}</pre>
+                </details>
+              ) : (
+                <span>
+                  {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
+                  <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ol>
     </details>
   );
@@ -4365,6 +4380,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const citationHref = (citation: QuestionCitation): string => buildEvidenceHash({
     workspace: workspaceID,
     fragment: citation.evidence_fragment_id,
+    ...(run.conversation_id ? { returnConversation: run.conversation_id } : {}),
     ...(citation.address ? { canonicalAddress: citation.address } : {}),
     ...(confirmedEvidenceQuoteSelector(citation) ? { selector: confirmedEvidenceQuoteSelector(citation)! } : {}),
   });
