@@ -16,6 +16,7 @@ import {
   questionRunPayload,
   relySourceSummary,
   reduceGovernedRetention,
+  sidebarConversations,
   TurnCard,
   type GovernedRetentionState,
   type WorkspaceDataState,
@@ -329,6 +330,19 @@ check(away.phase === "pending" && away.revision === 7 && away.resetKey === autho
 check(back.phase === "authorized" && back.revision === 7 && back.resetKey === authorized.resetKey, "same-revision return reveals without reset or resubmit");
 check(revised.resetKey === back.resetKey + 1 && revised.revision === 8, "revision change resets retained state");
 check(denied.phase === "denied" && denied.revision === null && denied.resetKey === revised.resetKey + 1, "denial clears retained state");
+
+const sidebarRows = [
+  { conversation_id: "empty-old", turns: [] },
+  { conversation_id: "asked", turns: [{ question_run: { question: "How fresh is GM?" } }] },
+  { conversation_id: "empty-current", turns: [] },
+  { conversation_id: "archived", archived_at: "2026-09-23T00:00:00Z", turns: [{ question_run: { question: "Archived" } }] },
+] as unknown as Parameters<typeof sidebarConversations>[0];
+check(sidebarConversations(sidebarRows, null, "").map((item) => item.conversation_id).join() === "asked",
+  "sidebar hides old empty conversations and archived history without deleting them");
+check(sidebarConversations(sidebarRows, "empty-current", "").map((item) => item.conversation_id).join() === "asked,empty-current",
+  "sidebar keeps the currently open empty conversation reachable");
+check(sidebarConversations(sidebarRows, null, "fresh").map((item) => item.conversation_id).join() === "asked",
+  "sidebar search still finds conversations after their first Ask");
 
 if (failures !== 0) throw new Error(`${failures} search-surface assertion(s) failed`);
 console.log("search surface probe: PASS");

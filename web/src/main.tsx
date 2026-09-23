@@ -806,6 +806,13 @@ function conversationTitle(conversation: ConversationDetail): string {
   return first.length > 72 ? `${first.slice(0, 72)}…` : first;
 }
 
+export function sidebarConversations(conversations: readonly ConversationSummary[], selectedID: string | null, query: string): ConversationSummary[] {
+  const needle = query.trim().toLowerCase();
+  return conversations
+    .filter((item) => !item.archived_at && (item.turns.length > 0 || item.conversation_id === selectedID))
+    .filter((item) => needle === "" || conversationTitle(item).toLowerCase().includes(needle));
+}
+
 // ---------------------------------------------------------------------------
 // Fail-closed fetching: a non-2xx answer is read only through the typed error
 // envelope; an unreadable answer is reported as-is, never reinterpreted.
@@ -5142,9 +5149,7 @@ function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialC
   const examples = exampleQuestions(activeSources);
   const conversationFailure = conversationList?.kind === "failure" || conversationList?.kind === "broken" ? conversationList : null;
   const detailFailure = conversation?.kind === "failure" || conversation?.kind === "broken" ? conversation : null;
-  const visibleConversations = conversations
-    .filter((item) => !item.archived_at)
-    .filter((item) => sidebarQuery.trim() === "" || conversationTitle(item).toLowerCase().includes(sidebarQuery.trim().toLowerCase()));
+  const visibleConversations = sidebarConversations(conversations, selectedConversationID, sidebarQuery);
   const showGreeting = selectedConversationID === null && feedTurns.length === 0 && pendingQuestion === null && !lastFailure;
   const currentTitle = selectedConversationID !== null && conversation?.kind === "ok" ? conversationTitle(conversation.value) : null;
 
@@ -5177,7 +5182,7 @@ function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialC
             </>
           )}
           {conversationList?.kind === "ok" && visibleConversations.length === 0 && (
-            <p className="muted">{conversations.length === 0 ? "No conversations yet." : "No results found."}</p>
+            <p className="muted">{sidebarConversations(conversations, selectedConversationID, "").length === 0 ? "No conversations yet." : "No results found."}</p>
           )}
           {conversationList?.kind === "ok" && visibleConversations.map((item) => (
             <button
