@@ -3878,6 +3878,8 @@ func checkVersionLock(root string) []string {
 		"go_build_tools.grype.image_digest":               "sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
 		"ci_actions.checkout.version":                     "v7.0.0",
 		"ci_actions.checkout.source_commit":               "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+		"ci_actions.upload_artifact.version":              "v4.6.2",
+		"ci_actions.upload_artifact.source_commit":        "ea165f8d65b6e75b540449e92b4886f43607fa02",
 		"ci_actions.codeql_init.repository":               "github/codeql-action/init",
 		"ci_actions.codeql_init.version":                  "v4.38.1",
 		"ci_actions.codeql_init.source_commit":            "1c5b675653bb5c22dbe9b12b556ec555138e09fd",
@@ -4030,6 +4032,7 @@ var reviewedVersionComponentFields = map[string][]string{
 	"go_build_tools.syft":                               {"module", "version", "source_commit", "release_checksum_manifest_sha256", "image", "image_digest", "scope", "license", "rule"},
 	"go_build_tools.grype":                              {"module", "version", "source_commit", "release_checksum_manifest_sha256", "image", "image_digest", "scope", "license", "rule"},
 	"ci_actions.checkout":                               {"repository", "version", "source_commit", "license", "scope"},
+	"ci_actions.upload_artifact":                        {"repository", "version", "source_commit", "license", "scope"},
 	"ci_actions.codeql_init":                            {"repository", "version", "source_commit", "license", "scope"},
 	"ci_actions.codeql_analyze":                         {"repository", "version", "source_commit", "license", "scope"},
 	"ci_actions.dependency_review":                      {"repository", "version", "source_commit", "license", "scope"},
@@ -4051,7 +4054,7 @@ var reviewedVersionGroups = map[string][]string{
 	"node_transitive_dependencies": {"fast_deep_equal", "fast_uri", "json_schema_traverse", "require_from_string", "scheduler", "csstype"},
 	"go_dependencies":              {"google_compute_metadata", "oidc", "go_jose", "pgx", "pgpassfile", "pgservicefile", "puddle", "x_oauth2", "x_sync", "x_sys", "x_text", "x_net"},
 	"go_build_tools":               {"oapi_codegen", "sqlc", "syft", "grype"},
-	"ci_actions":                   {"checkout", "powershell_probe_runner", "codeql_init", "codeql_analyze", "dependency_review"},
+	"ci_actions":                   {"checkout", "upload_artifact", "powershell_probe_runner", "codeql_init", "codeql_analyze", "dependency_review"},
 	"data_services":                {"postgresql", "opensearch", "reverse_proxy", "built_in_idp", "embedding_runtime"},
 }
 
@@ -4584,7 +4587,7 @@ func validateComponentIntegrity(path string, component map[string]any, lock any)
 		required = map[string]*regexp.Regexp{"module_sum": h1Pattern, "go_mod_sum": h1Pattern, "source_commit": hex40Pattern}
 	case path == "go_build_tools.syft" || path == "go_build_tools.grype":
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern, "release_checksum_manifest_sha256": hex64Pattern, "image": regexp.MustCompile(`^[^\s:@]+(?:/[^\s:@]+)*:[^\s@]+@sha256:[0-9a-f]{64}$`), "image_digest": regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)}
-	case path == "ci_actions.checkout" || path == "ci_actions.codeql_init" || path == "ci_actions.codeql_analyze" || path == "ci_actions.dependency_review":
+	case path == "ci_actions.checkout" || path == "ci_actions.upload_artifact" || path == "ci_actions.codeql_init" || path == "ci_actions.codeql_analyze" || path == "ci_actions.dependency_review":
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern}
 	case path == "ci_actions.powershell_probe_runner":
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern, "release_checksum_sha256": hex64Pattern}
@@ -4982,7 +4985,7 @@ func lockedImagesFromVersionLock(lock any) map[string]bool {
 
 func lockedActionsFromVersionLock(lock any) map[string]bool {
 	result := make(map[string]bool)
-	for _, name := range []string{"checkout", "codeql_init", "codeql_analyze", "dependency_review"} {
+	for _, name := range []string{"checkout", "upload_artifact", "codeql_init", "codeql_analyze", "dependency_review"} {
 		repository, repoOK := jsonValueAt(lock, "ci_actions."+name+".repository")
 		commit, commitOK := jsonValueAt(lock, "ci_actions."+name+".source_commit")
 		if repoOK && commitOK {
@@ -10007,7 +10010,7 @@ func checkLicensePolicy(root string) []string {
 		"go_dependencies.pgx": "pgx", "go_dependencies.pgpassfile": "pgpassfile", "go_dependencies.pgservicefile": "pgservicefile",
 		"go_dependencies.puddle": "puddle", "go_dependencies.x_oauth2": "golang.org/x/oauth2", "go_dependencies.x_sync": "golang.org/x/sync", "go_dependencies.x_sys": "golang.org/x/sys", "go_dependencies.x_text": "golang.org/x/text", "go_dependencies.x_net": "golang.org/x/net",
 		"go_build_tools.oapi_codegen": "oapi-codegen", "go_build_tools.sqlc": "sqlc", "go_build_tools.syft": "Syft", "go_build_tools.grype": "Grype",
-		"ci_actions.checkout": "actions/checkout", "data_services.postgresql": "PostgreSQL", "data_services.opensearch": "OpenSearch",
+		"ci_actions.checkout": "actions/checkout", "ci_actions.upload_artifact": "actions/upload-artifact", "data_services.postgresql": "PostgreSQL", "data_services.opensearch": "OpenSearch",
 	}
 	for _, component := range reviewedEsbuildPlatformPackages {
 		reviewedNames["node_transitive_dependencies."+component.Key] = component.SelectedName
@@ -10068,7 +10071,7 @@ var expectedSelectedComponentStatus = map[string]string{
 	"Ajv": "ACTIVE", "ajv-formats": "ACTIVE", "fast-deep-equal": "ACTIVE", "fast-uri": "ACTIVE",
 	"json-schema-traverse": "ACTIVE", "require-from-string": "ACTIVE", "scheduler": "ACTIVE", "csstype": "ACTIVE",
 	"oapi-codegen": "ACTIVE", "cloud.google.com/go/compute/metadata": "ACTIVE", "go-oidc": "ACTIVE", "go-jose": "ACTIVE", "golang.org/x/oauth2": "ACTIVE", "pgx": "ACTIVE", "pgpassfile": "ACTIVE", "pgservicefile": "ACTIVE", "puddle": "ACTIVE", "golang.org/x/sync": "ACTIVE", "golang.org/x/sys": "ACTIVE", "golang.org/x/text": "ACTIVE", "sqlc": "ACTIVE", "Syft": "ACTIVE", "Grype": "ACTIVE",
-	"actions/checkout": "ACTIVE", "PostgreSQL": "ACTIVE", "OpenSearch": "ACTIVE", "golang.org/x/net": "ACTIVE",
+	"actions/checkout": "ACTIVE", "actions/upload-artifact": "ACTIVE", "PostgreSQL": "ACTIVE", "OpenSearch": "ACTIVE", "golang.org/x/net": "ACTIVE",
 	"libc6 (isolated parser runtime)": "DEFERRED",
 	"Apache POI":                      "DEFERRED", "Apache PDFBox": "DEFERRED", "Tesseract OCR": "DEFERRED", "tessdata (Tesseract trained data)": "DEFERRED", "Leptonica": "DEFERRED", "vLLM": "DEFERRED",
 	"Qwen3-Embedding-0.6B": "DEFERRED", "Qwen3-Reranker-0.6B": "DEFERRED", "Qwen3-14B": "DEFERRED",

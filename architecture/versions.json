@@ -472,6 +472,13 @@
       "license": "MIT",
       "scope": "github-ci-only"
     },
+    "upload_artifact": {
+      "repository": "actions/upload-artifact",
+      "version": "v4.6.2",
+      "source_commit": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "license": "MIT",
+      "scope": "github-pilot-artifact-transfer-only"
+    },
     "powershell_probe_runner": {
       "repository": "PowerShell/PowerShell",
       "version": "v7.6.4",

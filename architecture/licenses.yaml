@@ -249,6 +249,11 @@ selected_components:
     role: pinned GitHub CI checkout action
     license: MIT
     source: https://github.com/actions/checkout/blob/main/LICENSE
+  - name: actions/upload-artifact
+    status: ACTIVE
+    role: pinned short-lived pilot image artifact transfer
+    license: MIT
+    source: https://github.com/actions/upload-artifact/blob/main/LICENSE
   - name: PostgreSQL
     status: ACTIVE
     role: metadata, RLS, jobs, outbox, audit
