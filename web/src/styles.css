@@ -337,7 +337,7 @@ svg { display: block; }
    layout itself fills the content panel without a page-level scrollbar
    (decision 14: the primary scenario fits a laptop screen).
 --------------------------------------------------------------------------- */
-.ask-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr) minmax(380px, 30%); }
+.ask-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr) minmax(300px, 25%); }
 .ask-layout-full { grid-template-columns: 224px minmax(0, 1fr) 0; }
 
 .topics { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
@@ -602,7 +602,7 @@ ul.answer-keys li:last-child { border-bottom: none; }
 @keyframes kv-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
 @media (max-width: 1180px) {
-  .ask-layout { grid-template-columns: 200px minmax(0, 1fr) 340px; }
+  .ask-layout { grid-template-columns: 200px minmax(0, 1fr) 300px; }
 }
 
 /* ---------------------------------------------------------------------------

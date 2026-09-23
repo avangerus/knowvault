@@ -3156,6 +3156,21 @@ function renderInline(text: string, ctx: InlineCtx, keyPrefix: string): ReactNod
   return nodes;
 }
 
+// The server escapes source excerpts for Markdown and HTML before storing the
+// answer. Decode that fixed escape set once, then let React create a text node.
+// Passing the quote through renderInline would turn document text into markup.
+function literalSourceExcerpt(escaped: string): string {
+  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", "#34": '"', "#39": "'" };
+  const markdown = escaped.replace(/\\([\\`*_\[\]()#!|])/g, "$1");
+  return markdown.replace(/&(amp|lt|gt|#34|#39);/g, (_match, entity: string) => entities[entity]);
+}
+
+function renderSourceExcerptLine(text: string, ctx: InlineCtx, key: string): ReactNode | null {
+  const match = text.match(/^(Source excerpt|\u0424\u0440\u0430\u0433\u043c\u0435\u043d\u0442 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430) \[(\d+)\]: “(.*)”$/);
+  if (!match) return null;
+  return <p className="ans-p" key={key}>{renderInline(`${match[1]} [${match[2]}]: `, ctx, key)}“{literalSourceExcerpt(match[3])}”</p>;
+}
+
 function renderAnswerBlock(block: AnswerBlock, index: number, ctx: InlineCtx): ReactNode {
   const key = `blk${index}`;
   if (block.kind === "h") {
@@ -3169,12 +3184,13 @@ function renderAnswerBlock(block: AnswerBlock, index: number, ctx: InlineCtx): R
       ? <ol className="ans-list" key={key}>{items}</ol>
       : <ul className="ans-list" key={key}>{items}</ul>;
   }
-  return <p className="ans-p" key={key}>{renderInline(block.text, ctx, key)}</p>;
+  return renderSourceExcerptLine(block.text, ctx, key)
+    ?? <p className="ans-p" key={key}>{renderInline(block.text, ctx, key)}</p>;
 }
 
 const ANSWER_COLLAPSED_BLOCK_COUNT = 8;
 
-function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
+export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
   text: string;
   citations: QuestionCitation[];
   turnId: string;
@@ -5384,7 +5400,6 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
               ) : (
                 <p>No sources are connected yet. Add them in Sources to see example questions here.</p>
               )}
-              <p className="hint">This question uses the “{workspaceTitle}” workspace. Switching workspaces starts a new conversation using that workspace's sources.</p>
             </div>
           )}
 
@@ -5448,8 +5463,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
             </label>
           )}
           <p className="hint" id="ask-keyboard-hint">Enter to ask · Shift + Enter for a new line</p>
-          {feedTurns.length > 0 && <p className="hint">When continuing a conversation, repeat any important conditions or facts from earlier answers that you want to use.</p>}
-          <p className="hint">This question uses the “{workspaceTitle}” workspace. Switching workspaces starts a new conversation. <button className="text-button" onClick={onOpenSources} type="button">Sources →</button></p>
+          <p className="hint">Workspace: {workspaceTitle} · Switching workspaces starts a new conversation. <button className="text-button" onClick={onOpenSources} type="button">Sources →</button></p>
         </div>
       </section>
 
