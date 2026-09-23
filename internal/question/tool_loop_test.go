@@ -16,11 +16,11 @@ import (
 )
 
 func TestToolLoopAdvertisesBothGovernedToolsWhenConfigured(t *testing.T) {
-	definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false)
+	definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false, [2]string{})
 	if err != nil || len(definitions) != 1 || definitions[0].Function.Name != liveDataToolName {
 		t.Fatalf("single-date definitions = %#v, err %v; want live ask only", definitions, err)
 	}
-	definitions, err = toolLoopGovernedDefinitions(trustedMetricCatalog(), nil, false)
+	definitions, err = toolLoopGovernedDefinitions(trustedMetricCatalog(), nil, false, [2]string{})
 	if err != nil || len(definitions) != 0 {
 		t.Fatalf("preset-only single-date definitions = %#v, err %v; want no governed tool", definitions, err)
 	}
@@ -39,7 +39,7 @@ func TestToolLoopDispatchesSingleDateAskWithComparisonCatalog(t *testing.T) {
 	access := database.AccessContext{OrganizationID: "org_current", PrincipalID: "usr_current", RequestID: "req_current"}
 	state := &liveDataRunState{}
 	result, evidence, err := service.invokeToolLoopGovernedData(context.Background(), access, run,
-		liveDataToolName, trustedMetricCatalog(), false, json.RawMessage(`{"question":"`+question+`"}`), 8192, state)
+		liveDataToolName, trustedMetricCatalog(), false, [2]string{}, []string{"2026-09-10"}, json.RawMessage(`{"question":"`+question+`"}`), 8192, state)
 	if err != nil || result.IsError || evidence != nil {
 		t.Fatalf("one-date ask result = %#v, evidence = %#v, err = %v", result, evidence, err)
 	}
@@ -47,14 +47,20 @@ func TestToolLoopDispatchesSingleDateAskWithComparisonCatalog(t *testing.T) {
 		!state.successfulCall || len(state.executions) != 1 {
 		t.Fatalf("one-date ask was not dispatched and retained: ask=%#v compare=%#v state=%#v", ask, compare, state)
 	}
+	wrongDate, _, err := service.invokeToolLoopGovernedData(context.Background(), access, run,
+		liveDataToolName, trustedMetricCatalog(), false, [2]string{}, []string{"2026-09-10"},
+		json.RawMessage(`{"question":"What was the metric on 2026-01-10?"}`), 8192, &liveDataRunState{})
+	if err != nil || !wrongDate.IsError || ask.calls != 1 {
+		t.Fatalf("rewritten date reached database: result=%#v err=%v calls=%d", wrongDate, err, ask.calls)
+	}
 	presetOnly := &Service{trustedMetricComparison: compare}
 	refusal, _, err := presetOnly.invokeToolLoopGovernedData(context.Background(), access, run,
-		liveDataToolName, trustedMetricCatalog(), false, json.RawMessage(`{"question":"`+question+`"}`), 8192, &liveDataRunState{})
+		liveDataToolName, trustedMetricCatalog(), false, [2]string{}, nil, json.RawMessage(`{"question":"`+question+`"}`), 8192, &liveDataRunState{})
 	if err != nil || !refusal.IsError || compare.calls != 0 {
 		t.Fatalf("preset-only live ask = %#v, err %v, comparison calls %d; want refusal", refusal, err, compare.calls)
 	}
 	refusal, _, err = service.invokeToolLoopGovernedData(context.Background(), access, run,
-		trustedMetricToolName, trustedMetricCatalog(), false,
+		trustedMetricToolName, trustedMetricCatalog(), false, [2]string{}, nil,
 		json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`), 8192, &liveDataRunState{})
 	if err != nil || !refusal.IsError || compare.calls != 0 {
 		t.Fatalf("unadvertised one-date comparison = %#v, err %v, calls %d; want refusal", refusal, err, compare.calls)
@@ -71,14 +77,14 @@ func TestRecognizedComparisonRoutesOnlyExplicitTwoDateQuestions(t *testing.T) {
 		if !recognizedComparison(question) {
 			t.Fatalf("comparison was not recognized: %q", question)
 		}
-		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, true)
+		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, true, [2]string{"2026-09-09", "2026-09-10"})
 		if err != nil || len(definitions) != 1 || definitions[0].Function.Name != trustedMetricToolName {
 			t.Fatalf("comparison definitions = %#v, err = %v", definitions, err)
 		}
 		ask := &liveDataAskProbe{result: liveDataResultFixture()}
 		service := &Service{liveDataAsk: ask, trustedMetricComparison: &trustedMetricProbe{}}
 		refusal, _, err := service.invokeToolLoopGovernedData(context.Background(), database.AccessContext{}, Run{WorkspaceID: "ws_current", ID: "qrun_current"},
-			liveDataToolName, trustedMetricCatalog(), true, json.RawMessage(`{"question":"bypass"}`), 8192, &liveDataRunState{})
+			liveDataToolName, trustedMetricCatalog(), true, [2]string{"2026-09-09", "2026-09-10"}, nil, json.RawMessage(`{"question":"bypass"}`), 8192, &liveDataRunState{})
 		if err != nil || !refusal.IsError || !strings.Contains(refusal.Text, "TRUSTED_COMPARISON_REQUIRED") || ask.calls != 0 {
 			t.Fatalf("generic comparison attempt = %#v, err = %v, calls = %d", refusal, err, ask.calls)
 		}
@@ -91,10 +97,56 @@ func TestRecognizedComparisonRoutesOnlyExplicitTwoDateQuestions(t *testing.T) {
 		if recognizedComparison(question) {
 			t.Fatalf("noncomparison was recognized: %q", question)
 		}
-		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false)
+		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false, [2]string{})
 		if err != nil || len(definitions) != 1 || definitions[0].Function.Name != liveDataToolName {
 			t.Fatalf("noncomparison definitions = %#v, err = %v", definitions, err)
 		}
+	}
+}
+
+func TestComparisonDatePairBindsOnlyUserDates(t *testing.T) {
+	sep := [2]string{"2026-09-09", "2026-09-10"}
+	for _, question := range []string{
+		"Compare 2026-09-10 with 2026-09-09.",
+		"\u0421\u0440\u0430\u0432\u043d\u0438 9 \u0438 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433\u043e\u0434\u0430.",
+		"\u0421\u0440\u0430\u0432\u043d\u0438 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f \u0438 9 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433\u043e\u0434\u0430.",
+		"Compare 09.09.2026 and 10.09.2026.",
+	} {
+		if got := comparisonDatePair(question, nil); got != sep {
+			t.Fatalf("dates for %q = %v, want %v", question, got, sep)
+		}
+	}
+	for _, question := range []string{
+		"Compare 2026-09-10 and 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026.",
+		"Compare 2026-09-10 with 2026-09-10.",
+		"Compare 2026-02-30 with 2026-09-10.",
+		"Compare 2026-09-09, 2026-09-10, and 2026-09-11.",
+	} {
+		if got := comparisonDatePair(question, nil); got != [2]string{} {
+			t.Fatalf("ambiguous or single dates for %q = %v", question, got)
+		}
+	}
+	if got := comparisonDatePair("\u0410 \u043a\u0430\u043a\u043e\u0439 \u0438\u0437 \u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u043d\u0435\u0439 \u0432\u044b\u0448\u0435?",
+		[]toolLoopConversationTurn{{Question: "Compare 2026-09-10 with 2026-09-09."}}); got != sep {
+		t.Fatalf("follow-up dates = %v, want %v", got, sep)
+	}
+	if got := comparisonDatePair("\u0410 \u043a\u0430\u043a\u043e\u0439 \u0438\u0437 \u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u043d\u0435\u0439 \u0432\u044b\u0448\u0435?",
+		[]toolLoopConversationTurn{{Question: "What is the latest value?"}}); got != [2]string{} {
+		t.Fatalf("unrelated history supplied dates: %v", got)
+	}
+	if !comparisonArgumentsMatch(json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-09-10","date_b":"2026-09-09"}`), sep) ||
+		comparisonArgumentsMatch(json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`), sep) {
+		t.Fatal("comparison invocation date scope failed")
+	}
+	compare := &trustedMetricProbe{}
+	service := &Service{trustedMetricComparison: compare}
+	refusal, _, err := service.invokeToolLoopGovernedData(context.Background(),
+		database.AccessContext{}, Run{WorkspaceID: "ws_current", ID: "qrun_current"},
+		trustedMetricToolName, trustedMetricCatalog(), true, sep, nil,
+		json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`),
+		8192, &liveDataRunState{})
+	if err != nil || !refusal.IsError || compare.calls != 0 {
+		t.Fatalf("wrong-date invocation reached database: refusal=%#v err=%v calls=%d", refusal, err, compare.calls)
 	}
 }
 

@@ -920,9 +920,9 @@ func collectCitationObservations(toolName string, raw json.RawMessage, index *ci
 	return citationReadPage{}, false
 }
 
-func toolLoopGovernedDefinitions(catalog []governedask.ComparisonSummary, ask GovernedAsk, comparisonQuestion bool) ([]modelgateway.ToolDefinition, error) {
+func toolLoopGovernedDefinitions(catalog []governedask.ComparisonSummary, ask GovernedAsk, comparisonQuestion bool, allowedDates [2]string) ([]modelgateway.ToolDefinition, error) {
 	var definitions []modelgateway.ToolDefinition
-	if comparisonQuestion && len(catalog) > 0 {
+	if comparisonQuestion && allowedDates != [2]string{} && len(catalog) > 0 {
 		definition, valid := trustedMetricToolDefinition(catalog)
 		if !valid {
 			return nil, &Error{code: CodeUnavailable}
@@ -936,16 +936,22 @@ func toolLoopGovernedDefinitions(catalog []governedask.ComparisonSummary, ask Go
 }
 
 func (service *Service) invokeToolLoopGovernedData(ctx context.Context, access database.AccessContext, run Run,
-	name string, catalog []governedask.ComparisonSummary, comparisonQuestion bool, args json.RawMessage, maxResultBytes int,
+	name string, catalog []governedask.ComparisonSummary, comparisonQuestion bool, allowedDates [2]string, requestedDates []string, args json.RawMessage, maxResultBytes int,
 	state *liveDataRunState) (workspacetools.Result, *liveDataProjection, error) {
 	if name == liveDataToolName {
 		if comparisonQuestion && len(catalog) > 0 {
 			return workspacetools.Result{IsError: true, Text: `{"error":"TRUSTED_COMPARISON_REQUIRED","advice":"Use knowvault_compare_metric for this two-date comparison. Do not ask live SQL to calculate it."}`}, nil, nil
 		}
+		if len(requestedDates) == 1 {
+			question, ok := parseLiveDataQuestion(args)
+			if !ok || !sameSingleDate(explicitComparisonDates(question), requestedDates[0]) {
+				return liveDataRefusal("REQUESTED_DATE_MISMATCH"), nil, nil
+			}
+		}
 		result, err := state.invoke(ctx, access, run.WorkspaceID, run.ID, service.liveDataAsk, args, maxResultBytes)
 		return result, nil, err
 	}
-	if !comparisonQuestion || len(catalog) == 0 || len(state.executions) >= liveDataMaxSuccessfulCalls {
+	if !comparisonQuestion || !comparisonArgumentsMatch(args, allowedDates) || len(catalog) == 0 || len(state.executions) >= liveDataMaxSuccessfulCalls {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
 	}
 	result, execution, err := invokeTrustedMetricToolRetained(ctx, access, run.WorkspaceID, run.ID,
@@ -1009,7 +1015,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		definitions = append(definitions, modelgateway.ToolDefinition{Type: "function", Function: modelgateway.ToolFunction{Name: tool.Name, Description: tool.Description, Parameters: tool.Schema}})
 	}
 	comparisonQuestion := len(comparisonCatalog) > 0 && recognizedComparison(questionText)
-	governedDefinitions, err := toolLoopGovernedDefinitions(comparisonCatalog, service.liveDataAsk, comparisonQuestion)
+	allowedDates := comparisonDatePair(questionText, history)
+	requestedDates := explicitComparisonDates(questionText)
+	governedDefinitions, err := toolLoopGovernedDefinitions(comparisonCatalog, service.liveDataAsk, comparisonQuestion, allowedDates)
 	if err != nil {
 		return err
 	}
@@ -1047,7 +1055,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		var callErr error
 		var metricEvidence *liveDataProjection
 		if name == trustedMetricToolName || name == liveDataToolName {
-			result, metricEvidence, callErr = service.invokeToolLoopGovernedData(ctx, access, run, name, comparisonCatalog, comparisonQuestion,
+			result, metricEvidence, callErr = service.invokeToolLoopGovernedData(ctx, access, run, name, comparisonCatalog, comparisonQuestion, allowedDates, requestedDates,
 				args, profile.MaxToolResultBytes, &liveDataState)
 		} else if name == analyticScalarToolName {
 			if service.liveDataAsk != nil {

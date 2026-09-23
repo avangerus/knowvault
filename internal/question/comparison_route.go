@@ -2,7 +2,6 @@ package question
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -20,34 +19,7 @@ func recognizedComparison(question string) bool {
 	if !hasComparisonCue(text) {
 		return false
 	}
-	for _, marker := range []string{
-		"these two days", "those two days", "these two dates", "those two dates",
-		"\u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u043d\u0435\u0439", // these two days
-		"\u044d\u0442\u0438 \u0434\u0432\u0430 \u0434\u043d\u044f",
-		"\u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u0430\u0442",
-		"\u044d\u0442\u0438 \u0434\u0432\u0435 \u0434\u0430\u0442\u044b",
-	} {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	dates := make(map[string]struct{})
-	for _, date := range comparisonISODate.FindAllString(text, -1) {
-		dates[date] = struct{}{}
-	}
-	for _, fields := range comparisonWrittenDate.FindAllStringSubmatch(text, -1) {
-		if month := comparisonMonth(fields[2]); month > 0 {
-			dates[fields[3]+"-"+strconv.Itoa(month)+"-"+fields[1]] = struct{}{}
-		}
-	}
-	for _, fields := range comparisonSharedMonth.FindAllStringSubmatch(text, -1) {
-		if month := comparisonMonth(fields[3]); month > 0 {
-			prefix := fields[4] + "-" + strconv.Itoa(month) + "-"
-			dates[prefix+fields[1]] = struct{}{}
-			dates[prefix+fields[2]] = struct{}{}
-		}
-	}
-	return len(dates) >= 2
+	return comparisonFollowup(question) || len(explicitComparisonDates(question)) == 2
 }
 
 func hasComparisonCue(text string) bool {
