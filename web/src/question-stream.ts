@@ -21,6 +21,33 @@ export type QuestionStreamFrame<Run> =
   | { type: "result"; result: Run }
   | { type: "error"; code: "QUESTION_FAILED"; request_id: string };
 
+export type QuestionStreamTerminal<Run> = Exclude<QuestionStreamFrame<Run>, QuestionActionFrame>;
+
+export function observationForGeneration(
+  owner: number, currentGeneration: () => number, observe: (action: QuestionActionFrame) => void,
+): (action: QuestionActionFrame) => void {
+  return (action) => { if (currentGeneration() === owner) observe(action); };
+}
+
+export async function readQuestionStream<Run>(
+  body: ReadableStream<Uint8Array>, onAction: (action: QuestionActionFrame) => void,
+): Promise<QuestionStreamTerminal<Run>> {
+  const reader = body.getReader();
+  const decoder = new QuestionStreamDecoder<Run>();
+  let terminal: QuestionStreamTerminal<Run> | null = null;
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    for (const frame of decoder.push(chunk.value)) {
+      if (frame.type === "action") onAction(frame);
+      else terminal = frame;
+    }
+  }
+  decoder.finish();
+  if (terminal === null) throw new Error("Missing terminal question frame");
+  return terminal;
+}
+
 const actionLabels = new Set<QuestionActionLabel>([
   "model", "document_search", "document_read", "live_data", "trusted_comparison", "other_tool",
 ]);

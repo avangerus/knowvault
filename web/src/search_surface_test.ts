@@ -13,6 +13,7 @@ import {
   LiveResultEvidencePanel,
   liveTablePayloadForReceipt,
   parseSearchHash,
+  pendingActionFromEvents,
   questionClaimGroundingLabel,
   questionRunPayload,
   relySourceSummary,
@@ -122,10 +123,26 @@ check(renderSearch(false).includes("hidden"), "document search remains mounted w
 const searchStart = mainSource.indexOf("export function SearchView");
 const searchEnd = mainSource.indexOf("function AskView", searchStart);
 const searchSource = searchStart >= 0 && searchEnd > searchStart ? mainSource.slice(searchStart, searchEnd) : "";
+const askViewStart = mainSource.indexOf("function AskView", searchEnd);
+const askViewEnd = mainSource.indexOf("function sourceHeadline", askViewStart);
+const askSource = askViewStart >= 0 && askViewEnd > askViewStart ? mainSource.slice(askViewStart, askViewEnd) : "";
 const answerStart = mainSource.indexOf("function QuestionRunAnswer");
 const answerSource = answerStart >= 0 && searchStart > answerStart ? mainSource.slice(answerStart, searchStart) : "";
-check((searchSource.match(/apiPost<QuestionRun>/g) ?? []).length === 1, "one question submit performs exactly one QuestionRun POST");
+check((searchSource.match(/apiPost<QuestionRun>/g) ?? []).length === 1, "document search retains its one QuestionRun POST");
+check((askSource.match(/apiPostQuestionStream\(/g) ?? []).length === 1, "Ask submits exactly one opt-in QuestionRun POST");
 check(!searchSource.includes("tools/search") && !searchSource.includes("apiGet<"), "question submit does not issue a preliminary document-search GET");
+check(mainSource.includes('Accept: "application/x-ndjson"') && mainSource.includes('response.json()) as QuestionRun')
+  && !askSource.includes("apiPost<QuestionRun>("), "streaming falls back to the same JSON response without replay");
+check(askSource.includes("observationForGeneration(workspaceGeneration, () => workspaceGenerationRef.current")
+  && askSource.includes("if (workspaceGenerationRef.current !== workspaceGeneration) return;"),
+"a workspace switch blocks both delayed progress frames and the final answer");
+const orderedProgress = pendingActionFromEvents([
+  { type: "action", sequence: 3, phase: "action_finished", label: "document_read", outcome: "succeeded", duration_ms: 3 },
+  { type: "action", sequence: 1, phase: "action_started", label: "document_search" },
+  { type: "action", sequence: 2, phase: "action_started", label: "document_read" },
+]);
+check(orderedProgress.current === "working" && JSON.stringify(orderedProgress.completed) === JSON.stringify(["reading"]),
+"progress follows server sequence and shows only observed successful actions");
 check(searchSource.includes("<QuestionRunAnswer") && answerSource.includes("<AnswerBody") && answerSource.includes("run.citations") && answerSource.includes("onOpenEvidence"), "QuestionRun renders the existing answer, citations and evidence actions");
 check(answerSource.includes("isLiveScalar") && answerSource.includes("Verified live calculation") && answerSource.includes("live-calculation-evidence")
   && answerSource.includes("Contributing rows") && answerSource.includes("Observed window") && answerSource.includes("Receipt digest"), "shipped QuestionRun live scalars render the compact verified-calculation disclosure");

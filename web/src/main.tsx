@@ -5,6 +5,7 @@ import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
 import { PendingAction, type PendingActionState } from "./pending-action";
+import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -926,6 +927,52 @@ async function apiPost<T>(path: string, body: unknown, idempotencyKey: string): 
   } catch {
     return { kind: "broken", status: 0 };
   }
+}
+
+// A stream is one POST. Older servers may answer with JSON; decode that same
+// response without retrying a question or reusing its idempotency key.
+async function apiPostQuestionStream(
+  path: string, body: unknown, idempotencyKey: string, onAction: (action: QuestionActionFrame) => void,
+): Promise<ApiResult<QuestionRun>> {
+  try {
+    const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
+    if (csrf.kind !== "ok") return csrf;
+    const response = await fetch(path, {
+      method: "POST", cache: "no-store",
+      headers: { Accept: "application/x-ndjson", "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey, "X-KnowVault-CSRF": csrf.value.csrf_token },
+      body: JSON.stringify(body),
+    });
+    notifySessionExpired(response);
+    if (!response.ok) {
+      const failure = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string } } | null;
+      return failure?.error?.code
+        ? { kind: "failure", status: response.status, code: failure.error.code, requestId: failure.error.request_id ?? "", clarification: failure.error.clarification }
+        : { kind: "broken", status: response.status };
+    }
+    if (response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== "application/x-ndjson") {
+      return { kind: "ok", value: (await response.json()) as QuestionRun };
+    }
+    if (!response.body) return { kind: "broken", status: 0 };
+    const terminal = await readQuestionStream<QuestionRun>(response.body, onAction);
+    return terminal.type === "result" ? { kind: "ok", value: terminal.result }
+      : { kind: "failure", status: 500, code: terminal.code, requestId: terminal.request_id };
+  } catch {
+    return { kind: "broken", status: 0 };
+  }
+}
+
+const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["current"]> = {
+  model: "answering", document_search: "searching", document_read: "reading",
+  live_data: "checking_data", trusted_comparison: "comparing", other_tool: "working",
+};
+
+export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
+  const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
+  const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome === "succeeded")
+    .map((event) => pendingKindByAction[event.label]);
+  const latest = ordered.at(-1);
+  return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
 }
 
 // Source registration is deliberately content-idempotent on the server and
@@ -4602,6 +4649,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
   const [localTurns, setLocalTurns] = useState<ConversationTurn[]>([]);
   const [lastFailure, setLastFailure] = useState<{ question: string; result: ApiFailure | ApiBroken } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [observedActions, setObservedActions] = useState<QuestionActionFrame[]>([]);
   const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
@@ -5159,10 +5207,13 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
     setLastFailure(null);
     setQuestion("");
     setPendingQuestion(trimmed);
-    const result = await apiPost<QuestionRun>(
+    setObservedActions([]);
+    const result = await apiPostQuestionStream(
       `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/questions`,
       { ...questionRunPayload(trimmed, selectedModel), ...(selectedConversationID ? { conversation_id: selectedConversationID } : {}) },
       newIdempotencyKey(),
+      observationForGeneration(workspaceGeneration, () => workspaceGenerationRef.current,
+        (action) => setObservedActions((current) => [...current, action])),
     );
     // R3: before ANY post-await mutation, drop an answer that belongs to a
     // workspace generation that has since been reset or denied. The pending
@@ -5431,7 +5482,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
           {pendingQuestion !== null && (
             <article className="turn turn-on turn-pending">
               <p className="turn-question"><span className="turn-role">Question</span>{pendingQuestion}</p>
-              <PendingAction elapsedSeconds={pendingElapsedSeconds} state={{ current: "working", completed: [] } satisfies PendingActionState} />
+              <PendingAction elapsedSeconds={pendingElapsedSeconds} state={pendingActionFromEvents(observedActions)} />
             </article>
           )}
 

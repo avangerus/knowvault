@@ -1,4 +1,4 @@
-import { QuestionStreamDecoder } from "./question-stream";
+import { observationForGeneration, QuestionStreamDecoder, readQuestionStream } from "./question-stream";
 
 function check(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -65,4 +65,30 @@ refuses(() => partialTerminal.finish(), "truncated terminal line is refused");
 refuses(() => new QuestionStreamDecoder<unknown>().push(Uint8Array.from([0xff, 10])),
   "malformed UTF-8 is refused");
 
-console.log("question stream decoder: ok");
+let generation = 1;
+const observed: number[] = [];
+const scoped = observationForGeneration(1, () => generation, (event) => observed.push(event.sequence));
+scoped({ type: "action", sequence: 1, phase: "action_started", label: "model" });
+generation = 2;
+scoped({ type: "action", sequence: 2, phase: "action_finished", label: "model", outcome: "succeeded" });
+check(JSON.stringify(observed) === "[1]", "workspace switch drops late progress frames");
+
+function stream(parts: string[]): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start(controller) {
+    for (const part of parts) controller.enqueue(encode(part));
+    controller.close();
+  } });
+}
+
+async function verifyReader() {
+  const actions: number[] = [];
+  const terminal = await readQuestionStream<{ answer: string }>(stream([action(1), result]),
+    (event) => actions.push(event.sequence));
+  check(terminal.type === "result" && terminal.result.answer === "Готово" && JSON.stringify(actions) === "[1]",
+    "response reader preserves action and terminal result");
+  let truncated = false;
+  try { await readQuestionStream(stream([action(1)]), () => {}); } catch { truncated = true; }
+  check(truncated, "truncated network stream never becomes a successful answer");
+}
+
+verifyReader().then(() => console.log("question stream decoder: ok"));
