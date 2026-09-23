@@ -81,6 +81,19 @@ func TestSubmitAnswerAcceptsLiveOnlyClaimWithoutCitations(t *testing.T) {
 	}
 }
 
+func TestSubmitAnswerAcceptsSupportedClaimWithoutRedundantFalseFlag(t *testing.T) {
+	const payload = `{"claims":[{"text":"Observed value is 3888.","live_reads":[{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}`
+	answer, ok := parseSubmitAnswerArguments([]byte(payload))
+	if !ok || answer.NoData || len(answer.Claims) != 1 || len(answer.Claims[0].LiveReads) != 1 {
+		t.Fatalf("supported claim without no_data=false was rejected or changed: %#v, ok=%v", answer, ok)
+	}
+	for _, invalid := range []string{`{"claims":[]}`, `{"claims":[],"clarification":"Which project?"}`, `{"claims":[{"text":"Unsupported."}]}`} {
+		if _, ok := parseSubmitAnswerArguments([]byte(invalid)); ok {
+			t.Fatalf("unsupported or empty variant accepted without no_data: %s", invalid)
+		}
+	}
+}
+
 func TestSubmitAnswerRejectsClaimsWithoutEvidence(t *testing.T) {
 	for _, payload := range []string{
 		`{"no_data":false,"claims":[{"text":"Unsupported."}]}`,

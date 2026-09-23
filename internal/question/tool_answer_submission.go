@@ -120,7 +120,7 @@ func parseSubmitAnswerArgumentsDetailed(raw json.RawMessage) (toolAnswer, bool, 
 	}
 	noDataRaw, hasNoData := fields["no_data"]
 	claimsRaw, hasClaims := fields["claims"]
-	if !hasNoData || !hasClaims || submitAnswerJSONNull(noDataRaw) || submitAnswerJSONNull(claimsRaw) {
+	if !hasClaims || (hasNoData && submitAnswerJSONNull(noDataRaw)) || submitAnswerJSONNull(claimsRaw) {
 		return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 	}
 	// Raw selector-key exclusivity belongs to the existing submit contract.
@@ -136,6 +136,12 @@ func parseSubmitAnswerArgumentsDetailed(raw json.RawMessage) (toolAnswer, bool, 
 
 	var rawClaims []json.RawMessage
 	if json.Unmarshal(claimsRaw, &rawClaims) != nil || rawClaims == nil || len(rawClaims) != len(answer.Claims) || len(rawClaims) > submitAnswerMaxClaims {
+		return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
+	}
+	// A model may omit the redundant false flag when it supplies supported
+	// claims. Keep the published schema strict, but accept this safe encoding;
+	// empty claims still require an explicit no_data or clarification variant.
+	if !hasNoData && len(rawClaims) == 0 {
 		return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 	}
 	for i, rawClaim := range rawClaims {
