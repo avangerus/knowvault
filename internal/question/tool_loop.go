@@ -1210,7 +1210,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 		started := service.now()
 		modelCtx := toolLoopOperationContext(ctx, researchCtx, finalizing)
-		response, attempt, converseErr := generation.adapter.Converse(modelCtx, run.WorkspaceID, messages, turnDefinitions)
+		response, attempt, converseErr := converseWithActionObserver(modelCtx, func() (modelgateway.ConverseResult, modelgateway.AttemptResult, error) {
+			return generation.adapter.Converse(modelCtx, run.WorkspaceID, messages, turnDefinitions)
+		})
 		attemptCtx, attemptCancel := modelAttemptPersistenceContext(parent)
 		addresses := make([]string, 0, len(observed))
 		for value := range observed {
