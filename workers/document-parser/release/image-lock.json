@@ -54,7 +54,7 @@
   },
   "vulnerability_scan": {
     "attestation": "workers/document-parser/release/vulnerability-attestation.json",
-    "attestation_digest": "sha256:ff63d132883f0143fb2adb591d5281a5b97544f4febd01a59abbee33df5fb89a",
+    "attestation_digest": "sha256:ff7905491b76e1712349182d2f3cdf05a39ded42933df384a624d48b3e8989dd",
     "bound_oci_manifest_digest": "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855",
     "bound_artifact_digest": "sha256:ccea6413429e0fb69d64d6065c15453fa432b9ac38e8399363ce455111eca414",
     "scanner": {

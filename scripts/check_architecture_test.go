@@ -2869,7 +2869,7 @@ func validParserReleaseScanFixtures(t *testing.T) (map[string]any, map[string]an
 	const (
 		ociManifest = "sha256:bf1e580938eb62a05de1efe2cdf24d7fc8ab9339e5224be238f3794a0c9e0855"
 		config      = "sha256:8006f7ddf504af8aee59afea5fcc719f673d7df80f6717c2ffced6b428c8d467"
-		dbChecksum  = "a52051769db44825dcab6e6d4c32ffee53cdea0d456d98630b55b15ad52b16f3"
+		dbChecksum  = "972de542534d3461cc3c3849a37a3f917b823de3b9c367e289db0d163519b42b"
 	)
 	metadata := func() map[string]any {
 		value := map[string]any{"imageID": config, "manifestDigest": ociManifest, "mediaType": "application/vnd.oci.image.manifest.v1+json"}
@@ -2894,7 +2894,7 @@ func validParserReleaseScanFixtures(t *testing.T) (map[string]any, map[string]an
 		"descriptor": map[string]any{
 			"name": "grype", "version": "0.116.0",
 			"db": map[string]any{"status": map[string]any{
-				"schemaVersion": "v6.1.9", "built": "2026-09-20T06:27:54Z", "valid": true,
+				"schemaVersion": "v6.1.9", "built": "2026-09-22T06:30:41Z", "valid": true,
 				"from": "https://grype.anchore.io/db?checksum=sha256%3A" + dbChecksum,
 			}},
 		},
@@ -2911,7 +2911,7 @@ func validNativeParserScanFixture(grype map[string]any) map[string]any {
 }
 
 func TestVerifyNativeParserScanRejectsMissingWrongAndSuppressedEvidence(t *testing.T) {
-	database := map[string]any{"schema_version": "v6.1.9", "built_at": "2026-09-20T06:27:54Z", "archive_sha256": "a52051769db44825dcab6e6d4c32ffee53cdea0d456d98630b55b15ad52b16f3"}
+	database := map[string]any{"schema_version": "v6.1.9", "built_at": "2026-09-22T06:30:41Z", "archive_sha256": "972de542534d3461cc3c3849a37a3f917b823de3b9c367e289db0d163519b42b"}
 	for name, mutate := range map[string]func(map[string]any){
 		"valid":           nil,
 		"wrong package":   func(s map[string]any) { s["source"].(map[string]any)["target"] = "pkg:deb/ubuntu/libc6@0" },

@@ -1,0 +1,94 @@
+name: pilot-image-artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character source commit SHA to package
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build exact-revision Docker archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout requested source revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Build server, worker, and migration operator
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$SOURCE_SHA"
+          version="pilot-${revision:0:12}"
+          built_at="$(git show -s --format=%cI HEAD)"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          mkdir -p release-images
+          builder="knowvault-pilot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create --name "$builder" --driver docker-container >/dev/null
+          trap 'docker buildx rm "$builder" >/dev/null 2>&1 || true' EXIT
+          docker buildx inspect "$builder" --bootstrap >/dev/null
+          for component in operator server worker; do
+            tag="knowvault/$component:candidate-${revision:0:12}"
+            docker buildx build \
+              --builder "$builder" \
+              --platform linux/amd64 \
+              --provenance=false \
+              --sbom=false \
+              --file "deploy/images/Dockerfile.$component" \
+              --tag "$tag" \
+              --build-arg "VERSION=$version" \
+              --build-arg "REVISION=$revision" \
+              --build-arg "BUILT_AT=$built_at" \
+              --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+              --output "type=docker,dest=release-images/knowvault-$component.docker.tar" \
+              .
+            gzip -n -1 "release-images/knowvault-$component.docker.tar"
+            gzip -dc "release-images/knowvault-$component.docker.tar.gz" | docker load
+            docker image inspect "$tag" >/dev/null
+          done
+          (
+            cd release-images
+            sha256sum knowvault-operator.docker.tar.gz knowvault-server.docker.tar.gz knowvault-worker.docker.tar.gz > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+          python3 - "$revision" "$version" "$built_at" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          revision, version, built_at = sys.argv[1:]
+          result = {
+              "revision": revision,
+              "version": version,
+              "built_at": built_at,
+              "platform": "linux/amd64",
+              "format": "docker-archive-gzip",
+              "tags": {name: f"knowvault/{name}:candidate-{revision[:12]}" for name in ("operator", "server", "worker")},
+              "deployment_order": ["operator migrations", "server", "worker"],
+          }
+          pathlib.Path("release-images/build-info.json").write_text(
+              json.dumps(result, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Upload short-lived pilot artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: knowvault-pilot-images-${{ inputs.source_sha }}
+          path: release-images/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
