@@ -3,14 +3,12 @@ package metriccompare
 import (
 	"errors"
 	"testing"
-
-	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 )
 
 func cell(value string) *string { return &value }
 
-func comparisonResult() governedquery.QueryResult {
-	return governedquery.QueryResult{
+func comparisonResult() TableResult {
+	return TableResult{
 		Columns:  []string{"local_date", "snapshot_at", "contributing_rows", "distinct_subjects", "nonnull_count", "value"},
 		RowCount: 2,
 		Rows: [][]*string{
@@ -53,23 +51,23 @@ func TestParseResultVerifiedComparison(t *testing.T) {
 
 func TestParseResultRejectsIncompleteOrAlteredData(t *testing.T) {
 	p := testProfile(t)
-	tests := map[string]func(*governedquery.QueryResult){
-		"missing period":     func(r *governedquery.QueryResult) { r.Rows = r.Rows[:1]; r.RowCount = 1 },
-		"duplicate period":   func(r *governedquery.QueryResult) { r.Rows[1][0] = cell("2026-09-10") },
-		"wrong period":       func(r *governedquery.QueryResult) { r.Rows[1][0] = cell("2026-09-08") },
-		"row count mismatch": func(r *governedquery.QueryResult) { r.RowCount = 3 },
-		"column mismatch":    func(r *governedquery.QueryResult) { r.Columns[5] = "amount" },
-		"missing snapshot":   func(r *governedquery.QueryResult) { r.Rows[0][1] = nil },
-		"wrong date snapshot": func(r *governedquery.QueryResult) {
+	tests := map[string]func(*TableResult){
+		"missing period":     func(r *TableResult) { r.Rows = r.Rows[:1]; r.RowCount = 1 },
+		"duplicate period":   func(r *TableResult) { r.Rows[1][0] = cell("2026-09-10") },
+		"wrong period":       func(r *TableResult) { r.Rows[1][0] = cell("2026-09-08") },
+		"row count mismatch": func(r *TableResult) { r.RowCount = 3 },
+		"column mismatch":    func(r *TableResult) { r.Columns[5] = "amount" },
+		"missing snapshot":   func(r *TableResult) { r.Rows[0][1] = nil },
+		"wrong date snapshot": func(r *TableResult) {
 			r.Rows[0][1] = cell("2026-09-09 23:59:59+03")
 		},
-		"missing value":     func(r *governedquery.QueryResult) { r.Rows[0][5] = nil },
-		"missing subjects":  func(r *governedquery.QueryResult) { r.Rows[0][3] = cell("406") },
-		"null measure":      func(r *governedquery.QueryResult) { r.Rows[0][4] = cell("406") },
-		"zero rows":         func(r *governedquery.QueryResult) { r.Rows[0][2] = cell("0") },
-		"malformed decimal": func(r *governedquery.QueryResult) { r.Rows[0][5] = cell("1/2") },
-		"nonfinite decimal": func(r *governedquery.QueryResult) { r.Rows[0][5] = cell("NaN") },
-		"zero denominator":  func(r *governedquery.QueryResult) { r.Rows[1][5] = cell("0") },
+		"missing value":     func(r *TableResult) { r.Rows[0][5] = nil },
+		"missing subjects":  func(r *TableResult) { r.Rows[0][3] = cell("406") },
+		"null measure":      func(r *TableResult) { r.Rows[0][4] = cell("406") },
+		"zero rows":         func(r *TableResult) { r.Rows[0][2] = cell("0") },
+		"malformed decimal": func(r *TableResult) { r.Rows[0][5] = cell("1/2") },
+		"nonfinite decimal": func(r *TableResult) { r.Rows[0][5] = cell("NaN") },
+		"zero denominator":  func(r *TableResult) { r.Rows[1][5] = cell("0") },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

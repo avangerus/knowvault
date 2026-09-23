@@ -7,10 +7,19 @@ import (
 	"strings"
 	"time"
 
-	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
+	"knowvault.local/verified-workspace/internal/tzrules"
 )
 
 const ObservedSnapshot = "OBSERVED_SNAPSHOT"
+
+// TableResult is the transport-neutral text table returned by the approved
+// comparison read. The caller converts its governed-query result into this
+// shape without granting this package access to the database executor.
+type TableResult struct {
+	Columns  []string
+	Rows     [][]*string
+	RowCount int
+}
 
 var decimalText = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$`)
 
@@ -99,7 +108,7 @@ func parseSnapshot(value, date, timezone string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		location, err := time.LoadLocation(timezone)
+		location, err := tzrules.Load(timezone)
 		if err != nil || parsed.In(location).Format("2006-01-02") != date {
 			return "", false
 		}
@@ -111,7 +120,7 @@ func parseSnapshot(value, date, timezone string) (string, bool) {
 // ParseResult accepts only the exact projection emitted by Compile. Any
 // missing/duplicate period, absent measure, partial subjects, or altered
 // result shape is refused rather than converted into a plausible total.
-func ParseResult(result governedquery.QueryResult, firstDate, secondDate string, profile Profile) (Comparison, error) {
+func ParseResult(result TableResult, firstDate, secondDate string, profile Profile) (Comparison, error) {
 	if profile.hash == "" || !validDate(firstDate) || !validDate(secondDate) || firstDate == secondDate ||
 		result.RowCount != 2 || len(result.Rows) != 2 || len(result.Columns) != 6 {
 		return Comparison{}, ErrInvalid
