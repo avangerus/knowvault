@@ -922,7 +922,7 @@ func collectCitationObservations(toolName string, raw json.RawMessage, index *ci
 
 func toolLoopGovernedDefinitions(catalog []governedask.ComparisonSummary, ask GovernedAsk, comparisonQuestion bool) ([]modelgateway.ToolDefinition, error) {
 	var definitions []modelgateway.ToolDefinition
-	if len(catalog) > 0 {
+	if comparisonQuestion && len(catalog) > 0 {
 		definition, valid := trustedMetricToolDefinition(catalog)
 		if !valid {
 			return nil, &Error{code: CodeUnavailable}
@@ -945,7 +945,7 @@ func (service *Service) invokeToolLoopGovernedData(ctx context.Context, access d
 		result, err := state.invoke(ctx, access, run.WorkspaceID, run.ID, service.liveDataAsk, args, maxResultBytes)
 		return result, nil, err
 	}
-	if len(catalog) == 0 || len(state.executions) >= liveDataMaxSuccessfulCalls {
+	if !comparisonQuestion || len(catalog) == 0 || len(state.executions) >= liveDataMaxSuccessfulCalls {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
 	}
 	result, execution, err := invokeTrustedMetricToolRetained(ctx, access, run.WorkspaceID, run.ID,

@@ -17,15 +17,15 @@ import (
 
 func TestToolLoopAdvertisesBothGovernedToolsWhenConfigured(t *testing.T) {
 	definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false)
-	if err != nil || len(definitions) != 2 || definitions[0].Function.Name != trustedMetricToolName || definitions[1].Function.Name != liveDataToolName {
-		t.Fatalf("governed definitions = %#v, err %v; want comparison and live ask", definitions, err)
+	if err != nil || len(definitions) != 1 || definitions[0].Function.Name != liveDataToolName {
+		t.Fatalf("single-date definitions = %#v, err %v; want live ask only", definitions, err)
 	}
 	definitions, err = toolLoopGovernedDefinitions(trustedMetricCatalog(), nil, false)
-	if err != nil || len(definitions) != 1 || definitions[0].Function.Name != trustedMetricToolName {
-		t.Fatalf("preset-only definitions = %#v, err %v; want comparison only", definitions, err)
+	if err != nil || len(definitions) != 0 {
+		t.Fatalf("preset-only single-date definitions = %#v, err %v; want no governed tool", definitions, err)
 	}
 	if !strings.Contains(toolLoopInstructions, "Never invent a second date") ||
-		!strings.Contains(definitions[0].Function.Description, "two distinct dates") {
+		!strings.Contains(toolLoopInstructions, "two distinct dates") {
 		t.Fatal("tool routing guidance does not distinguish a requested comparison from a single-date read")
 	}
 }
@@ -52,6 +52,12 @@ func TestToolLoopDispatchesSingleDateAskWithComparisonCatalog(t *testing.T) {
 		liveDataToolName, trustedMetricCatalog(), false, json.RawMessage(`{"question":"`+question+`"}`), 8192, &liveDataRunState{})
 	if err != nil || !refusal.IsError || compare.calls != 0 {
 		t.Fatalf("preset-only live ask = %#v, err %v, comparison calls %d; want refusal", refusal, err, compare.calls)
+	}
+	refusal, _, err = service.invokeToolLoopGovernedData(context.Background(), access, run,
+		trustedMetricToolName, trustedMetricCatalog(), false,
+		json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`), 8192, &liveDataRunState{})
+	if err != nil || !refusal.IsError || compare.calls != 0 {
+		t.Fatalf("unadvertised one-date comparison = %#v, err %v, calls %d; want refusal", refusal, err, compare.calls)
 	}
 }
 
@@ -86,7 +92,7 @@ func TestRecognizedComparisonRoutesOnlyExplicitTwoDateQuestions(t *testing.T) {
 			t.Fatalf("noncomparison was recognized: %q", question)
 		}
 		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false)
-		if err != nil || len(definitions) != 2 || definitions[1].Function.Name != liveDataToolName {
+		if err != nil || len(definitions) != 1 || definitions[0].Function.Name != liveDataToolName {
 			t.Fatalf("noncomparison definitions = %#v, err = %v", definitions, err)
 		}
 	}
