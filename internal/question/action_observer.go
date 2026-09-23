@@ -3,6 +3,7 @@ package question
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"knowvault.local/verified-workspace/internal/modelgateway"
 )
@@ -10,10 +11,11 @@ import (
 // ActionEvent is deliberately content-free. Its vocabulary is controlled by
 // the question service, not by a model response or a tool result.
 type ActionEvent struct {
-	Sequence uint64          `json:"sequence"`
-	Type     ActionEventType `json:"type"`
-	Label    ActionLabel     `json:"label"`
-	Outcome  ActionOutcome   `json:"outcome,omitempty"`
+	Sequence   uint64          `json:"sequence"`
+	Type       ActionEventType `json:"type"`
+	Label      ActionLabel     `json:"label"`
+	Outcome    ActionOutcome   `json:"outcome,omitempty"`
+	DurationMS *int64          `json:"duration_ms,omitempty"`
 }
 
 type ActionEventType string
@@ -24,6 +26,11 @@ const (
 	actionStarted  ActionEventType = "action_started"
 	actionFinished ActionEventType = "action_finished"
 	actionModel    ActionLabel     = "model"
+	actionSearch   ActionLabel     = "document_search"
+	actionRead     ActionLabel     = "document_read"
+	actionLive     ActionLabel     = "live_data"
+	actionCompare  ActionLabel     = "trusted_comparison"
+	actionOther    ActionLabel     = "other_tool"
 	actionSuccess  ActionOutcome   = "succeeded"
 	actionFailed   ActionOutcome   = "failed"
 )
@@ -61,4 +68,38 @@ func converseWithActionObserver(ctx context.Context, converse func() (modelgatew
 	}
 	emitAction(ctx, actionFinished, outcome)
 	return response, attempt, err
+}
+
+func toolActionLabel(name string) ActionLabel {
+	switch name {
+	case "knowvault_search":
+		return actionSearch
+	case "knowvault_read", "knowvault_evidence_read":
+		return actionRead
+	case liveDataToolName, analyticScalarToolName:
+		return actionLive
+	case trustedMetricToolName:
+		return actionCompare
+	default:
+		return actionOther
+	}
+}
+
+// beginToolAction emits only an allowlisted category, never a catalog name.
+func beginToolAction(ctx context.Context, name string) func(bool) {
+	observer, _ := ctx.Value(actionObserverKey{}).(*actionObserver)
+	if observer == nil {
+		return func(bool) {}
+	}
+	label := toolActionLabel(name)
+	started := time.Now()
+	observer.emit(ActionEvent{Sequence: observer.next.Add(1), Type: actionStarted, Label: label})
+	return func(succeeded bool) {
+		outcome := actionFailed
+		if succeeded {
+			outcome = actionSuccess
+		}
+		duration := time.Since(started).Milliseconds()
+		observer.emit(ActionEvent{Sequence: observer.next.Add(1), Type: actionFinished, Label: label, Outcome: outcome, DurationMS: &duration})
+	}
 }

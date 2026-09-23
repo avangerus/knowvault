@@ -78,3 +78,59 @@ func TestActionObserverIsOptional(t *testing.T) {
 		t.Fatal("nil observer discarded the request context")
 	}
 }
+
+func TestToolActionLifecycleIsOrderedAndAllowlisted(t *testing.T) {
+	const sensitive = "private_table_customer_payload"
+	for name, wantLabel := range map[string]ActionLabel{
+		"knowvault_search":        actionSearch,
+		"knowvault_read":          actionRead,
+		"knowvault_evidence_read": actionRead,
+		liveDataToolName:          actionLive,
+		analyticScalarToolName:    actionLive,
+		trustedMetricToolName:     actionCompare,
+		sensitive:                 actionOther,
+	} {
+		if got := toolActionLabel(name); got != wantLabel {
+			t.Fatalf("tool %q has action label %q, want %q", name, got, wantLabel)
+		}
+	}
+	events := make(chan ActionEvent, 2)
+	ctx := WithActionObserver(context.Background(), func(event ActionEvent) { events <- event })
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		finish := beginToolAction(ctx, sensitive)
+		<-release // Fake tool blocks with sensitive arguments and result.
+		_ = map[string]string{"sql": sensitive, "result": sensitive}
+		finish(false)
+		close(done)
+	}()
+	var started ActionEvent
+	select {
+	case started = <-events:
+	case <-time.After(3 * time.Second):
+		t.Fatal("tool start event was not emitted")
+	}
+	if started.Sequence != 1 || started.Type != actionStarted || started.Label != actionOther || started.Outcome != "" || started.DurationMS != nil {
+		t.Fatalf("start event = %#v", started)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("tool finished before its fake call returned: %#v", event)
+	default:
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fake tool did not return")
+	}
+	finished := <-events
+	if finished.Sequence != 2 || finished.Type != actionFinished || finished.Label != actionOther || finished.Outcome != actionFailed || finished.DurationMS == nil || *finished.DurationMS < 0 {
+		t.Fatalf("finish event = %#v", finished)
+	}
+	encoded, err := json.Marshal([]ActionEvent{started, finished})
+	if err != nil || strings.Contains(string(encoded), sensitive) {
+		t.Fatalf("sensitive tool content entered events: %q, %v", encoded, err)
+	}
+}
