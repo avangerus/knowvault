@@ -141,7 +141,7 @@ jobs:
             -v "$scan_stage:/scan:rw" \
             -v "$scan_stage/parser.oci.tar:/scan/parser.oci.tar:ro" \
             "$SYFT_IMAGE" oci-archive:/scan/parser.oci.tar -o syft-json=/scan/syft.json
-          grype_db_url='https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-09-15T00:33:48Z_1789453896.tar.zst?checksum=sha256%3Ada59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60'
+          grype_db_url='https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-09-22T00:33:02Z_1790058641.tar.zst?checksum=sha256%3A972de542534d3461cc3c3849a37a3f917b823de3b9c367e289db0d163519b42b'
           docker run --rm --network bridge --read-only --cap-drop ALL \
             --user "$(id -u):$(id -g)" \
             --security-opt no-new-privileges --memory 4g \

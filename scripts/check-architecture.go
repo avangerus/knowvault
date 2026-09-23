@@ -6171,7 +6171,7 @@ func checkParserRuntimeCompliance(root string) []string {
 		for _, required := range []string{
 			"anchore/syft:v1.48.0@sha256:b4f1df79f97b817682d8b5ff941eb6bfe74f6172553a5e312c75bbc2eabc405c",
 			"anchore/grype:v0.116.0@sha256:fd4ab4d1042b522c896e73bdf09ab8bf384fa417df99d6dd0d6e1008c7e7c821",
-			"da59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60",
+			"972de542534d3461cc3c3849a37a3f917b823de3b9c367e289db0d163519b42b",
 			"GRYPE_DB_AUTO_UPDATE=false",
 			"GRYPE_CHECK_FOR_APP_UPDATE=false",
 			"-verify-parser-syft-json /scan/syft.json",
@@ -6573,8 +6573,8 @@ func validateParserRuntimeComplianceContents(isolation qualifiedIsolation, docke
 		problems = append(problems, exactObjectKeys(database, "R-16 parser vulnerability attestation database", []string{"schema_version", "built_at", "archive_sha256"})...)
 		for key, expected := range map[string]any{
 			"schema_version": "v6.1.9",
-			"built_at":       "2026-09-15T06:31:36Z",
-			"archive_sha256": "da59e6799affd13b75ab62e1de533fff3a45f4efa6fe255ffd99e35109f82c60",
+			"built_at":       "2026-09-22T06:30:41Z",
+			"archive_sha256": "972de542534d3461cc3c3849a37a3f917b823de3b9c367e289db0d163519b42b",
 		} {
 			if database[key] != expected {
 				problems = append(problems, fmt.Sprintf("R-16 parser vulnerability attestation database.%s mismatch", key))
