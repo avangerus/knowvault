@@ -111,3 +111,26 @@ func TestComparisonCatalogDenialAndDisabledModeRevealNoSummaries(t *testing.T) {
 		})
 	}
 }
+
+func TestComparisonCatalogWithoutBindingSkipsLiveQueryGate(t *testing.T) {
+	service := &Service{enabled: true}
+	service.config.ConnectionID = "connection_alpha"
+	service.config.DatabaseIdentity = "database_alpha"
+	access := governedAskAccess(database.ActorKindHuman)
+	checks := 0
+	got, err := service.comparisonCatalogWith(context.Background(), access, "ws_without_metric",
+		func(_ context.Context, _ database.AccessContext, workspaceID string, operation policy.Operation) error {
+			checks++
+			if workspaceID != "ws_without_metric" || operation != policy.OperationWorkspaceAsk {
+				t.Fatalf("wrong authorization scope: %s %s", workspaceID, operation)
+			}
+			return nil
+		},
+		func(context.Context, database.AccessContext, string) (bool, error) {
+			t.Fatal("live-query gate checked for a workspace without a comparison binding")
+			return false, nil
+		})
+	if err != nil || got == nil || len(got) != 0 || checks != 1 {
+		t.Fatalf("catalog=%+v, checks=%d, err=%v", got, checks, err)
+	}
+}

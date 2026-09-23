@@ -38,6 +38,18 @@ func (service *Service) comparisonCatalogWith(ctx context.Context, access databa
 	if err := authorize(ctx, access, workspaceID, policy.OperationWorkspaceAsk); err != nil {
 		return nil, err
 	}
+	service.comparisonMu.RLock()
+	hasBinding := false
+	for _, binding := range service.comparisonProfiles[workspaceID] {
+		if binding.connectionID == service.config.ConnectionID && binding.databaseIdentity == service.config.DatabaseIdentity {
+			hasBinding = true
+			break
+		}
+	}
+	service.comparisonMu.RUnlock()
+	if !hasBinding {
+		return []ComparisonSummary{}, nil
+	}
 	enabled, err := liveEnabled(ctx, access, workspaceID)
 	if err != nil {
 		return nil, err
