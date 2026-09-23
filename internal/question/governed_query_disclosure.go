@@ -40,6 +40,45 @@ func authorizeGovernedQueryDisclosure(
 	if dependency == nil {
 		return nil
 	}
+	return authorizeGovernedQueryDisclosures(ctx, access, workspaceID, questionRunID, []governedQueryDependency{*dependency}, reauthorizer)
+}
+
+func authorizeGovernedQueryDisclosures(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID string,
+	questionRunID string,
+	dependencies []governedQueryDependency,
+	reauthorizer governedAttemptReauthorizer,
+) error {
+	if len(dependencies) == 0 {
+		return nil
+	}
+	denied := false
+	for _, dependency := range dependencies {
+		dependency := dependency
+		if err := authorizeGovernedQueryDisclosureOne(ctx, access, workspaceID, questionRunID, &dependency, reauthorizer); err != nil {
+			if CodeOf(err) == CodeNotFound {
+				denied = true
+				continue
+			}
+			return err
+		}
+	}
+	if denied {
+		return &Error{code: CodeNotFound}
+	}
+	return nil
+}
+
+func authorizeGovernedQueryDisclosureOne(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID string,
+	questionRunID string,
+	dependency *governedQueryDependency,
+	reauthorizer governedAttemptReauthorizer,
+) error {
 	if scalarInterfaceIsNil(ctx) || access.Validate() != nil ||
 		!validOpaque(workspaceID) || !validOpaque(questionRunID) ||
 		!dependency.validForRun(questionRunID) || scalarInterfaceIsNil(reauthorizer) {
@@ -92,4 +131,21 @@ func (service *Service) authorizeGovernedQueryDisclosure(
 		reauthorizer, _ = service.liveDataAsk.(governedAttemptReauthorizer)
 	}
 	return authorizeGovernedQueryDisclosure(ctx, access, workspaceID, questionRunID, dependency, reauthorizer)
+}
+
+func (service *Service) authorizeGovernedQueryDisclosures(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID string,
+	questionRunID string,
+	dependencies []governedQueryDependency,
+) error {
+	if len(dependencies) == 0 {
+		return nil
+	}
+	var reauthorizer governedAttemptReauthorizer
+	if service != nil {
+		reauthorizer, _ = service.liveDataAsk.(governedAttemptReauthorizer)
+	}
+	return authorizeGovernedQueryDisclosures(ctx, access, workspaceID, questionRunID, dependencies, reauthorizer)
 }

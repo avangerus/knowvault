@@ -316,8 +316,8 @@ func TestReadStoredRunScalarGateOrderingAndPrivacy(t *testing.T) {
 		t.Fatal("governed reauthorization does not follow the scalar disclosure gate")
 	}
 	governedInit, ok := governedGate.Init.(*ast.AssignStmt)
-	if !ok || len(governedInit.Rhs) != 1 || readGateCallName(governedInit.Rhs[0]) != "service.authorizeGovernedQueryDisclosure" {
-		t.Fatalf("post-scalar gate = %q, want service.authorizeGovernedQueryDisclosure", func() string {
+	if !ok || len(governedInit.Rhs) != 1 || readGateCallName(governedInit.Rhs[0]) != "service.authorizeGovernedQueryDisclosures" {
+		t.Fatalf("post-scalar gate = %q, want service.authorizeGovernedQueryDisclosures", func() string {
 			if ok && len(governedInit.Rhs) == 1 {
 				return readGateCallName(governedInit.Rhs[0])
 			}
@@ -325,7 +325,7 @@ func TestReadStoredRunScalarGateOrderingAndPrivacy(t *testing.T) {
 		}())
 	}
 	governedCall := governedInit.Rhs[0].(*ast.CallExpr)
-	wantGovernedArgs := []string{"ctx", "access", "workspaceID", "runID", "retainedGovernedQueryDependency"}
+	wantGovernedArgs := []string{"ctx", "access", "workspaceID", "runID", "retainedGovernedQueryDependencies"}
 	if len(governedCall.Args) != len(wantGovernedArgs) {
 		t.Fatalf("governed gate args = %d, want %d", len(governedCall.Args), len(wantGovernedArgs))
 	}

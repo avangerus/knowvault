@@ -1439,10 +1439,10 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 	// is assigned inside the artifact transaction only so the authorization
 	// gate can run after that transaction has ended and released its connection.
 	var retainedAnalyticScalarPair *analyticScalarPair
-	// retainedGovernedQueryDependency keeps the opaque live-query reference
-	// method-local until the same post-transaction disclosure point. It is never
-	// projected onto Run or retained by Service.
-	var retainedGovernedQueryDependency *governedQueryDependency
+	// retainedGovernedQueryDependencies keeps the opaque live-query references
+	// method-local until the same post-transaction disclosure point. They are
+	// never projected onto Run or retained by Service.
+	var retainedGovernedQueryDependencies []governedQueryDependency
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		var readable bool
 		if err := tx.QueryRow(txCtx, `SELECT app.question_run_readable($1, $2)`, runID, workspaceID).Scan(&readable); err != nil {
@@ -1571,7 +1571,7 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 				// CodeUnavailable.
 				return &Error{code: CodeUnavailable}
 			}
-			if !governedQueryAnswerResultAllowedForStatus(status, structured.governedQueryDependency, structured.AnswerResult, structured.ToolLoop) {
+			if !governedQueryAnswerResultsAllowedForStatus(status, structured.governedQueryDependencies, structured.AnswerResult, structured.ToolLoop) {
 				return &Error{code: CodeUnavailable}
 			}
 			result.AnswerResult = structured.AnswerResult
@@ -1590,7 +1590,7 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 			// the read transaction has committed/rolled back and released its
 			// connection. It is never projected onto the Run.
 			retainedAnalyticScalarPair = structured.analyticScalarPair
-			retainedGovernedQueryDependency = structured.governedQueryDependency
+			retainedGovernedQueryDependencies = structured.governedQueryDependencies
 		}
 		structuredByCitationID := make(map[string]Citation, len(structuredCitations))
 		for _, citation := range structuredCitations {
@@ -1697,7 +1697,7 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 	if err := service.authorizeAnalyticScalarDisclosure(ctx, access, workspaceID, runID, retainedAnalyticScalarPair); err != nil {
 		return Run{}, err
 	}
-	if err := service.authorizeGovernedQueryDisclosure(ctx, access, workspaceID, runID, retainedGovernedQueryDependency); err != nil {
+	if err := service.authorizeGovernedQueryDisclosures(ctx, access, workspaceID, runID, retainedGovernedQueryDependencies); err != nil {
 		return Run{}, err
 	}
 	return result, nil
@@ -1792,10 +1792,10 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 	// can reauthorize every surviving pair after that transaction has ended and
 	// released its connection.
 	var retainedAnalyticScalarPairs map[string]*analyticScalarPair = make(map[string]*analyticScalarPair, len(runIDs))
-	// retainedGovernedQueryDependencies holds the decoded opaque references only
-	// for this method, keyed by their trusted run ids, until after the artifact
-	// transaction and the existing scalar disclosure gate have completed.
-	retainedGovernedQueryDependencies := make(map[string]*governedQueryDependency, len(runIDs))
+	// retainedGovernedQueryDependencies holds the decoded opaque reference lists
+	// only for this method, keyed by trusted run ids, until after the artifact
+	// transaction and scalar disclosure gate have completed.
+	retainedGovernedQueryDependencies := make(map[string][]governedQueryDependency, len(runIDs))
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
 		rows, err := tx.Query(txCtx, `
 			SELECT id, workspace_revision, conversation_id, conversation_turn_id,
@@ -1960,7 +1960,7 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 					// projected Question Run, answer or citation is returned.
 					return &Error{code: CodeUnavailable}
 				}
-				if !governedQueryAnswerResultAllowedForStatus(run.ResultStatus, structured.governedQueryDependency, structured.AnswerResult, structured.ToolLoop) {
+				if !governedQueryAnswerResultsAllowedForStatus(run.ResultStatus, structured.governedQueryDependencies, structured.AnswerResult, structured.ToolLoop) {
 					return &Error{code: CodeUnavailable}
 				}
 				run.AnswerResult = structured.AnswerResult
@@ -1977,7 +1977,7 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 				if structured.analyticScalarPair != nil {
 					retainedAnalyticScalarPairs[runID] = structured.analyticScalarPair
 				}
-				retainedGovernedQueryDependencies[runID] = structured.governedQueryDependency
+				retainedGovernedQueryDependencies[runID] = structured.governedQueryDependencies
 			}
 			if run.AnswerResult != nil {
 				run.AnswerResult.Snapshot.CapturedAt = run.Freshness.CapturedAt
@@ -2130,7 +2130,7 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 	for runID := range result {
 		governedCandidateRunIDs = append(governedCandidateRunIDs, runID)
 	}
-	governedDenied, err := service.authorizeGovernedQueryDisclosureBatch(
+	governedDenied, err := service.authorizeGovernedQueryDisclosureBatchMany(
 		ctx, access, workspaceID, governedCandidateRunIDs, retainedGovernedQueryDependencies,
 	)
 	if err != nil {
@@ -3309,14 +3309,27 @@ func (service *Service) persistTerminalRunWithAnalyticScalarPair(ctx context.Con
 	return service.persistTerminalRunWithStructuredDependencies(ctx, access, runID, workspaceID, answer, citations, selected, status, partial, uncertainties, conflicts, answerResult, analyticScalarPair, nil)
 }
 
-func (service *Service) persistTerminalRunWithStructuredDependencies(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult, analyticScalarPair *analyticScalarPair, governedQueryDependency *governedQueryDependency) error {
+func (service *Service) persistTerminalRunWithStructuredDependencies(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult, analyticScalarPair *analyticScalarPair, dependency *governedQueryDependency) error {
+	var dependencies []governedQueryDependency
+	if dependency != nil {
+		dependencies = []governedQueryDependency{*dependency}
+	}
+	return service.persistTerminalRunWithStructuredDependencyList(ctx, access, runID, workspaceID, answer, citations, selected, status, partial, uncertainties, conflicts, answerResult, analyticScalarPair, dependencies)
+}
+
+func (service *Service) persistTerminalRunWithStructuredDependencyList(ctx context.Context, access database.AccessContext, runID, workspaceID, answer string, citations []Citation, selected []candidate, status string, partial bool, uncertainties []Uncertainty, conflicts []Conflict, answerResult *AnswerResult, analyticScalarPair *analyticScalarPair, governedQueryDependencies []governedQueryDependency) error {
 	if analyticScalarPair != nil && !analyticScalarPair.observation.valid() {
 		return &Error{code: CodeInvalid}
 	}
-	if governedQueryDependency != nil && !governedQueryDependency.validForRun(runID) {
+	if len(governedQueryDependencies) > liveDataMaxSuccessfulCalls {
 		return &Error{code: CodeInvalid}
 	}
-	if !governedQueryAnswerResultAllowedForStatus(status, governedQueryDependency, answerResult, toolLoopFromContext(ctx)) {
+	for _, dependency := range governedQueryDependencies {
+		if !dependency.validForRun(runID) {
+			return &Error{code: CodeInvalid}
+		}
+	}
+	if !governedQueryAnswerResultsAllowedForStatus(status, governedQueryDependencies, answerResult, toolLoopFromContext(ctx)) {
 		return &Error{code: CodeInvalid}
 	}
 	// R1: bind the citation grounding projection from the same authorized
@@ -3374,7 +3387,7 @@ func (service *Service) persistTerminalRunWithStructuredDependencies(ctx context
 			}
 			citations[index].CitationID = citationID
 		}
-		structuredBytes, err := marshalStructuredAnswerWithDependencies(runID, answerHash, citations, answerResult, understoodFromContext(ctx), analyticScalarPair, governedQueryDependency, toolLoopFromContext(ctx))
+		structuredBytes, err := marshalStructuredAnswerWithDependencyList(runID, answerHash, citations, answerResult, understoodFromContext(ctx), analyticScalarPair, governedQueryDependencies, toolLoopFromContext(ctx))
 		if err != nil {
 			return &Error{code: CodeUnavailable, cause: err}
 		}
@@ -4695,8 +4708,8 @@ type structuredAnswer struct {
 
 	// These private copies are retained only for the later source reader gate;
 	// they are never marshaled or projected.
-	analyticScalarPair      *analyticScalarPair
-	governedQueryDependency *governedQueryDependency
+	analyticScalarPair        *analyticScalarPair
+	governedQueryDependencies []governedQueryDependency
 }
 
 func marshalStructuredAnswer(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, toolLoops ...*ToolLoopRecord) ([]byte, error) {
@@ -4714,6 +4727,14 @@ func marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash string, cit
 }
 
 func marshalStructuredAnswerWithDependencies(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, pair *analyticScalarPair, dependency *governedQueryDependency, toolLoops ...*ToolLoopRecord) ([]byte, error) {
+	var dependencies []governedQueryDependency
+	if dependency != nil {
+		dependencies = []governedQueryDependency{*dependency}
+	}
+	return marshalStructuredAnswerWithDependencyList(runID, answerHash, citations, answerResult, understood, pair, dependencies, toolLoops...)
+}
+
+func marshalStructuredAnswerWithDependencyList(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, pair *analyticScalarPair, dependencies []governedQueryDependency, toolLoops ...*ToolLoopRecord) ([]byte, error) {
 	if !validOpaque(runID) || len(toolLoops) > 1 {
 		return nil, &Error{code: CodeInvalid}
 	}
@@ -4736,11 +4757,11 @@ func marshalStructuredAnswerWithDependencies(runID, answerHash string, citations
 		structured.ToolLoop = toolLoop
 		structured.AnswerMode, structured.VerificationMethod = AnswerModeToolLoop, verificationAddress
 	}
-	if !validateGovernedQueryAnswerResult(runID, dependency, toolLoop, answerResult) {
+	if !validateGovernedQueryAnswerResults(runID, dependencies, toolLoop, answerResult) {
 		return nil, &Error{code: CodeInvalid}
 	}
-	if dependency != nil {
-		encoded, err := encodeGovernedQueryDependency(runID, *dependency)
+	if len(dependencies) > 0 {
+		encoded, err := encodeGovernedQueryDependencies(runID, dependencies)
 		if err != nil {
 			return nil, &Error{code: CodeInvalid}
 		}
@@ -4806,15 +4827,15 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 	if presence.analyticScalarNull() || pairErr != nil {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
-	governedDependency, governedErr := decodeGovernedQueryDependency(expectedRunID, structured.GovernedQueryDependency)
-	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryAnswerResult(expectedRunID, governedDependency, structured.ToolLoop, structured.AnswerResult) {
+	governedDependencies, governedErr := decodeGovernedQueryDependencies(expectedRunID, structured.GovernedQueryDependency)
+	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryAnswerResults(expectedRunID, governedDependencies, structured.ToolLoop, structured.AnswerResult) {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
 	if pair != nil {
 		structured.AnalyticScalar = &pair.observation
 		structured.analyticScalarPair = pair
 	}
-	structured.governedQueryDependency = governedDependency
+	structured.governedQueryDependencies = governedDependencies
 	return structured, nil
 }
 

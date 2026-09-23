@@ -90,6 +90,37 @@ func encodeGovernedQueryDependency(questionRunID string, dependency governedQuer
 	return jsontext.Value(encoded), nil
 }
 
+func encodeGovernedQueryDependencies(questionRunID string, dependencies []governedQueryDependency) (jsontext.Value, error) {
+	if !validOpaque(questionRunID) || len(dependencies) == 0 || len(dependencies) > liveDataMaxSuccessfulCalls {
+		return nil, &Error{code: CodeInvalid}
+	}
+	wire := make([]governedQueryDependencyWire, 0, len(dependencies))
+	seen := make(map[string]struct{}, len(dependencies))
+	for _, dependency := range dependencies {
+		if !dependency.validForRun(questionRunID) {
+			return nil, &Error{code: CodeInvalid}
+		}
+		if _, duplicate := seen[dependency.attemptID]; duplicate {
+			return nil, &Error{code: CodeInvalid}
+		}
+		seen[dependency.attemptID] = struct{}{}
+		wire = append(wire, governedQueryDependencyWire{
+			QuestionRunID: dependency.questionRunID, AttemptID: dependency.attemptID,
+			ConnectionID: dependency.connectionID, SQLHash: dependency.sqlHash,
+			ExposedSchemaRevision: dependency.exposedSchemaRevision, ResultDigest: dependency.resultDigest,
+		})
+	}
+	raw, err := canon.CanonicalJSON(wire)
+	if err != nil || len(raw) == 0 {
+		return nil, &Error{code: CodeInvalid}
+	}
+	encoded, err := jsonv2.Marshal(base64.StdEncoding.EncodeToString(raw))
+	if err != nil {
+		return nil, &Error{code: CodeInvalid}
+	}
+	return jsontext.Value(encoded), nil
+}
+
 func decodeGovernedQueryDependency(questionRunID string, encoded jsontext.Value) (*governedQueryDependency, error) {
 	if len(encoded) == 0 {
 		return nil, nil
@@ -125,13 +156,64 @@ func decodeGovernedQueryDependency(questionRunID string, encoded jsontext.Value)
 	return dependency, nil
 }
 
-// governedQueryToolProjection requires every successful synthetic live tool
-// call to have exactly one complete, digest-valid projection and exactly one
-// private dependency bound to the same Question Run and result metadata.
-// Failed live calls are allowed without a dependency.
-func governedQueryToolProjection(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord) (liveDataProjection, bool, bool) {
-	successes := 0
-	var successful liveDataProjection
+func decodeGovernedQueryDependencies(questionRunID string, encoded jsontext.Value) ([]governedQueryDependency, error) {
+	if len(encoded) == 0 {
+		return nil, nil
+	}
+	var base64Value string
+	if err := jsonv2.Unmarshal(encoded, &base64Value); err != nil || base64Value == "" {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	canonicalString, err := jsonv2.Marshal(base64Value)
+	if err != nil || !bytes.Equal(canonicalString, encoded) {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	raw, err := base64.StdEncoding.DecodeString(base64Value)
+	if err != nil || len(raw) == 0 || base64.StdEncoding.EncodeToString(raw) != base64Value {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	if raw[0] == '{' {
+		legacy, err := decodeGovernedQueryDependency(questionRunID, encoded)
+		if err != nil {
+			return nil, err
+		}
+		if legacy == nil {
+			return nil, &Error{code: CodeUnavailable}
+		}
+		return []governedQueryDependency{*legacy}, nil
+	}
+	var wire []governedQueryDependencyWire
+	if err := jsonv2.Unmarshal(raw, &wire, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil || len(wire) == 0 || len(wire) > liveDataMaxSuccessfulCalls {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	canonicalJSON, err := canon.CanonicalJSON(wire)
+	if err != nil || !bytes.Equal(canonicalJSON, raw) {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	dependencies := make([]governedQueryDependency, 0, len(wire))
+	seen := make(map[string]struct{}, len(wire))
+	for _, item := range wire {
+		dependency := governedQueryDependency{
+			questionRunID: item.QuestionRunID, attemptID: item.AttemptID,
+			connectionID: item.ConnectionID, sqlHash: item.SQLHash,
+			exposedSchemaRevision: item.ExposedSchemaRevision, resultDigest: item.ResultDigest,
+		}
+		if !dependency.validForRun(questionRunID) {
+			return nil, &Error{code: CodeUnavailable}
+		}
+		if _, duplicate := seen[dependency.attemptID]; duplicate {
+			return nil, &Error{code: CodeUnavailable}
+		}
+		seen[dependency.attemptID] = struct{}{}
+		dependencies = append(dependencies, dependency)
+	}
+	return dependencies, nil
+}
+
+// governedQueryToolExecutions binds every successful synthetic live tool call
+// to its ordered private dependency. Failed calls carry no dependency.
+func governedQueryToolExecutions(questionRunID string, dependencies []governedQueryDependency, record *ToolLoopRecord) ([]liveDataExecution, bool, bool) {
+	projections := make([]liveDataProjection, 0, len(dependencies))
 	if record != nil {
 		for _, call := range record.Calls {
 			if call.Name != liveDataToolName {
@@ -139,34 +221,61 @@ func governedQueryToolProjection(questionRunID string, dependency *governedQuery
 			}
 			if call.Outcome == "REFUSED" {
 				if !call.Result.IsError {
-					return liveDataProjection{}, false, false
+					return nil, false, false
 				}
 				continue
 			}
 			if call.Outcome != "SUCCEEDED" || call.Result.IsError || len(call.Result.Structured) == 0 ||
 				call.Result.Text != string(call.Result.Structured) || record.Profile.MaxToolResultBytes < 1 ||
 				len(call.Result.Structured) > record.Profile.MaxToolResultBytes {
-				return liveDataProjection{}, false, false
+				return nil, false, false
 			}
 			projection, ok := decodeLiveDataProjection(call.Result.Structured)
 			if !ok {
-				return liveDataProjection{}, false, false
+				return nil, false, false
 			}
-			successes++
-			successful = projection
+			projections = append(projections, projection)
+			if len(projections) > liveDataMaxSuccessfulCalls {
+				return nil, false, false
+			}
 		}
 	}
-	if successes == 0 {
-		return liveDataProjection{}, false, dependency == nil
+	if len(projections) == 0 {
+		return nil, false, len(dependencies) == 0
 	}
-	if successes != 1 || dependency == nil || !dependency.validForRun(questionRunID) {
-		return liveDataProjection{}, false, false
+	if len(projections) != len(dependencies) || len(dependencies) > liveDataMaxSuccessfulCalls {
+		return nil, false, false
 	}
-	if successful.AttemptID != dependency.attemptID || successful.SQLHash != dependency.sqlHash ||
-		successful.ExposedSchemaRevision != dependency.exposedSchemaRevision || successful.ResultDigest != dependency.resultDigest {
-		return liveDataProjection{}, false, false
+	executions := make([]liveDataExecution, 0, len(projections))
+	seen := make(map[string]struct{}, len(dependencies))
+	for index, projection := range projections {
+		dependency := dependencies[index]
+		if !dependency.validForRun(questionRunID) || projection.AttemptID != dependency.attemptID ||
+			projection.SQLHash != dependency.sqlHash || projection.ExposedSchemaRevision != dependency.exposedSchemaRevision ||
+			projection.ResultDigest != dependency.resultDigest {
+			return nil, false, false
+		}
+		if _, duplicate := seen[dependency.attemptID]; duplicate {
+			return nil, false, false
+		}
+		seen[dependency.attemptID] = struct{}{}
+		executions = append(executions, liveDataExecution{projection: projection, dependency: dependency})
 	}
-	return successful, true, true
+	return executions, true, true
+}
+
+// governedQueryToolProjection keeps the former singleton helper for callers
+// and tests that still exercise one-result artifacts.
+func governedQueryToolProjection(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord) (liveDataProjection, bool, bool) {
+	var dependencies []governedQueryDependency
+	if dependency != nil {
+		dependencies = []governedQueryDependency{*dependency}
+	}
+	executions, successful, valid := governedQueryToolExecutions(questionRunID, dependencies, record)
+	if !valid || !successful || len(executions) == 0 {
+		return liveDataProjection{}, successful, valid
+	}
+	return executions[0].projection, true, true
 }
 
 func validateGovernedQueryToolBinding(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord) bool {
@@ -175,7 +284,15 @@ func validateGovernedQueryToolBinding(questionRunID string, dependency *governed
 }
 
 func validateGovernedQueryAnswerResult(questionRunID string, dependency *governedQueryDependency, record *ToolLoopRecord, answerResult *AnswerResult) bool {
-	projection, successful, valid := governedQueryToolProjection(questionRunID, dependency, record)
+	var dependencies []governedQueryDependency
+	if dependency != nil {
+		dependencies = []governedQueryDependency{*dependency}
+	}
+	return validateGovernedQueryAnswerResults(questionRunID, dependencies, record, answerResult)
+}
+
+func validateGovernedQueryAnswerResults(questionRunID string, dependencies []governedQueryDependency, record *ToolLoopRecord, answerResult *AnswerResult) bool {
+	executions, successful, valid := governedQueryToolExecutions(questionRunID, dependencies, record)
 	if !valid {
 		return false
 	}
@@ -183,16 +300,24 @@ func validateGovernedQueryAnswerResult(questionRunID string, dependency *governe
 		return true
 	}
 	if answerResult.Kind != "LIVE_TABLE" {
-		return !successful && dependency == nil
+		return !successful && len(dependencies) == 0
 	}
-	if !successful || dependency == nil {
+	if !successful || len(executions) == 0 {
 		return false
 	}
-	expected, err := liveDataAnswerResult(questionRunID, liveDataExecution{projection: projection, dependency: *dependency})
+	expected, err := liveDataAnswerResults(questionRunID, executions)
 	return err == nil && reflect.DeepEqual(expected, answerResult)
 }
 
 func governedQueryAnswerResultAllowedForStatus(status string, dependency *governedQueryDependency, answerResult *AnswerResult, toolLoop *ToolLoopRecord) bool {
-	return dependency == nil || answerResult != nil || status != "COMPLETED" ||
+	var dependencies []governedQueryDependency
+	if dependency != nil {
+		dependencies = []governedQueryDependency{*dependency}
+	}
+	return governedQueryAnswerResultsAllowedForStatus(status, dependencies, answerResult, toolLoop)
+}
+
+func governedQueryAnswerResultsAllowedForStatus(status string, dependencies []governedQueryDependency, answerResult *AnswerResult, toolLoop *ToolLoopRecord) bool {
+	return len(dependencies) == 0 || answerResult != nil || status != "COMPLETED" ||
 		(toolLoop != nil && toolLoop.StopReason == "CLARIFICATION")
 }

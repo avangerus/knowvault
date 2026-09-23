@@ -33,6 +33,39 @@ func livePersistenceFixture(t *testing.T) (liveDataProjection, governedQueryDepe
 	return projection, dependency, record
 }
 
+func livePersistenceMultiFixture(t *testing.T, count int) ([]liveDataExecution, *ToolLoopRecord) {
+	t.Helper()
+	if count < 1 || count > liveDataMaxSuccessfulCalls {
+		t.Fatalf("fixture count %d outside live read limit", count)
+	}
+	base, _, ok := projectLiveDataResult(liveDataResultFixture(), 8192)
+	if !ok {
+		t.Fatal("live fixture did not produce a validated projection")
+	}
+	record := &ToolLoopRecord{Profile: modelgateway.ToolLoopProfile{MaxToolResultBytes: 8192}}
+	executions := make([]liveDataExecution, 0, count)
+	for index := 0; index < count; index++ {
+		projection := base
+		projection.AttemptID = "gqat_live_persist_" + string(rune('1'+index))
+		payload, err := json.Marshal(projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dependency := governedQueryDependency{
+			questionRunID: livePersistenceRunID, attemptID: projection.AttemptID,
+			connectionID: "conn_private_secret", sqlHash: projection.SQLHash,
+			exposedSchemaRevision: projection.ExposedSchemaRevision, resultDigest: projection.ResultDigest,
+		}
+		record.Calls = append(record.Calls, ToolCallRecord{
+			ID: "live-call-" + string(rune('1'+index)), Name: liveDataToolName,
+			Arguments: json.RawMessage(`{"question":"read"}`), Outcome: "SUCCEEDED",
+			Result: workspacetools.Result{Text: string(payload), Structured: payload},
+		})
+		executions = append(executions, liveDataExecution{projection: projection, dependency: dependency})
+	}
+	return executions, record
+}
+
 func livePersistenceAnswer(t *testing.T, projection liveDataProjection, dependency governedQueryDependency) *AnswerResult {
 	t.Helper()
 	answer, err := liveDataAnswerResult(livePersistenceRunID, liveDataExecution{projection: projection, dependency: dependency})
@@ -48,7 +81,7 @@ func TestGovernedQueryDependencyCodecLegacyAndToolBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	decoded, err := decodeStructuredAnswer(livePersistenceRunID, legacy)
-	if err != nil || decoded.governedQueryDependency != nil {
+	if err != nil || len(decoded.governedQueryDependencies) != 0 {
 		t.Fatalf("legacy artifact decode = %#v, %v", decoded, err)
 	}
 
@@ -59,7 +92,7 @@ func TestGovernedQueryDependencyCodecLegacyAndToolBinding(t *testing.T) {
 		t.Fatalf("marshal paired successful live call: %v", err)
 	}
 	decoded, err = decodeStructuredAnswer(livePersistenceRunID, raw)
-	if err != nil || decoded.governedQueryDependency == nil || decoded.governedQueryDependency.connectionID != dependency.connectionID {
+	if err != nil || len(decoded.governedQueryDependencies) != 1 || decoded.governedQueryDependencies[0].connectionID != dependency.connectionID {
 		t.Fatalf("paired live artifact decode = %#v, %v", decoded, err)
 	}
 	if !strings.Contains(string(raw), "governed_query_dependency") || strings.Contains(string(raw), dependency.connectionID) || strings.Contains(string(raw), "SELECT private_sql_secret") {
@@ -75,6 +108,60 @@ func TestGovernedQueryDependencyCodecLegacyAndToolBinding(t *testing.T) {
 	failed := &ToolLoopRecord{Calls: []ToolCallRecord{{Name: liveDataToolName, Outcome: "REFUSED", Result: workspacetools.Result{IsError: true}}}}
 	if _, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, nil, nil, nil, nil, failed); err != nil {
 		t.Fatalf("failed live call needs no dependency: %v", err)
+	}
+}
+
+func TestGovernedQueryMultiReadReceiptsRoundTripAndKeepLegacySingletonReadable(t *testing.T) {
+	executions, record := livePersistenceMultiFixture(t, liveDataMaxSuccessfulCalls)
+	dependencies := make([]governedQueryDependency, 0, len(executions))
+	for _, execution := range executions {
+		dependencies = append(dependencies, execution.dependency)
+	}
+	answer, err := liveDataAnswerResults(livePersistenceRunID, executions)
+	if err != nil || len(answer.Receipts) != liveDataMaxSuccessfulCalls {
+		t.Fatalf("multi-read answer receipts = %#v, err=%v", answer, err)
+	}
+	raw, err := marshalStructuredAnswerWithDependencyList(livePersistenceRunID, "answer-hash", nil, answer, nil, nil, dependencies, record)
+	if err != nil {
+		t.Fatalf("marshal three governed reads: %v", err)
+	}
+	decoded, err := decodeStructuredAnswer(livePersistenceRunID, raw)
+	if err != nil || len(decoded.governedQueryDependencies) != liveDataMaxSuccessfulCalls || !reflect.DeepEqual(decoded.AnswerResult, answer) {
+		t.Fatalf("three-read artifact did not round-trip: dependency count=%d result=%#v err=%v", len(decoded.governedQueryDependencies), decoded.AnswerResult, err)
+	}
+	if strings.Contains(string(raw), "conn_private_secret") || strings.Contains(string(raw), "SELECT private_sql_secret") {
+		t.Fatalf("multi-read dependency artifact leaked private details: %s", raw)
+	}
+
+	legacyProjection, legacyDependency, legacyRecord := livePersistenceFixture(t)
+	legacyAnswer := livePersistenceAnswer(t, legacyProjection, legacyDependency)
+	legacyCurrent, err := marshalStructuredAnswerWithDependencies(livePersistenceRunID, "answer-hash", nil, legacyAnswer, nil, nil, &legacyDependency, legacyRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyEncoded, err := encodeGovernedQueryDependency(livePersistenceRunID, legacyDependency)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRaw := addGovernedDependencyMember(t, removeGovernedDependencyMember(t, legacyCurrent), legacyEncoded)
+	legacyDecoded, err := decodeStructuredAnswer(livePersistenceRunID, legacyRaw)
+	if err != nil || len(legacyDecoded.governedQueryDependencies) != 1 || legacyDecoded.governedQueryDependencies[0] != legacyDependency {
+		t.Fatalf("old singleton artifact did not decode: %#v err=%v", legacyDecoded.governedQueryDependencies, err)
+	}
+
+	truncated, err := encodeGovernedQueryDependencies(livePersistenceRunID, dependencies[:2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncatedRaw := addGovernedDependencyMember(t, removeGovernedDependencyMember(t, raw), truncated)
+	if got, err := decodeStructuredAnswer(livePersistenceRunID, truncatedRaw); CodeOf(err) != CodeUnavailable || !reflect.DeepEqual(got, structuredAnswer{}) {
+		t.Fatalf("artifact with a missing current dependency was disclosed: %#v err=%v", got, err)
+	}
+
+	changedAnswer := copyLiveAnswerResult(t, answer)
+	changedAnswer.Receipts[1].ReceiptDigest = "sha256:" + strings.Repeat("c", 64)
+	if _, err := marshalStructuredAnswerWithDependencyList(livePersistenceRunID, "answer-hash", nil, changedAnswer, nil, nil, dependencies, record); CodeOf(err) != CodeInvalid {
+		t.Fatalf("multi-read receipt tampering was accepted: %v", err)
 	}
 }
 
@@ -288,7 +375,7 @@ func TestGovernedQueryClarificationMayPersistWithoutLiveAnswerResult(t *testing.
 		t.Fatalf("marshal clarification trace without AnswerResult: %v", err)
 	}
 	decoded, err := decodeStructuredAnswer(livePersistenceRunID, raw)
-	if err != nil || decoded.AnswerResult != nil || decoded.governedQueryDependency == nil || decoded.ToolLoop == nil || decoded.ToolLoop.StopReason != "CLARIFICATION" {
+	if err != nil || decoded.AnswerResult != nil || len(decoded.governedQueryDependencies) != 1 || decoded.ToolLoop == nil || decoded.ToolLoop.StopReason != "CLARIFICATION" {
 		t.Fatalf("clarification artifact did not round-trip: answer=%#v err=%v", decoded, err)
 	}
 
@@ -307,6 +394,15 @@ func copyLiveAnswerResult(t *testing.T, source *AnswerResult) *AnswerResult {
 	if source.ObservationWindow != nil {
 		window := *source.ObservationWindow
 		copy.ObservationWindow = &window
+	}
+	if source.Receipts != nil {
+		copy.Receipts = append([]LiveTableReceipt(nil), source.Receipts...)
+		for index := range copy.Receipts {
+			if source.Receipts[index].ObservationWindow != nil {
+				window := *source.Receipts[index].ObservationWindow
+				copy.Receipts[index].ObservationWindow = &window
+			}
+		}
 	}
 	return &copy
 }

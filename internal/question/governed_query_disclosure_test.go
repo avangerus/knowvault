@@ -26,6 +26,7 @@ type governedDisclosureRecorder struct {
 	workspaceID string
 	disclosures []governedask.AttemptDisclosure
 	err         error
+	errs        []error
 	onCall      func(int)
 }
 
@@ -50,6 +51,9 @@ func (recorder *governedDisclosureRecorder) ReauthorizeAttempt(
 	recorder.disclosures = append(recorder.disclosures, disclosure)
 	if recorder.onCall != nil {
 		recorder.onCall(recorder.calls)
+	}
+	if recorder.calls <= len(recorder.errs) {
+		return recorder.errs[recorder.calls-1]
 	}
 	return recorder.err
 }
@@ -184,6 +188,41 @@ func TestAuthorizeGovernedQueryDisclosureCollapsesDenialAndCancellation(t *testi
 	}
 }
 
+func TestAuthorizeGovernedQueryDisclosuresRequiresEveryCurrentAttempt(t *testing.T) {
+	runID := "run_governed_multi"
+	first := *governedDisclosureDependency(runID)
+	second := first
+	second.attemptID = "gqat_run_governed_multi_2"
+	second.sqlHash = "sha256:" + strings.Repeat("c", 64)
+	third := first
+	third.attemptID = "gqat_run_governed_multi_3"
+	third.resultDigest = "sha256:" + strings.Repeat("d", 64)
+	dependencies := []governedQueryDependency{first, second, third}
+	access := questionAccess(database.ActorKindHuman)
+
+	denied := &governedDisclosureRecorder{errs: []error{nil, errors.New("revoked second read"), nil}}
+	err := authorizeGovernedQueryDisclosures(context.Background(), access, "workspace_live", runID, dependencies, denied)
+	assertGovernedQuestionRefusal(t, err, CodeNotFound)
+	wantAttempts := []string{first.attemptID, second.attemptID, third.attemptID}
+	if denied.calls != len(dependencies) || !reflect.DeepEqual(denied.order, wantAttempts) {
+		t.Fatalf("reauthorized only a prefix: calls=%d order=%v want=%v", denied.calls, denied.order, wantAttempts)
+	}
+
+	fatal := &governedBatchThenFatal{}
+	err = authorizeGovernedQueryDisclosures(context.Background(), access, "workspace_live", runID, dependencies, fatal)
+	assertGovernedQuestionRefusal(t, err, CodeUnavailable)
+	if fatal.calls != 2 {
+		t.Fatalf("fatal reauthorization calls=%d, want abort at unavailable dependency", fatal.calls)
+	}
+
+	batchDenied := &governedDisclosureRecorder{errs: []error{errors.New("revoked first read"), nil}}
+	deniedRuns, err := authorizeGovernedQueryDisclosureBatchMany(context.Background(), access, "workspace_live",
+		[]string{runID}, map[string][]governedQueryDependency{runID: dependencies[:2]}, batchDenied)
+	if err != nil || !reflect.DeepEqual(deniedRuns, []string{runID}) || batchDenied.calls != 2 {
+		t.Fatalf("batch multi-read reauthorization = denied %v err %v calls %d", deniedRuns, err, batchDenied.calls)
+	}
+}
+
 type governedBatchThenFatal struct {
 	calls int
 }
@@ -303,8 +342,8 @@ func TestReadStoredRunGovernedGateIsPostTransactionPrivateAndFailClosed(t *testi
 		}
 		for _, specification := range generic.Specs {
 			value, ok := specification.(*ast.ValueSpec)
-			if ok && len(value.Names) == 1 && value.Names[0].Name == "retainedGovernedQueryDependency" {
-				local = value.Type != nil && readGateCallName(value.Type) == "*governedQueryDependency" && len(value.Values) == 0
+			if ok && len(value.Names) == 1 && value.Names[0].Name == "retainedGovernedQueryDependencies" {
+				local = value.Type != nil && batchGateTypeName(value.Type) == "[]governedQueryDependency" && len(value.Values) == 0
 			}
 		}
 	}
@@ -323,7 +362,7 @@ func TestReadStoredRunGovernedGateIsPostTransactionPrivateAndFailClosed(t *testi
 				switch readGateCallName(init.Rhs[0]) {
 				case "service.authorizeAnalyticScalarDisclosure":
 					scalarIndex = index
-				case "service.authorizeGovernedQueryDisclosure":
+				case "service.authorizeGovernedQueryDisclosures":
 					governedIndex = index
 				}
 			}
@@ -335,7 +374,7 @@ func TestReadStoredRunGovernedGateIsPostTransactionPrivateAndFailClosed(t *testi
 	governedBranch := body[governedIndex].(*ast.IfStmt)
 	governedInit := governedBranch.Init.(*ast.AssignStmt)
 	call := governedInit.Rhs[0].(*ast.CallExpr)
-	wantArgs := []string{"ctx", "access", "workspaceID", "runID", "retainedGovernedQueryDependency"}
+	wantArgs := []string{"ctx", "access", "workspaceID", "runID", "retainedGovernedQueryDependencies"}
 	if len(call.Args) != len(wantArgs) {
 		t.Fatalf("governed gate args = %d, want %d", len(call.Args), len(wantArgs))
 	}
@@ -359,14 +398,14 @@ func TestReadStoredRunGovernedGateIsPostTransactionPrivateAndFailClosed(t *testi
 	captures, statusChecks := 0, 0
 	ast.Inspect(dbCall, func(node ast.Node) bool {
 		if assignment, ok := node.(*ast.AssignStmt); ok && len(assignment.Lhs) == 1 && len(assignment.Rhs) == 1 {
-			if target, ok := assignment.Lhs[0].(*ast.Ident); ok && target.Name == "retainedGovernedQueryDependency" {
+			if target, ok := assignment.Lhs[0].(*ast.Ident); ok && target.Name == "retainedGovernedQueryDependencies" {
 				captures++
-				if readGateCallName(assignment.Rhs[0]) != "structured.governedQueryDependency" {
+				if readGateCallName(assignment.Rhs[0]) != "structured.governedQueryDependencies" {
 					t.Fatalf("governed dependency capture source = %q", readGateCallName(assignment.Rhs[0]))
 				}
 			}
 		}
-		if expression, ok := node.(*ast.CallExpr); ok && readGateCallName(expression) == "governedQueryAnswerResultAllowedForStatus" {
+		if expression, ok := node.(*ast.CallExpr); ok && readGateCallName(expression) == "governedQueryAnswerResultsAllowedForStatus" {
 			statusChecks++
 			if len(expression.Args) != 4 || readGateCallName(expression.Args[0]) != "status" {
 				t.Fatal("single-run status guard does not use the database result status")
@@ -389,7 +428,7 @@ func TestReadStoredRunBatchGovernedGateDeniesWholeRunsAndAudits(t *testing.T) {
 			continue
 		}
 		call, ok := assignment.Rhs[0].(*ast.CallExpr)
-		if !ok || readGateCallName(call) != "make" || len(call.Args) == 0 || batchGateTypeName(call.Args[0]) != "map[string]*governedQueryDependency" {
+		if !ok || readGateCallName(call) != "make" || len(call.Args) == 0 || batchGateTypeName(call.Args[0]) != "map[string][]governedQueryDependency" {
 			continue
 		}
 		local = true
@@ -412,12 +451,12 @@ func TestReadStoredRunBatchGovernedGateDeniesWholeRunsAndAudits(t *testing.T) {
 		if assignment, ok := node.(*ast.AssignStmt); ok && len(assignment.Lhs) == 1 && len(assignment.Rhs) == 1 {
 			if index, ok := assignment.Lhs[0].(*ast.IndexExpr); ok && readGateCallName(index.X) == "retainedGovernedQueryDependencies" {
 				captures++
-				if readGateCallName(assignment.Rhs[0]) != "structured.governedQueryDependency" {
+				if readGateCallName(assignment.Rhs[0]) != "structured.governedQueryDependencies" {
 					t.Fatalf("governed dependency map source = %q", readGateCallName(assignment.Rhs[0]))
 				}
 			}
 		}
-		if call, ok := node.(*ast.CallExpr); ok && readGateCallName(call) == "governedQueryAnswerResultAllowedForStatus" {
+		if call, ok := node.(*ast.CallExpr); ok && readGateCallName(call) == "governedQueryAnswerResultsAllowedForStatus" {
 			statusChecks++
 			if len(call.Args) != 4 || readGateCallName(call.Args[0]) != "run.ResultStatus" {
 				t.Fatal("batch status guard does not use the database result status")
@@ -439,7 +478,7 @@ func TestReadStoredRunBatchGovernedGateDeniesWholeRunsAndAudits(t *testing.T) {
 				}
 			}
 		}
-		if assignment, ok := statement.(*ast.AssignStmt); ok && len(assignment.Lhs) == 2 && len(assignment.Rhs) == 1 && readGateCallName(assignment.Rhs[0]) == "service.authorizeGovernedQueryDisclosureBatch" {
+		if assignment, ok := statement.(*ast.AssignStmt); ok && len(assignment.Lhs) == 2 && len(assignment.Rhs) == 1 && readGateCallName(assignment.Rhs[0]) == "service.authorizeGovernedQueryDisclosureBatchMany" {
 			gateIndex = index
 			call := assignment.Rhs[0].(*ast.CallExpr)
 			wantArgs := []string{"ctx", "access", "workspaceID", "governedCandidateRunIDs", "retainedGovernedQueryDependencies"}

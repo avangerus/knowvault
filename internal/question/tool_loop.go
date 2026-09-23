@@ -1210,7 +1210,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			record.AllClaimsBound = false
 		} else {
 			var resultErr error
-			answerResult, resultErr = liveDataAnswerResult(run.ID, *liveDataState.retained)
+			answerResult, resultErr = liveDataAnswerResults(run.ID, liveDataState.executions)
 			if resultErr != nil {
 				return resultErr
 			}
@@ -1220,16 +1220,18 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	finishCtx, finishCancel := modelAttemptPersistenceContext(parent)
 	defer finishCancel()
 	finishCtx = context.WithValue(finishCtx, toolLoopContextKey{}, record)
-	var governedDependency *governedQueryDependency
-	if liveDataState.retained != nil {
-		dependency := liveDataState.retained.dependency
-		governedDependency = &dependency
+	var governedDependencies []governedQueryDependency
+	if len(liveDataState.executions) > 0 {
+		governedDependencies = make([]governedQueryDependency, 0, len(liveDataState.executions))
+		for _, execution := range liveDataState.executions {
+			governedDependencies = append(governedDependencies, execution.dependency)
+		}
 	}
 	var scalarPair *analyticScalarPair
 	if retainedAnalyticScalarPair != nil && !scopeChanged {
 		scalarPair = retainedAnalyticScalarPair
 	}
-	return service.persistTerminalRunWithStructuredDependencies(finishCtx, access, run.ID, run.WorkspaceID, answer, citations, selected, status, run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, answerResult, scalarPair, governedDependency)
+	return service.persistTerminalRunWithStructuredDependencyList(finishCtx, access, run.ID, run.WorkspaceID, answer, citations, selected, status, run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, answerResult, scalarPair, governedDependencies)
 }
 
 func toolLoopModelFailureStopReason(ctx context.Context, attempt modelgateway.AttemptResult) string {

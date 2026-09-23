@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	liveDataToolName       = "knowvault_ask_live_data"
-	liveDataMaxRows        = 100
-	liveDataMaxColumns     = 64
-	liveDataMaxCells       = 4096
-	liveDataMaxCellBytes   = 4096
-	liveDataMaxColumnBytes = 128
-	liveDataQuestionBytes  = 4000
-	liveDataResultFormat   = "postgres-text-table-v1"
+	liveDataToolName           = "knowvault_ask_live_data"
+	liveDataMaxRows            = 100
+	liveDataMaxColumns         = 64
+	liveDataMaxCells           = 4096
+	liveDataMaxCellBytes       = 4096
+	liveDataMaxColumnBytes     = 128
+	liveDataQuestionBytes      = 4000
+	liveDataResultFormat       = "postgres-text-table-v1"
+	liveDataMaxSuccessfulCalls = 3
 )
 
 const liveDataToolSchema = `{"type":"object","additionalProperties":false,"required":["question"],"properties":{"question":{"type":"string"}}}`
@@ -354,11 +355,40 @@ func liveDataAnswerResult(questionRunID string, execution liveDataExecution) (*A
 	return result, nil
 }
 
+func liveDataAnswerResults(questionRunID string, executions []liveDataExecution) (*AnswerResult, error) {
+	if len(executions) == 0 || len(executions) > liveDataMaxSuccessfulCalls {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	answers := make([]*AnswerResult, 0, len(executions))
+	for _, execution := range executions {
+		answer, err := liveDataAnswerResult(questionRunID, execution)
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, answer)
+	}
+	primary := *answers[0]
+	if len(answers) > 1 {
+		primary.Receipts = make([]LiveTableReceipt, 0, len(answers))
+		for _, answer := range answers {
+			window := *answer.ObservationWindow
+			primary.Receipts = append(primary.Receipts, LiveTableReceipt{
+				ExecutionID: answer.ExecutionID, ResultDigest: answer.ResultDigest,
+				ReceiptDigest: answer.ReceiptDigest, RowCount: answer.Snapshot.RowCount,
+				Completeness: answer.Completeness, ObservationWindow: &window,
+			})
+		}
+	}
+	return &primary, nil
+}
+
 // liveDataRunState is local to executeToolLoop. It retains the complete
-// validated result and its private dependency from one successful call.
+// validated results and private dependencies from a bounded sequence of
+// successful calls.
 type liveDataRunState struct {
 	successfulCall bool
 	retained       *liveDataExecution
+	executions     []liveDataExecution
 }
 
 func (state *liveDataRunState) invoke(
@@ -373,13 +403,16 @@ func (state *liveDataRunState) invoke(
 	if state == nil {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil
 	}
-	if state.successfulCall {
-		return liveDataRefusal("LIVE_DATA_ALREADY_RECORDED"), nil
+	if len(state.executions) >= liveDataMaxSuccessfulCalls {
+		return liveDataRefusal("LIVE_DATA_LIMIT_REACHED"), nil
 	}
 	result, execution, err := invokeLiveDataToolRetained(ctx, access, workspaceID, questionRunID, ask, raw, maxResultBytes)
 	if err == nil && !result.IsError && execution != nil {
 		state.successfulCall = true
-		state.retained = execution
+		if state.retained == nil {
+			state.retained = execution
+		}
+		state.executions = append(state.executions, *execution)
 	}
 	return result, err
 }
@@ -387,5 +420,6 @@ func (state *liveDataRunState) invoke(
 func (state *liveDataRunState) discardRetainedResult() {
 	if state != nil {
 		state.retained = nil
+		state.executions = nil
 	}
 }

@@ -22,12 +22,17 @@ type liveDataAskProbe struct {
 	workspace string
 	question  string
 	result    governedask.AskResult
+	results   []governedask.AskResult
 	err       error
 }
 
 func (probe *liveDataAskProbe) AskWorkspace(ctx context.Context, access database.AccessContext, workspaceID, question string) (governedask.AskResult, error) {
 	probe.calls++
 	probe.ctx, probe.access, probe.workspace, probe.question = ctx, access, workspaceID, question
+	if len(probe.results) > 0 {
+		index := min(probe.calls-1, len(probe.results)-1)
+		return probe.results[index], probe.err
+	}
 	return probe.result, probe.err
 }
 
@@ -135,20 +140,31 @@ func TestInvokeLiveDataToolDelegatesCurrentScopeAndProjectsOnlySafeFields(t *tes
 	}
 }
 
-func TestLiveDataRunStateRefusesSecondSuccessfulResult(t *testing.T) {
-	probe := &liveDataAskProbe{result: liveDataResultFixture()}
+func TestLiveDataRunStateAllowsThreeSuccessfulResultsAndRefusesFourth(t *testing.T) {
+	results := make([]governedask.AskResult, liveDataMaxSuccessfulCalls)
+	for index := range results {
+		results[index] = liveDataResultFixture()
+		results[index].AttemptID = fmt.Sprintf("gqat_live_%d", index+1)
+	}
+	probe := &liveDataAskProbe{results: results}
 	state := &liveDataRunState{}
-	args := json.RawMessage(`{"question":"first"}`)
-	first, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe, args, 8192)
-	if err != nil || first.IsError {
-		t.Fatalf("first invoke = %#v, err %v", first, err)
+	var first workspacetools.Result
+	for index := 0; index < liveDataMaxSuccessfulCalls; index++ {
+		result, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe,
+			json.RawMessage(fmt.Sprintf(`{"question":"read %d"}`, index+1)), 8192)
+		if err != nil || result.IsError {
+			t.Fatalf("invoke %d = %#v, err %v", index+1, result, err)
+		}
+		if index == 0 {
+			first = result
+		}
 	}
-	second, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe, json.RawMessage(`{"question":"second"}`), 8192)
-	if err != nil || !second.IsError || probe.calls != 1 {
-		t.Fatalf("second invoke = %#v, err %v, ask calls %d", second, err, probe.calls)
+	fourth, err := state.invoke(context.Background(), database.AccessContext{}, "workspace_current", "qrun_live_current", probe, json.RawMessage(`{"question":"fourth"}`), 8192)
+	if err != nil || !fourth.IsError || probe.calls != liveDataMaxSuccessfulCalls || len(state.executions) != liveDataMaxSuccessfulCalls {
+		t.Fatalf("fourth invoke = %#v, err %v, ask calls %d, retained %d", fourth, err, probe.calls, len(state.executions))
 	}
-	if !strings.Contains(second.Text, "LIVE_DATA_ALREADY_RECORDED") || strings.Contains(second.Text, "private") {
-		t.Fatalf("second result = %q, want content-free already-recorded refusal", second.Text)
+	if !strings.Contains(fourth.Text, "LIVE_DATA_LIMIT_REACHED") || strings.Contains(fourth.Text, "private") {
+		t.Fatalf("fourth result = %q, want content-free bounded refusal", fourth.Text)
 	}
 	if !strings.Contains(first.Text, "private_row_value") {
 		t.Fatal("the first successful result was replaced")

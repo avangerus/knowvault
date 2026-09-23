@@ -88,6 +88,21 @@ type AnswerResult struct {
 	// Governed live read receipt fields (additive; absent for legacy answers).
 	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
 	ReceiptDigest     string                   `json:"receipt_digest,omitempty"`
+	// Receipts carries every successful governed live read used by one answer.
+	// The top-level live-table fields remain the first receipt for compatibility.
+	Receipts []LiveTableReceipt `json:"receipts,omitempty"`
+}
+
+// LiveTableReceipt is the safe public receipt projection for one live read.
+// Exact rows remain in the encrypted ToolLoop artifact and are disclosed only
+// through the governed reader path.
+type LiveTableReceipt struct {
+	ExecutionID       string                   `json:"execution_id"`
+	ResultDigest      string                   `json:"result_digest"`
+	ReceiptDigest     string                   `json:"receipt_digest"`
+	RowCount          int                      `json:"row_count"`
+	Completeness      string                   `json:"completeness"`
+	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
 }
 
 // AnswerObservationWindow is the server-observed wall-clock window around a
