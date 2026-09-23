@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
+import { PendingAction, type PendingActionState } from "./pending-action";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -4601,6 +4602,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
   const [localTurns, setLocalTurns] = useState<ConversationTurn[]>([]);
   const [lastFailure, setLastFailure] = useState<{ question: string; result: ApiFailure | ApiBroken } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
@@ -5114,6 +5116,14 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
   const turnsByID = new Map(feedTurns.map((turn) => [turn.turn_id, turn]));
 
   useEffect(() => {
+    if (pendingQuestion === null) return;
+    const startedAt = Date.now();
+    setPendingElapsedSeconds(0);
+    const interval = window.setInterval(() => setPendingElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingQuestion]);
+
+  useEffect(() => {
     const flow = flowRef.current;
     const latest = flow?.querySelector(".turn:last-child");
     if (flow && latest) flow.scrollTo({ top: latest.getBoundingClientRect().top - flow.getBoundingClientRect().top + flow.scrollTop - 16 });
@@ -5421,9 +5431,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
           {pendingQuestion !== null && (
             <article className="turn turn-on turn-pending">
               <p className="turn-question"><span className="turn-role">Question</span>{pendingQuestion}</p>
-              <p className="lead">Preparing answer.</p>
-              <p aria-live="polite" className="steps-note" role="status">Searching accessible data and preparing an answer with evidence.</p>
-              <p className="steps-note">Response time depends on the source and request queue.</p>
+              <PendingAction elapsedSeconds={pendingElapsedSeconds} state={{ current: "working", completed: [] } satisfies PendingActionState} />
             </article>
           )}
 
