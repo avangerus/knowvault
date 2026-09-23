@@ -43,12 +43,16 @@ async function main(): Promise<void> {
   check(parsed?.selector?.source_version_id === "version-7" && parsed.selector.text_hash === selector.text_hash, "deep link preserves the complete quote selector");
   check(parsed ? evidenceRequestPath(parsed) === "/api/v1/workspaces/url-workspace/evidence/fragment-4" : false, "evidence request uses the workspace from the URL");
 
-  const exactTarget = { ...target, canonicalAddress: "kv1:immutable&version#span" };
+  const exactTarget = { ...target, canonicalAddress: "kv1:immutable&version#span", returnConversation: "conversation-7" };
   const exactParsed = parseEvidenceHash(buildEvidenceHash(exactTarget));
   check(exactParsed?.canonicalAddress === exactTarget.canonicalAddress && exactParsed.selector?.text_hash === selector.text_hash, "exact version address and verified quote selector round-trip together");
+  check(exactParsed?.returnConversation === "conversation-7"
+    && buildSearchHash(exactParsed.workspace, exactParsed.returnConversation) === "#search/url-workspace?conversation=conversation-7",
+  "a standalone evidence link can return to its authorized conversation");
   check(exactParsed ? new URL(evidenceRequestPath(exactParsed), "https://test.invalid").searchParams.get("address") === exactTarget.canonicalAddress : false, "page fetch forwards exact address without truncation");
   check(parseEvidenceHash("#evidence/w/f?address=") === null, "empty exact selector never falls back to the current fragment");
   check(parseEvidenceHash("#evidence/w/f?address=one&address=two") === null, "ambiguous exact selectors never fall back to a current read");
+  check(parseEvidenceHash("#evidence/w/f?from=one&from=two") === null, "ambiguous return conversation is rejected");
   const malformedExact = parseEvidenceHash("#evidence/w/f?address=invalid-address");
   check(malformedExact?.canonicalAddress === "invalid-address" && evidenceRequestPath(malformedExact).endsWith("address=invalid-address"), "malformed address is sent for server refusal without dropping exact mode");
 
@@ -99,7 +103,7 @@ async function main(): Promise<void> {
       connection_id: "connection-2",
     },
   };
-  const pageRequest = { workspace: "url-workspace", fragment: "fragment-4", canonicalAddress: "kv1:address" };
+  const pageRequest = { workspace: "url-workspace", fragment: "fragment-4", canonicalAddress: "kv1:address", returnConversation: "conversation-7" };
   const browserAlias = "https://browser-alias.example/app?tenant=browser";
   const configuredPublicEvidence: EvidenceData = {
     ...evidence,
@@ -112,7 +116,8 @@ async function main(): Promise<void> {
     const publicTarget = parseEvidenceHash(publicURL.hash);
     check(publicURL.origin === "https://configured-public.example" && publicURL.pathname === "/knowvault/", "open and copy targets use the server-configured public origin instead of the browser alias");
     check(publicURL.search === "" && publicTarget?.workspace === pageRequest.workspace && publicTarget?.fragment === pageRequest.fragment, "server URL keeps the canonical UI route without an outer query");
-    check(publicTarget?.canonicalAddress === evidence.canonical_address && publicTarget?.selector?.text_hash === selector.text_hash, "server URL retains the canonical address and confirmed quote selector");
+    check(publicTarget?.canonicalAddress === evidence.canonical_address && publicTarget?.selector?.text_hash === selector.text_hash
+      && publicTarget.returnConversation === "conversation-7", "server URL retains the canonical address, quote and return conversation");
   }
   const browserFallbackHref = evidencePageHref(evidence, pageRequest, selector, browserAlias);
   check(browserFallbackHref !== null, "same-origin fallback remains for older responses that omit source_page_url");

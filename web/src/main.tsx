@@ -140,7 +140,7 @@ export type EvidenceQuoteSelector = {
   anchor: string;
 };
 
-export type EvidenceTarget = { workspace: string; fragment: string; canonicalAddress?: string; selector?: EvidenceQuoteSelector };
+export type EvidenceTarget = { workspace: string; fragment: string; canonicalAddress?: string; selector?: EvidenceQuoteSelector; returnConversation?: string };
 
 export type VerifiedEvidenceQuote = { start: number; end: number; text: string };
 
@@ -208,6 +208,7 @@ export function buildEvidenceHash(target: EvidenceTarget): string {
   const base = `#evidence/${encodeURIComponent(target.workspace)}/${encodeURIComponent(target.fragment)}`;
   const params = new URLSearchParams();
   if (target.canonicalAddress !== undefined) params.set("address", target.canonicalAddress);
+  if (target.returnConversation) params.set("from", target.returnConversation);
   if (!target.selector || !isEvidenceQuoteSelector(target.selector)) return params.size ? `${base}?${params.toString()}` : base;
   params.set("quote_start", String(target.selector.start));
   params.set("quote_end", String(target.selector.end));
@@ -232,7 +233,7 @@ export function evidenceRequestPath(target: Pick<EvidenceTarget, "workspace" | "
 // fragment address returned by the server, so their address strings can differ.
 export function evidencePageHref(
   evidence: EvidenceData,
-  request: Pick<EvidenceTarget, "workspace" | "fragment" | "canonicalAddress">,
+  request: Pick<EvidenceTarget, "workspace" | "fragment" | "canonicalAddress" | "returnConversation">,
   selector: EvidenceQuoteSelector | null,
   legacyBase?: string,
 ): string | null {
@@ -243,6 +244,7 @@ export function evidencePageHref(
     fragment: request.fragment,
     ...(evidence.canonical_address !== undefined ? { canonicalAddress: evidence.canonical_address } : {}),
     ...(selector ? { selector } : {}),
+    ...(request.returnConversation ? { returnConversation: request.returnConversation } : {}),
   };
   const hasServerURL = Object.prototype.hasOwnProperty.call(evidence, "source_page_url");
   if (hasServerURL) {
@@ -337,6 +339,11 @@ export function parseEvidenceHash(hash: string): EvidenceTarget | null {
     if (params.getAll("address").length !== 1 || !params.get("address")) return null;
     target.canonicalAddress = params.get("address")!;
     params.delete("address");
+  }
+  if (params.has("from")) {
+    if (params.getAll("from").length !== 1 || !params.get("from")) return null;
+    target.returnConversation = params.get("from")!;
+    params.delete("from");
   }
   const keys = [...params.keys()];
   if (keys.length !== evidenceSelectorKeys.length || keys.some((key) => !evidenceSelectorKeys.includes(key as typeof evidenceSelectorKeys[number]))) return target;
@@ -2064,7 +2071,7 @@ function App() {
       window.history.back();
       return;
     }
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${buildSearchHash(evidenceTarget.workspace)}`);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${buildSearchHash(evidenceTarget.workspace, evidenceTarget.returnConversation)}`);
     syncLocation();
   }
 
@@ -2273,7 +2280,7 @@ function App() {
               key={JSON.stringify(evidenceTarget)}
               onAccessDenied={invalidateRetainedSearch}
               onReturn={returnFromEvidence}
-              returnHref={buildSearchHash(evidenceTarget.workspace)}
+              returnHref={buildSearchHash(evidenceTarget.workspace, evidenceTarget.returnConversation)}
               target={evidenceTarget}
               workspaceName={workspaces.find((workspace) => workspace.id === evidenceTarget.workspace)?.name ?? "Workspace"}
             />
@@ -4365,6 +4372,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const citationHref = (citation: QuestionCitation): string => buildEvidenceHash({
     workspace: workspaceID,
     fragment: citation.evidence_fragment_id,
+    ...(run.conversation_id ? { returnConversation: run.conversation_id } : {}),
     ...(citation.address ? { canonicalAddress: citation.address } : {}),
     ...(confirmedEvidenceQuoteSelector(citation) ? { selector: confirmedEvidenceQuoteSelector(citation)! } : {}),
   });
