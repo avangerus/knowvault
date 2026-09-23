@@ -22,7 +22,7 @@ func TestCompletedTypedMetricAnswerOwnsDirectionalPercent(t *testing.T) {
 	if strings.Contains(answer, "6.09% \u0432\u044B\u0448\u0435") {
 		t.Fatalf("incorrect direction survived: %s", answer)
 	}
-	if record.PresentationVersion == nil || *record.PresentationVersion != "metric-comparison-v2" ||
+	if record.PresentationVersion == nil || *record.PresentationVersion != "metric-comparison-v3" ||
 		record.PresentationLanguage == nil || *record.PresentationLanguage != "ru" ||
 		record.PresentationAnswerHash == nil || *record.PresentationAnswerHash != canon.Hash([]byte(answer)) {
 		t.Fatalf("typed answer envelope is missing or unbound: %#v", record)

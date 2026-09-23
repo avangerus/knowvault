@@ -13,8 +13,7 @@ import (
 )
 
 // renderTypedMetricAnswer builds prose solely from authenticated comparison
-// results and already-verified citation numbers. It is intentionally not wired
-// into Question run creation or persistence yet.
+// results and already-verified citations, using the stored presentation version.
 func renderTypedMetricAnswer(questionRunID string, record *ToolLoopRecord,
 	dependencies []governedQueryDependency, citations []Citation, language string) (string, error) {
 	invalid := func() (string, error) { return "", &Error{code: CodeInvalid} }
@@ -24,6 +23,16 @@ func renderTypedMetricAnswer(questionRunID string, record *ToolLoopRecord,
 	executions, successful, valid := governedQueryToolExecutions(questionRunID, dependencies, record)
 	if !valid || !successful || len(executions) == 0 || len(executions) > liveDataMaxSuccessfulCalls || record == nil {
 		return invalid()
+	}
+	present := metriccompare.PresentInLanguage // Unversioned callers retain v2.
+	if record.PresentationVersion != nil {
+		switch *record.PresentationVersion {
+		case "metric-comparison-v2":
+		case "metric-comparison-v3":
+			present = metriccompare.PresentReadable
+		default:
+			return invalid()
+		}
 	}
 	parts := make([]string, 0, len(executions)+1)
 	index := 0
@@ -53,7 +62,7 @@ func renderTypedMetricAnswer(questionRunID string, record *ToolLoopRecord,
 				DistinctSubjects: result.Second.DistinctSubjects, NonNullCount: result.Second.ContributingRows},
 			Delta: result.Delta, PercentChange: result.PercentChange,
 		}
-		prose, err := metriccompare.PresentInLanguage(comparison, language)
+		prose, err := present(comparison, language)
 		if err != nil {
 			return invalid()
 		}
@@ -106,6 +115,10 @@ func renderTypedMetricAnswer(questionRunID string, record *ToolLoopRecord,
 		}
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+func supportedMetricPresentation(version string) bool {
+	return version == "metric-comparison-v2" || version == "metric-comparison-v3"
 }
 
 var metricExcerptWords = regexp.MustCompile(`[\pL\pN_.-]+`)

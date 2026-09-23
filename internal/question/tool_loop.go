@@ -430,7 +430,7 @@ func bindToolLiveReadReferences(questionRunID string, references []toolLiveReadR
 // answer must require a nonempty value so v2 compares the exact displayed bytes.
 func validateToolLoopClaimEvidence(questionRunID, answerMarkdown string, record *ToolLoopRecord, dependencies []governedQueryDependency, citations []Citation) bool {
 	if record != nil && (record.PresentationVersion != nil || record.PresentationLanguage != nil || record.PresentationAnswerHash != nil) {
-		if record.PresentationVersion == nil || *record.PresentationVersion != "metric-comparison-v2" ||
+		if record.PresentationVersion == nil || !supportedMetricPresentation(*record.PresentationVersion) ||
 			record.PresentationLanguage == nil || (*record.PresentationLanguage != "en" && *record.PresentationLanguage != "ru") ||
 			record.PresentationAnswerHash == nil || *record.PresentationAnswerHash == "" ||
 			record.ClaimEvidenceVersion != "v1" ||
@@ -1623,11 +1623,13 @@ func completedTypedMetricAnswer(runID, questionText string, record *ToolLoopReco
 	if containsCyrillic(questionText) {
 		language = "ru"
 	}
-	answer, err := renderTypedMetricAnswer(runID, record, dependencies, citations, language)
+	version := "metric-comparison-v3"
+	presentationRecord := *record
+	presentationRecord.PresentationVersion = &version
+	answer, err := renderTypedMetricAnswer(runID, &presentationRecord, dependencies, citations, language)
 	if err != nil {
 		return "", true, err
 	}
-	version := "metric-comparison-v2"
 	hash := canon.Hash([]byte(answer))
 	record.PresentationVersion = &version
 	record.PresentationLanguage = &language

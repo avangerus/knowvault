@@ -4759,7 +4759,7 @@ type structuredAnswer struct {
 	governedQueryDependencies []governedQueryDependency
 }
 
-// A v2 presentation is three copies of one exact answer digest: the sealed
+// A versioned presentation is three copies of one exact answer digest: the sealed
 // presentation envelope, the sealed structured answer, and question_run. A
 // missing or changed markdown artifact must close both governed read paths
 // before either path projects answer or evidence. Legacy records have no
@@ -4769,7 +4769,7 @@ func storedTypedMetricAnswerMatches(answer, runAnswerHash string, structured str
 	if loop == nil || (loop.PresentationVersion == nil && loop.PresentationLanguage == nil && loop.PresentationAnswerHash == nil) {
 		return true
 	}
-	if loop.PresentationVersion == nil || *loop.PresentationVersion != "metric-comparison-v2" ||
+	if loop.PresentationVersion == nil || !supportedMetricPresentation(*loop.PresentationVersion) ||
 		loop.PresentationLanguage == nil || loop.PresentationAnswerHash == nil || answer == "" {
 		return false
 	}
@@ -4777,14 +4777,14 @@ func storedTypedMetricAnswerMatches(answer, runAnswerHash string, structured str
 	return answerHash == *loop.PresentationAnswerHash && answerHash == structured.AnswerHash && answerHash == runAnswerHash
 }
 
-// A v2 answer may quote a sealed structured citation. Before either governed
+// A versioned answer may quote a sealed structured citation. Before either governed
 // read discloses it, bind that copy to the separately gated citation row and
 // CitedExcerpt artifact. Legacy runs retain their existing citation behavior.
 func typedMetricCitationsMatchGated(loop *ToolLoopRecord, structured, gated []Citation) bool {
 	if loop == nil || loop.PresentationVersion == nil {
 		return true
 	}
-	if *loop.PresentationVersion != "metric-comparison-v2" || len(structured) != len(gated) {
+	if !supportedMetricPresentation(*loop.PresentationVersion) || len(structured) != len(gated) {
 		return false
 	}
 	byID := make(map[string]Citation, len(gated))
