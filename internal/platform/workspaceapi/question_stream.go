@@ -37,6 +37,7 @@ func newQuestionEventStream(writer http.ResponseWriter) *questionEventStream {
 	writer.Header().Set("Content-Type", questionStreamContentType)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.Header().Set("X-Accel-Buffering", "no")
 	return &questionEventStream{writer: writer, encoder: json.NewEncoder(writer)}
 }
 
@@ -77,8 +78,9 @@ func (stream *questionEventStream) write(frame questionStreamFrame, terminal boo
 	if terminal {
 		stream.finished = true
 	}
-	if flusher, ok := stream.writer.(http.Flusher); ok {
-		flusher.Flush()
+	if err := http.NewResponseController(stream.writer).Flush(); err != nil {
+		stream.finished = true
+		return err
 	}
 	return nil
 }

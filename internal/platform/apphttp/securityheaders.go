@@ -65,3 +65,12 @@ func (writer *securityHeaderWriter) Write(body []byte) (int, error) {
 	}
 	return writer.ResponseWriter.Write(body)
 }
+
+// ResponseController uses FlushError through this wrapper. Commit the guarded
+// headers first, including when a handler flushes before writing its body.
+func (writer *securityHeaderWriter) FlushError() error {
+	if !writer.wrote {
+		writer.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(writer.ResponseWriter).Flush()
+}
