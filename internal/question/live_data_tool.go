@@ -36,7 +36,7 @@ func liveDataToolDefinition() modelgateway.ToolDefinition {
 		Type: "function",
 		Function: modelgateway.ToolFunction{
 			Name:        liveDataToolName,
-			Description: "Answer a single-date or other live-data question from the workspace's administrator-governed live company data. Ask a focused question, carrying document-derived code, timezone, and snapshot semantics into it. Never invent a second date. The workspace and database are selected by the server. For a supported claim, copy this result's attempt_id as live_reads.result_id and copy receipt_digest exactly.",
+			Description: "Read administrator-governed live company data. Write one compact database task using the source's exact field and metric names, the requested date in YYYY-MM-DD, timezone and snapshot rule. For a total, ask for one aggregate row at the selected snapshot: SUM of the measure, distinct-subject count and row count as separate values; do not request raw subject rows or multiple unrelated metrics. Never invent a second date. The server selects the workspace and database. For a supported claim, copy this result's attempt_id as live_reads.result_id and receipt_digest exactly.",
 			Parameters:  json.RawMessage(liveDataToolSchema),
 		},
 	}
