@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 )
 
 func exampleSpec() ProfileSpec {
@@ -143,17 +141,17 @@ func TestInvalidDatesRefused(t *testing.T) {
 	}
 }
 
-func exposedSchema() governedquery.ExposedSchema {
-	return governedquery.ExposedSchema{
+func exposedSchema() Schema {
+	return Schema{
 		Revision: 7,
-		Objects: []governedquery.ExposedObject{{
-			SchemaName: "reporting", TableName: "v_metric", Description: "Approved metric observations.",
-			Columns: []governedquery.ExposedColumn{
-				{Name: "team_id", DataType: "integer", Description: "Subject identity."},
-				{Name: "observed_at", DataType: "timestamp with time zone", Description: "Observation time."},
-				{Name: "amount", DataType: "numeric", Description: "Measured value."},
-				{Name: "range_kind", DataType: "text", Description: "Range."},
-				{Name: "metric_code", DataType: "text", Description: "Metric code."},
+		Objects: []SchemaObject{{
+			SchemaName: "reporting", TableName: "v_metric",
+			Columns: []SchemaColumn{
+				{Name: "team_id", DataType: "integer"},
+				{Name: "observed_at", DataType: "timestamp with time zone"},
+				{Name: "amount", DataType: "numeric"},
+				{Name: "range_kind", DataType: "text"},
+				{Name: "metric_code", DataType: "text"},
 			},
 		}},
 	}
@@ -172,13 +170,16 @@ func TestValidateAgainstExposedSchema(t *testing.T) {
 	if err := ValidateAgainstExposedSchema(profile, integral); err != nil {
 		t.Fatalf("safe integral measure rejected: %v", err)
 	}
-	tests := map[string]func(*governedquery.ExposedSchema){
-		"stale revision":      func(s *governedquery.ExposedSchema) { s.Revision++ },
-		"missing object":      func(s *governedquery.ExposedSchema) { s.Objects[0].TableName = "other_view" },
-		"missing filter":      func(s *governedquery.ExposedSchema) { s.Objects[0].Columns = s.Objects[0].Columns[:4] },
-		"wrong snapshot type": func(s *governedquery.ExposedSchema) { s.Objects[0].Columns[1].DataType = "timestamp without time zone" },
-		"float measure":       func(s *governedquery.ExposedSchema) { s.Objects[0].Columns[2].DataType = "double precision" },
-		"missing subject":     func(s *governedquery.ExposedSchema) { s.Objects[0].Columns[0].Name = "other_id" },
+	tests := map[string]func(*Schema){
+		"stale revision":      func(s *Schema) { s.Revision++ },
+		"missing object":      func(s *Schema) { s.Objects[0].TableName = "other_view" },
+		"missing filter":      func(s *Schema) { s.Objects[0].Columns = s.Objects[0].Columns[:4] },
+		"wrong snapshot type": func(s *Schema) { s.Objects[0].Columns[1].DataType = "timestamp without time zone" },
+		"float measure":       func(s *Schema) { s.Objects[0].Columns[2].DataType = "double precision" },
+		"missing subject":     func(s *Schema) { s.Objects[0].Columns[0].Name = "other_id" },
+		"duplicate object":    func(s *Schema) { s.Objects = append(s.Objects, s.Objects[0]) },
+		"duplicate column":    func(s *Schema) { s.Objects[0].Columns[1].Name = s.Objects[0].Columns[0].Name },
+		"empty type":          func(s *Schema) { s.Objects[0].Columns[0].DataType = "" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

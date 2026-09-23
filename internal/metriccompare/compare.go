@@ -15,7 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
+	"knowvault.local/verified-workspace/internal/tzrules"
 )
 
 var ErrInvalid = errors.New("invalid metric comparison")
@@ -129,7 +129,7 @@ func NewProfile(spec ProfileSpec) (Profile, error) {
 		len(spec.Filters) > 4 {
 		return Profile{}, ErrInvalid
 	}
-	if _, err := time.LoadLocation(spec.Timezone); err != nil {
+	if _, err := tzrules.Load(spec.Timezone); err != nil {
 		return Profile{}, ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -151,21 +151,57 @@ func NewProfile(spec ProfileSpec) (Profile, error) {
 	return Profile{spec: spec, hash: "sha256:" + hex.EncodeToString(digest[:])}, nil
 }
 
-// ValidateAgainstExposedSchema refuses a stale or mismatched projection before
-// a compiled read can be handed to the governed-query executor.
-func ValidateAgainstExposedSchema(profile Profile, schema governedquery.ExposedSchema) error {
-	if profile.hash == "" || schema.Validate() != nil || schema.Revision != profile.spec.ExposedSchemaRevision {
+// Schema is a neutral projection supplied by the SQL capability owner. It
+// carries only the names and types needed to validate an operator profile.
+type Schema struct {
+	Revision int64
+	Objects  []SchemaObject
+}
+
+type SchemaObject struct {
+	SchemaName string
+	TableName  string
+	Columns    []SchemaColumn
+}
+
+type SchemaColumn struct {
+	Name     string
+	DataType string
+}
+
+// ValidateAgainstExposedSchema refuses a stale, ambiguous, or mismatched
+// projection before a compiled read can be handed to the SQL capability owner.
+func ValidateAgainstExposedSchema(profile Profile, schema Schema) error {
+	if profile.hash == "" || schema.Revision != profile.spec.ExposedSchemaRevision ||
+		len(schema.Objects) == 0 || len(schema.Objects) > 32 {
 		return ErrInvalid
 	}
 	s := profile.spec
+	seenObjects := map[string]bool{}
+	found := false
 	for _, object := range schema.Objects {
+		if !safeIdentifier(object.SchemaName) || !safeIdentifier(object.TableName) ||
+			len(object.Columns) == 0 || len(object.Columns) > 64 {
+			return ErrInvalid
+		}
+		key := object.SchemaName + "." + object.TableName
+		if seenObjects[key] {
+			return ErrInvalid
+		}
+		seenObjects[key] = true
+		columns := make(map[string]string, len(object.Columns))
+		for _, column := range object.Columns {
+			if !safeIdentifier(column.Name) || column.DataType == "" ||
+				len(column.DataType) > 128 || !utf8.ValidString(column.DataType) ||
+				strings.ContainsAny(column.DataType, "\x00\r\n") || columns[column.Name] != "" {
+				return ErrInvalid
+			}
+			columns[column.Name] = column.DataType
+		}
 		if object.SchemaName != s.Schema || object.TableName != s.View {
 			continue
 		}
-		columns := make(map[string]string, len(object.Columns))
-		for _, column := range object.Columns {
-			columns[column.Name] = column.DataType
-		}
+		found = true
 		if columns[s.SnapshotColumn] != "timestamp with time zone" {
 			return ErrInvalid
 		}
@@ -182,9 +218,11 @@ func ValidateAgainstExposedSchema(profile Profile, schema governedquery.ExposedS
 				return ErrInvalid
 			}
 		}
-		return nil
 	}
-	return ErrInvalid
+	if !found {
+		return ErrInvalid
+	}
+	return nil
 }
 
 // Compiled holds only SQL derived from the sealed profile and validated dates.
