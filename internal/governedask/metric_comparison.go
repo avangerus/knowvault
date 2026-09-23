@@ -2,6 +2,7 @@ package governedask
 
 import (
 	"context"
+	"reflect"
 
 	"knowvault.local/verified-workspace/internal/audit"
 	"knowvault.local/verified-workspace/internal/metriccompare"
@@ -105,7 +106,7 @@ func (service *Service) CompareWorkspace(ctx context.Context, access database.Ac
 		if schema == nil {
 			return AskResult{}, service.rejectComparison(ctx, access, workspaceID, 0, "", CodeSchemaUnavailable, nil)
 		}
-		if validationErr := metriccompare.ValidateAgainstExposedSchema(admittedProfile, *schema); validationErr != nil {
+		if validationErr := metriccompare.ValidateAgainstExposedSchema(admittedProfile, comparisonSchema(*schema)); validationErr != nil {
 			return AskResult{}, service.rejectComparison(ctx, access, workspaceID, revision, "", CodeSchemaUnavailable, validationErr)
 		}
 		result, attempt, executeErr := governedquery.Execute(ctx, service.config, governedquery.ExecuteParams{
@@ -118,6 +119,22 @@ func (service *Service) CompareWorkspace(ctx context.Context, access database.Ac
 				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
 			}
 			return AskResult{}, &Error{code: CodeExecutionFailed, cause: executeErr}
+		}
+		if auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
+		// The operator may replace the exposed schema while the external read
+		// runs. Re-read the control plane before any result or saved-attempt
+		// disclosure, and refuse both revision and in-place schema drift.
+		currentSchema, currentRevision, currentErr := service.loadExposedSchema(ctx, access, workspaceID)
+		if currentErr != nil {
+			return AskResult{}, currentErr
+		}
+		currentProfile, profileFound := service.comparisonProfile(workspaceID, metricID)
+		if currentSchema == nil || currentRevision != revision || !reflect.DeepEqual(*schema, *currentSchema) ||
+			!profileFound || currentProfile.Hash() != admittedProfile.Hash() ||
+			metriccompare.ValidateAgainstExposedSchema(admittedProfile, comparisonSchema(*currentSchema)) != nil {
+			return AskResult{}, &Error{code: CodeSchemaUnavailable}
 		}
 		var disclosureErr error
 		compared, disclosureErr = service.discloseComparison(ctx, access, workspaceID, revision, compiled.SQL,
@@ -140,7 +157,9 @@ func (service *Service) discloseComparison(ctx context.Context, access database.
 	if auditErr != nil {
 		return MetricComparisonResult{}, &Error{code: CodeUnavailable, cause: auditErr}
 	}
-	comparison, err := metriccompare.ParseResult(result, firstDate, secondDate, profile)
+	comparison, err := metriccompare.ParseResult(metriccompare.TableResult{
+		Columns: result.Columns, Rows: result.Rows, RowCount: result.RowCount,
+	}, firstDate, secondDate, profile)
 	if err != nil {
 		return MetricComparisonResult{}, &Error{code: CodeExecutionFailed, cause: err}
 	}
@@ -149,6 +168,21 @@ func (service *Service) discloseComparison(ctx context.Context, access database.
 		return MetricComparisonResult{}, err
 	}
 	return MetricComparisonResult{Ask: ask, Comparison: comparison}, nil
+}
+
+func comparisonSchema(schema governedquery.ExposedSchema) metriccompare.Schema {
+	projection := metriccompare.Schema{Revision: schema.Revision, Objects: make([]metriccompare.SchemaObject, 0, len(schema.Objects))}
+	for _, object := range schema.Objects {
+		item := metriccompare.SchemaObject{
+			SchemaName: object.SchemaName, TableName: object.TableName,
+			Columns: make([]metriccompare.SchemaColumn, 0, len(object.Columns)),
+		}
+		for _, column := range object.Columns {
+			item.Columns = append(item.Columns, metriccompare.SchemaColumn{Name: column.Name, DataType: column.DataType})
+		}
+		projection.Objects = append(projection.Objects, item)
+	}
+	return projection
 }
 
 func (service *Service) rejectComparison(ctx context.Context, access database.AccessContext, workspaceID string, revision int64, sqlHash string, code ErrorCode, cause error) error {
