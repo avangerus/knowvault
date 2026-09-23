@@ -3619,17 +3619,25 @@ func (service *Service) storeCitationArtifacts(ctx context.Context, tx database.
 }
 
 func (service *Service) reportFailureCleanup(ctx context.Context, access database.AccessContext, runID, workspaceID string, cause error) {
-	if err := service.fail(ctx, access, runID, workspaceID, "QUESTION_EXECUTION_FAILED"); err != nil {
+	status, code := questionFailureTerminal(ctx, cause)
+	if err := service.fail(ctx, access, runID, workspaceID, status, code); err != nil {
 		slog.Error("question failure persistence failed", "error_code", CodeOf(err), "error_type", fmt.Sprintf("%T", err), "sqlstate", database.SQLStateCode(err), "constraint", database.SQLConstraintName(err), "cause_code", CodeOf(cause))
 	}
 }
 
-func (service *Service) fail(ctx context.Context, access database.AccessContext, runID, workspaceID, failureCode string) error {
+func questionFailureTerminal(ctx context.Context, cause error) (status, code string) {
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
+		return "CANCELLED", "QUESTION_CANCELLED"
+	}
+	return "FAILED", "QUESTION_EXECUTION_FAILED"
+}
+
+func (service *Service) fail(ctx context.Context, access database.AccessContext, runID, workspaceID, status, failureCode string) error {
 	cleanupCtx, cancel := questionFailureCleanupContext(ctx)
 	defer cancel()
 	return service.db.Write(cleanupCtx, access, func(txCtx context.Context, tx database.Transaction) error {
 		completedAt := service.now().UTC()
-		updated, err := tx.Exec(txCtx, `UPDATE public.question_run SET result_status = 'FAILED', completed_at = $4, failure_code = $5 WHERE organization_id = $1 AND id = $2 AND workspace_id = $3 AND result_status IN ('QUEUED','RUNNING')`, access.OrganizationID, runID, workspaceID, completedAt, failureCode)
+		updated, err := tx.Exec(txCtx, `UPDATE public.question_run SET result_status = $4, completed_at = $5, failure_code = $6 WHERE organization_id = $1 AND id = $2 AND workspace_id = $3 AND result_status IN ('QUEUED','RUNNING')`, access.OrganizationID, runID, workspaceID, status, completedAt, failureCode)
 		if err != nil {
 			return err
 		}
