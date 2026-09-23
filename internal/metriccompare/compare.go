@@ -248,6 +248,16 @@ func Compile(profile Profile, firstDate, secondDate string) (Compiled, error) {
 	if profile.hash == "" || !validDate(firstDate) || !validDate(secondDate) || firstDate == secondDate {
 		return Compiled{}, ErrInvalid
 	}
+	first, _ := time.Parse("2006-01-02", firstDate)
+	second, _ := time.Parse("2006-01-02", secondDate)
+	// Reconstruct date literals from parsed integer components. No request
+	// string is ever copied into the SQL template, even after validation.
+	dateLiteral := func(value time.Time) string {
+		return fmt.Sprintf("'%04d-%02d-%02d'", value.Year(), value.Month(), value.Day())
+	}
+	quoteLiteral := func(value string) string {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
 	s := profile.spec
 	table := `"` + s.Schema + `"."` + s.View + `"`
 	snapshot := `src."` + s.SnapshotColumn + `"`
@@ -255,19 +265,19 @@ func Compile(profile Profile, firstDate, secondDate string) (Compiled, error) {
 	measure := `src."` + s.MeasureColumn + `"`
 	filters := ""
 	for _, filter := range s.Filters {
-		filters += ` AND src."` + filter.Column + `" = '` + filter.Value + `'`
+		filters += ` AND src."` + filter.Column + `" = ` + quoteLiteral(filter.Value)
 	}
 	// Each date first finds the latest timestamp shared by that date's rows.
 	// At that exact timestamp, SUM covers observed rows only. Duplicate subjects,
 	// null measures, and non-finite numeric values yield NULL; no population
 	// completeness is inferred from the observed row count.
 	sql := fmt.Sprintf(`WITH requested(local_date) AS (
-  VALUES (DATE '%s'), (DATE '%s')
+  VALUES (DATE %s), (DATE %s)
 ), latest AS (
   SELECT r.local_date, MAX(%s) AS snapshot_at
   FROM requested AS r
-  LEFT JOIN %s AS src ON %s >= (r.local_date::timestamp AT TIME ZONE '%s')
-    AND %s < ((r.local_date + 1)::timestamp AT TIME ZONE '%s')%s
+  LEFT JOIN %s AS src ON %s >= (r.local_date::timestamp AT TIME ZONE %s)
+    AND %s < ((r.local_date + 1)::timestamp AT TIME ZONE %s)%s
   GROUP BY r.local_date
 ), totals AS (
   SELECT l.local_date, l.snapshot_at,
@@ -285,8 +295,8 @@ func Compile(profile Profile, firstDate, secondDate string) (Compiled, error) {
   GROUP BY l.local_date, l.snapshot_at
 )
 SELECT local_date, snapshot_at, contributing_rows, distinct_subjects, nonnull_count, value
-FROM totals ORDER BY local_date DESC`, firstDate, secondDate,
-		snapshot, table, snapshot, s.Timezone, snapshot, s.Timezone, filters,
+FROM totals ORDER BY local_date DESC`, dateLiteral(first), dateLiteral(second),
+		snapshot, table, snapshot, quoteLiteral(s.Timezone), snapshot, quoteLiteral(s.Timezone), filters,
 		snapshot, subject, measure, snapshot, snapshot, subject, snapshot, measure,
 		snapshot, measure, measure, measure, measure, table, snapshot, filters)
 	return Compiled{SQL: sql, ProfileHash: profile.hash, MetricID: s.MetricID, Unit: s.Unit}, nil
