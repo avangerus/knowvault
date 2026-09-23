@@ -36,7 +36,7 @@ func liveDataToolDefinition() modelgateway.ToolDefinition {
 		Type: "function",
 		Function: modelgateway.ToolFunction{
 			Name:        liveDataToolName,
-			Description: "Read administrator-governed live company data. Write one compact database task using the source's exact field and metric names, the requested date in YYYY-MM-DD, timezone and snapshot rule. For a total, ask for one aggregate row at the selected snapshot: SUM of the measure, distinct-subject count and row count as separate values; do not request raw subject rows or multiple unrelated metrics. Never invent a second date. The server selects the workspace and database. For a supported claim, copy this result's attempt_id as live_reads.result_id and receipt_digest exactly.",
+			Description: "Read administrator-governed live company data. Write one compact database task using the source's exact field and metric names, the requested date in YYYY-MM-DD and snapshot rule. Include a timezone only if the user or source states it; otherwise omit it so the planner can use matching operator-confirmed metric metadata. Never default to UTC. For a total, ask for one aggregate row at the selected snapshot: SUM of the measure, distinct-subject count and row count as separate values; do not request raw subject rows or multiple unrelated metrics. Never invent a second date. The server selects the workspace and database. For a supported claim, copy this result's attempt_id as live_reads.result_id and receipt_digest exactly.",
 			Parameters:  json.RawMessage(liveDataToolSchema),
 		},
 	}
@@ -260,6 +260,9 @@ func invokeLiveDataToolRetained(
 	}
 	result, err := ask.AskWorkspace(ctx, access, workspaceID, question)
 	if err != nil {
+		if governedask.CodeOf(err) == governedask.CodeClarificationRequired {
+			return workspacetools.Result{IsError: true, Text: `{"error":"CLARIFICATION_REQUIRED","advice":"The requested live read lacks confirmed source semantics. Ask the user to clarify the metric, reporting timezone or source. Do not invent a timezone, numeric zero, or population completeness."}`}, nil, nil
+		}
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -304,6 +307,21 @@ func invokeLiveDataToolRetained(
 	}
 	owned = append(json.RawMessage(nil), owned...)
 	return workspacetools.Result{Text: string(owned), Structured: owned}, &liveDataExecution{projection: projection, dependency: dependency}, nil
+}
+
+// Interpretation guidance is model context, not a change to the historical
+// observation/receipt format. Query completeness is not population coverage.
+func liveDataModelPayload(projection liveDataProjection) ([]byte, error) {
+	state := "QUERY_ROWS_RETURNED"
+	if projection.RowCount == 0 {
+		state = "NO_OBSERVATIONS_RETURNED"
+	}
+	return json.Marshal(struct {
+		liveDataProjection
+		PopulationCoverage string `json:"population_coverage"`
+		ObservationState   string `json:"observation_state"`
+		Interpretation     string `json:"interpretation"`
+	}{projection, "UNKNOWN", state, "complete describes the query result only. Empty rows or NULL measures do not establish a numeric zero or 0% population coverage; expected population and its completeness remain unknown."})
 }
 
 type liveDataExecution struct {

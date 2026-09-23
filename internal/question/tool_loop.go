@@ -1154,6 +1154,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	}
 	appendResult := func(call modelgateway.ToolCall, result workspacetools.Result, callErr error) {
 		text := result.Text
+		if call.Function.Name == liveDataToolName && callErr == nil && !result.IsError {
+			if projection, ok := decodeLiveDataProjection(result.Structured); ok {
+				if payload, err := liveDataModelPayload(projection); err == nil && len(payload) <= profile.MaxToolResultBytes {
+					text = string(payload)
+				}
+			}
+		}
 		if len(text) > profile.MaxToolResultBytes {
 			text = fmt.Sprintf(`{"error":"MODEL_RESULT_BUDGET","result_bytes":%d,"limit_bytes":%d,"advice":"Repeat the tool with a smaller limit or narrower query. Full result remains in the source panel."}`, len(text), profile.MaxToolResultBytes)
 		}
