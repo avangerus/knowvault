@@ -67,7 +67,6 @@ func TestParseResultRejectsIncompleteOrAlteredData(t *testing.T) {
 		"zero rows":         func(r *TableResult) { r.Rows[0][2] = cell("0") },
 		"malformed decimal": func(r *TableResult) { r.Rows[0][5] = cell("1/2") },
 		"nonfinite decimal": func(r *TableResult) { r.Rows[0][5] = cell("NaN") },
-		"zero denominator":  func(r *TableResult) { r.Rows[1][5] = cell("0") },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -76,6 +75,21 @@ func TestParseResultRejectsIncompleteOrAlteredData(t *testing.T) {
 			got, err := ParseResult(r, "2026-09-10", "2026-09-09", p)
 			if !errors.Is(err, ErrInvalid) || got != (Comparison{}) {
 				t.Fatalf("accepted invalid projection: %+v / %v", got, err)
+			}
+		})
+	}
+}
+
+func TestParseResultZeroBaselinePreservesObservedValues(t *testing.T) {
+	for name, first := range map[string]string{"increase from zero": "3888", "zero to zero": "0"} {
+		t.Run(name, func(t *testing.T) {
+			r := comparisonResult()
+			r.Rows[0][5] = cell(first)
+			r.Rows[1][5] = cell("0")
+			got, err := ParseResult(r, "2026-09-10", "2026-09-09", testProfile(t))
+			if err != nil || got.First.Value != first || got.Second.Value != "0" ||
+				got.Delta != first || got.PercentChange != "" || got.Coverage != ObservedSnapshot {
+				t.Fatalf("zero baseline: %+v / %v", got, err)
 			}
 		})
 	}

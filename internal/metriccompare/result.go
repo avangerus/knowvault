@@ -37,7 +37,8 @@ type DailyValue struct {
 // Comparison is a value-only, validated projection. First and Second follow
 // the caller's requested order, regardless of the SQL result's row order.
 // Delta is First minus Second. PercentChange is Delta / Second * 100,
-// rounded to two decimal places, with ties away from zero.
+// rounded to two decimal places, with ties away from zero. It is empty when
+// Second is zero because a percentage change from zero is undefined.
 type Comparison struct {
 	MetricID      string
 	ProfileHash   string
@@ -170,7 +171,7 @@ func ParseResult(result TableResult, firstDate, secondDate string, profile Profi
 			DistinctSubjects: counts[1], NonNullCount: counts[2], Value: compactDecimal(amount, scale)}
 		amounts[date], scales[date] = amount, scale
 	}
-	if len(values) != 2 || amounts[secondDate].Sign() == 0 {
+	if len(values) != 2 {
 		return Comparison{}, ErrInvalid
 	}
 	delta := new(big.Rat).Sub(amounts[firstDate], amounts[secondDate])
@@ -178,10 +179,7 @@ func ParseResult(result TableResult, firstDate, secondDate string, profile Profi
 	if scales[secondDate] > deltaScale {
 		deltaScale = scales[secondDate]
 	}
-	change, ok := percent(amounts[firstDate], amounts[secondDate])
-	if !ok {
-		return Comparison{}, ErrInvalid
-	}
+	change, _ := percent(amounts[firstDate], amounts[secondDate])
 	return Comparison{MetricID: profile.MetricID(), ProfileHash: profile.Hash(), Unit: profile.Unit(),
 		Coverage: ObservedSnapshot, First: values[firstDate], Second: values[secondDate],
 		Delta: compactDecimal(delta, deltaScale), PercentChange: change}, nil
