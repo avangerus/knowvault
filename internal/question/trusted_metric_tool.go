@@ -43,15 +43,20 @@ type metricToolDay struct {
 }
 
 type metricToolResult struct {
-	MetricID      string        `json:"metric_id"`
-	Unit          string        `json:"unit"`
-	Coverage      string        `json:"coverage"`
-	First         metricToolDay `json:"first"`
-	Second        metricToolDay `json:"second"`
-	Delta         string        `json:"delta"`
-	PercentChange string        `json:"percent_change"`
-	AttemptID     string        `json:"attempt_id"`
-	ReceiptDigest string        `json:"receipt_digest"`
+	MetricID              string        `json:"metric_id"`
+	ProfileHash           string        `json:"profile_hash"`
+	EvidenceSchemaVersion int           `json:"evidence_schema_version"`
+	ExposedSchemaRevision int64         `json:"exposed_schema_revision"`
+	Unit                  string        `json:"unit"`
+	Coverage              string        `json:"coverage"`
+	First                 metricToolDay `json:"first"`
+	Second                metricToolDay `json:"second"`
+	Delta                 string        `json:"delta"`
+	PercentChange         string        `json:"percent_change"`
+	AttemptID             string        `json:"attempt_id"`
+	RawResultDigest       string        `json:"raw_result_digest"`
+	EvidenceDigest        string        `json:"evidence_digest"`
+	ReceiptDigest         string        `json:"receipt_digest"`
 }
 
 func trustedMetricToolDefinition(catalog []governedask.ComparisonSummary) (modelgateway.ToolDefinition, bool) {
@@ -163,10 +168,17 @@ func invokeTrustedMetricToolRetained(ctx context.Context, access database.Access
 	if err != nil {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
 	}
-	output := metricToolResult{MetricID: result.Comparison.MetricID, Unit: result.Comparison.Unit,
+	evidenceDigest, err := metriccompare.EvidenceDigest(result.Comparison, projection.ExposedSchemaRevision, projection.ResultDigest)
+	if err != nil {
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
+	}
+	output := metricToolResult{MetricID: result.Comparison.MetricID, ProfileHash: result.Comparison.ProfileHash,
+		EvidenceSchemaVersion: metriccompare.EvidenceSchemaVersion, ExposedSchemaRevision: projection.ExposedSchemaRevision,
+		Unit:     result.Comparison.Unit,
 		Coverage: result.Comparison.Coverage, First: metricDay(result.Comparison.First), Second: metricDay(result.Comparison.Second),
 		Delta: result.Comparison.Delta, PercentChange: result.Comparison.PercentChange,
-		AttemptID: projection.AttemptID, ReceiptDigest: projection.ReceiptDigest}
+		AttemptID: projection.AttemptID, RawResultDigest: projection.ResultDigest,
+		EvidenceDigest: evidenceDigest, ReceiptDigest: projection.ReceiptDigest}
 	payload, err := json.Marshal(output)
 	if err != nil || len(payload) > maxResultBytes {
 		return liveDataRefusal("LIVE_DATA_RESULT_TOO_LARGE"), nil, nil
