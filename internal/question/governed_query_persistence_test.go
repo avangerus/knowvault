@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"knowvault.local/verified-workspace/internal/source/canon"
 	"reflect"
 	"strings"
 	"testing"
@@ -64,6 +65,40 @@ func livePersistenceMultiFixture(t *testing.T, count int) ([]liveDataExecution, 
 		executions = append(executions, liveDataExecution{projection: projection, dependency: dependency})
 	}
 	return executions, record
+}
+
+func bindLivePersistenceReceipts(t *testing.T, executions []liveDataExecution, record *ToolLoopRecord) []toolLiveReadReference {
+	t.Helper()
+	if record == nil || len(record.Calls) != len(executions) {
+		t.Fatal("live persistence fixture call count does not match executions")
+	}
+	references := make([]toolLiveReadReference, 0, len(executions))
+	for index := range executions {
+		projection := executions[index].projection
+		digest, err := liveDataReceiptDigest(livePersistenceRunID, projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projection.ReceiptDigest = digest
+		executions[index].projection = projection
+		encoded, err := json.Marshal(projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record.Calls[index].Result = workspacetools.Result{Text: string(encoded), Structured: encoded}
+		references = append(references, toolLiveReadReference{ResultID: projection.AttemptID, ReceiptDigest: digest})
+	}
+	return references
+}
+
+func setPersistedToolAnswer(t *testing.T, record *ToolLoopRecord, answer toolAnswer) {
+	t.Helper()
+	encoded, err := json.Marshal(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := testSubmitAnswerCall(string(encoded))
+	record.Messages = []modelgateway.Message{{Role: "assistant", ToolCalls: []modelgateway.ToolCall{call}}}
 }
 
 func livePersistenceAnswer(t *testing.T, projection liveDataProjection, dependency governedQueryDependency) *AnswerResult {
@@ -162,6 +197,119 @@ func TestGovernedQueryMultiReadReceiptsRoundTripAndKeepLegacySingletonReadable(t
 	changedAnswer.Receipts[1].ReceiptDigest = "sha256:" + strings.Repeat("c", 64)
 	if _, err := marshalStructuredAnswerWithDependencyList(livePersistenceRunID, "answer-hash", nil, changedAnswer, nil, nil, dependencies, record); CodeOf(err) != CodeInvalid {
 		t.Fatalf("multi-read receipt tampering was accepted: %v", err)
+	}
+}
+
+func TestMixedClaimEvidenceBindsDocumentsAndExactLiveReceipts(t *testing.T) {
+	executions, record := livePersistenceMultiFixture(t, liveDataMaxSuccessfulCalls)
+	dependencies := make([]governedQueryDependency, 0, len(executions))
+	for _, execution := range executions {
+		dependencies = append(dependencies, execution.dependency)
+	}
+	allReferences := bindLivePersistenceReceipts(t, executions, record)
+	documentOnly := toolClaim{Text: "The procedure defines the required removal window.", Citations: []toolCitation{{FragmentID: "fragment_rule"}}}
+	mixed := toolClaim{
+		Text:      "The current records include operations outside that window.",
+		Citations: []toolCitation{{FragmentID: "fragment_rule"}},
+		LiveReads: append([]toolLiveReadReference(nil), allReferences[:2]...),
+	}
+	answer := toolAnswer{Claims: []toolClaim{documentOnly, mixed}}
+	setPersistedToolAnswer(t, record, answer)
+	record.StopReason = "ANSWER"
+	record.AllClaimsBound = true
+	record.ClaimEvidenceVersion = "v1"
+	record.ClaimEvidence = []ToolClaimEvidence{
+		{TextHash: canon.Hash([]byte(documentOnly.Text)), CitationNumbers: []int64{1}},
+		{TextHash: canon.Hash([]byte(mixed.Text)), CitationNumbers: []int64{1}, LiveReads: allReferences[:2]},
+	}
+	citations := []Citation{{Number: 1, Address: "kv1:example"}}
+	markdown := documentOnly.Text + " [1]\n\n" + mixed.Text + " [1] [Live result 1] [Live result 2]"
+	if !validateToolLoopClaimEvidence(livePersistenceRunID, markdown, record, dependencies, citations) {
+		t.Fatal("mixed document/live claims did not validate against exact run evidence")
+	}
+	answerResult, err := liveDataAnswerResults(livePersistenceRunID, executions)
+	if err != nil || len(answerResult.Receipts) != liveDataMaxSuccessfulCalls {
+		t.Fatalf("public live result did not preserve all three receipts: %#v, err=%v", answerResult, err)
+	}
+	raw, err := marshalStructuredAnswerWithDependencyList(livePersistenceRunID, "answer-hash", citations, answerResult, nil, nil, dependencies, record)
+	if err != nil {
+		t.Fatalf("mixed evidence artifact did not marshal: %v", err)
+	}
+	decoded, err := decodeStructuredAnswer(livePersistenceRunID, raw)
+	if err != nil || len(decoded.AnswerResult.Receipts) != liveDataMaxSuccessfulCalls {
+		t.Fatalf("mixed evidence artifact did not round-trip all receipts: %#v, err=%v", decoded.AnswerResult, err)
+	}
+	if validateToolLoopClaimEvidence(livePersistenceRunID, mixed.Text, record, dependencies, citations) {
+		t.Fatal("answer markdown without required citation and receipt labels was accepted")
+	}
+
+	for _, example := range []struct {
+		name   string
+		mutate func(*toolAnswer, *ToolLoopRecord)
+	}{
+		{
+			name: "unknown live result",
+			mutate: func(value *toolAnswer, target *ToolLoopRecord) {
+				value.Claims[1].LiveReads[0].ResultID = "gqat_foreign_result"
+				setPersistedToolAnswer(t, target, *value)
+			},
+		},
+		{
+			name: "forged receipt digest",
+			mutate: func(value *toolAnswer, target *ToolLoopRecord) {
+				value.Claims[1].LiveReads[0].ReceiptDigest = "sha256:" + strings.Repeat("f", 64)
+				setPersistedToolAnswer(t, target, *value)
+			},
+		},
+		{
+			name: "missing live reference",
+			mutate: func(value *toolAnswer, target *ToolLoopRecord) {
+				value.Claims[1].LiveReads = nil
+				setPersistedToolAnswer(t, target, *value)
+			},
+		},
+		{
+			name: "citation number missing from run",
+			mutate: func(_ *toolAnswer, target *ToolLoopRecord) {
+				target.ClaimEvidence[1].CitationNumbers = []int64{99}
+			},
+		},
+	} {
+		t.Run(example.name, func(t *testing.T) {
+			changed := *record
+			changed.Messages = append([]modelgateway.Message(nil), record.Messages...)
+			changed.Messages[0].ToolCalls = append([]modelgateway.ToolCall(nil), record.Messages[0].ToolCalls...)
+			changed.ClaimEvidence = append([]ToolClaimEvidence(nil), record.ClaimEvidence...)
+			for index := range changed.ClaimEvidence {
+				changed.ClaimEvidence[index].CitationNumbers = append([]int64(nil), record.ClaimEvidence[index].CitationNumbers...)
+				changed.ClaimEvidence[index].LiveReads = append([]toolLiveReadReference(nil), record.ClaimEvidence[index].LiveReads...)
+			}
+			claimAnswer := answer
+			claimAnswer.Claims = append([]toolClaim(nil), answer.Claims...)
+			claimAnswer.Claims[1].Citations = append([]toolCitation(nil), answer.Claims[1].Citations...)
+			claimAnswer.Claims[1].LiveReads = append([]toolLiveReadReference(nil), answer.Claims[1].LiveReads...)
+			example.mutate(&claimAnswer, &changed)
+			if validateToolLoopClaimEvidence(livePersistenceRunID, markdown, &changed, dependencies, citations) {
+				t.Fatal("forged or missing claim evidence was accepted")
+			}
+		})
+	}
+
+	legacy := &ToolLoopRecord{AllClaimsBound: true}
+	setPersistedToolAnswer(t, legacy, toolAnswer{Claims: []toolClaim{{Text: "Old answer", Citations: []toolCitation{{FragmentID: "old_fragment"}}}}})
+	if !validateToolLoopClaimEvidence(livePersistenceRunID, "Old answer [1]", legacy, nil, citations) {
+		t.Fatal("legacy claim trace without v1 evidence marker stopped being readable")
+	}
+}
+
+func TestDocumentOnlyV2ClaimNeedsNoLiveReference(t *testing.T) {
+	claim := toolClaim{Text: "The document defines the process.", Citations: []toolCitation{{FragmentID: "fragment_rule"}}}
+	record := &ToolLoopRecord{StopReason: "ANSWER", AllClaimsBound: true, ClaimEvidenceVersion: "v1", ClaimEvidence: []ToolClaimEvidence{{
+		TextHash: canon.Hash([]byte(claim.Text)), CitationNumbers: []int64{1},
+	}}}
+	setPersistedToolAnswer(t, record, toolAnswer{Claims: []toolClaim{claim}})
+	if !validateToolLoopClaimEvidence(livePersistenceRunID, claim.Text+" [1]", record, nil, []Citation{{Number: 1}}) {
+		t.Fatal("document-only answer was rejected when it correctly omitted live_reads")
 	}
 }
 

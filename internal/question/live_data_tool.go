@@ -72,6 +72,7 @@ type liveDataProjection struct {
 	DatabaseIdentity      string             `json:"database_identity"`
 	ExecutionStartedAt    string             `json:"execution_started_at"`
 	ExecutionCompletedAt  string             `json:"execution_completed_at"`
+	ReceiptDigest         string             `json:"receipt_digest,omitempty"`
 	Complete              bool               `json:"complete"`
 }
 
@@ -196,6 +197,7 @@ func validLiveDataProjection(projection liveDataProjection, now time.Time) bool 
 		projection.RowCount*len(projection.Columns) > liveDataMaxCells || !validLiveDataAttemptID(projection.AttemptID) ||
 		!validGovernedSHA256(projection.SQLHash) || projection.ExposedSchemaRevision < 1 ||
 		!validGovernedSHA256(projection.ResultDigest) || !validGovernedID(projection.DatabaseIdentity) ||
+		(projection.ReceiptDigest != "" && !validGovernedSHA256(projection.ReceiptDigest)) ||
 		projection.ReadWindow != (liveDataReadWindow{Offset: 0, Limit: projection.RowCount, ReturnedRows: projection.RowCount, TotalRows: projection.RowCount, Complete: true}) {
 		return false
 	}
@@ -263,7 +265,7 @@ func invokeLiveDataToolRetained(
 	if err := ctx.Err(); err != nil {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, err
 	}
-	projection, payload, ok, refusal := projectLiveDataResultDetailed(result, maxResultBytes)
+	projection, _, ok, refusal := projectLiveDataResultDetailed(result, maxResultBytes)
 	if !ok {
 		if refusal != "LIVE_DATA_RESULT_TOO_LARGE" {
 			return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
@@ -285,7 +287,22 @@ func invokeLiveDataToolRetained(
 	if !dependency.validForRun(questionRunID) {
 		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
 	}
-	owned := append(json.RawMessage(nil), payload...)
+	projection.ReceiptDigest, err = liveDataReceiptDigest(questionRunID, projection)
+	if err != nil || !validGovernedSHA256(projection.ReceiptDigest) {
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
+	}
+	owned, err := json.Marshal(projection)
+	if err != nil {
+		return liveDataRefusal("LIVE_DATA_UNAVAILABLE"), nil, nil
+	}
+	if len(owned) > maxResultBytes {
+		return workspacetools.Result{
+			Text:       `{"error":"LIVE_DATA_RESULT_TOO_LARGE","advice":"Narrow the question or add filters; no partial rows were returned."}`,
+			Structured: json.RawMessage(`{"error":"LIVE_DATA_RESULT_TOO_LARGE","advice":"Narrow the question or add filters; no partial rows were returned."}`),
+			IsError:    true,
+		}, nil, nil
+	}
+	owned = append(json.RawMessage(nil), owned...)
 	return workspacetools.Result{Text: string(owned), Structured: owned}, &liveDataExecution{projection: projection, dependency: dependency}, nil
 }
 
@@ -336,23 +353,39 @@ func liveDataAnswerResult(questionRunID string, execution liveDataExecution) (*A
 		ResultDigest:      projection.ResultDigest,
 		ObservationWindow: &window,
 	}
+	receiptDigest, err := liveDataReceiptDigest(questionRunID, projection)
+	if err != nil || receiptDigest == "" || (projection.ReceiptDigest != "" && projection.ReceiptDigest != receiptDigest) {
+		return nil, &Error{code: CodeUnavailable}
+	}
+	result.ReceiptDigest = receiptDigest
+	return result, nil
+}
+
+func liveDataReceiptDigest(questionRunID string, projection liveDataProjection) (string, error) {
+	if !validOpaque(questionRunID) || !validLiveDataProjection(projection, time.Now().UTC()) {
+		return "", &Error{code: CodeUnavailable}
+	}
 	receipt := liveTableReceiptProjection{
 		Schema: "knowvault.question.live-table-receipt.v1", RunID: questionRunID,
-		Kind: result.Kind, Operation: result.Operation, Rule: result.Rule,
+		Kind: "LIVE_TABLE", Operation: "GOVERNED_READ",
+		Rule:   "Complete administrator-governed live table; prose is an interpretation of these returned rows.",
 		Format: projection.Format, AttemptID: projection.AttemptID, SQLHash: projection.SQLHash,
 		ExposedSchemaRevision: projection.ExposedSchemaRevision, DatabaseIdentity: projection.DatabaseIdentity,
-		ResultDigest: projection.ResultDigest, RowCount: projection.RowCount, Completeness: result.Completeness,
-		ObservationWindow: window,
+		ResultDigest: projection.ResultDigest, RowCount: projection.RowCount, Completeness: "COMPLETE",
+		ObservationWindow: AnswerObservationWindow{
+			Basis: "SERVER_GOVERNED_QUERY_EXECUTION", StartedAt: projection.ExecutionStartedAt,
+			CompletedAt: projection.ExecutionCompletedAt,
+		},
 	}
 	canonical, err := canon.CanonicalJSON(receipt)
 	if err != nil || len(canonical) == 0 {
-		return nil, &Error{code: CodeUnavailable}
+		return "", &Error{code: CodeUnavailable}
 	}
-	result.ReceiptDigest = canon.Hash(canonical)
-	if result.ReceiptDigest == "" {
-		return nil, &Error{code: CodeUnavailable}
+	digest := canon.Hash(canonical)
+	if digest == "" {
+		return "", &Error{code: CodeUnavailable}
 	}
-	return result, nil
+	return digest, nil
 }
 
 func liveDataAnswerResults(questionRunID string, executions []liveDataExecution) (*AnswerResult, error) {

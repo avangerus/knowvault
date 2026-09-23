@@ -1571,6 +1571,9 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 				// CodeUnavailable.
 				return &Error{code: CodeUnavailable}
 			}
+			if !validateToolLoopClaimEvidence(runID, result.Answer, structured.ToolLoop, structured.governedQueryDependencies, structured.Citations) {
+				return &Error{code: CodeUnavailable}
+			}
 			if !governedQueryAnswerResultsAllowedForStatus(status, structured.governedQueryDependencies, structured.AnswerResult, structured.ToolLoop) {
 				return &Error{code: CodeUnavailable}
 			}
@@ -1958,6 +1961,9 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 					// fails the whole batched read closed: the plaintext was
 					// already cleared by the decode boundary and no partially
 					// projected Question Run, answer or citation is returned.
+					return &Error{code: CodeUnavailable}
+				}
+				if !validateToolLoopClaimEvidence(runID, run.Answer, structured.ToolLoop, structured.governedQueryDependencies, structured.Citations) {
 					return &Error{code: CodeUnavailable}
 				}
 				if !governedQueryAnswerResultsAllowedForStatus(run.ResultStatus, structured.governedQueryDependencies, structured.AnswerResult, structured.ToolLoop) {
@@ -4760,6 +4766,9 @@ func marshalStructuredAnswerWithDependencyList(runID, answerHash string, citatio
 	if !validateGovernedQueryAnswerResults(runID, dependencies, toolLoop, answerResult) {
 		return nil, &Error{code: CodeInvalid}
 	}
+	if !validateToolLoopClaimEvidence(runID, "", toolLoop, dependencies, citations) {
+		return nil, &Error{code: CodeInvalid}
+	}
 	if len(dependencies) > 0 {
 		encoded, err := encodeGovernedQueryDependencies(runID, dependencies)
 		if err != nil {
@@ -4828,7 +4837,8 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
 	governedDependencies, governedErr := decodeGovernedQueryDependencies(expectedRunID, structured.GovernedQueryDependency)
-	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryAnswerResults(expectedRunID, governedDependencies, structured.ToolLoop, structured.AnswerResult) {
+	if presence.governedQueryNull() || governedErr != nil || !validateGovernedQueryAnswerResults(expectedRunID, governedDependencies, structured.ToolLoop, structured.AnswerResult) ||
+		!validateToolLoopClaimEvidence(expectedRunID, "", structured.ToolLoop, governedDependencies, structured.Citations) {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
 	if pair != nil {

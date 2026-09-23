@@ -8,13 +8,13 @@ import (
 	"knowvault.local/verified-workspace/internal/modelgateway"
 )
 
-func TestSubmitAnswerDefinitionUsesPrivateV1ChatSchema(t *testing.T) {
+func TestSubmitAnswerDefinitionUsesPrivateV2ChatSchema(t *testing.T) {
 	definition := submitAnswerToolDefinition()
 	if definition.Type != "function" || definition.Function.Name != submitAnswerToolName {
 		t.Fatalf("definition = %#v", definition)
 	}
-	if !strings.Contains(definition.Function.Description, submitAnswerSchemaV1) {
-		t.Fatalf("definition description must identify schema %q", submitAnswerSchemaV1)
+	if !strings.Contains(definition.Function.Description, submitAnswerSchemaV2) {
+		t.Fatalf("definition description must identify schema %q", submitAnswerSchemaV2)
 	}
 	if !json.Valid(definition.Function.Parameters) {
 		t.Fatal("submit_answer schema is not valid JSON")
@@ -27,6 +27,34 @@ func TestSubmitAnswerDefinitionUsesPrivateV1ChatSchema(t *testing.T) {
 	}
 	if len(schema.Required) != 2 || schema.Required[0] != "no_data" || schema.Required[1] != "claims" {
 		t.Fatalf("required fields = %#v", schema.Required)
+	}
+}
+
+func TestSubmitAnswerLiveReadReferencesAreOptionalAndBounded(t *testing.T) {
+	definition := submitAnswerToolDefinition()
+	if !strings.Contains(string(definition.Function.Parameters), `"live_reads"`) || !strings.Contains(string(definition.Function.Parameters), `"maxItems":3`) {
+		t.Fatal("submit_answer schema must expose at most three explicit live-read references")
+	}
+	legacy := `{"no_data":false,"claims":[{"text":"Document fact.","citations":[{"fragment_id":"fragment_1"}]}]}`
+	if _, ok := parseSubmitAnswerArguments([]byte(legacy)); !ok {
+		t.Fatal("legacy document-only claim without live_reads was rejected")
+	}
+	valid := `{"no_data":false,"claims":[{"text":"Mixed fact.","citations":[{"fragment_id":"fragment_1"}],"live_reads":[{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}`
+	answer, ok := parseSubmitAnswerArguments([]byte(valid))
+	if !ok || len(answer.Claims) != 1 || len(answer.Claims[0].LiveReads) != 1 || answer.Claims[0].LiveReads[0].ResultID != "gqat_test_1" {
+		t.Fatalf("valid mixed claim was not preserved exactly: %#v, ok=%v", answer, ok)
+	}
+	invalid := []string{
+		`{"no_data":false,"claims":[{"text":"Fact.","citations":[],"live_reads":null}]}`,
+		`{"no_data":false,"claims":[{"text":"Fact.","citations":[],"live_reads":[{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","extra":true}]}]}`,
+		`{"no_data":false,"claims":[{"text":"Fact.","citations":[],"live_reads":[{"result_id":"gqat_test_1","receipt_digest":"bad"}]}]}`,
+		`{"no_data":false,"claims":[{"text":"Fact.","citations":[],"live_reads":[{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}`,
+		`{"no_data":false,"claims":[{"text":"Fact.","citations":[],"live_reads":[{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"result_id":"gqat_test_2","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"result_id":"gqat_test_3","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"result_id":"gqat_test_4","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}`,
+	}
+	for _, raw := range invalid {
+		if _, ok := parseSubmitAnswerArguments([]byte(raw)); ok {
+			t.Fatalf("invalid live-read references accepted: %s", raw)
+		}
 	}
 }
 
