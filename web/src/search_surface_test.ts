@@ -2,12 +2,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   AskSurface,
+  EvidencePanel,
   SearchView,
   authorizedSourcesForAsk,
   buildSearchHash,
   hasLiveDataReceipt,
   initialConversationWorkspaceOwner,
   LiveTableEvidenceList,
+  LiveResultEvidencePanel,
   liveTablePayloadForReceipt,
   parseSearchHash,
   questionClaimGroundingLabel,
@@ -221,6 +223,13 @@ const liveEvidenceMarkup = renderToStaticMarkup(createElement(LiveTableEvidenceL
   result: liveAnswerResult,
   run: liveRunFixture as never,
 }));
+const livePanelMarkup = renderToStaticMarkup(createElement(LiveResultEvidencePanel, {
+  run: { ...liveRunFixture, answer_result: liveAnswerResult } as never,
+}));
+check(livePanelMarkup.includes("live database reads") && livePanelMarkup.includes("Live result 1")
+  && livePanelMarkup.includes(`sha256:${"1".repeat(64)}`)
+  && !livePanelMarkup.includes("no supporting citations") && !livePanelMarkup.includes("Evidence unavailable"),
+  "live-only evidence panel presents the receipt without a document-citation warning");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`Live result ${ordinal}`)), "every current live receipt has a separately labelled evidence disclosure");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`sha256:${String(ordinal).repeat(64)}`))
   && liveEvidenceMarkup.includes("Row count") && liveEvidenceMarkup.includes("Observation window"), "live evidence disclosures carry row count, observation window and each receipt digest");
@@ -250,14 +259,29 @@ const activeConversationRun = {
   conflicts: [],
   answer_result: liveAnswerResult,
 } as never;
+const liveTurn = {
+  turn_id: "turn-1",
+  question_run_id: "qrun-1",
+  turn_index: 1,
+  created_at: "2026-09-21T08:12:30Z",
+  question_run: activeConversationRun,
+} as never;
+const liveSidePanelMarkup = renderToStaticMarkup(createElement(EvidencePanel, {
+  workspaceID: "workspace-1",
+  target: { turnId: "turn-1", citationId: null },
+  turnsByID: new Map([["turn-1", liveTurn]]),
+  sourceNameByConnection: new Map(),
+  allSources: [],
+  fullscreen: false,
+  onToggleFullscreen: () => {},
+  onSelectCitation: () => {},
+}));
+check(liveSidePanelMarkup.includes("Live database evidence") && liveSidePanelMarkup.includes("Live result 1")
+  && liveSidePanelMarkup.includes(`sha256:${"1".repeat(64)}`)
+  && !liveSidePanelMarkup.includes("Evidence unavailable") && !liveSidePanelMarkup.includes("no supporting citations"),
+  "selecting a live-only turn shows its receipts in the right evidence panel");
 const activeConversationMarkup = renderToStaticMarkup(createElement(TurnCard, {
-  turn: {
-    turn_id: "turn-1",
-    question_run_id: "qrun-1",
-    turn_index: 1,
-    created_at: "2026-09-21T08:12:30Z",
-    question_run: activeConversationRun,
-  } as never,
+  turn: liveTurn,
   panelTurnId: null,
   selectedCitationId: null,
   onSelectTurn: () => {},

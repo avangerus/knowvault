@@ -3276,6 +3276,16 @@ export function LiveTableEvidenceList({ result, run }: { result: AnswerResult; r
   );
 }
 
+export function LiveResultEvidencePanel({ run }: { run: QuestionRun }) {
+  if (!run.answer_result || liveTableReceipts(run.answer_result).length === 0) return null;
+  return (
+    <div className="live-result-panel">
+      <p>This answer used live database reads. Each receipt records the returned rows and when the database was read.</p>
+      <LiveTableEvidenceList result={run.answer_result} run={run} />
+    </div>
+  );
+}
+
 function LiveTableEvidenceItem({ ordinal, receipt, run }: {
   ordinal: number;
   receipt: LiveTableReceipt;
@@ -3761,7 +3771,7 @@ function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = fa
   );
 }
 
-function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onSelectCitation }: {
+export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onSelectCitation }: {
   workspaceID: string | null;
   target: PanelTarget;
   turnsByID: Map<string, ConversationTurn>;
@@ -3776,6 +3786,9 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
   const activeCitationID = target && "citationId" in target ? target.citationId : null;
   const activeCitation = citations.find((item) => item.citation_id === activeCitationID) ?? null;
   const fragmentID = activeCitation?.evidence_fragment_id ?? null;
+  const liveResultRun = turn?.question_run && hasLiveDataReceipt(turn.question_run) &&
+    liveTableReceipts(turn.question_run.answer_result).length > 0 && !fragmentID
+    ? turn.question_run : null;
   const citationAddress = activeCitation?.address?.startsWith("kv1:") ? activeCitation.address : undefined;
   const requestPath = workspaceID && fragmentID
     ? evidenceRequestPath({ workspace: workspaceID, fragment: fragmentID, canonicalAddress: citationAddress })
@@ -3866,7 +3879,7 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
     <aside aria-label="Answer evidence" className={fullscreen ? "evi evi-full" : "evi"}>
       <header className="evi-h">
         <div className="t">
-          <b>{evidence?.kind === "ok" ? evidenceSourceFilename(evidence.value.source_path) ?? provenanceName : fragmentID ? "Checking source…" : "Evidence unavailable"}</b>
+          <b>{evidence?.kind === "ok" ? evidenceSourceFilename(evidence.value.source_path) ?? provenanceName : fragmentID ? "Checking source…" : liveResultRun ? "Live database evidence" : "Evidence unavailable"}</b>
           {provenanceName && <span>{activeCitation ? `Evidence ${activeCitation.number} · ` : ""}{provenanceName}</span>}
           {/* FIX-6 + UPL-1: anchor is a machine provenance descriptor (for a
               structured cell, a JSON locator with its own canonical_value_hash/
@@ -3932,7 +3945,8 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
       )}
 
       <div className="evi-b" ref={evidenceBodyRef}>
-        {!fragmentID && (
+        {liveResultRun && <LiveResultEvidencePanel run={liveResultRun} />}
+        {!fragmentID && !liveResultRun && (
           <p className="evi-denied">
             <IconInfo />
             {(turn?.question_run?.citations.length ?? 0) === 0
