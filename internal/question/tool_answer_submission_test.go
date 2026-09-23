@@ -122,6 +122,10 @@ func TestSubmitAnswerPublishedSchemaAcceptsMixedDocumentLivePayload(t *testing.T
 		!strings.Contains(liveDataToolDefinition().Function.Description, "attempt_id as live_reads.result_id") {
 		t.Fatal("live tool instructions do not explain the attempt_id to result_id mapping")
 	}
+	if !strings.Contains(toolLoopInstructions, "Do not restate, alter, or recalculate that knowvault_analyze result") ||
+		!strings.Contains(toolLoopInstructions, "For knowvault_ask_live_data, interpret its returned rows and cite its live read") {
+		t.Fatal("tool-loop instructions conflate server-presented analytic values with model-interpreted live rows")
+	}
 }
 
 // validatePublishedSubmitAnswerSchema evaluates the JSON Schema keywords used

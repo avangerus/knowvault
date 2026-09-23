@@ -87,7 +87,7 @@ func trustedMetricToolDefinition(catalog []governedask.ComparisonSummary) (model
 	}
 	return modelgateway.ToolDefinition{Type: "function", Function: modelgateway.ToolFunction{
 		Name: trustedMetricToolName,
-		Description: "Compare two dates using an administrator-approved metric. Available metrics: " + strings.Join(labels, "; ") +
+		Description: "Use only when the user requests two distinct dates for an administrator-approved metric; never invent a second date. Available metrics: " + strings.Join(labels, "; ") +
 			". Values describe observed snapshots; do not infer complete population coverage. Cite attempt_id and receipt_digest as a live read.",
 		Parameters: schema,
 	}}, true

@@ -1586,6 +1586,9 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 				// CodeUnavailable.
 				return &Error{code: CodeUnavailable}
 			}
+			if !storedTypedMetricAnswerMatches(result.Answer, result.AnswerHash, structured) {
+				return &Error{code: CodeUnavailable}
+			}
 			if !validateToolLoopClaimEvidence(runID, result.Answer, structured.ToolLoop, structured.governedQueryDependencies, structured.Citations) {
 				return &Error{code: CodeUnavailable}
 			}
@@ -1682,6 +1685,9 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 				clear(plain)
 			}
 			result.Citations = append(result.Citations, citation)
+		}
+		if !typedMetricCitationsMatchGated(result.ToolLoop, structuredCitations, result.Citations) {
+			return &Error{code: CodeUnavailable}
 		}
 		// R1: project the sealed grounding fields onto the rebuilt citations and
 		// derive the answer-level state. A run written before R1 has no
@@ -1978,6 +1984,9 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 					// projected Question Run, answer or citation is returned.
 					return &Error{code: CodeUnavailable}
 				}
+				if !storedTypedMetricAnswerMatches(run.Answer, run.AnswerHash, structured) {
+					return &Error{code: CodeUnavailable}
+				}
 				if !validateToolLoopClaimEvidence(runID, run.Answer, structured.ToolLoop, structured.governedQueryDependencies, structured.Citations) {
 					return &Error{code: CodeUnavailable}
 				}
@@ -2084,6 +2093,15 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 			citation.DeepLink = "/api/v1/workspaces/" + workspaceID + "/evidence/" + citation.EvidenceFragment
 			run.Citations = append(run.Citations, citation)
 			result[pendingItem.runID] = run
+		}
+		for _, runID := range order {
+			run, ok := result[runID]
+			if !ok {
+				continue
+			}
+			if !typedMetricCitationsMatchGated(run.ToolLoop, structuredCitationsByRun[runID], run.Citations) {
+				return &Error{code: CodeUnavailable}
+			}
 		}
 		// R1: project the sealed grounding fields and derive the answer-level
 		// state for every surviving run, exactly like Get.
@@ -4733,6 +4751,61 @@ type structuredAnswer struct {
 	governedQueryDependencies []governedQueryDependency
 }
 
+// A v2 presentation is three copies of one exact answer digest: the sealed
+// presentation envelope, the sealed structured answer, and question_run. A
+// missing or changed markdown artifact must close both governed read paths
+// before either path projects answer or evidence. Legacy records have no
+// presentation envelope and retain their original read behavior.
+func storedTypedMetricAnswerMatches(answer, runAnswerHash string, structured structuredAnswer) bool {
+	loop := structured.ToolLoop
+	if loop == nil || (loop.PresentationVersion == nil && loop.PresentationLanguage == nil && loop.PresentationAnswerHash == nil) {
+		return true
+	}
+	if loop.PresentationVersion == nil || *loop.PresentationVersion != "metric-comparison-v2" ||
+		loop.PresentationLanguage == nil || loop.PresentationAnswerHash == nil || answer == "" {
+		return false
+	}
+	answerHash := canon.Hash([]byte(answer))
+	return answerHash == *loop.PresentationAnswerHash && answerHash == structured.AnswerHash && answerHash == runAnswerHash
+}
+
+// A v2 answer may quote a sealed structured citation. Before either governed
+// read discloses it, bind that copy to the separately gated citation row and
+// CitedExcerpt artifact. Legacy runs retain their existing citation behavior.
+func typedMetricCitationsMatchGated(loop *ToolLoopRecord, structured, gated []Citation) bool {
+	if loop == nil || loop.PresentationVersion == nil {
+		return true
+	}
+	if *loop.PresentationVersion != "metric-comparison-v2" || len(structured) != len(gated) {
+		return false
+	}
+	byID := make(map[string]Citation, len(gated))
+	numbers := make(map[int64]struct{}, len(gated))
+	for _, citation := range gated {
+		if citation.CitationID == "" || citation.Number < 1 ||
+			canon.Hash([]byte(citation.Excerpt)) != citation.ExcerptHash {
+			return false
+		}
+		if _, duplicate := byID[citation.CitationID]; duplicate {
+			return false
+		}
+		if _, duplicate := numbers[citation.Number]; duplicate {
+			return false
+		}
+		byID[citation.CitationID] = citation
+		numbers[citation.Number] = struct{}{}
+	}
+	for _, citation := range structured {
+		independent, found := byID[citation.CitationID]
+		if !found || citation.Number != independent.Number ||
+			citation.Excerpt != independent.Excerpt || citation.ExcerptHash != independent.ExcerptHash {
+			return false
+		}
+		delete(byID, citation.CitationID)
+	}
+	return len(byID) == 0
+}
+
 func marshalStructuredAnswer(runID, answerHash string, citations []Citation, answerResult *AnswerResult, understood *Understood, toolLoops ...*ToolLoopRecord) ([]byte, error) {
 	return marshalStructuredAnswerWithAnalyticScalarPair(runID, answerHash, citations, answerResult, understood, nil, toolLoops...)
 }
@@ -4840,6 +4913,9 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 	if err := jsonv2.Unmarshal(raw, &structured, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
+	if !validPresentationFieldPresence(raw) {
+		return structuredAnswer{}, &Error{code: CodeUnavailable}
+	}
 	if structured.QuestionRunID != expectedRunID {
 		return structuredAnswer{}, &Error{code: CodeUnavailable}
 	}
@@ -4862,6 +4938,35 @@ func decodeStructuredAnswer(expectedRunID string, raw []byte) (structuredAnswer,
 	}
 	structured.governedQueryDependencies = governedDependencies
 	return structured, nil
+}
+
+// Pointer fields cannot distinguish absence from an explicit JSON null. A
+// null presentation member would otherwise erase the v2 marker and let the
+// artifact be interpreted under the older v1 answer rules.
+func validPresentationFieldPresence(raw []byte) bool {
+	var outer struct {
+		ToolLoop jsontext.Value `json:"tool_loop"`
+	}
+	if err := jsonv2.Unmarshal(raw, &outer, jsontext.AllowDuplicateNames(false)); err != nil {
+		return false
+	}
+	if outer.ToolLoop.Kind() != jsontext.KindBeginObject {
+		return true
+	}
+	var members map[string]jsontext.Value
+	if err := jsonv2.Unmarshal(outer.ToolLoop, &members, jsontext.AllowDuplicateNames(false)); err != nil {
+		return false
+	}
+	count := 0
+	for _, name := range []string{"presentation_version", "presentation_language", "presentation_answer_hash"} {
+		if value, present := members[name]; present {
+			if value.Kind() == jsontext.KindNull {
+				return false
+			}
+			count++
+		}
+	}
+	return count == 0 || count == 3
 }
 
 // decodeStructuredAnswerCleared is the governed-reader boundary around
