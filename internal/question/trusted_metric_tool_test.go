@@ -191,6 +191,29 @@ func TestTrustedMetricComparisonInstallAndPersistedEvidence(t *testing.T) {
 	if err := json.Unmarshal(result.Structured, &altered); err != nil {
 		t.Fatal(err)
 	}
+	for name, mutate := range map[string]func(*metricToolResult){
+		"profile hash":       func(value *metricToolResult) { value.ProfileHash = "sha256:" + strings.Repeat("0", 64) },
+		"schema version":     func(value *metricToolResult) { value.EvidenceSchemaVersion++ },
+		"exposure revision":  func(value *metricToolResult) { value.ExposedSchemaRevision++ },
+		"raw result digest":  func(value *metricToolResult) { value.RawResultDigest = "sha256:" + strings.Repeat("0", 64) },
+		"evidence digest":    func(value *metricToolResult) { value.EvidenceDigest = "sha256:" + strings.Repeat("0", 64) },
+		"unit":               func(value *metricToolResult) { value.Unit = "tasks" },
+		"comparison value":   func(value *metricToolResult) { value.First.Value = "3889" },
+		"comparison percent": func(value *metricToolResult) { value.PercentChange = "1.00" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := altered
+			mutate(&changed)
+			payload, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.Calls[0].Result = workspacetools.Result{Text: string(payload), Structured: payload}
+			if _, _, valid := governedQueryToolExecutions("qrun_current", []governedQueryDependency{execution.dependency}, record); valid {
+				t.Fatal("tampered comparison metadata was accepted")
+			}
+		})
+	}
 	altered.Delta = "1"
 	corrupted, err := json.Marshal(altered)
 	if err != nil {

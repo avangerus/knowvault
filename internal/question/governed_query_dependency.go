@@ -20,9 +20,13 @@ import (
 func decodeTrustedMetricProjection(questionRunID string, raw json.RawMessage, evidence *liveDataProjection) (liveDataProjection, bool) {
 	var result metricToolResult
 	if err := jsonv2.Unmarshal(raw, &result, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil ||
-		!validGovernedID(result.MetricID) || result.Unit == "" || len(result.Unit) > 128 ||
+		!validGovernedID(result.MetricID) || !validGovernedSHA256(result.ProfileHash) ||
+		result.EvidenceSchemaVersion != metriccompare.EvidenceSchemaVersion ||
+		result.Unit == "" || len(result.Unit) > 128 ||
 		result.Coverage != metriccompare.ObservedSnapshot || result.First.Date == result.Second.Date ||
-		evidence == nil || result.AttemptID != evidence.AttemptID || result.ReceiptDigest != evidence.ReceiptDigest {
+		evidence == nil || result.AttemptID != evidence.AttemptID || result.ReceiptDigest != evidence.ReceiptDigest ||
+		result.ExposedSchemaRevision != evidence.ExposedSchemaRevision || result.RawResultDigest != evidence.ResultDigest ||
+		!validGovernedSHA256(result.EvidenceDigest) {
 		return liveDataProjection{}, false
 	}
 	projectionBytes, err := json.Marshal(evidence)
@@ -34,12 +38,17 @@ func decodeTrustedMetricProjection(questionRunID string, raw json.RawMessage, ev
 	if !ok || receiptErr != nil || receiptDigest != result.ReceiptDigest {
 		return liveDataProjection{}, false
 	}
-	if !ok || !comparisonMatchesRows(metriccompare.Comparison{
+	comparison := metriccompare.Comparison{
+		MetricID: result.MetricID, ProfileHash: result.ProfileHash, Unit: result.Unit, Coverage: result.Coverage,
 		First: metriccompare.DailyValue{Date: result.First.Date, SnapshotAt: result.First.SnapshotAt,
-			Value: result.First.Value, ContributingRows: result.First.ContributingRows, DistinctSubjects: result.First.DistinctSubjects},
+			Value: result.First.Value, ContributingRows: result.First.ContributingRows, DistinctSubjects: result.First.DistinctSubjects,
+			NonNullCount: result.First.ContributingRows},
 		Second: metriccompare.DailyValue{Date: result.Second.Date, SnapshotAt: result.Second.SnapshotAt,
-			Value: result.Second.Value, ContributingRows: result.Second.ContributingRows, DistinctSubjects: result.Second.DistinctSubjects},
-	}, projection) {
+			Value: result.Second.Value, ContributingRows: result.Second.ContributingRows, DistinctSubjects: result.Second.DistinctSubjects,
+			NonNullCount: result.Second.ContributingRows},
+		Delta: result.Delta, PercentChange: result.PercentChange,
+	}
+	if !ok || !comparisonMatchesRows(comparison, projection) {
 		return liveDataProjection{}, false
 	}
 	first, firstOK := new(big.Rat).SetString(result.First.Value)
@@ -58,6 +67,10 @@ func decodeTrustedMetricProjection(questionRunID string, raw json.RawMessage, ev
 		if percent.FloatString(2) != result.PercentChange {
 			return liveDataProjection{}, false
 		}
+	}
+	evidenceDigest, err := metriccompare.EvidenceDigest(comparison, projection.ExposedSchemaRevision, projection.ResultDigest)
+	if err != nil || evidenceDigest != result.EvidenceDigest {
+		return liveDataProjection{}, false
 	}
 	return projection, true
 }
