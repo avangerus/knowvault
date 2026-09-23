@@ -14,6 +14,7 @@ import {
   questionRunPayload,
   relySourceSummary,
   reduceGovernedRetention,
+  TurnCard,
   type GovernedRetentionState,
   type WorkspaceDataState,
 } from "./main";
@@ -181,28 +182,44 @@ const liveAnswerResult = {
 const liveRunFixture = {
   question_run_id: "qrun-1",
   tool_loop: {
-    calls: liveReceipts.map((receipt, index) => ({
-      name: "knowvault_ask_live_data",
-      outcome: "SUCCEEDED",
-      result: {
-        text: "",
-        structured: {
-          attempt_id: receipt.execution_id,
-          result_digest: receipt.result_digest,
-          receipt_digest: receipt.receipt_digest,
-          complete: true,
-          read_window: { complete: true },
-          row_count: 1,
-          columns: ["id"],
-          rows: [[`PRIVATE_LIVE_ROW_${index + 1}`]],
+    model: "fixture-model",
+    stop_reason: "END_TURN",
+    all_claims_bound: true,
+    calls: [
+      ...liveReceipts.map((receipt, index) => ({
+        id: `call-${index + 1}`,
+        name: "knowvault_ask_live_data",
+        system: false,
+        outcome: "SUCCEEDED",
+        duration_ms: 25,
+        result: {
+          text: "",
+          structured: {
+            attempt_id: receipt.execution_id,
+            result_digest: receipt.result_digest,
+            receipt_digest: receipt.receipt_digest,
+            complete: true,
+            read_window: { complete: true },
+            row_count: 1,
+            columns: ["id"],
+            rows: [[`PRIVATE_LIVE_ROW_${index + 1}`]],
+          },
         },
+      })),
+      {
+        id: "document-call",
+        name: "knowvault_search",
+        system: false,
+        outcome: "SUCCEEDED",
+        duration_ms: 12,
+        result: { text: "PRIVATE_DOCUMENT_TOOL_JSON" },
       },
-    })),
+    ],
   },
-} as never;
+};
 const liveEvidenceMarkup = renderToStaticMarkup(createElement(LiveTableEvidenceList, {
   result: liveAnswerResult,
-  run: liveRunFixture,
+  run: liveRunFixture as never,
 }));
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`Live result ${ordinal}`)), "every current live receipt has a separately labelled evidence disclosure");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`sha256:${String(ordinal).repeat(64)}`))
@@ -217,6 +234,45 @@ check(liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], receipt_d
   "a receipt, result, run ID or completeness mismatch withholds the table payload");
 check(mainSource.includes("<ToolCallsDisclosure run={run} showResults={false} />")
   && !mainSource.includes("<ToolCallsDisclosure run={run} showResults={true}"), "live table disclosure leaves generic tool outputs hidden");
+const activeConversationRun = {
+  ...liveRunFixture,
+  workspace_id: "workspace-1",
+  question: "Summarize the live reads",
+  answer_mode: "TOOL_LOOP",
+  status: "COMPLETED",
+  corpus_status: "COMPLETE",
+  verification_method: "ADDRESS_BOUND",
+  grounding_status: "CONFIRMED_BY_FRAGMENT",
+  freshness: {},
+  answer: "SUPPORTED_LIVE_ANSWER_TEXT",
+  citations: [],
+  uncertainties: [],
+  conflicts: [],
+  answer_result: liveAnswerResult,
+} as never;
+const activeConversationMarkup = renderToStaticMarkup(createElement(TurnCard, {
+  turn: {
+    turn_id: "turn-1",
+    question_run_id: "qrun-1",
+    turn_index: 1,
+    created_at: "2026-09-21T08:12:30Z",
+    question_run: activeConversationRun,
+  } as never,
+  panelTurnId: null,
+  selectedCitationId: null,
+  onSelectTurn: () => {},
+  onSelectCitation: () => {},
+}));
+check(activeConversationMarkup.includes("SUPPORTED_LIVE_ANSWER_TEXT")
+  && [1, 2, 3].every((ordinal) => activeConversationMarkup.includes(`Live result ${ordinal}`)), "the active conversation TurnCard renders the answer and every receipt disclosure");
+check(activeConversationMarkup.indexOf("SUPPORTED_LIVE_ANSWER_TEXT") < activeConversationMarkup.indexOf("Live result 1")
+  && !activeConversationMarkup.includes("Run ID") && !activeConversationMarkup.includes("R1 audit receipt"), "the active conversation shows live receipts after prose without the old technical result panel");
+check(activeConversationMarkup.includes("tool-trace") && !activeConversationMarkup.includes("PRIVATE_LIVE_ROW_")
+  && !activeConversationMarkup.includes("PRIVATE_DOCUMENT_TOOL_JSON") && !activeConversationMarkup.includes("<pre"),
+  "the active conversation keeps table rows and generic document/tool JSON hidden by default");
+const askViewSource = mainSource.slice(mainSource.indexOf("function AskView("));
+check(askViewSource.includes("{feedTurns.map((turn) => (") && askViewSource.includes("<TurnCard")
+  && mainSource.includes("export function TurnCard"), "the exercised TurnCard is mounted by the active AskView conversation feed");
 check(mainSource.includes("run.citations.length === 0 && !hasLiveReceipt"), "TurnAnswer keeps the no-citation warning for unsupported document claims");
 check(!askOwnerSource.includes('aria-label="Search source"') && !askOwnerSource.includes("Workspace search") && !askOwnerSource.includes("Live database"), "Ask owner contains no execution-mode labels");
 check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "the governed host remains available for a future Diagnostics surface");

@@ -3344,11 +3344,13 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   const leftoverCitations = run.citations.filter((citation) => !referencedCitationNumbers.has(citation.number));
   return (
     <>
-      <ToolCallsDisclosure run={run} />
+      <ToolCallsDisclosure run={run} showResults={false} />
       {run.understood && <UnderstoodBanner understood={run.understood} />}
       {showGenericHow && <HowObtained run={run} />}
       {run.answer_result ? (
-        <AnswerResultBlock result={run.answer_result} />
+        run.answer_result.kind === "LIVE_TABLE"
+          ? null
+          : <AnswerResultBlock result={run.answer_result} />
       ) : (
         // R2 Outcome 3: an older structured answer (AGGREGATE/LIST completed
         // before the unified result existed) still gets the unified panel --
@@ -3378,6 +3380,9 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
             <p className="msg-note">
               {run.citations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.
             </p>
+          )}
+          {hasLiveReceipt && run.answer_result?.kind === "LIVE_TABLE" && (
+            <LiveTableEvidenceList result={run.answer_result} run={run} />
           )}
           {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
           {run.conflicts.map((item) => (
@@ -3414,7 +3419,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   );
 }
 
-function TurnCard({ turn, panelTurnId, selectedCitationId, onSelectTurn, onSelectCitation }: {
+export function TurnCard({ turn, panelTurnId, selectedCitationId, onSelectTurn, onSelectCitation }: {
   turn: ConversationTurn;
   panelTurnId: string | null;
   selectedCitationId: string | null;
