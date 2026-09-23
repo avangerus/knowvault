@@ -37,6 +37,29 @@ func toolLoopResearchCallLimit(maxCalls int) int {
 	return maxCalls - min(3, max(0, maxCalls-2))
 }
 
+// Research shares the overall request budget but cannot consume the time
+// reserved for a final answer and its citation checks. Respect an earlier
+// caller deadline rather than extending the mounted profile's timeout.
+func toolLoopResearchContext(ctx context.Context, now time.Time) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	reserve := min(time.Minute, max(time.Duration(0), deadline.Sub(now)/3))
+	return context.WithDeadline(ctx, deadline.Add(-reserve))
+}
+
+func toolLoopResearchExpired(ctx, researchCtx context.Context) bool {
+	return ctx.Err() == nil && errors.Is(researchCtx.Err(), context.DeadlineExceeded)
+}
+
+func toolLoopOperationContext(ctx, researchCtx context.Context, finalizing bool) context.Context {
+	if finalizing {
+		return ctx
+	}
+	return researchCtx
+}
+
 const toolFinalizationInstructions = "Research calls are complete; use the remaining step for submit_answer based on the data already read. Give the supported part of the answer and explicitly state its scope and limitations. Do not invent the unchecked remainder of a list or a total. Treat live numeric results according to explicit unit and entity-grain evidence; when either is absent, call the result a metric or indicator value, never a count of individual real-world records inferred from numeric_value, SUM, or another reducer. A complete zero-row live result for the user's explicit period supports saying that no data was found for that period; do not retry an equivalent period, substitute the latest period, or broaden to other dates unless the user asked, while preserving separately requested document work. For every factual claim, attach exact document citations and, for each live-data or approved metric-comparison result it uses, a live_reads entry whose result_id is copied from that output's attempt_id and whose receipt_digest is copied exactly. A claim combining a document rule with live table data must reference both. The citation-verification reserve does not replace reading. Never label model prose as a byte-exact database fact. Do not call search, inventory, or reading tools. Explicitly state when verified information is insufficient; use no_data only when data is absent, and clarification only when the subject of the question is unclear."
 
 func toolFinalizationRefusal() workspacetools.Result {
@@ -975,6 +998,8 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(profile.TimeoutSeconds)*time.Second)
 	defer cancel()
+	researchCtx, researchCancel := toolLoopResearchContext(ctx, time.Now())
+	defer researchCancel()
 	scope := workspacetools.Scope{Access: access, WorkspaceID: run.WorkspaceID, Revision: run.WorkspaceRevision}
 	record := &ToolLoopRecord{ModelProfile: copyModelProfile(&generation.profile), Profile: profile, Model: generation.adapter.ProviderName(), Calls: []ToolCallRecord{}, StopReason: "TURN_LIMIT"}
 	persistScopeChanged := func() error {
@@ -1050,12 +1075,16 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			record.StopReason = "TOOL_LIMIT"
 			return workspacetools.Result{}, workspacetools.ErrUnavailable
 		}
+		if !system && toolLoopResearchExpired(ctx, researchCtx) {
+			return toolFinalizationRefusal(), nil
+		}
+		callCtx := toolLoopOperationContext(ctx, researchCtx, system)
 		started := time.Now()
 		var result workspacetools.Result
 		var callErr error
 		var metricEvidence *liveDataProjection
 		if name == trustedMetricToolName || name == liveDataToolName {
-			result, metricEvidence, callErr = service.invokeToolLoopGovernedData(ctx, access, run, name, comparisonCatalog, comparisonQuestion, allowedDates, requestedDates,
+			result, metricEvidence, callErr = service.invokeToolLoopGovernedData(callCtx, access, run, name, comparisonCatalog, comparisonQuestion, allowedDates, requestedDates,
 				args, profile.MaxToolResultBytes, &liveDataState)
 		} else if name == analyticScalarToolName {
 			if service.liveDataAsk != nil {
@@ -1064,13 +1093,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				result = workspacetools.Result{IsError: true, Text: `{"error":"ANALYTIC_OBSERVATION_ALREADY_RECORDED","advice":"Finish the answer from the verified observation already returned."}`}
 			} else {
 				var pair *analyticScalarPair
-				result, pair = service.invokeAnalyticScalarTool(ctx, access, run.WorkspaceID, run.ID, scalarCapability, args)
+				result, pair = service.invokeAnalyticScalarTool(callCtx, access, run.WorkspaceID, run.ID, scalarCapability, args)
 				if pair != nil {
 					retainedAnalyticScalarPair = pair
 				}
 			}
 		} else {
-			result, callErr = service.tools.Invoke(ctx, scope, name, args)
+			result, callErr = service.tools.Invoke(callCtx, scope, name, args)
 		}
 		if callErr != nil {
 			if errors.Is(callErr, workspacetools.ErrScopeChanged) {
@@ -1150,7 +1179,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			record.StopReason = "TIME_LIMIT"
 			break
 		}
-		finalizing = finalizing || turn == profile.MaxTurns-1 || len(record.Calls) >= researchCallLimit
+		finalizing = finalizing || turn == profile.MaxTurns-1 || len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx)
 		turnDefinitions := definitions
 		if finalizing {
 			var finalizationErr error
@@ -1180,7 +1209,8 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			break
 		}
 		started := service.now()
-		response, attempt, converseErr := generation.adapter.Converse(ctx, run.WorkspaceID, messages, turnDefinitions)
+		modelCtx := toolLoopOperationContext(ctx, researchCtx, finalizing)
+		response, attempt, converseErr := generation.adapter.Converse(modelCtx, run.WorkspaceID, messages, turnDefinitions)
 		attemptCtx, attemptCancel := modelAttemptPersistenceContext(parent)
 		addresses := make([]string, 0, len(observed))
 		for value := range observed {
@@ -1194,6 +1224,12 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			return persistErr
 		}
 		if converseErr != nil {
+			if !finalizing && toolLoopResearchExpired(ctx, researchCtx) {
+				// No assistant message was appended for the expired call. Keep
+				// completed observations and spend the reserve on a final answer.
+				finalizing = true
+				continue
+			}
 			record.StopReason = toolLoopModelFailureStopReason(ctx, attempt)
 			break
 		}
@@ -1250,7 +1286,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				break
 			}
 			for _, call := range response.Message.ToolCalls {
-				if len(record.Calls) >= researchCallLimit {
+				if len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx) {
 					finalizing = true
 					// Complete the assistant/tool pairing for the whole batch;
 					// these refused requests never reach Runtime.Invoke.
