@@ -1,0 +1,79 @@
+name: pilot-oci-artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build exact-revision OCI archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout dispatched revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build server, worker, and migration operator
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          test "$revision" = "$GITHUB_SHA"
+          version="pilot-${revision:0:12}"
+          built_at="$(git show -s --format=%cI HEAD)"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          mkdir -p release-oci
+          builder="knowvault-pilot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create --name "$builder" --driver docker-container >/dev/null
+          trap 'docker buildx rm "$builder" >/dev/null 2>&1 || true' EXIT
+          docker buildx inspect "$builder" --bootstrap >/dev/null
+          for component in operator server worker; do
+            docker buildx build \
+              --builder "$builder" \
+              --platform linux/amd64 \
+              --provenance=false \
+              --sbom=false \
+              --file "deploy/images/Dockerfile.$component" \
+              --build-arg "VERSION=$version" \
+              --build-arg "REVISION=$revision" \
+              --build-arg "BUILT_AT=$built_at" \
+              --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+              --output "type=oci,dest=release-oci/knowvault-$component.oci.tar" \
+              .
+          done
+          (
+            cd release-oci
+            sha256sum knowvault-operator.oci.tar knowvault-server.oci.tar knowvault-worker.oci.tar > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+          python3 - "$revision" "$version" "$built_at" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          revision, version, built_at = sys.argv[1:]
+          result = {
+              "revision": revision,
+              "version": version,
+              "built_at": built_at,
+              "platform": "linux/amd64",
+              "format": "oci-archive",
+              "deployment_order": ["operator migrations", "server", "worker"],
+          }
+          pathlib.Path("release-oci/build-info.json").write_text(
+              json.dumps(result, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Upload short-lived pilot artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: knowvault-pilot-oci-${{ github.sha }}
+          path: release-oci/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
