@@ -1,6 +1,7 @@
 package question
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -10,7 +11,144 @@ import (
 
 	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
+
+func TestToolLoopAdvertisesBothGovernedToolsWhenConfigured(t *testing.T) {
+	definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false, [2]string{})
+	if err != nil || len(definitions) != 1 || definitions[0].Function.Name != liveDataToolName {
+		t.Fatalf("single-date definitions = %#v, err %v; want live ask only", definitions, err)
+	}
+	definitions, err = toolLoopGovernedDefinitions(trustedMetricCatalog(), nil, false, [2]string{})
+	if err != nil || len(definitions) != 0 {
+		t.Fatalf("preset-only single-date definitions = %#v, err %v; want no governed tool", definitions, err)
+	}
+	if !strings.Contains(toolLoopInstructions, "Never invent a second date") ||
+		!strings.Contains(toolLoopInstructions, "two distinct dates") {
+		t.Fatal("tool routing guidance does not distinguish a requested comparison from a single-date read")
+	}
+}
+
+func TestToolLoopDispatchesSingleDateAskWithComparisonCatalog(t *testing.T) {
+	const question = "For code METER on 2026-09-10 in Europe/Moscow, use the latest snapshot of that local date; what are the GM and contributing rows?"
+	ask := &liveDataAskProbe{result: liveDataResultFixture()}
+	compare := &trustedMetricProbe{}
+	service := &Service{liveDataAsk: ask, trustedMetricComparison: compare}
+	run := Run{WorkspaceID: "ws_current", ID: "qrun_current"}
+	access := database.AccessContext{OrganizationID: "org_current", PrincipalID: "usr_current", RequestID: "req_current"}
+	state := &liveDataRunState{}
+	result, evidence, err := service.invokeToolLoopGovernedData(context.Background(), access, run,
+		liveDataToolName, trustedMetricCatalog(), false, [2]string{}, []string{"2026-09-10"}, json.RawMessage(`{"question":"`+question+`"}`), 8192, state)
+	if err != nil || result.IsError || evidence != nil {
+		t.Fatalf("one-date ask result = %#v, evidence = %#v, err = %v", result, evidence, err)
+	}
+	if ask.calls != 1 || ask.question != question || ask.access != access || ask.workspace != run.WorkspaceID || compare.calls != 0 ||
+		!state.successfulCall || len(state.executions) != 1 {
+		t.Fatalf("one-date ask was not dispatched and retained: ask=%#v compare=%#v state=%#v", ask, compare, state)
+	}
+	wrongDate, _, err := service.invokeToolLoopGovernedData(context.Background(), access, run,
+		liveDataToolName, trustedMetricCatalog(), false, [2]string{}, []string{"2026-09-10"},
+		json.RawMessage(`{"question":"What was the metric on 2026-01-10?"}`), 8192, &liveDataRunState{})
+	if err != nil || !wrongDate.IsError || ask.calls != 1 {
+		t.Fatalf("rewritten date reached database: result=%#v err=%v calls=%d", wrongDate, err, ask.calls)
+	}
+	presetOnly := &Service{trustedMetricComparison: compare}
+	refusal, _, err := presetOnly.invokeToolLoopGovernedData(context.Background(), access, run,
+		liveDataToolName, trustedMetricCatalog(), false, [2]string{}, nil, json.RawMessage(`{"question":"`+question+`"}`), 8192, &liveDataRunState{})
+	if err != nil || !refusal.IsError || compare.calls != 0 {
+		t.Fatalf("preset-only live ask = %#v, err %v, comparison calls %d; want refusal", refusal, err, compare.calls)
+	}
+	refusal, _, err = service.invokeToolLoopGovernedData(context.Background(), access, run,
+		trustedMetricToolName, trustedMetricCatalog(), false, [2]string{}, nil,
+		json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`), 8192, &liveDataRunState{})
+	if err != nil || !refusal.IsError || compare.calls != 0 {
+		t.Fatalf("unadvertised one-date comparison = %#v, err %v, calls %d; want refusal", refusal, err, compare.calls)
+	}
+}
+
+func TestRecognizedComparisonRoutesOnlyExplicitTwoDateQuestions(t *testing.T) {
+	comparisons := []string{
+		"Compare the assigned work indicator on 2026-09-10 versus 2026-09-09 and explain the rule in the documents.",
+		"\u0421\u0440\u0430\u0432\u043d\u0438 9 \u0438 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433\u043e\u0434\u0430: \u043a\u0430\u043a\u0430\u044f \u0440\u0430\u0437\u043d\u0438\u0446\u0430?",
+		"\u0410 \u043a\u0430\u043a\u043e\u0439 \u0438\u0437 \u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u043d\u0435\u0439 \u0432\u044b\u0448\u0435 \u0438 \u043d\u0430 \u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043f\u0440\u043e\u0446\u0435\u043d\u0442\u043e\u0432?",
+	}
+	for _, question := range comparisons {
+		if !recognizedComparison(question) {
+			t.Fatalf("comparison was not recognized: %q", question)
+		}
+		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, true, [2]string{"2026-09-09", "2026-09-10"})
+		if err != nil || len(definitions) != 1 || definitions[0].Function.Name != trustedMetricToolName {
+			t.Fatalf("comparison definitions = %#v, err = %v", definitions, err)
+		}
+		ask := &liveDataAskProbe{result: liveDataResultFixture()}
+		service := &Service{liveDataAsk: ask, trustedMetricComparison: &trustedMetricProbe{}}
+		refusal, _, err := service.invokeToolLoopGovernedData(context.Background(), database.AccessContext{}, Run{WorkspaceID: "ws_current", ID: "qrun_current"},
+			liveDataToolName, trustedMetricCatalog(), true, [2]string{"2026-09-09", "2026-09-10"}, nil, json.RawMessage(`{"question":"bypass"}`), 8192, &liveDataRunState{})
+		if err != nil || !refusal.IsError || !strings.Contains(refusal.Text, "TRUSTED_COMPARISON_REQUIRED") || ask.calls != 0 {
+			t.Fatalf("generic comparison attempt = %#v, err = %v, calls = %d", refusal, err, ask.calls)
+		}
+	}
+	for _, question := range []string{
+		"What is the assigned work indicator on 2026-09-10?",
+		"What company data is available now?",
+		"Compare 2026-09-10 with 2026-09-10.",
+	} {
+		if recognizedComparison(question) {
+			t.Fatalf("noncomparison was recognized: %q", question)
+		}
+		definitions, err := toolLoopGovernedDefinitions(trustedMetricCatalog(), &liveDataAskProbe{}, false, [2]string{})
+		if err != nil || len(definitions) != 1 || definitions[0].Function.Name != liveDataToolName {
+			t.Fatalf("noncomparison definitions = %#v, err = %v", definitions, err)
+		}
+	}
+}
+
+func TestComparisonDatePairBindsOnlyUserDates(t *testing.T) {
+	sep := [2]string{"2026-09-09", "2026-09-10"}
+	for _, question := range []string{
+		"Compare 2026-09-10 with 2026-09-09.",
+		"\u0421\u0440\u0430\u0432\u043d\u0438 9 \u0438 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433\u043e\u0434\u0430.",
+		"\u0421\u0440\u0430\u0432\u043d\u0438 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f \u0438 9 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433\u043e\u0434\u0430.",
+		"Compare 09.09.2026 and 10.09.2026.",
+	} {
+		if got := comparisonDatePair(question, nil); got != sep {
+			t.Fatalf("dates for %q = %v, want %v", question, got, sep)
+		}
+	}
+	for _, question := range []string{
+		"Compare 2026-09-10 and 10 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026.",
+		"Compare 2026-09-10 with 2026-09-10.",
+		"Compare 2026-02-30 with 2026-09-10.",
+		"Compare 2026-09-09, 2026-09-10, and 2026-09-11.",
+	} {
+		if got := comparisonDatePair(question, nil); got != [2]string{} {
+			t.Fatalf("ambiguous or single dates for %q = %v", question, got)
+		}
+	}
+	if got := comparisonDatePair("\u0410 \u043a\u0430\u043a\u043e\u0439 \u0438\u0437 \u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u043d\u0435\u0439 \u0432\u044b\u0448\u0435?",
+		[]toolLoopConversationTurn{{Question: "Compare 2026-09-10 with 2026-09-09."}}); got != sep {
+		t.Fatalf("follow-up dates = %v, want %v", got, sep)
+	}
+	if got := comparisonDatePair("\u0410 \u043a\u0430\u043a\u043e\u0439 \u0438\u0437 \u044d\u0442\u0438\u0445 \u0434\u0432\u0443\u0445 \u0434\u043d\u0435\u0439 \u0432\u044b\u0448\u0435?",
+		[]toolLoopConversationTurn{{Question: "What is the latest value?"}}); got != [2]string{} {
+		t.Fatalf("unrelated history supplied dates: %v", got)
+	}
+	if !comparisonArgumentsMatch(json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-09-10","date_b":"2026-09-09"}`), sep) ||
+		comparisonArgumentsMatch(json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`), sep) {
+		t.Fatal("comparison invocation date scope failed")
+	}
+	compare := &trustedMetricProbe{}
+	service := &Service{trustedMetricComparison: compare}
+	refusal, _, err := service.invokeToolLoopGovernedData(context.Background(),
+		database.AccessContext{}, Run{WorkspaceID: "ws_current", ID: "qrun_current"},
+		trustedMetricToolName, trustedMetricCatalog(), true, sep, nil,
+		json.RawMessage(`{"metric_id":"gm.assigned_tasks_observed","date_a":"2026-01-10","date_b":"2026-01-11"}`),
+		8192, &liveDataRunState{})
+	if err != nil || !refusal.IsError || compare.calls != 0 {
+		t.Fatalf("wrong-date invocation reached database: refusal=%#v err=%v calls=%d", refusal, err, compare.calls)
+	}
+}
 
 func TestToolLoopHistoryMessagesPreserveChronologicalOrder(t *testing.T) {
 	got := toolLoopHistoryMessages([]toolLoopConversationTurn{
@@ -42,7 +180,7 @@ func TestToolLoopHistoryMessagesRetainNewestPriorQuestions(t *testing.T) {
 }
 
 func TestToolLoopHistoryMessagesKeepUTF8WithoutTruncatingQuestions(t *testing.T) {
-	newest := toolLoopConversationTurn{Question: strings.Repeat("я", 12)}
+	newest := toolLoopConversationTurn{Question: strings.Repeat("\u044F", 12)}
 	older := toolLoopConversationTurn{Question: strings.Repeat("x", 1000)}
 	got := toolLoopHistoryMessages([]toolLoopConversationTurn{older, newest}, 1024)
 	if len(got) != 1 {
@@ -64,6 +202,84 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	}
 	if got := toolLoopHistoryMessages([]toolLoopConversationTurn{{Question: "q"}}, 0); got != nil {
 		t.Fatalf("zero budget history = %#v; want nil", got)
+	}
+}
+
+func TestSuccessfulLiveReadPlusRefusedDocumentRequestRejectsUncitedClaim(t *testing.T) {
+	projection, dependency, liveRecord := livePersistenceFixture(t)
+	liveRecord.Calls = append(liveRecord.Calls, ToolCallRecord{ID: "doc-call-1", Name: "knowvault_read", Outcome: "REFUSED"})
+	if !validateGovernedQueryToolBinding(livePersistenceRunID, &dependency, liveRecord) {
+		t.Fatal("successful live table did not remain valid alongside a refused document read")
+	}
+	liveAnswer := livePersistenceAnswer(t, projection, dependency)
+	if liveAnswer.Kind != "LIVE_TABLE" || len(liveAnswer.Keys) != 0 {
+		t.Fatalf("server-owned live result was not kept separate from prose: %#v", liveAnswer)
+	}
+
+	call := modelgateway.ToolCall{}
+	call.Function.Name = "knowvault_read"
+	workspaceToolRequested := containsWorkspaceToolRequest([]modelgateway.ToolCall{call}, map[string]struct{}{"knowvault_read": {}})
+	if !workspaceToolRequested {
+		t.Fatal("document read request was not counted before its refused result")
+	}
+	liveOnly := toolLiveOnlyInterpretationAllowed(true, workspaceToolRequested, false)
+	allClaimsBound := toolClaimHasSupport(false, 0, true, liveOnly)
+	status := "COMPLETED"
+	if !toolAnswerHasCompleteSupport(0, true, allClaimsBound) {
+		status = "INSUFFICIENT_EVIDENCE"
+	}
+	if status != "INSUFFICIENT_EVIDENCE" || allClaimsBound {
+		t.Fatalf("uncited invented document rule escaped after a refused read: status=%s all_claims_bound=%v", status, allClaimsBound)
+	}
+}
+
+func TestPureLiveAndMixedDocumentClaimsUseSeparateSupport(t *testing.T) {
+	projection, dependency, liveRecord := livePersistenceFixture(t)
+	if !validateGovernedQueryToolBinding(livePersistenceRunID, &dependency, liveRecord) {
+		t.Fatal("pure-live successful table did not validate")
+	}
+	liveAnswer := livePersistenceAnswer(t, projection, dependency)
+	if liveAnswer.Kind != "LIVE_TABLE" || !toolLiveOnlyInterpretationAllowed(true, false, false) ||
+		!toolClaimHasSupport(false, 0, true, true) || !toolAnswerHasCompleteSupport(0, true, true) {
+		t.Fatal("citation-free interpretation without document tools was refused")
+	}
+
+	answerWithDocumentSelector := toolAnswer{Claims: []toolClaim{{Text: "Document rule", Citations: []toolCitation{{FragmentID: "fragment_1"}}}}}
+	if toolLiveOnlyInterpretationAllowed(true, true, false) ||
+		toolLiveOnlyInterpretationAllowed(true, false, toolAnswerHasCitationSelector(answerWithDocumentSelector)) {
+		t.Fatal("live-only exception remained available in a mixed or cited answer")
+	}
+	if !toolClaimHasSupport(true, 1, true, false) || liveAnswer.Kind != "LIVE_TABLE" ||
+		!toolAnswerHasCompleteSupport(1, true, true) {
+		t.Fatal("cited document prose with a separate live receipt was refused")
+	}
+	if toolClaimHasSupport(true, 0, false, false) || toolAnswerHasCompleteSupport(1, true, false) {
+		t.Fatal("invalid document references were rescued by the live table")
+	}
+	if toolLiveOnlyInterpretationAllowed(false, false, false) || toolClaimHasSupport(false, 0, true, false) {
+		t.Fatal("citation-free claim without a live result was treated as supported")
+	}
+}
+
+func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "REFUSED",
+		Result: workspacetools.Result{Text: `{"error":"SNAPSHOT_UNAVAILABLE","date":"2026-09-10"}`},
+	}}}, false); got != refusedMetricComparison {
+		t.Fatalf("refused metric comparison fallback = %q; want %q", got, refusedMetricComparison)
+	}
+	if strings.Contains(refusedMetricComparison, "2026-09-10") || strings.Contains(refusedMetricComparison, "access") {
+		t.Fatalf("fallback exposes refusal details: %q", refusedMetricComparison)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "REFUSED",
+	}}}, true); got != noWorkspaceData {
+		t.Fatalf("fallback with successful comparison = %q; want %q", got, noWorkspaceData)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: "knowvault_search", Outcome: "REFUSED",
+	}}}, false); got != noWorkspaceData {
+		t.Fatalf("fallback for another refused tool = %q; want %q", got, noWorkspaceData)
 	}
 }
 
@@ -120,6 +336,52 @@ func TestRecentToolLoopConversationTurnsRequireEarlierTerminalDisplayableRuns(t 
 	}
 	if strings.Contains(sql, "id <> $4") {
 		t.Fatal("recent history must order against the current turn, not merely exclude its id")
+	}
+	for _, required := range []string{
+		"runs, err := service.GetBatch(ctx, access, workspaceID, runIDs)",
+		"return toolLoopConversationTurnsFromBatch(runIDs, runs), nil",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("recent history does not use the governed surviving-run map: missing %q", required)
+		}
+	}
+	helperStart := strings.Index(text, "func toolLoopConversationTurnsFromBatch(")
+	if helperStart < 0 {
+		t.Fatal("service.go does not declare the surviving-run history projection")
+	}
+	helperEnd := strings.Index(text[helperStart:], "var errPreviousTurnUnreadable")
+	if helperEnd < 0 {
+		t.Fatal("cannot find the end of toolLoopConversationTurnsFromBatch")
+	}
+	helper := text[helperStart : helperStart+helperEnd]
+	for _, required := range []string{"run, ok := runs[runIDs[i]]", "if !ok {\n\t\t\tcontinue", "toolLoopConversationTurn{Question: run.Question}"} {
+		if !strings.Contains(helper, required) {
+			t.Fatalf("surviving-run projection is missing %q", required)
+		}
+	}
+}
+
+func TestRevokedGovernedPriorQuestionIsOmittedFromNextModelPrompt(t *testing.T) {
+	const revokedQuestion = "revoked governed prior question"
+	const readableQuestion = "still readable prior question"
+	// recentToolLoopConversationTurns receives this map from GetBatch. A
+	// governed-denied prior run is removed from that map; exercise the exact
+	// projection it uses and then the production prompt builder.
+	runIDs := []string{"run_readable_prior", "run_revoked_governed_prior"}
+	history := toolLoopConversationTurnsFromBatch(runIDs, map[string]Run{
+		"run_readable_prior": {Question: readableQuestion},
+	})
+	if len(history) != 1 || history[0].Question != readableQuestion {
+		t.Fatalf("history = %#v, want only the surviving prior run", history)
+	}
+	outbound, _ := initialToolLoopMessages("next model question", history, 32*1024)
+	foundReadable, foundRevoked := false, false
+	for _, message := range outbound {
+		foundReadable = foundReadable || strings.Contains(message.Content, readableQuestion)
+		foundRevoked = foundRevoked || strings.Contains(message.Content, revokedQuestion)
+	}
+	if !foundReadable || foundRevoked {
+		t.Fatalf("next prompt readable=%v revoked=%v messages=%#v", foundReadable, foundRevoked, outbound)
 	}
 }
 

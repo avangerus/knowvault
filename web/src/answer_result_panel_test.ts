@@ -98,6 +98,14 @@ function jsonTagNames(structBody: string): string[] {
 function r2ServerTagNames(structBody: string): string[] {
   const marker = structBody.indexOf("// R2 Outcome 3 unified fields");
   if (marker < 0) throw new Error("R2 Outcome 3 unified field marker is missing from AnswerResult");
+  const liveMarker = structBody.indexOf("// Governed live read receipt fields", marker);
+  if (liveMarker < 0) throw new Error("governed live receipt field marker is missing from AnswerResult");
+  return jsonTagNames(structBody.slice(marker, liveMarker));
+}
+
+function liveReceiptServerTagNames(structBody: string): string[] {
+  const marker = structBody.indexOf("// Governed live read receipt fields");
+  if (marker < 0) throw new Error("governed live receipt field marker is missing from AnswerResult");
   return jsonTagNames(structBody.slice(marker));
 }
 
@@ -153,6 +161,9 @@ async function main(): Promise<void> {
   const expectedFromServer = [...r2Tags, "value", "unit", "completeness"];
   check(sameSet(expectedFromServer, projectionKeys), `panel projection ${JSON.stringify(sorted(projectionKeys))} is not the server R2 members ${JSON.stringify(sorted(r2Tags))} plus value/unit/completeness`);
 
+  const liveReceiptTags = liveReceiptServerTagNames(structBody);
+  check(sameSet(liveReceiptTags, ["observation_window", "receipt_digest", "receipts"]), `live receipt contract ${JSON.stringify(sorted(liveReceiptTags))} does not match the additive receipt fields`);
+
   // --- 2. Legacy answers render “no data”, never invented values -----------
   everyAbsentFieldIsNoData(undefined, "legacy fallback (showUnifiedFallback)");
   everyAbsentFieldIsNoData({} as AnswerResult, "empty result object");
@@ -181,9 +192,9 @@ async function main(): Promise<void> {
   check(minimalMarkup.includes(ANSWER_NO_DATA), "AnswerResultBlock did not render 'no data' for absent unified fields");
 
   const liveResult = {
-    kind: "AGGREGATE",
-    operation: "AGGREGATE",
-    rule: "live rule",
+    kind: "LIVE_TABLE",
+    operation: "GOVERNED_READ",
+    rule: "complete governed live read",
     snapshot: { row_count: 407 },
     completeness: "COMPLETE",
     observation_window: {
@@ -197,7 +208,13 @@ async function main(): Promise<void> {
   check(liveMarkup.includes("<dt>Observed</dt>") && liveMarkup.includes("CLIENT_READ_CALL"), "live observation window was not rendered");
   check(liveMarkup.includes("<dt>Evidence receipt</dt>") && liveMarkup.includes("sha256:receipt"), "live evidence receipt was not rendered");
   check(liveMarkup.includes("<dt>Rows read</dt><dd>407</dd>"), "live contributing row count was not rendered");
-  check(!liveMarkup.includes("current"), "live observation was labeled as the current snapshot");
+	check(!liveMarkup.includes("<dt>Snapshot</dt><dd>current"), "live observation was labeled as the current snapshot");
+  check(liveMarkup.includes("a complete governed live table read; the prose answer interprets its rows"), "live prose was not distinguished from the server-owned table result");
+
+  const emptyLiveMarkup = renderToStaticMarkup(createElement(AnswerResultBlock, {
+    result: { ...liveResult, snapshot: { row_count: 0 } } as AnswerResult,
+  }));
+  check(emptyLiveMarkup.includes("<dt>Rows read</dt><dd>0</dd>"), "complete zero-row live result hid its row count");
 
   // --- 3. PARTIAL stays non-full ------------------------------------------
   const partialResult = { kind: "AGGREGATE", operation: "AGGREGATE", rule: "r", snapshot: { row_count: 0 }, completeness: "PARTIAL" } as AnswerResult;

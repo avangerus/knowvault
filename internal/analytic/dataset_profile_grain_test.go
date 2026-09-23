@@ -124,7 +124,7 @@ func TestDatasetGrainRejectsInvalidInputsContentFree(t *testing.T) {
 
 func TestDatasetGrainAcceptsExactUTF8ByteBounds(t *testing.T) {
 	input := validDatasetGrainInput()
-	input.Description = strings.Repeat("я", 512)
+	input.Description = strings.Repeat("\u044F", 512)
 	if len(input.Description) != 1024 {
 		t.Fatalf("cyrillic description not 1024 bytes: %d", len(input.Description))
 	}

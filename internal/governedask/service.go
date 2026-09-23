@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/audit"
@@ -130,6 +131,14 @@ const (
 		"carriage return, tab, other control character, or leading/trailing whitespace. " +
 		"The SQL text must not contain bidirectional-control characters: " +
 		"U+200E, U+200F, U+202A-U+202E, or U+2066-U+2069. " +
+		"For a natural-language comparison across periods, infer the requested metric, " +
+		"period grain and aggregation from the question and supplied Evidence, and return " +
+		"one row per distinct requested period with the period, aggregate and an explicit " +
+		"coverage value. Aggregate across all rows contributing to each period. If Evidence " +
+		"specifies snapshots, first select the latest snapshot for each period and then " +
+		"aggregate that snapshot's contributing rows. Do not use LIMIT N raw rows as a proxy " +
+		"for N periods; LIMIT may only be applied after period selection/grouping when the " +
+		"question explicitly requires it. " +
 		"unknown_reason is exactly null, evidence_ids is a nonempty array of identifiers for the schema fragments used, " +
 		"supporting_claim_ids is exactly []; " +
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
@@ -180,6 +189,12 @@ type Service struct {
 	// tests can drive discloseExecutedAttempt without a live database; nil in
 	// production, where the real checks always run.
 	disclosureCheck func(context.Context, database.AccessContext, string) error
+	// attemptLoader is a package-test seam for ReauthorizeAttempt. Production
+	// always uses loadExecutedAttempt, which scopes the append-only record to
+	// the caller organization, workspace and mounted connection.
+	attemptLoader      func(context.Context, database.AccessContext, string, string) (governedquery.ExecutedAttempt, error)
+	comparisonMu       sync.RWMutex
+	comparisonProfiles map[string]map[string]comparisonBinding
 }
 
 func New(db *database.Store, auditor auditAppender) (*Service, error) {
@@ -286,6 +301,31 @@ func (service *Service) Ask(ctx context.Context, access database.AccessContext, 
 		}
 		return service.askAdmitted(ctx, access, workspaceID, question)
 	})
+}
+
+// AskWorkspace is the connection-free entry point for a server-owned caller
+// such as the Question tool loop. The caller supplies only workspace scope and
+// natural-language question; this service binds the request to its one
+// administrator-mounted connection and retains Ask's authorization, audit,
+// execution and disclosure gates. Preset-only mounts deliberately expose no
+// ad-hoc path, even to an in-process caller.
+func (service *Service) AskWorkspace(ctx context.Context, access database.AccessContext, workspaceID, question string) (AskResult, error) {
+	return service.askWorkspaceWith(ctx, access, workspaceID, question, service.Ask)
+}
+
+// askWorkspaceWith keeps the server-owned connection binding explicit and
+// provides a narrow package-test seam without retaining a replaceable runtime
+// callback on Service.
+func (service *Service) askWorkspaceWith(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID, question string,
+	ask func(context.Context, database.AccessContext, string, string, string) (AskResult, error),
+) (AskResult, error) {
+	if service == nil || !service.enabled || service.adapter == nil || service.config.PresetOnly || ask == nil {
+		return AskResult{}, &Error{code: CodeUnavailable}
+	}
+	return ask(ctx, access, workspaceID, service.config.ConnectionID, question)
 }
 
 // askAdmitted is Ask()'s governed body: it runs only after the mandatory

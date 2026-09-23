@@ -72,8 +72,8 @@ func TestProfileSemanticsRejectsInvalidInputsContentFree(t *testing.T) {
 		"trailing whitespace":          func(v *ProfileSemanticsInput) { v.Fields[0].Description = "trailing " },
 		"control":                      func(v *ProfileSemanticsInput) { v.Measures[0].Label = "bad\u0085label" },
 		"invalid utf8":                 func(v *ProfileSemanticsInput) { v.Fields[0].NullMeaning = string([]byte{0xff}) },
-		"label over byte limit":        func(v *ProfileSemanticsInput) { v.Fields[0].Label = strings.Repeat("я", 81) },
-		"alias over byte limit":        func(v *ProfileSemanticsInput) { v.Measures[0].Aliases = []string{strings.Repeat("я", 81)} },
+		"label over byte limit":        func(v *ProfileSemanticsInput) { v.Fields[0].Label = strings.Repeat("\u044F", 81) },
+		"alias over byte limit":        func(v *ProfileSemanticsInput) { v.Measures[0].Aliases = []string{strings.Repeat("\u044F", 81)} },
 		"description over byte limit":  func(v *ProfileSemanticsInput) { v.DatasetDescription = strings.Repeat("x", 1025) },
 		"null meaning over byte limit": func(v *ProfileSemanticsInput) { v.Fields[0].NullMeaning = strings.Repeat("x", 1025) },
 	}
@@ -88,10 +88,10 @@ func TestProfileSemanticsRejectsInvalidInputsContentFree(t *testing.T) {
 
 func TestProfileSemanticsAcceptsExactUTF8ByteBounds(t *testing.T) {
 	input := validProfileSemanticsInput()
-	input.DatasetLabel = strings.Repeat("я", 80)
-	input.DatasetDescription = strings.Repeat("я", 512)
-	input.Fields[0].Aliases = []string{strings.Repeat("я", 80)}
-	input.Fields[0].NullMeaning = strings.Repeat("я", 512)
+	input.DatasetLabel = strings.Repeat("\u044F", 80)
+	input.DatasetDescription = strings.Repeat("\u044F", 512)
+	input.Fields[0].Aliases = []string{strings.Repeat("\u044F", 80)}
+	input.Fields[0].NullMeaning = strings.Repeat("\u044F", 512)
 	if value, err := NewProfileSemantics(input); err != nil || !value.Valid() {
 		t.Fatalf("exact UTF-8 byte bounds rejected: valid=%v err=%v", value.Valid(), err)
 	}

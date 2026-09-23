@@ -337,7 +337,7 @@ svg { display: block; }
    layout itself fills the content panel without a page-level scrollbar
    (decision 14: the primary scenario fits a laptop screen).
 --------------------------------------------------------------------------- */
-.ask-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr) minmax(380px, 30%); }
+.ask-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr) minmax(300px, 25%); }
 .ask-layout-full { grid-template-columns: 224px minmax(0, 1fr) 0; }
 
 .topics { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
@@ -437,6 +437,21 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .live-calculation-evidence dl { display: grid; gap: 3px 12px; grid-template-columns: max-content minmax(0, 1fr); margin: 6px 0 0; }
 .live-calculation-evidence dt { color: var(--ink-tertiary); }
 .live-calculation-evidence dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); }
+.live-table-evidence-list { display: grid; gap: 6px; margin-top: 8px; }
+.live-result-evidence { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: var(--fs-caption); color: var(--ink-secondary); }
+.live-result-evidence summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+.live-result-evidence dl { display: grid; gap: 3px 12px; grid-template-columns: max-content minmax(0, 1fr); margin: 8px 0; }
+.live-result-evidence dt { color: var(--ink-tertiary); }
+.live-result-evidence dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); }
+.live-table-scroll { overflow-x: auto; margin-top: 8px; }
+.live-table-payload { width: 100%; border-collapse: collapse; color: var(--ink); }
+.live-table-payload caption { padding: 4px 0; text-align: left; color: var(--ink-secondary); }
+.live-table-payload th, .live-table-payload td { padding: 5px 8px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.live-table-unavailable { margin: 8px 0 0; color: var(--ink-tertiary); }
+.live-comparison-evidence { overflow-x: auto; }
+.live-comparison-evidence p { margin: 8px 0; }
+.live-comparison-evidence details { margin: 8px 0; }
+.live-comparison-evidence code { overflow-wrap: anywhere; }
 
 /* TXT-1: formatted answer body — paragraphs, lists, headings and inline
    emphasis parsed from the server's Markdown-lite answer text (main.tsx's
@@ -587,7 +602,7 @@ ul.answer-keys li:last-child { border-bottom: none; }
 @keyframes kv-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
 @media (max-width: 1180px) {
-  .ask-layout { grid-template-columns: 200px minmax(0, 1fr) 340px; }
+  .ask-layout { grid-template-columns: 200px minmax(0, 1fr) 300px; }
 }
 
 /* ---------------------------------------------------------------------------

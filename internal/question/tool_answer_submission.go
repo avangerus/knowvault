@@ -12,7 +12,7 @@ import (
 
 const (
 	submitAnswerToolName     = "submit_answer"
-	submitAnswerSchemaV1     = "v1"
+	submitAnswerSchemaV2     = "v2"
 	submitAnswerMaxClaims    = 20
 	submitAnswerMaxCitations = 3
 )
@@ -29,7 +29,7 @@ var submitAnswerParameters = json.RawMessage(`{
       "items":{
         "type":"object",
         "additionalProperties":false,
-        "required":["text","citations"],
+        "required":["text"],
         "properties":{
           "text":{"type":"string","minLength":1,"maxLength":8192},
           "citations":{
@@ -48,6 +48,19 @@ var submitAnswerParameters = json.RawMessage(`{
                 {"required":["fragment_id"],"not":{"required":["address"]}}
               ]
             }
+          },
+          "live_reads":{
+          "type":"array",
+          "maxItems":3,
+          "items":{
+            "type":"object",
+            "additionalProperties":false,
+            "required":["result_id","receipt_digest"],
+            "properties":{
+              "result_id":{"type":"string","description":"Copy the attempt_id field from knowvault_ask_live_data output.","minLength":1,"maxLength":200},
+              "receipt_digest":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}
+            }
+          }
           }
         }
       }
@@ -61,7 +74,7 @@ func submitAnswerToolDefinition() modelgateway.ToolDefinition {
 		Type: "function",
 		Function: modelgateway.ToolFunction{
 			Name:        submitAnswerToolName,
-			Description: "v1: finish this conversation turn with source-bound claims, a clarification, or no_data; use only after the knowledge calls are complete",
+			Description: submitAnswerSchemaV2 + ": finish this conversation turn with claims bound to verified document citations and/or exact live-read receipts, a clarification, or no_data; use only after the knowledge calls are complete",
 			Parameters:  submitAnswerParameters,
 		},
 	}
@@ -90,7 +103,7 @@ func submitAnswerCallsFormatCode(calls []modelgateway.ToolCall) toolFormatInvali
 func submitAnswerProtocolError(code string) workspacetools.Result {
 	payload, _ := json.Marshal(map[string]string{
 		"error":  code,
-		"advice": "Call submit_answer alone with the v1 no_data/claims/clarification schema, or use knowledge tools without submit_answer.",
+		"advice": "Call submit_answer alone with the v2 no_data/claims/clarification schema, or use knowledge tools without submit_answer.",
 	})
 	return workspacetools.Result{Text: string(payload), IsError: true}
 }
@@ -125,35 +138,58 @@ func parseSubmitAnswerArgumentsDetailed(raw json.RawMessage) (toolAnswer, bool, 
 	if json.Unmarshal(claimsRaw, &rawClaims) != nil || rawClaims == nil || len(rawClaims) != len(answer.Claims) || len(rawClaims) > submitAnswerMaxClaims {
 		return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 	}
-	for _, rawClaim := range rawClaims {
+	for i, rawClaim := range rawClaims {
 		claimFields, claimOK := submitAnswerObjectFields(rawClaim)
-		if !claimOK || submitAnswerJSONNull(claimFields["text"]) || submitAnswerJSONNull(claimFields["citations"]) {
+		if !claimOK || submitAnswerJSONNull(claimFields["text"]) {
 			return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 		}
 		if _, ok := claimFields["text"]; !ok {
 			return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 		}
-		citationsRaw, ok := claimFields["citations"]
-		if !ok {
-			return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
-		}
-		var rawCitations []json.RawMessage
-		if json.Unmarshal(citationsRaw, &rawCitations) != nil || rawCitations == nil || len(rawCitations) > submitAnswerMaxCitations {
-			return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
-		}
-		for _, rawCitation := range rawCitations {
-			citationFields, ok := submitAnswerObjectFields(rawCitation)
-			if !ok {
+		if citationsRaw, present := claimFields["citations"]; present {
+			var rawCitations []json.RawMessage
+			if submitAnswerJSONNull(citationsRaw) || json.Unmarshal(citationsRaw, &rawCitations) != nil || rawCitations == nil || len(rawCitations) > submitAnswerMaxCitations {
 				return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 			}
-			for key, value := range citationFields {
-				if submitAnswerJSONNull(value) {
-					if key == "address" || key == "fragment_id" {
-						return toolAnswer{}, false, toolFormatCitationSelectorInvalid
-					}
+			for _, rawCitation := range rawCitations {
+				citationFields, ok := submitAnswerObjectFields(rawCitation)
+				if !ok {
 					return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 				}
+				for key, value := range citationFields {
+					if submitAnswerJSONNull(value) {
+						if key == "address" || key == "fragment_id" {
+							return toolAnswer{}, false, toolFormatCitationSelectorInvalid
+						}
+						return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
+					}
+				}
 			}
+		}
+		if liveReadsRaw, present := claimFields["live_reads"]; present {
+			if submitAnswerJSONNull(liveReadsRaw) {
+				return toolAnswer{}, false, toolFormatLiveReferenceInvalid
+			}
+			var rawLiveReads []json.RawMessage
+			if json.Unmarshal(liveReadsRaw, &rawLiveReads) != nil || rawLiveReads == nil || len(rawLiveReads) > liveDataMaxSuccessfulCalls {
+				return toolAnswer{}, false, toolFormatLiveReferenceInvalid
+			}
+			for _, rawLiveRead := range rawLiveReads {
+				liveReadFields, ok := submitAnswerObjectFields(rawLiveRead)
+				if !ok || len(liveReadFields) != 2 || submitAnswerJSONNull(liveReadFields["result_id"]) || submitAnswerJSONNull(liveReadFields["receipt_digest"]) {
+					return toolAnswer{}, false, toolFormatLiveReferenceInvalid
+				}
+				if _, ok := liveReadFields["result_id"]; !ok {
+					return toolAnswer{}, false, toolFormatLiveReferenceInvalid
+				}
+				if _, ok := liveReadFields["receipt_digest"]; !ok {
+					return toolAnswer{}, false, toolFormatLiveReferenceInvalid
+				}
+			}
+		}
+		// A live-only claim may omit citations; every claim still needs evidence.
+		if len(answer.Claims[i].Citations) == 0 && len(answer.Claims[i].LiveReads) == 0 {
+			return toolAnswer{}, false, toolFormatAnswerSchemaInvalid
 		}
 	}
 	if clarificationRaw, present := fields["clarification"]; present && submitAnswerJSONNull(clarificationRaw) {

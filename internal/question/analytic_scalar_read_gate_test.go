@@ -306,10 +306,43 @@ func TestReadStoredRunScalarGateOrderingAndPrivacy(t *testing.T) {
 		t.Fatalf("disclosure gate refusal wraps the gate error instead of returning it unchanged")
 	}
 
-	// The gate is immediately before the one success return, so it cannot be
-	// skipped and no populated Run can escape after a refusal.
-	if len(body) != dbIndex+4 {
+	// The existing scalar gate remains first, followed by the governed live-query
+	// gate and then the one success return. Neither refusal can return result.
+	if len(body) != dbIndex+5 {
 		t.Fatalf("readStoredRun tail shape changed: %d statements after db.Read", len(body)-dbIndex)
+	}
+	governedGate, ok := body[dbIndex+3].(*ast.IfStmt)
+	if !ok {
+		t.Fatal("governed reauthorization does not follow the scalar disclosure gate")
+	}
+	governedInit, ok := governedGate.Init.(*ast.AssignStmt)
+	if !ok || len(governedInit.Rhs) != 1 || readGateCallName(governedInit.Rhs[0]) != "service.authorizeGovernedQueryDisclosures" {
+		t.Fatalf("post-scalar gate = %q, want service.authorizeGovernedQueryDisclosures", func() string {
+			if ok && len(governedInit.Rhs) == 1 {
+				return readGateCallName(governedInit.Rhs[0])
+			}
+			return ""
+		}())
+	}
+	governedCall := governedInit.Rhs[0].(*ast.CallExpr)
+	wantGovernedArgs := []string{"ctx", "access", "workspaceID", "runID", "retainedGovernedQueryDependencies"}
+	if len(governedCall.Args) != len(wantGovernedArgs) {
+		t.Fatalf("governed gate args = %d, want %d", len(governedCall.Args), len(wantGovernedArgs))
+	}
+	for index, argument := range governedCall.Args {
+		if readGateCallName(argument) != wantGovernedArgs[index] {
+			t.Fatalf("governed gate arg %d = %q, want %q", index, readGateCallName(argument), wantGovernedArgs[index])
+		}
+	}
+	if len(governedGate.Body.List) != 1 {
+		t.Fatalf("governed gate refusal body has %d statements, want one", len(governedGate.Body.List))
+	}
+	governedRefusal, ok := governedGate.Body.List[0].(*ast.ReturnStmt)
+	if !ok || !readGateReturnsZeroRun(governedRefusal) || len(governedRefusal.Results) != 2 {
+		t.Fatal("governed refusal does not return the exact zero Run and error")
+	}
+	if returned, ok := governedRefusal.Results[1].(*ast.Ident); !ok || returned.Name != "err" {
+		t.Fatal("governed refusal wraps or changes the bare gate error")
 	}
 	success, ok := body[len(body)-1].(*ast.ReturnStmt)
 	if !ok || len(success.Results) != 2 {
@@ -337,10 +370,11 @@ func TestReadStoredRunScalarGateOrderingAndPrivacy(t *testing.T) {
 		}
 	}
 	pairPointer := reflect.TypeOf(&analyticScalarPair{})
+	governedDependencyPointer := reflect.TypeOf((*governedQueryDependency)(nil))
 	for index := 0; index < reflect.TypeOf(Run{}).NumField(); index++ {
 		field := reflect.TypeOf(Run{}).Field(index)
-		if field.Type == pairPointer {
-			t.Fatalf("Run carries the analytic scalar pair through field %q", field.Name)
+		if field.Type == pairPointer || field.Type == governedDependencyPointer {
+			t.Fatalf("Run carries a private disclosure dependency through field %q", field.Name)
 		}
 		lowered := strings.ToLower(field.Name + " " + field.Tag.Get("json"))
 		for _, forbidden := range []string{"analytic", "scalar", "dependency"} {
@@ -350,8 +384,8 @@ func TestReadStoredRunScalarGateOrderingAndPrivacy(t *testing.T) {
 		}
 	}
 	for index := 0; index < reflect.TypeOf(Service{}).NumField(); index++ {
-		if field := reflect.TypeOf(Service{}).Field(index); field.Type == pairPointer {
-			t.Fatalf("Service carries the analytic scalar pair through field %q", field.Name)
+		if field := reflect.TypeOf(Service{}).Field(index); field.Type == pairPointer || field.Type == governedDependencyPointer {
+			t.Fatalf("Service carries a private disclosure dependency through field %q", field.Name)
 		}
 	}
 }
