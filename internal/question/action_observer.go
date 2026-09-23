@@ -51,6 +51,18 @@ func WithActionObserver(ctx context.Context, emit func(ActionEvent)) context.Con
 	return context.WithValue(ctx, actionObserverKey{}, &actionObserver{emit: emit})
 }
 
+// ReportAction publishes a content-free action category to the optional
+// request observer. Transport consumers must still validate the closed event
+// vocabulary before disclosing it.
+func ReportAction(ctx context.Context, event ActionEvent) {
+	observer, _ := ctx.Value(actionObserverKey{}).(*actionObserver)
+	if observer == nil {
+		return
+	}
+	event.Sequence = observer.next.Add(1)
+	observer.emit(event)
+}
+
 func emitAction(ctx context.Context, kind ActionEventType, outcome ActionOutcome) {
 	observer, _ := ctx.Value(actionObserverKey{}).(*actionObserver)
 	if observer == nil {

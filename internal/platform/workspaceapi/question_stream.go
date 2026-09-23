@@ -11,8 +11,9 @@ import (
 
 const questionStreamContentType = "application/x-ndjson"
 
-// questionEventStream writes only transport-owned lifecycle fields. The full
-// authorized run is read through the ordinary question GET disclosure gate.
+// questionEventStream writes only transport-owned lifecycle fields until its
+// terminal frame. That frame carries the completed Create response, after the
+// question authority's disclosure gate has passed.
 type questionEventStream struct {
 	mu       sync.Mutex
 	writer   http.ResponseWriter
