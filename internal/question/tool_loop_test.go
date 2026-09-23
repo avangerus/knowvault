@@ -571,6 +571,7 @@ func TestToolLoopFormatDiagnosticsAreBoundedAndContentFree(t *testing.T) {
 }
 
 func TestToolAnswerDistinguishesClarificationFromUnsupportedClaims(t *testing.T) {
+	matchingAddress := testCitationAddress(t, "object_1", "fragment_1", "version_1", "Fact")
 	for _, input := range []struct {
 		name   string
 		answer toolAnswer
@@ -586,7 +587,8 @@ func TestToolAnswerDistinguishesClarificationFromUnsupportedClaims(t *testing.T)
 		{"address without copied quote", toolAnswer{Claims: []toolClaim{{Text: "\u0424\u0430\u043a\u0442 \u0438\u0437 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430.", Citations: []toolCitation{{Address: "kv1:observed-address"}}}}}, true},
 		{"quote without address", toolAnswer{Claims: []toolClaim{{Text: "\u0424\u0430\u043a\u0442 \u0438\u0437 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430.", Citations: []toolCitation{{Quote: "\u0424\u0430\u043a\u0442"}}}}}, false},
 		{"fragment reference", toolAnswer{Claims: []toolClaim{{Text: "\u0424\u0430\u043a\u0442.", Citations: []toolCitation{{FragmentID: "fragment_1"}}}}}, true},
-		{"two reference selectors", toolAnswer{Claims: []toolClaim{{Text: "\u0424\u0430\u043a\u0442.", Citations: []toolCitation{{FragmentID: "fragment_1", Address: "kv1:observed-address"}}}}}, false},
+		{"matching redundant selectors", toolAnswer{Claims: []toolClaim{{Text: "\u0424\u0430\u043a\u0442.", Citations: []toolCitation{{FragmentID: "fragment_1", Address: matchingAddress}}}}}, true},
+		{"conflicting redundant selectors", toolAnswer{Claims: []toolClaim{{Text: "\u0424\u0430\u043a\u0442.", Citations: []toolCitation{{FragmentID: "fragment_2", Address: matchingAddress}}}}}, false},
 	} {
 		t.Run(input.name, func(t *testing.T) {
 			if validToolAnswer(input.answer) != input.valid {

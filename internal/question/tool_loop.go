@@ -1730,8 +1730,17 @@ func toolAnswerFormatCode(answer toolAnswer) toolFormatInvalidCode {
 			seenLiveReads[liveRead.ResultID] = struct{}{}
 		}
 		for _, citation := range claim.Citations {
-			if (citation.Address == "") == (citation.FragmentID == "") || len(citation.Address) > 1024 || len(citation.FragmentID) > 256 {
+			if citation.Address == "" && citation.FragmentID == "" || len(citation.Address) > 1024 || len(citation.FragmentID) > 256 {
 				return toolFormatCitationSelectorInvalid
+			}
+			// Some tool-calling models repeat the fragment ID alongside its
+			// canonical address. Accept that redundant selector only when both
+			// identify the same fragment; binding still verifies the address.
+			if citation.Address != "" && citation.FragmentID != "" {
+				selector, err := address.Parse(citation.Address)
+				if err != nil || selector.Object != citation.FragmentID {
+					return toolFormatCitationSelectorInvalid
+				}
 			}
 			if len(citation.Quote) > 8192 {
 				return toolFormatAnswerSchemaInvalid
