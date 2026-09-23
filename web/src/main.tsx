@@ -4300,11 +4300,9 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
         initialConversationID={initialConversationID ?? null}
         onConversationChange={onConversationChange ?? (() => {})}
         onOpenEvidence={onOpenEvidence}
-        onOpenSources={onOpenSources}
         requestedWorkspaceID={requestedWorkspaceID}
         state={state}
         pushToast={pushToast ?? (() => {})}
-        workspaceTitle={state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value.name : "Workspace"}
       />
     </div>
   );
@@ -4583,9 +4581,7 @@ export function initialConversationWorkspaceOwner(initialConversationID: string 
   return initialConversationID ? requestedWorkspaceID : null;
 }
 
-function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
-  workspaceTitle: string;
-  onOpenSources: () => void;
+function AskView({ onOpenEvidence, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
   onOpenEvidence: (hash: string) => void;
   onConversationChange: (conversationID: string | null) => void;
   initialConversationID: string | null;
@@ -5147,13 +5143,11 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
     return () => { alive = false; };
   }, [workspaceID, workspaceClosed, selectedConversationID]);
 
-  // Opening a topic from the left column shows the basis of its latest turn,
-  // mirroring "select a previous turn to see its evidence" for the turn the
-  // conversation was left on.
+  // Keep the answer readable first; evidence opens when the reader selects a
+  // citation or a turn.
   useEffect(() => {
     if (conversation?.kind !== "ok" || conversation.value.turns.length === 0) return;
-    const last = conversation.value.turns[conversation.value.turns.length - 1];
-    setPanelTarget({ turnId: last.turn_id, citationId: firstAnswerCitation(last.question_run) });
+    setPanelTarget(null);
     setFullscreen(false);
   }, [conversation]);
 
@@ -5232,7 +5226,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
       };
       dismissFootnoteTooltip();
       setLocalTurns((current) => [...current, turn]);
-      setPanelTarget({ turnId: turn.turn_id, citationId: firstAnswerCitation(result.value) });
+      setPanelTarget(null);
       setFullscreen(false);
       if (result.value.conversation_id && result.value.conversation_id !== selectedConversationID) {
         setSelectedConversationID(result.value.conversation_id);
@@ -5522,7 +5516,6 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
             </label>
           )}
           <p className="hint" id="ask-keyboard-hint">Enter to ask · Shift + Enter for a new line</p>
-          <p className="hint">Workspace: {workspaceTitle} · Switching workspaces starts a new conversation. <button className="text-button" onClick={onOpenSources} type="button">Sources →</button></p>
         </div>
       </section>
 
