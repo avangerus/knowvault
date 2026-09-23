@@ -26,6 +26,7 @@ import (
 const AnswerModeToolLoop = "TOOL_LOOP"
 const verificationAddress = "ADDRESS_BOUND"
 const noWorkspaceData = "The workspace has no data to answer this question."
+const refusedMetricComparison = "The requested comparison could not be verified for both dates. No comparison result is available."
 const toolScopeChangedError = `{"error":"TOOL_SCOPE_CHANGED"}`
 const toolScopeChangedStopReason = "SCOPE_CHANGED"
 const toolScopeChangedAnswer = "The workspace changed during the request. Please try again."
@@ -40,6 +41,18 @@ const toolFinalizationInstructions = "Research calls are complete; use the remai
 
 func toolFinalizationRefusal() workspacetools.Result {
 	return workspacetools.Result{IsError: true, Text: `{"error":"FINALIZATION_REQUIRED","advice":"Finish with submit_answer using the evidence already read and state its scope and limitations. No further knowledge-tool calls are available."}`}
+}
+
+func toolLoopNoDataFallback(record *ToolLoopRecord, hasSuccessfulComparison bool) string {
+	if hasSuccessfulComparison || record == nil {
+		return noWorkspaceData
+	}
+	for _, call := range record.Calls {
+		if call.Name == trustedMetricToolName && call.Outcome == "REFUSED" {
+			return refusedMetricComparison
+		}
+	}
+	return noWorkspaceData
 }
 
 // Catalog performs the existing live workspace admission and revision check.
@@ -1372,6 +1385,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		record.StopReason = "CLARIFICATION"
 	}
 	if !scopeChanged && answer == noWorkspaceData {
+		answer = toolLoopNoDataFallback(record, liveDataState.retained != nil)
 		status = "INSUFFICIENT_EVIDENCE"
 		record.AllClaimsBound = false
 	}

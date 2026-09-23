@@ -10,6 +10,7 @@ import (
 
 	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 func TestToolLoopHistoryMessagesPreserveChronologicalOrder(t *testing.T) {
@@ -120,6 +121,28 @@ func TestPureLiveAndMixedDocumentClaimsUseSeparateSupport(t *testing.T) {
 	}
 	if toolLiveOnlyInterpretationAllowed(false, false, false) || toolClaimHasSupport(false, 0, true, false) {
 		t.Fatal("citation-free claim without a live result was treated as supported")
+	}
+}
+
+func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "REFUSED",
+		Result: workspacetools.Result{Text: `{"error":"SNAPSHOT_UNAVAILABLE","date":"2026-09-10"}`},
+	}}}, false); got != refusedMetricComparison {
+		t.Fatalf("refused metric comparison fallback = %q; want %q", got, refusedMetricComparison)
+	}
+	if strings.Contains(refusedMetricComparison, "2026-09-10") || strings.Contains(refusedMetricComparison, "access") {
+		t.Fatalf("fallback exposes refusal details: %q", refusedMetricComparison)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "REFUSED",
+	}}}, true); got != noWorkspaceData {
+		t.Fatalf("fallback with successful comparison = %q; want %q", got, noWorkspaceData)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: "knowvault_search", Outcome: "REFUSED",
+	}}}, false); got != noWorkspaceData {
+		t.Fatalf("fallback for another refused tool = %q; want %q", got, noWorkspaceData)
 	}
 }
 
