@@ -437,6 +437,17 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .live-calculation-evidence dl { display: grid; gap: 3px 12px; grid-template-columns: max-content minmax(0, 1fr); margin: 6px 0 0; }
 .live-calculation-evidence dt { color: var(--ink-tertiary); }
 .live-calculation-evidence dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); }
+.live-table-evidence-list { display: grid; gap: 6px; margin-top: 8px; }
+.live-result-evidence { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: var(--fs-caption); color: var(--ink-secondary); }
+.live-result-evidence summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+.live-result-evidence dl { display: grid; gap: 3px 12px; grid-template-columns: max-content minmax(0, 1fr); margin: 8px 0; }
+.live-result-evidence dt { color: var(--ink-tertiary); }
+.live-result-evidence dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); }
+.live-table-scroll { overflow-x: auto; margin-top: 8px; }
+.live-table-payload { width: 100%; border-collapse: collapse; color: var(--ink); }
+.live-table-payload caption { padding: 4px 0; text-align: left; color: var(--ink-secondary); }
+.live-table-payload th, .live-table-payload td { padding: 5px 8px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.live-table-unavailable { margin: 8px 0 0; color: var(--ink-tertiary); }
 
 /* TXT-1: formatted answer body — paragraphs, lists, headings and inline
    emphasis parsed from the server's Markdown-lite answer text (main.tsx's

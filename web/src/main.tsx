@@ -655,6 +655,21 @@ type AnswerObservationWindow = {
   completed_at?: string;
 };
 
+export type LiveTableReceipt = {
+  execution_id: string;
+  result_digest: string;
+  receipt_digest: string;
+  row_count: number;
+  completeness: string;
+  observation_window?: AnswerObservationWindow;
+};
+
+type LiveTablePayload = {
+  columns: string[];
+  rows: Array<Array<string | null>>;
+  row_count: number;
+};
+
 export type AnswerResult = {
   kind: string;
   value?: string;
@@ -681,6 +696,7 @@ export type AnswerResult = {
   audit_receipt?: Array<string | number>;
   observation_window?: AnswerObservationWindow;
   receipt_digest?: string;
+  receipts?: LiveTableReceipt[];
 };
 
 // FIX-2 #2 ("Understood as"): populated only when Create spliced a bare period
@@ -742,7 +758,7 @@ type QuestionRun = {
       system: boolean;
       outcome: string;
       duration_ms: number;
-      result: { text: string; is_error?: boolean };
+      result: { text: string; structured?: unknown; is_error?: boolean };
     }>;
   };
 };
@@ -3171,7 +3187,133 @@ function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; sh
 
 export function hasLiveDataReceipt(run: Pick<QuestionRun, "status" | "answer_result">): boolean {
   const result = run.answer_result;
-  return run.status === "COMPLETED" && Boolean(result?.receipt_digest || (result?.result_digest && result.execution_id));
+  return run.status === "COMPLETED" && Boolean(
+    result?.receipt_digest || result?.receipts?.some((receipt) => receipt.receipt_digest) ||
+    (result?.result_digest && result.execution_id),
+  );
+}
+
+export function liveTableReceipts(result?: AnswerResult): LiveTableReceipt[] {
+  if (!result || result.kind !== "LIVE_TABLE") return [];
+  if (result.receipts && result.receipts.length > 0) return result.receipts.filter(isLiveTableReceipt).slice(0, 3);
+  if (!result.execution_id || !result.receipt_digest) return [];
+  const receipt: LiveTableReceipt = {
+    execution_id: result.execution_id,
+    result_digest: result.result_digest ?? "",
+    receipt_digest: result.receipt_digest,
+    row_count: result.snapshot.row_count,
+    completeness: result.completeness,
+    observation_window: result.observation_window,
+  };
+  return isLiveTableReceipt(receipt) ? [receipt] : [];
+}
+
+function isLiveTableReceipt(value: unknown): value is LiveTableReceipt {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const receipt = value as Record<string, unknown>;
+  const hash = (candidate: unknown) => typeof candidate === "string" && /^sha256:[0-9a-f]{64}$/.test(candidate);
+  const observation = receipt.observation_window;
+  const observationIsSafe = observation === undefined || (
+    typeof observation === "object" && observation !== null && !Array.isArray(observation) &&
+    ["basis", "started_at", "completed_at"].every((key) => {
+      const field = (observation as Record<string, unknown>)[key];
+      return field === undefined || typeof field === "string";
+    })
+  );
+  return typeof receipt.execution_id === "string" && receipt.execution_id.length > 0 &&
+    receipt.execution_id.length <= 256 && hash(receipt.result_digest) && hash(receipt.receipt_digest) &&
+    typeof receipt.row_count === "number" && Number.isInteger(receipt.row_count) &&
+    receipt.row_count >= 0 && receipt.row_count <= 100 && receipt.completeness === "COMPLETE" && observationIsSafe;
+}
+
+export function liveTablePayloadForReceipt(
+  run: Pick<QuestionRun, "tool_loop">,
+  receipt: LiveTableReceipt,
+): LiveTablePayload | null {
+  const calls = run.tool_loop?.calls ?? [];
+  for (const call of calls) {
+    if (call.name !== "knowvault_ask_live_data" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    const raw = call.result.structured ?? call.result.text;
+    let value: unknown = raw;
+    if (typeof raw === "string") {
+      try {
+        value = JSON.parse(raw) as unknown;
+      } catch {
+        continue;
+      }
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const projection = value as Record<string, unknown>;
+    if (!isLiveTableReceipt(receipt) ||
+      projection.attempt_id !== receipt.execution_id || projection.complete !== true ||
+      projection.result_digest !== receipt.result_digest || projection.receipt_digest !== receipt.receipt_digest) continue;
+    const readWindow = projection.read_window;
+    if (typeof readWindow !== "object" || readWindow === null || Array.isArray(readWindow) ||
+      (readWindow as Record<string, unknown>).complete !== true) continue;
+    const columns = projection.columns;
+    const rows = projection.rows;
+    const rowCount = projection.row_count;
+    if (!Array.isArray(columns) || !Array.isArray(rows) || typeof rowCount !== "number" ||
+      !Number.isInteger(rowCount) || rowCount !== receipt.row_count || rowCount < 0 || rowCount > 100 ||
+      columns.length === 0 || columns.length > 64 || rows.length !== rowCount || rows.length * columns.length > 4096 ||
+      columns.some((column) => typeof column !== "string" || column.length === 0) ||
+      rows.some((row) => !Array.isArray(row) || row.length !== columns.length ||
+        row.some((cell) => cell !== null && typeof cell !== "string"))) continue;
+    return { columns: columns as string[], rows: rows as Array<Array<string | null>>, row_count: rowCount };
+  }
+  return null;
+}
+
+export function LiveTableEvidenceList({ result, run }: { result: AnswerResult; run: QuestionRun }) {
+  const receipts = liveTableReceipts(result);
+  if (receipts.length === 0) return null;
+  return (
+    <section aria-label="Live result evidence" className="live-table-evidence-list">
+      {receipts.map((receipt, index) => (
+        <LiveTableEvidenceItem key={`${receipt.execution_id}-${index}`} ordinal={index + 1} receipt={receipt} run={run} />
+      ))}
+    </section>
+  );
+}
+
+function LiveTableEvidenceItem({ ordinal, receipt, run }: {
+  ordinal: number;
+  receipt: LiveTableReceipt;
+  run: QuestionRun;
+}) {
+  const [showTable, setShowTable] = useState(false);
+  const payload = liveTablePayloadForReceipt(run, receipt);
+  const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
+  return (
+    <details className="live-result-evidence">
+      <summary>Live result {ordinal} · {receipt.row_count.toLocaleString("en-US")} {receipt.row_count === 1 ? "row" : "rows"}</summary>
+      <dl>
+        <dt>Row count</dt><dd>{receipt.row_count.toLocaleString("en-US")}</dd>
+        <dt>Observation window</dt><dd>{receipt.observation_window ? answerObservationWindowText(receipt.observation_window) || "—" : "—"}</dd>
+        <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
+      </dl>
+      {payload ? (
+        <>
+          <button aria-controls={tableID} aria-expanded={showTable} className="text-button live-table-toggle" onClick={() => setShowTable((visible) => !visible)} type="button">
+            {showTable ? "Hide returned table" : "Show returned table"}
+          </button>
+          <div className="live-table-scroll" id={tableID}>
+            {showTable && (
+              <table className="live-table-payload">
+                <caption>Returned rows · Live result {ordinal}</caption>
+                <thead><tr>{payload.columns.map((column, index) => <th key={`${column}-${index}`} scope="col">{column}</th>)}</tr></thead>
+                <tbody>{payload.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex}>{row.map((cell, columnIndex) => <td key={columnIndex}>{cell === null ? "NULL" : cell}</td>)}</tr>
+                ))}</tbody>
+              </table>
+            )}
+          </div>
+        </>
+      ) : (
+        <p className="live-table-unavailable">The table payload is unavailable for this receipt.</p>
+      )}
+    </details>
+  );
 }
 
 function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
@@ -4005,8 +4147,9 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   const liveResult = run.answer_result;
   const liveObservationWindow = liveResult?.observation_window;
   const liveReceiptDigest = liveResult?.receipt_digest;
-  const hasLiveReceipt = Boolean(liveObservationWindow && liveReceiptDigest);
   const isLiveTable = liveResult?.kind === "LIVE_TABLE";
+  const liveReceipts = liveTableReceipts(liveResult);
+  const hasLiveReceipt = Boolean((liveObservationWindow && liveReceiptDigest) || liveReceipts.length > 0);
   const isLiveScalar = hasLiveReceipt && !isLiveTable;
   // A live calculation and cited document prose prove different things. Keep
   // their presentation separate so the model's document context is never
@@ -4039,16 +4182,31 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           ) : resultValue ? (
             <span className="answer-live-summary">{resultValue}</span>
           ) : null}
-          <details className="live-calculation-evidence">
-            <summary>{isLiveTable ? "Live table receipt" : "Evidence for this calculation"}</summary>
-            <dl>
-              {liveResult?.period && <><dt>Period</dt><dd>{answerPeriodText(liveResult.period) ?? "—"}</dd></>}
-              {liveResult?.timezone && <><dt>Time zone</dt><dd>{liveResult.timezone}</dd></>}
-              <dt>{isLiveTable ? "Rows returned" : "Contributing rows"}</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
-              <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
-              <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
-            </dl>
-          </details>
+          {isLiveTable && liveResult ? (
+            liveReceipts.length > 0 ? (
+              <LiveTableEvidenceList result={liveResult} run={run} />
+            ) : (
+              <details className="live-calculation-evidence">
+                <summary>Live table receipt</summary>
+                <dl>
+                  <dt>Rows returned</dt><dd>{liveResult.snapshot.row_count}</dd>
+                  <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
+                  <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
+                </dl>
+              </details>
+            )
+          ) : (
+            <details className="live-calculation-evidence">
+              <summary>Evidence for this calculation</summary>
+              <dl>
+                {liveResult?.period && <><dt>Period</dt><dd>{answerPeriodText(liveResult.period) ?? "—"}</dd></>}
+                {liveResult?.timezone && <><dt>Time zone</dt><dd>{liveResult.timezone}</dd></>}
+                <dt>Contributing rows</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
+                <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
+                <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
+              </dl>
+            </details>
+          )}
         </div>
       ) : text ? (
         isQuote ? (

@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   check(sameSet(expectedFromServer, projectionKeys), `panel projection ${JSON.stringify(sorted(projectionKeys))} is not the server R2 members ${JSON.stringify(sorted(r2Tags))} plus value/unit/completeness`);
 
   const liveReceiptTags = liveReceiptServerTagNames(structBody);
-  check(sameSet(liveReceiptTags, ["observation_window", "receipt_digest"]), `live receipt contract ${JSON.stringify(sorted(liveReceiptTags))} does not match the panel's additive receipt fields`);
+  check(sameSet(liveReceiptTags, ["observation_window", "receipt_digest", "receipts"]), `live receipt contract ${JSON.stringify(sorted(liveReceiptTags))} does not match the additive receipt fields`);
 
   // --- 2. Legacy answers render “no data”, never invented values -----------
   everyAbsentFieldIsNoData(undefined, "legacy fallback (showUnifiedFallback)");

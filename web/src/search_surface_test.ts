@@ -7,6 +7,8 @@ import {
   buildSearchHash,
   hasLiveDataReceipt,
   initialConversationWorkspaceOwner,
+  LiveTableEvidenceList,
+  liveTablePayloadForReceipt,
   parseSearchHash,
   questionClaimGroundingLabel,
   questionRunPayload,
@@ -160,6 +162,61 @@ check(mainSource.includes("initialConversationWorkspaceOwner(initialConversation
 const receiptRun = { status: "COMPLETED", answer_result: { receipt_digest: "sha256:receipt" } } as never;
 const documentRun = { status: "COMPLETED", answer_result: undefined } as never;
 check(hasLiveDataReceipt(receiptRun) && !hasLiveDataReceipt(documentRun), "a completed receipt-backed live answer suppresses only the document-citation warning");
+const liveReceipts = [1, 2, 3].map((ordinal) => ({
+  execution_id: `attempt-${ordinal}`,
+  result_digest: `sha256:${String.fromCharCode(96 + ordinal).repeat(64)}`,
+  receipt_digest: `sha256:${String(ordinal).repeat(64)}`,
+  row_count: 1,
+  completeness: "COMPLETE",
+  observation_window: {
+    basis: "SERVER_GOVERNED_QUERY_EXECUTION",
+    started_at: "2026-09-21T08:12:29Z",
+    completed_at: "2026-09-21T08:12:30Z",
+  },
+}));
+const liveAnswerResult = {
+  kind: "LIVE_TABLE",
+  receipts: liveReceipts,
+} as never;
+const liveRunFixture = {
+  question_run_id: "qrun-1",
+  tool_loop: {
+    calls: liveReceipts.map((receipt, index) => ({
+      name: "knowvault_ask_live_data",
+      outcome: "SUCCEEDED",
+      result: {
+        text: "",
+        structured: {
+          attempt_id: receipt.execution_id,
+          result_digest: receipt.result_digest,
+          receipt_digest: receipt.receipt_digest,
+          complete: true,
+          read_window: { complete: true },
+          row_count: 1,
+          columns: ["id"],
+          rows: [[`PRIVATE_LIVE_ROW_${index + 1}`]],
+        },
+      },
+    })),
+  },
+} as never;
+const liveEvidenceMarkup = renderToStaticMarkup(createElement(LiveTableEvidenceList, {
+  result: liveAnswerResult,
+  run: liveRunFixture,
+}));
+check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`Live result ${ordinal}`)), "every current live receipt has a separately labelled evidence disclosure");
+check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`sha256:${String(ordinal).repeat(64)}`))
+  && liveEvidenceMarkup.includes("Row count") && liveEvidenceMarkup.includes("Observation window"), "live evidence disclosures carry row count, observation window and each receipt digest");
+check(liveEvidenceMarkup.includes("Show returned table") && !liveEvidenceMarkup.includes("PRIVATE_LIVE_ROW_"), "the receipt UI keeps table rows out of default markup and offers an explicit disclosure control");
+const matchingLivePayload = liveTablePayloadForReceipt(liveRunFixture, liveReceipts[1]);
+check(matchingLivePayload?.rows[0]?.[0] === "PRIVATE_LIVE_ROW_2", "a returned table is available only from the successful call matching the exact live receipt");
+check(liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], receipt_digest: `sha256:${"9".repeat(64)}` }) === null
+  && liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], result_digest: `sha256:${"9".repeat(64)}` }) === null
+  && liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], execution_id: "another-run" }) === null
+  && liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], completeness: "PARTIAL" }) === null,
+  "a receipt, result, run ID or completeness mismatch withholds the table payload");
+check(mainSource.includes("<ToolCallsDisclosure run={run} showResults={false} />")
+  && !mainSource.includes("<ToolCallsDisclosure run={run} showResults={true}"), "live table disclosure leaves generic tool outputs hidden");
 check(mainSource.includes("run.citations.length === 0 && !hasLiveReceipt"), "TurnAnswer keeps the no-citation warning for unsupported document claims");
 check(!askOwnerSource.includes('aria-label="Search source"') && !askOwnerSource.includes("Workspace search") && !askOwnerSource.includes("Live database"), "Ask owner contains no execution-mode labels");
 check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "the governed host remains available for a future Diagnostics surface");
