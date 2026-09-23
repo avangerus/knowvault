@@ -296,6 +296,30 @@ export function parseSearchHash(hash: string): SearchTarget | null {
   return conversation ? { workspace, conversation } : null;
 }
 
+export function shouldHandleInAppEvidenceClick(event: Pick<MouseEvent, "button" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">): boolean {
+  return event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+}
+
+export function openEvidenceHistory(
+  hash: string,
+  workspaceID: string | null,
+  conversationID: string | null,
+  history: Pick<History, "replaceState" | "pushState">,
+  pathname: string,
+  search: string,
+  navigationSession: string,
+): string | null {
+  const target = parseEvidenceHash(hash);
+  if (!target) return null;
+  const searchHash = buildSearchHash(workspaceID ?? target.workspace, conversationID);
+  const base = `${pathname}${search}`;
+  // Keep the current conversation in the retained search entry. Queries,
+  // answers and source text stay in the mounted, session-scoped SearchView.
+  history.replaceState(null, "", `${base}${searchHash}`);
+  history.pushState({ knowvaultSearchReturn: navigationSession }, "", `${base}${hash}`);
+  return searchHash;
+}
+
 export function parseEvidenceHash(hash: string): EvidenceTarget | null {
   const match = hash.match(/^#evidence\/([^/?#]+)\/([^/?#]+)(?:\?(.*))?$/);
   if (!match) return null;
@@ -1974,15 +1998,11 @@ function App() {
   }, []);
 
   function openEvidence(hash: string) {
-    const target = parseEvidenceHash(hash);
-    if (!target || sessionStateRef.current !== "signedIn") return;
-    const searchHash = buildSearchHash(selectedWorkspaceID ?? target.workspace, selectedConversationID);
-    const base = `${window.location.pathname}${window.location.search}`;
-    // History holds navigation identity only. Queries, answers and source text
-    // stay in the mounted, session-scoped SearchView and never enter storage.
-    window.history.replaceState(null, "", `${base}${searchHash}`);
+    if (sessionStateRef.current !== "signedIn") return;
+    const searchHash = openEvidenceHistory(hash, selectedWorkspaceID, selectedConversationID,
+      window.history, window.location.pathname, window.location.search, navigationSession.current);
+    if (!searchHash) return;
     routeHash.current = searchHash;
-    window.history.pushState({ knowvaultSearchReturn: navigationSession.current }, "", `${base}${hash}`);
     syncLocation();
   }
 
@@ -3850,7 +3870,7 @@ function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = fa
   );
 }
 
-export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onSelectCitation }: {
+export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onOpenEvidence, onSelectCitation }: {
   workspaceID: string | null;
   target: PanelTarget;
   turnsByID: Map<string, ConversationTurn>;
@@ -3858,6 +3878,7 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
   allSources: SourceStatus[];
   fullscreen: boolean;
   onToggleFullscreen: () => void;
+  onOpenEvidence: (hash: string) => void;
   onSelectCitation: (turnID: string, citationID: string) => void;
 }) {
   const turn = target && "turnId" in target ? turnsByID.get(target.turnId) ?? null : null;
@@ -3970,7 +3991,11 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
         </div>
         {evidence?.kind === "ok" && (
           <div className="evi-actions">
-            {evidencePageURL && <a className="lnk" href={evidencePageURL}>Open separately</a>}
+            {evidencePageURL && <a className="lnk" href={evidencePageURL} onClick={(event) => {
+              if (!shouldHandleInAppEvidenceClick(event)) return;
+              event.preventDefault();
+              onOpenEvidence(new URL(evidencePageURL).hash);
+            }}>Open separately</a>}
             {evidencePageURL && <button className="lnk" onClick={() => void copyEvidencePageLink()} type="button">Copy link</button>}
             <button aria-expanded={fullscreen} className="lnk" onClick={onToggleFullscreen} ref={expandButtonRef} type="button">
               {fullscreen ? <IconCollapse /> : <IconExpand />}
@@ -4210,6 +4235,7 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
       <AskView
         initialConversationID={initialConversationID ?? null}
         onConversationChange={onConversationChange ?? (() => {})}
+        onOpenEvidence={onOpenEvidence}
         onOpenSources={onOpenSources}
         requestedWorkspaceID={requestedWorkspaceID}
         state={state}
@@ -4493,9 +4519,10 @@ export function initialConversationWorkspaceOwner(initialConversationID: string 
   return initialConversationID ? requestedWorkspaceID : null;
 }
 
-function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
+function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
   workspaceTitle: string;
   onOpenSources: () => void;
+  onOpenEvidence: (hash: string) => void;
   onConversationChange: (conversationID: string | null) => void;
   initialConversationID: string | null;
   state: WorkspaceDataState;
@@ -5429,6 +5456,7 @@ function AskView({ workspaceTitle, onOpenSources, onConversationChange, initialC
       <EvidencePanel
         allSources={allSources}
         fullscreen={fullscreen}
+        onOpenEvidence={onOpenEvidence}
         onSelectCitation={(turnID, citationID) => {
           const turn = turnsByID.get(turnID);
           if (turn) selectCitation(turn, citationID);

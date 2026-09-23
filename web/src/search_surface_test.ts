@@ -311,6 +311,7 @@ const liveSidePanelMarkup = renderToStaticMarkup(createElement(EvidencePanel, {
   sourceNameByConnection: new Map(),
   allSources: [],
   fullscreen: false,
+  onOpenEvidence: () => {},
   onToggleFullscreen: () => {},
   onSelectCitation: () => {},
 }));

@@ -4,8 +4,11 @@ import {
   evidencePageHref,
   evidenceRequestPath,
   evidenceSourceFilename,
+  buildSearchHash,
+  openEvidenceHistory,
   parseEvidenceHash,
   verifyEvidenceQuoteSelector,
+  shouldHandleInAppEvidenceClick,
   type EvidenceData,
   type EvidenceTarget,
 } from "./main";
@@ -51,6 +54,24 @@ async function main(): Promise<void> {
 
   const bare = parseEvidenceHash("#evidence/other-workspace/fragment-4");
   check(bare?.workspace === "other-workspace" && bare.selector === undefined, "bare source links open the full fragment without a selector");
+  const historyCalls: Array<{ kind: string; state: unknown; url: string }> = [];
+  const history = {
+    replaceState: (state: unknown, _title: string, url?: string | URL | null) => historyCalls.push({ kind: "replace", state, url: String(url) }),
+    pushState: (state: unknown, _title: string, url?: string | URL | null) => historyCalls.push({ kind: "push", state, url: String(url) }),
+  } as unknown as History;
+  const returnHash = openEvidenceHistory("#evidence/url-workspace/fragment-4", "url-workspace", "conversation-7",
+    history, "/app", "?tenant=browser", "session-23");
+  check(returnHash === buildSearchHash("url-workspace", "conversation-7"), "opening evidence retains the active conversation in its search history entry");
+  check(historyCalls[0]?.url === `/app?tenant=browser${buildSearchHash("url-workspace", "conversation-7")}`
+    && historyCalls[1]?.url === "/app?tenant=browser#evidence/url-workspace/fragment-4"
+    && (historyCalls[1]?.state as { knowvaultSearchReturn?: string })?.knowvaultSearchReturn === "session-23",
+  "evidence navigation replaces the current route with conversation search before pushing the evidence page");
+  check(shouldHandleInAppEvidenceClick({ button: 0, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }),
+    "ordinary Open separately click uses in-app history navigation");
+  check(!shouldHandleInAppEvidenceClick({ button: 0, ctrlKey: true, metaKey: false, shiftKey: false, altKey: false })
+    && !shouldHandleInAppEvidenceClick({ button: 1, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }),
+  "modifier and non-left clicks preserve ordinary anchor behavior");
+  check(buildSearchHash(bare!.workspace) === "#search/other-workspace", "a shared evidence link has a workspace search fallback without conversation state");
   const partial = parseEvidenceHash("#evidence/url-workspace/fragment-4?quote_start=1&quote_end=2");
   check(partial?.workspace === "url-workspace" && partial.selector === undefined, "partial selectors fall back to the full fragment");
   const malformed = parseEvidenceHash("#evidence/url-workspace/fragment-4?quote_start=1#tampered");
