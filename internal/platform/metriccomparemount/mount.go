@@ -58,6 +58,7 @@ type wire struct {
 type profileWire struct {
 	ExposedSchemaRevision int64        `json:"exposed_schema_revision"`
 	MetricID              string       `json:"metric_id"`
+	Description           string       `json:"description"`
 	Unit                  string       `json:"unit"`
 	Schema                string       `json:"schema"`
 	View                  string       `json:"view"`
@@ -135,7 +136,8 @@ func LoadMountedAt(root string) (Mount, error) {
 		filters[i] = metriccompare.FixedFilter{Column: f.Column, Value: f.Value}
 	}
 	profile, err := metriccompare.NewProfile(metriccompare.ProfileSpec{
-		ExposedSchemaRevision: p.ExposedSchemaRevision, MetricID: p.MetricID, Unit: p.Unit,
+		ExposedSchemaRevision: p.ExposedSchemaRevision, MetricID: p.MetricID,
+		Description: p.Description, Unit: p.Unit,
 		Schema: p.Schema, View: p.View, SubjectColumn: p.SubjectColumn,
 		SnapshotColumn: p.SnapshotColumn, MeasureColumn: p.MeasureColumn,
 		Timezone: p.Timezone, Filters: filters,

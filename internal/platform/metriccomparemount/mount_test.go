@@ -15,6 +15,7 @@ const validProfile = `{
   "profile":{
     "exposed_schema_revision":2,
     "metric_id":"gm.assigned-tasks",
+    "description":"Assigned-task indicator across subjects at the latest daily snapshot",
     "unit":"unknown",
     "schema":"public",
     "view":"v_kpi_value",
@@ -52,6 +53,7 @@ func TestLoadMountedAbsentAndValid(t *testing.T) {
 	}
 	if mount.WorkspaceID != "ws_001" || mount.ConnectionID != "customer-gm-live" ||
 		mount.Profile.MetricID() != "gm.assigned-tasks" || mount.Profile.Unit() != "unknown" ||
+		mount.Profile.Description() != "Assigned-task indicator across subjects at the latest daily snapshot" ||
 		!strings.HasPrefix(mount.Profile.Hash(), "sha256:") {
 		t.Fatalf("invalid binding: %+v", mount)
 	}
@@ -64,6 +66,7 @@ func TestLoadMountedRejectsMalformedUnknownDuplicateAndUnsafe(t *testing.T) {
 		"malformed":        "{",
 		"unknown top":      strings.Replace(validProfile, `"workspace_id"`, `"extra":1,"workspace_id"`, 1),
 		"unknown nested":   strings.Replace(validProfile, `"metric_id"`, `"extra":1,"metric_id"`, 1),
+		"control prose":    strings.Replace(validProfile, `"description":"Assigned-task indicator across subjects at the latest daily snapshot"`, `"description":"bad\ntext"`, 1),
 		"unknown filter":   strings.Replace(validProfile, `"column"`, `"extra":1,"column"`, 1),
 		"duplicate top":    strings.Replace(validProfile, `"workspace_id":"ws_001"`, `"workspace_id":"ws_001","workspace_id":"ws_002"`, 1),
 		"duplicate nested": strings.Replace(validProfile, `"unit":"unknown"`, `"unit":"unknown","unit":"tasks"`, 1),
