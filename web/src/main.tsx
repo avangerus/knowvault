@@ -670,6 +670,25 @@ type LiveTablePayload = {
   row_count: number;
 };
 
+type ComparisonDay = {
+  date: string;
+  snapshot_at: string;
+  value: string;
+  contributing_rows: number;
+  distinct_subjects: number;
+};
+
+type ComparisonEvidence = {
+  metric_id: string;
+  unit: string;
+  coverage: "OBSERVED_SNAPSHOT";
+  first: ComparisonDay;
+  second: ComparisonDay;
+  delta: string;
+  percent_change: string;
+  evidence_digest: string;
+};
+
 export type AnswerResult = {
   kind: string;
   value?: string;
@@ -3271,6 +3290,45 @@ export function liveTablePayloadForReceipt(
   return null;
 }
 
+export function comparisonEvidenceForReceipt(
+  run: Pick<QuestionRun, "tool_loop">,
+  receipt: LiveTableReceipt,
+): ComparisonEvidence | null {
+  if (!isLiveTableReceipt(receipt) || receipt.row_count !== 2) return null;
+  const digest = (value: unknown): value is string => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+  const decimal = (value: unknown): value is string => typeof value === "string" && value.length <= 128 && /^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/.test(value);
+  const day = (value: unknown): value is ComparisonDay => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const item = value as Record<string, unknown>;
+    return Object.keys(item).sort().join(",") === "contributing_rows,date,distinct_subjects,snapshot_at,value" &&
+      typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date) &&
+      typeof item.snapshot_at === "string" && !Number.isNaN(Date.parse(item.snapshot_at)) &&
+      decimal(item.value) && Number.isSafeInteger(item.contributing_rows) &&
+      (item.contributing_rows as number) > 0 && item.distinct_subjects === item.contributing_rows;
+  };
+  for (const call of run.tool_loop?.calls ?? []) {
+    if (call.name !== "knowvault_compare_metric" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    let value: unknown = call.result.structured ?? call.result.text;
+    if (typeof value === "string") {
+      try { value = JSON.parse(value) as unknown; } catch { continue; }
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).sort().join(",") !== "attempt_id,coverage,delta,evidence_digest,evidence_schema_version,exposed_schema_revision,first,metric_id,percent_change,profile_hash,raw_result_digest,receipt_digest,second,unit" ||
+      item.attempt_id !== receipt.execution_id || item.raw_result_digest !== receipt.result_digest ||
+      item.receipt_digest !== receipt.receipt_digest || item.evidence_schema_version !== 1 ||
+      !Number.isSafeInteger(item.exposed_schema_revision) || (item.exposed_schema_revision as number) < 1 ||
+      typeof item.metric_id !== "string" || item.metric_id.length === 0 || item.metric_id.length > 128 ||
+      !digest(item.profile_hash) || !digest(item.evidence_digest) ||
+      typeof item.unit !== "string" || item.unit.length === 0 || item.unit.length > 128 ||
+      item.coverage !== "OBSERVED_SNAPSHOT" || !day(item.first) || !day(item.second) ||
+      (item.first as ComparisonDay).date === (item.second as ComparisonDay).date ||
+      !decimal(item.delta) || !(item.percent_change === "" || decimal(item.percent_change))) continue;
+    return item as ComparisonEvidence;
+  }
+  return null;
+}
+
 export function LiveTableEvidenceList({ result, run }: { result: AnswerResult; run: QuestionRun }) {
   const receipts = liveTableReceipts(result);
   if (receipts.length === 0) return null;
@@ -3287,7 +3345,7 @@ export function LiveResultEvidencePanel({ run }: { run: QuestionRun }) {
   if (!run.answer_result || liveTableReceipts(run.answer_result).length === 0) return null;
   return (
     <div className="live-result-panel">
-      <p>This answer used live database reads. Each receipt records the returned rows and when the database was read.</p>
+      <p>This answer used live database reads. Each receipt records the result and when the database was read.</p>
       <LiveTableEvidenceList result={run.answer_result} run={run} />
     </div>
   );
@@ -3300,6 +3358,7 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
 }) {
   const [showTable, setShowTable] = useState(false);
   const payload = liveTablePayloadForReceipt(run, receipt);
+  const comparison = comparisonEvidenceForReceipt(run, receipt);
   const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
   return (
     <details className="live-result-evidence">
@@ -3309,7 +3368,20 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
         <dt>Observation window</dt><dd>{receipt.observation_window ? answerObservationWindowText(receipt.observation_window) || "—" : "—"}</dd>
         <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
       </dl>
-      {payload ? (
+      {comparison ? (
+        <div className="live-comparison-evidence">
+          <p>Metric: {comparison.metric_id} · Unit: {comparison.unit === "unknown" ? "unknown" : comparison.unit} · Coverage: observed snapshots only; full population coverage is unknown.</p>
+          <table className="live-table-payload">
+            <caption>Observed values · Live result {ordinal}</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Observed value</th><th scope="col">Snapshot time</th><th scope="col">Observed subjects</th></tr></thead>
+            <tbody>{[comparison.first, comparison.second].map((day) => (
+              <tr key={day.date}><th scope="row">{day.date}</th><td>{day.value}</td><td>{day.snapshot_at}</td><td>{day.distinct_subjects.toLocaleString("en-US")}</td></tr>
+            ))}</tbody>
+          </table>
+          <p>Delta (first − second): {comparison.delta} · Change relative to second: {comparison.percent_change === "" ? "undefined (second value is zero)" : `${comparison.percent_change}%`}</p>
+          <details><summary>Semantic evidence digest</summary><code className="mono">{comparison.evidence_digest}</code></details>
+        </div>
+      ) : payload ? (
         <>
           <button aria-controls={tableID} aria-expanded={showTable} className="text-button live-table-toggle" onClick={() => setShowTable((visible) => !visible)} type="button">
             {showTable ? "Hide returned table" : "Show returned table"}

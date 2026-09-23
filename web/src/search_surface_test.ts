@@ -6,6 +6,7 @@ import {
   SearchView,
   authorizedSourcesForAsk,
   buildSearchHash,
+  comparisonEvidenceForReceipt,
   hasLiveDataReceipt,
   initialConversationWorkspaceOwner,
   LiveTableEvidenceList,
@@ -242,6 +243,42 @@ check(liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], receipt_d
   && liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], execution_id: "another-run" }) === null
   && liveTablePayloadForReceipt(liveRunFixture, { ...liveReceipts[1], completeness: "PARTIAL" }) === null,
   "a receipt, result, run ID or completeness mismatch withholds the table payload");
+const comparisonReceipt = { ...liveReceipts[0], row_count: 2 };
+const comparisonResult = {
+  metric_id: "work.assignments", profile_hash: `sha256:${"a".repeat(64)}`,
+  evidence_schema_version: 1, exposed_schema_revision: 7,
+  unit: "unknown", coverage: "OBSERVED_SNAPSHOT",
+  first: { date: "2026-09-10", snapshot_at: "2026-09-10T09:00:00Z", value: "32520", contributing_rows: 9, distinct_subjects: 9 },
+  second: { date: "2026-09-17", snapshot_at: "2026-09-17T09:00:00Z", value: "36454", contributing_rows: 10, distinct_subjects: 10 },
+  delta: "-3934", percent_change: "-10.79",
+  attempt_id: comparisonReceipt.execution_id, raw_result_digest: comparisonReceipt.result_digest,
+  evidence_digest: `sha256:${"e".repeat(64)}`, receipt_digest: comparisonReceipt.receipt_digest,
+};
+const comparisonRun = { ...liveRunFixture, tool_loop: { ...liveRunFixture.tool_loop, calls: [{
+  id: "comparison-call", name: "knowvault_compare_metric", outcome: "SUCCEEDED", duration_ms: 30,
+  result: { text: JSON.stringify(comparisonResult), structured: comparisonResult },
+}] } };
+check(comparisonEvidenceForReceipt(comparisonRun as never, comparisonReceipt)?.delta === "-3934"
+  && comparisonEvidenceForReceipt(comparisonRun as never, { ...comparisonReceipt, result_digest: `sha256:${"9".repeat(64)}` }) === null
+  && comparisonEvidenceForReceipt(comparisonRun as never, { ...comparisonReceipt, receipt_digest: `sha256:${"9".repeat(64)}` }) === null
+  && comparisonEvidenceForReceipt(comparisonRun as never, { ...comparisonReceipt, execution_id: "other" }) === null,
+  "comparison evidence requires the exact attempt, raw result and receipt digests");
+const alteredComparisonRun = (structured: unknown) => ({ ...comparisonRun, tool_loop: { ...comparisonRun.tool_loop,
+  calls: [{ ...comparisonRun.tool_loop.calls[0], result: { text: "", structured } }],
+} });
+check(comparisonEvidenceForReceipt(alteredComparisonRun({ ...comparisonResult, first: { ...comparisonResult.first, distinct_subjects: 8 } }) as never, comparisonReceipt) === null
+  && comparisonEvidenceForReceipt(alteredComparisonRun({ ...comparisonResult, coverage: "COMPLETE" }) as never, comparisonReceipt) === null
+  && comparisonEvidenceForReceipt(alteredComparisonRun({ ...comparisonResult, sql: "SELECT * FROM private" }) as never, comparisonReceipt) === null,
+  "comparison evidence rejects inconsistent counts, coverage claims and unexpected fields");
+const comparisonMarkup = renderToStaticMarkup(createElement(LiveTableEvidenceList, {
+  result: { kind: "LIVE_TABLE", receipts: [comparisonReceipt] } as never, run: comparisonRun as never,
+}));
+check(comparisonMarkup.includes("32520") && comparisonMarkup.includes("36454")
+  && comparisonMarkup.includes("2026-09-10T09:00:00Z") && comparisonMarkup.includes("2026-09-17T09:00:00Z")
+  && comparisonMarkup.includes("Observed subjects") && comparisonMarkup.includes("-3934")
+  && comparisonMarkup.includes("-10.79%") && comparisonMarkup.includes("full population coverage is unknown")
+  && comparisonMarkup.includes(`sha256:${"e".repeat(64)}`) && !comparisonMarkup.includes("table payload is unavailable")
+  && !comparisonMarkup.includes("SELECT *"), "comparison receipt renders compact observed evidence without SQL");
 check(mainSource.includes("<ToolCallsDisclosure run={run} showResults={false} />")
   && !mainSource.includes("<ToolCallsDisclosure run={run} showResults={true}"), "live table disclosure leaves generic tool outputs hidden");
 const activeConversationRun = {

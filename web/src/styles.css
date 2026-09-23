@@ -448,6 +448,10 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .live-table-payload caption { padding: 4px 0; text-align: left; color: var(--ink-secondary); }
 .live-table-payload th, .live-table-payload td { padding: 5px 8px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
 .live-table-unavailable { margin: 8px 0 0; color: var(--ink-tertiary); }
+.live-comparison-evidence { overflow-x: auto; }
+.live-comparison-evidence p { margin: 8px 0; }
+.live-comparison-evidence details { margin: 8px 0; }
+.live-comparison-evidence code { overflow-wrap: anywhere; }
 
 /* TXT-1: formatted answer body — paragraphs, lists, headings and inline
    emphasis parsed from the server's Markdown-lite answer text (main.tsx's
