@@ -328,6 +328,18 @@ func TestParseSubmitAnswerArgumentsDetailedClassifiesFailures(t *testing.T) {
 	}
 }
 
+func TestSubmitAnswerAcceptsMatchingRedundantCitationSelector(t *testing.T) {
+	canonical := testCitationAddress(t, "object_1", "fragment_1", "version_1", "Fact")
+	input := fmt.Sprintf(`{"claims":[{"text":"Fact.","citations":[{"address":%q,"fragment_id":"fragment_1"}]}],"no_data":false}`, canonical)
+	if _, ok, code := parseSubmitAnswerArgumentsDetailed([]byte(input)); !ok || code != "" {
+		t.Fatalf("matching selector rejected: ok=%v code=%q", ok, code)
+	}
+	conflicting := strings.Replace(input, `"fragment_id":"fragment_1"`, `"fragment_id":"fragment_2"`, 1)
+	if _, ok, code := parseSubmitAnswerArgumentsDetailed([]byte(conflicting)); ok || code != toolFormatCitationSelectorInvalid {
+		t.Fatalf("conflicting selector accepted: ok=%v code=%q", ok, code)
+	}
+}
+
 func TestSubmitAnswerCallsFormatCodeDistinguishesMixedCalls(t *testing.T) {
 	submit := testSubmitAnswerCall(`{"no_data":true,"claims":[]}`)
 	knowledge := testSubmitAnswerCall(`{"fragment_id":"fragment_1"}`)

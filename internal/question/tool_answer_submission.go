@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 
+	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
@@ -255,8 +256,18 @@ func toolAnswerRawCitationSelectorCode(raw json.RawMessage) toolFormatInvalidCod
 			}
 			addressRaw, hasAddress := citationFields["address"]
 			fragmentRaw, hasFragment := citationFields["fragment_id"]
-			if hasAddress == hasFragment {
+			if !hasAddress && !hasFragment {
 				return toolFormatCitationSelectorInvalid
+			}
+			if hasAddress && hasFragment {
+				var canonical, fragment string
+				if json.Unmarshal(addressRaw, &canonical) != nil || json.Unmarshal(fragmentRaw, &fragment) != nil {
+					return toolFormatCitationSelectorInvalid
+				}
+				selector, err := address.Parse(canonical)
+				if err != nil || selector.Object != fragment || len(fragment) > 256 {
+					return toolFormatCitationSelectorInvalid
+				}
 			}
 			selectorRaw := addressRaw
 			maxLength := 1024
