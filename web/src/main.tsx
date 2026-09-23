@@ -3280,7 +3280,7 @@ export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitat
 function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
   if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
   return (
-    <details className="tool-trace">
+    <details className="tool-trace" open>
       <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
       <ol>
         {run.tool_loop.calls.map((call, index) => {
