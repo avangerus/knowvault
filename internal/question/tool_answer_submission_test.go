@@ -62,6 +62,38 @@ func TestSubmitAnswerLiveReadReferencesAreOptionalAndBounded(t *testing.T) {
 	}
 }
 
+func TestSubmitAnswerAcceptsLiveOnlyClaimWithoutCitations(t *testing.T) {
+	const payload = `{"no_data":false,"claims":[{"text":"Live observation.","live_reads":[{"result_id":"gqat_test_1","receipt_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]}`
+	answer, ok := parseSubmitAnswerArguments([]byte(payload))
+	if !ok || len(answer.Claims) != 1 || len(answer.Claims[0].Citations) != 0 || len(answer.Claims[0].LiveReads) != 1 {
+		t.Fatalf("live-only claim without citations was rejected or changed: %#v, ok=%v", answer, ok)
+	}
+	var schema any
+	if err := json.Unmarshal(submitAnswerToolDefinition().Function.Parameters, &schema); err != nil {
+		t.Fatal(err)
+	}
+	var instance any
+	if err := json.Unmarshal([]byte(payload), &instance); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishedSubmitAnswerSchema(schema, instance); err != nil {
+		t.Fatalf("published schema rejected live-only claim: %v", err)
+	}
+}
+
+func TestSubmitAnswerRejectsClaimsWithoutEvidence(t *testing.T) {
+	for _, payload := range []string{
+		`{"no_data":false,"claims":[{"text":"Unsupported."}]}`,
+		`{"no_data":false,"claims":[{"text":"Unsupported.","citations":[]}]}`,
+		`{"no_data":false,"claims":[{"text":"Unsupported.","live_reads":[]}]}`,
+		`{"no_data":false,"claims":[{"text":"Unsupported.","citations":[],"live_reads":[]}]}`,
+	} {
+		if _, ok := parseSubmitAnswerArguments([]byte(payload)); ok {
+			t.Fatalf("unsupported claim accepted: %s", payload)
+		}
+	}
+}
+
 func TestSubmitAnswerPublishedSchemaAcceptsMixedDocumentLivePayload(t *testing.T) {
 	definition := submitAnswerToolDefinition()
 	var schema any
