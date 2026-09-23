@@ -251,7 +251,11 @@ check(livePanelMarkup.includes("live database reads") && livePanelMarkup.include
   "live-only evidence panel presents the receipt without a document-citation warning");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`Live result ${ordinal}`)), "every current live receipt has a separately labelled evidence disclosure");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`sha256:${String(ordinal).repeat(64)}`))
-  && liveEvidenceMarkup.includes("Row count") && liveEvidenceMarkup.includes("Observation window"), "live evidence disclosures carry row count, observation window and each receipt digest");
+  && liveEvidenceMarkup.includes("Database read:"), "live evidence disclosures carry read times and each receipt digest");
+check(liveEvidenceMarkup.includes(" · read ") && liveEvidenceMarkup.indexOf("Database read:") < liveEvidenceMarkup.indexOf("<summary>Technical details</summary>")
+  && liveEvidenceMarkup.indexOf("Receipt digest") > liveEvidenceMarkup.indexOf("<summary>Technical details</summary>")
+  && liveEvidenceMarkup.includes("Execution ID") && liveEvidenceMarkup.includes("Result digest"),
+  "live receipt shows read time first and keeps identifiers and hashes in closed technical details");
 check(liveEvidenceMarkup.includes("Show returned table") && !liveEvidenceMarkup.includes("PRIVATE_LIVE_ROW_"), "the receipt UI keeps table rows out of default markup and offers an explicit disclosure control");
 const matchingLivePayload = liveTablePayloadForReceipt(liveRunFixture, liveReceipts[1]);
 check(matchingLivePayload?.rows[0]?.[0] === "PRIVATE_LIVE_ROW_2", "a returned table is available only from the successful call matching the exact live receipt");
@@ -296,6 +300,10 @@ check(comparisonMarkup.includes("32520") && comparisonMarkup.includes("36454")
   && comparisonMarkup.includes("-10.79%") && comparisonMarkup.includes("full population coverage is unknown")
   && comparisonMarkup.includes(`sha256:${"e".repeat(64)}`) && !comparisonMarkup.includes("table payload is unavailable")
   && !comparisonMarkup.includes("SELECT *"), "comparison receipt renders compact observed evidence without SQL");
+check(comparisonMarkup.indexOf("2026-09-10: 32520") < comparisonMarkup.indexOf("<summary>Technical details</summary>")
+  && comparisonMarkup.indexOf("Semantic evidence digest") > comparisonMarkup.indexOf("<summary>Technical details</summary>")
+  && comparisonMarkup.includes(comparisonResult.profile_hash) && comparisonMarkup.includes("Exposed schema revision"),
+  "comparison values and dates precede its closed provenance details");
 check(mainSource.includes("<ToolCallsDisclosure run={run} showResults={false} />")
   && !mainSource.includes("<ToolCallsDisclosure run={run} showResults={true}"), "live table disclosure leaves generic tool outputs hidden");
 const activeConversationRun = {

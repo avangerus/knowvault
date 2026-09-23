@@ -706,6 +706,9 @@ type ComparisonDay = {
 
 type ComparisonEvidence = {
   metric_id: string;
+  profile_hash: string;
+  evidence_schema_version: number;
+  exposed_schema_revision: number;
   unit: string;
   coverage: "OBSERVED_SNAPSHOT";
   first: ComparisonDay;
@@ -3444,14 +3447,12 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
   const payload = liveTablePayloadForReceipt(run, receipt);
   const comparison = comparisonEvidenceForReceipt(run, receipt);
   const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
+  const readStarted = receipt.observation_window?.started_at;
+  const readAt = receipt.observation_window?.completed_at;
   return (
     <details className="live-result-evidence">
-      <summary>Live result {ordinal} · {receipt.row_count.toLocaleString("en-US")} {receipt.row_count === 1 ? "row" : "rows"}</summary>
-      <dl>
-        <dt>Row count</dt><dd>{receipt.row_count.toLocaleString("en-US")}</dd>
-        <dt>Observation window</dt><dd>{receipt.observation_window ? answerObservationWindowText(receipt.observation_window) || "—" : "—"}</dd>
-        <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
-      </dl>
+      <summary>Live result {ordinal} · {comparison ? `${comparison.first.date}: ${comparison.first.value} → ${comparison.second.date}: ${comparison.second.value}` : `${receipt.row_count.toLocaleString("en-US")} ${receipt.row_count === 1 ? "row" : "rows"}`}{readAt ? ` · read ${formatTime(readAt)}` : ""}</summary>
+      <p>Database read: {readStarted && readAt ? `${formatTime(readStarted)} – ${formatTime(readAt)}` : readAt ? formatTime(readAt) : "time unavailable"}</p>
       {comparison ? (
         <div className="live-comparison-evidence">
           <p>Metric: {comparison.metric_id} · Unit: {comparison.unit === "unknown" ? "unknown" : comparison.unit} · Coverage: observed snapshots only; full population coverage is unknown.</p>
@@ -3463,7 +3464,6 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
             ))}</tbody>
           </table>
           <p>Delta (first − second): {comparison.delta} · Change relative to second: {comparison.percent_change === "" ? "undefined (second value is zero)" : `${comparison.percent_change}%`}</p>
-          <details><summary>Semantic evidence digest</summary><code className="mono">{comparison.evidence_digest}</code></details>
         </div>
       ) : payload ? (
         <>
@@ -3485,6 +3485,23 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
       ) : (
         <p className="live-table-unavailable">The table payload is unavailable for this receipt.</p>
       )}
+      <details className="live-receipt-technical">
+        <summary>Technical details</summary>
+        <dl>
+          <dt>Execution ID</dt><dd className="mono">{receipt.execution_id}</dd>
+          <dt>Result digest</dt><dd className="mono">{receipt.result_digest}</dd>
+          <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
+          <dt>Read window start</dt><dd className="mono">{receipt.observation_window?.started_at ?? "—"}</dd>
+          <dt>Read window end</dt><dd className="mono">{receipt.observation_window?.completed_at ?? "—"}</dd>
+          <dt>Read basis</dt><dd className="mono">{receipt.observation_window?.basis ?? "—"}</dd>
+          {comparison && <>
+            <dt>Semantic evidence digest</dt><dd className="mono">{comparison.evidence_digest}</dd>
+            <dt>Profile hash</dt><dd className="mono">{comparison.profile_hash}</dd>
+            <dt>Evidence schema</dt><dd>{comparison.evidence_schema_version}</dd>
+            <dt>Exposed schema revision</dt><dd>{comparison.exposed_schema_revision}</dd>
+          </>}
+        </dl>
+      </details>
     </details>
   );
 }
