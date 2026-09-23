@@ -26,6 +26,7 @@ import (
 const AnswerModeToolLoop = "TOOL_LOOP"
 const verificationAddress = "ADDRESS_BOUND"
 const noWorkspaceData = "The workspace has no data to answer this question."
+const unreadableWorkspaceData = "The requested source could not be read. Please try again."
 const refusedMetricComparison = "The requested comparison could not be verified for both dates. No comparison result is available."
 const toolScopeChangedError = `{"error":"TOOL_SCOPE_CHANGED"}`
 const toolScopeChangedStopReason = "SCOPE_CHANGED"
@@ -70,10 +71,17 @@ func toolLoopNoDataFallback(record *ToolLoopRecord, hasSuccessfulComparison bool
 	if hasSuccessfulComparison || record == nil {
 		return noWorkspaceData
 	}
+	refused := false
 	for _, call := range record.Calls {
 		if call.Name == trustedMetricToolName && call.Outcome == "REFUSED" {
 			return refusedMetricComparison
 		}
+		if call.Outcome == "REFUSED" {
+			refused = true
+		}
+	}
+	if refused {
+		return unreadableWorkspaceData
 	}
 	return noWorkspaceData
 }
