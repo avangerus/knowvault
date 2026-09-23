@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/audit"
@@ -191,7 +192,9 @@ type Service struct {
 	// attemptLoader is a package-test seam for ReauthorizeAttempt. Production
 	// always uses loadExecutedAttempt, which scopes the append-only record to
 	// the caller organization, workspace and mounted connection.
-	attemptLoader func(context.Context, database.AccessContext, string, string) (governedquery.ExecutedAttempt, error)
+	attemptLoader      func(context.Context, database.AccessContext, string, string) (governedquery.ExecutedAttempt, error)
+	comparisonMu       sync.RWMutex
+	comparisonProfiles map[string]map[string]comparisonBinding
 }
 
 func New(db *database.Store, auditor auditAppender) (*Service, error) {
