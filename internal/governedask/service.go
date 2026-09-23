@@ -130,6 +130,14 @@ const (
 		"carriage return, tab, other control character, or leading/trailing whitespace. " +
 		"The SQL text must not contain bidirectional-control characters: " +
 		"U+200E, U+200F, U+202A-U+202E, or U+2066-U+2069. " +
+		"For a natural-language comparison across periods, infer the requested metric, " +
+		"period grain and aggregation from the question and supplied Evidence, and return " +
+		"one row per distinct requested period with the period, aggregate and an explicit " +
+		"coverage value. Aggregate across all rows contributing to each period. If Evidence " +
+		"specifies snapshots, first select the latest snapshot for each period and then " +
+		"aggregate that snapshot's contributing rows. Do not use LIMIT N raw rows as a proxy " +
+		"for N periods; LIMIT may only be applied after period selection/grouping when the " +
+		"question explicitly requires it. " +
 		"unknown_reason is exactly null, evidence_ids is a nonempty array of identifiers for the schema fragments used, " +
 		"supporting_claim_ids is exactly []; " +
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
