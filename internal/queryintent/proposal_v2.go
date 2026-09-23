@@ -189,19 +189,40 @@ func NewFieldToken(v string) (FieldToken, error) {
 // DatasetProfileRef identifies an approved dataset profile definition.
 // Its fields are private so proposals cannot bypass constructor validation.
 type DatasetProfileRef struct {
-	datasetID      string
-	profileVersion int64
+	datasetID           string
+	profileVersion      int64
+	expectedProfileHash string
 }
 
-func NewDatasetProfileRef(datasetID string, profileVersion int64) (DatasetProfileRef, error) {
-	if !validLabel(datasetID, maxIDLength) || profileVersion <= 0 {
+const (
+	profileHashPrefix    = "sha256:"
+	profileHashHexLength = 64
+)
+
+// validProfileHash requires the exact canonical form: the "sha256:" tag
+// followed by 64 lowercase hex digits.
+func validProfileHash(value string) bool {
+	if len(value) != len(profileHashPrefix)+profileHashHexLength || !strings.HasPrefix(value, profileHashPrefix) {
+		return false
+	}
+	for i := len(profileHashPrefix); i < len(value); i++ {
+		c := value[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func NewDatasetProfileRef(datasetID string, profileVersion int64, expectedProfileHash string) (DatasetProfileRef, error) {
+	if !validLabel(datasetID, maxIDLength) || profileVersion <= 0 || !validProfileHash(expectedProfileHash) {
 		return DatasetProfileRef{}, newRefusal(CodeInvalidProposal)
 	}
-	return DatasetProfileRef{datasetID: datasetID, profileVersion: profileVersion}, nil
+	return DatasetProfileRef{datasetID: datasetID, profileVersion: profileVersion, expectedProfileHash: expectedProfileHash}, nil
 }
 
 func (r DatasetProfileRef) Valid() bool {
-	return validLabel(r.datasetID, maxIDLength) && r.profileVersion > 0
+	return validLabel(r.datasetID, maxIDLength) && r.profileVersion > 0 && validProfileHash(r.expectedProfileHash)
 }
 
 func (r DatasetProfileRef) DatasetID() (string, bool) {
@@ -218,35 +239,35 @@ func (r DatasetProfileRef) ProfileVersion() (int64, bool) {
 	return r.profileVersion, true
 }
 
-// MetricRef identifies an approved metric definition.
-type MetricRef struct {
-	metricID      string
-	metricVersion int64
-}
-
-func NewMetricRef(metricID string, metricVersion int64) (MetricRef, error) {
-	if !validLabel(metricID, maxIDLength) || metricVersion <= 0 {
-		return MetricRef{}, newRefusal(CodeInvalidProposal)
-	}
-	return MetricRef{metricID: metricID, metricVersion: metricVersion}, nil
-}
-
-func (r MetricRef) Valid() bool {
-	return validLabel(r.metricID, maxIDLength) && r.metricVersion > 0
-}
-
-func (r MetricRef) MetricID() (string, bool) {
+// ExpectedProfileHash returns the pinned profile hash used for stale-profile
+// detection. The hash carries no authority of its own.
+func (r DatasetProfileRef) ExpectedProfileHash() (string, bool) {
 	if !r.Valid() {
 		return "", false
 	}
-	return r.metricID, true
+	return r.expectedProfileHash, true
 }
 
-func (r MetricRef) MetricVersion() (int64, bool) {
-	if !r.Valid() {
-		return 0, false
+// MeasureRef identifies a measure defined by the pinned dataset profile. It
+// carries no independent version: the profile version is authoritative.
+type MeasureRef struct {
+	measureID string
+}
+
+func NewMeasureRef(measureID string) (MeasureRef, error) {
+	if !validLabel(measureID, maxIDLength) {
+		return MeasureRef{}, newRefusal(CodeInvalidProposal)
 	}
-	return r.metricVersion, true
+	return MeasureRef{measureID: measureID}, nil
+}
+
+func (r MeasureRef) Valid() bool { return validLabel(r.measureID, maxIDLength) }
+
+func (r MeasureRef) MeasureID() (string, bool) {
+	if !r.Valid() {
+		return "", false
+	}
+	return r.measureID, true
 }
 
 type PeriodMode string
@@ -331,6 +352,17 @@ const (
 
 func (d SortDirection) Valid() bool { return d == SortASC || d == SortDESC }
 
+type SortTargetKind string
+
+const (
+	SortTargetDIMENSION SortTargetKind = "DIMENSION"
+	SortTargetMEASURE   SortTargetKind = "MEASURE"
+)
+
+func (k SortTargetKind) Valid() bool {
+	return k == SortTargetDIMENSION || k == SortTargetMEASURE
+}
+
 type Dimensions struct {
 	fields      [MaxDimensions]FieldToken
 	count       uint8
@@ -385,25 +417,65 @@ func duplicateField(fields []FieldToken, candidate FieldToken) bool {
 	return false
 }
 
+// SortKey names exactly one closed sort target: either a dimension field or a
+// measure reference, never both and never neither. A dimension and a measure
+// that share the same text remain distinct targets.
 type SortKey struct {
-	field     FieldToken
+	kind      SortTargetKind
+	dimension FieldToken
+	measure   MeasureRef
 	direction SortDirection
 }
 
-func NewSortKey(field FieldToken, direction SortDirection) (SortKey, error) {
-	if !field.Valid() || !direction.Valid() {
+func NewDimensionSortKey(field FieldToken, direction SortDirection) (SortKey, error) {
+	key := SortKey{kind: SortTargetDIMENSION, dimension: field, direction: direction}
+	if !key.Valid() {
 		return SortKey{}, newRefusal(CodeInvalidProposal)
 	}
-	return SortKey{field: field, direction: direction}, nil
+	return key, nil
 }
 
-func (k SortKey) Valid() bool { return k.field.Valid() && k.direction.Valid() }
+func NewMeasureSortKey(measure MeasureRef, direction SortDirection) (SortKey, error) {
+	key := SortKey{kind: SortTargetMEASURE, measure: measure, direction: direction}
+	if !key.Valid() {
+		return SortKey{}, newRefusal(CodeInvalidProposal)
+	}
+	return key, nil
+}
 
-func (k SortKey) Field() (FieldToken, bool) {
+func (k SortKey) Valid() bool {
+	if !k.direction.Valid() {
+		return false
+	}
+	switch k.kind {
+	case SortTargetDIMENSION:
+		return k.dimension.Valid() && !k.measure.Valid()
+	case SortTargetMEASURE:
+		return k.measure.Valid() && !k.dimension.Valid()
+	default:
+		return false
+	}
+}
+
+func (k SortKey) TargetKind() (SortTargetKind, bool) {
 	if !k.Valid() {
+		return "", false
+	}
+	return k.kind, true
+}
+
+func (k SortKey) Dimension() (FieldToken, bool) {
+	if !k.Valid() || k.kind != SortTargetDIMENSION {
 		return FieldToken{}, false
 	}
-	return k.field, true
+	return k.dimension, true
+}
+
+func (k SortKey) Measure() (MeasureRef, bool) {
+	if !k.Valid() || k.kind != SortTargetMEASURE {
+		return MeasureRef{}, false
+	}
+	return k.measure, true
 }
 
 func (k SortKey) Direction() (SortDirection, bool) {
@@ -425,7 +497,7 @@ func NewSortKeys(keys ...SortKey) (SortKeys, error) {
 	}
 	var sortKeys SortKeys
 	for i, key := range keys {
-		if !key.Valid() || duplicateSortField(keys[:i], key) {
+		if !key.Valid() || duplicateSortTarget(keys[:i], key) {
 			return SortKeys{}, newRefusal(CodeInvalidProposal)
 		}
 		sortKeys.keys[i] = key
@@ -440,7 +512,7 @@ func (s SortKeys) Valid() bool {
 		return false
 	}
 	for i := 0; i < int(s.count); i++ {
-		if !s.keys[i].Valid() || duplicateSortField(s.keys[:i], s.keys[i]) {
+		if !s.keys[i].Valid() || duplicateSortTarget(s.keys[:i], s.keys[i]) {
 			return false
 		}
 	}
@@ -456,15 +528,33 @@ func (s SortKeys) Values() ([]SortKey, bool) {
 	return keys, true
 }
 
-func duplicateSortField(keys []SortKey, candidate SortKey) bool {
-	field, _ := candidate.Field()
+// duplicateSortTarget reports whether candidate repeats the exact target
+// (kind and identity) of an earlier key, ignoring direction.
+func duplicateSortTarget(keys []SortKey, candidate SortKey) bool {
 	for _, key := range keys {
-		other, _ := key.Field()
-		if other == field {
+		if sameSortTarget(key, candidate) {
 			return true
 		}
 	}
 	return false
+}
+
+func sameSortTarget(left, right SortKey) bool {
+	if left.kind != right.kind {
+		return false
+	}
+	switch left.kind {
+	case SortTargetDIMENSION:
+		leftName, leftOK := left.dimension.Value()
+		rightName, rightOK := right.dimension.Value()
+		return leftOK && rightOK && leftName == rightName
+	case SortTargetMEASURE:
+		leftID, leftOK := left.measure.MeasureID()
+		rightID, rightOK := right.measure.MeasureID()
+		return leftOK && rightOK && leftID == rightID
+	default:
+		return false
+	}
 }
 
 type Limit struct {
@@ -634,29 +724,164 @@ func clonePredicate(predicate Predicate) Predicate {
 	return predicate
 }
 
-type ProposalV2 struct {
-	dataset     DatasetProfileRef
-	metric      MetricRef
-	period      PeriodProposal
-	filters     Predicates
-	dimensions  Dimensions
-	sort        SortKeys
-	limit       Limit
-	output      Output
+// Operation is the closed vocabulary of proposal shapes. A proposal is exactly
+// one shape: AGGREGATE names a measure over dimensions, LOOKUP names the fields
+// of a row set. The two never combine, and a shape is never inferred from the
+// values around it.
+type Operation string
+
+const (
+	OperationAGGREGATE Operation = "AGGREGATE"
+	OperationLOOKUP    Operation = "LOOKUP"
+)
+
+func (o Operation) Valid() bool { return o == OperationAGGREGATE || o == OperationLOOKUP }
+
+const MaxOutputFields = 8
+
+// OutputFields is the bounded, immutable field list of a LOOKUP proposal. Its
+// fields are private so a proposal can only carry what the constructor
+// accepted: between one and MaxOutputFields distinct names, copied on the way
+// in and on the way out.
+type OutputFields struct {
+	fields      [MaxOutputFields]FieldToken
+	count       uint8
 	initialized bool
 }
 
-func NewProposalV2(dataset DatasetProfileRef, metric MetricRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
-	proposal := ProposalV2{dataset: dataset, metric: metric, period: period, filters: clonePredicates(filters), dimensions: dimensions, sort: sort, limit: limit, output: output, initialized: true}
+func NewOutputFields(fields ...FieldToken) (OutputFields, error) {
+	if len(fields) < 1 || len(fields) > MaxOutputFields {
+		return OutputFields{}, newRefusal(CodeInvalidProposal)
+	}
+	var outputFields OutputFields
+	for i, field := range fields {
+		if !field.Valid() || duplicateField(fields[:i], field) {
+			return OutputFields{}, newRefusal(CodeInvalidProposal)
+		}
+		outputFields.fields[i] = field
+	}
+	outputFields.count = uint8(len(fields))
+	outputFields.initialized = true
+	return outputFields, nil
+}
+
+func (o OutputFields) Valid() bool {
+	if !o.initialized || int(o.count) < 1 || int(o.count) > MaxOutputFields {
+		return false
+	}
+	for i := 0; i < int(o.count); i++ {
+		if !o.fields[i].Valid() || duplicateField(o.fields[:i], o.fields[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Fields returns a fresh copy of the requested fields in request order.
+func (o OutputFields) Fields() ([]FieldToken, bool) {
+	if !o.Valid() {
+		return nil, false
+	}
+	fields := make([]FieldToken, int(o.count))
+	copy(fields, o.fields[:o.count])
+	return fields, true
+}
+
+// ProposalV2 is a model-proposed analytic query in exactly one closed shape.
+// Both shapes carry the same dataset profile, period, filters, sort and limit;
+// they differ in what they ask for. An AGGREGATE proposal needs a measure and a
+// (possibly empty) dimension list and answers with the configured VALUE or
+// ROWSET output. A LOOKUP proposal has no measure and no dimensions: it returns
+// a ROWSET of output fields and may only order by dimensions, because a measure
+// it never selected has no column to sort by. The constructors fix the shape,
+// and Valid refuses a zero shape as well as one mixed by hand.
+type ProposalV2 struct {
+	operation    Operation
+	dataset      DatasetProfileRef
+	measure      MeasureRef
+	period       PeriodProposal
+	filters      Predicates
+	dimensions   Dimensions
+	outputFields OutputFields
+	sort         SortKeys
+	limit        Limit
+	output       Output
+	initialized  bool
+}
+
+// NewAggregateProposalV2 builds the AGGREGATE shape from a measure, a dimension
+// list and the requested VALUE or ROWSET output. Measure sort targets are
+// allowed because the measure is part of this shape.
+func NewAggregateProposalV2(dataset DatasetProfileRef, measure MeasureRef, period PeriodProposal, filters Predicates, dimensions Dimensions, sort SortKeys, limit Limit, output Output) (ProposalV2, error) {
+	proposal := ProposalV2{
+		operation:   OperationAGGREGATE,
+		dataset:     dataset,
+		measure:     measure,
+		period:      period,
+		filters:     clonePredicates(filters),
+		dimensions:  dimensions,
+		sort:        sort,
+		limit:       limit,
+		output:      output,
+		initialized: true,
+	}
 	if !proposal.Valid() {
 		return ProposalV2{}, newRefusal(CodeInvalidProposal)
 	}
 	return proposal, nil
 }
 
+// NewLookupProposalV2 builds the LOOKUP shape from the fields the caller wants
+// back. The output is always ROWSET, and sort keys must target dimensions only.
+func NewLookupProposalV2(dataset DatasetProfileRef, period PeriodProposal, filters Predicates, outputFields OutputFields, sort SortKeys, limit Limit) (ProposalV2, error) {
+	proposal := ProposalV2{
+		operation:    OperationLOOKUP,
+		dataset:      dataset,
+		period:       period,
+		filters:      clonePredicates(filters),
+		outputFields: outputFields,
+		sort:         sort,
+		limit:        limit,
+		output:       OutputRowset,
+		initialized:  true,
+	}
+	if !proposal.Valid() {
+		return ProposalV2{}, newRefusal(CodeInvalidProposal)
+	}
+	return proposal, nil
+}
+
+// Valid reports whether this is a constructed shape. Every shape requires the
+// dataset profile, period, filters, sort and limit; the slots that belong to
+// the other shape must stay untouched, so a struct mixed by hand is invalid
+// even when each of its parts would be valid on its own.
 func (p ProposalV2) Valid() bool {
-	return p.initialized && p.dataset.Valid() && p.metric.Valid() && p.period.Valid() && p.filters.Valid() &&
-		p.dimensions.Valid() && p.sort.Valid() && p.limit.Valid() && p.output.valid()
+	if !p.initialized || !p.operation.Valid() || !p.dataset.Valid() || !p.period.Valid() || !p.filters.Valid() || !p.sort.Valid() || !p.limit.Valid() {
+		return false
+	}
+	switch p.operation {
+	case OperationAGGREGATE:
+		return p.measure.Valid() && p.dimensions.Valid() && p.outputFields == OutputFields{} && p.output.valid()
+	case OperationLOOKUP:
+		return p.measure == MeasureRef{} && p.dimensions == Dimensions{} && p.outputFields.Valid() &&
+			p.output == OutputRowset && dimensionSortOnly(p.sort)
+	default:
+		return false
+	}
+}
+
+// dimensionSortOnly reports whether every sort key of a valid SortKeys targets
+// a dimension.
+func dimensionSortOnly(sort SortKeys) bool {
+	if !sort.Valid() {
+		return false
+	}
+	for i := 0; i < int(sort.count); i++ {
+		if kind, ok := sort.keys[i].TargetKind(); !ok || kind != SortTargetDIMENSION {
+			return false
+		}
+	}
+	return true
 }
 
 func clonePredicates(predicates Predicates) Predicates {
@@ -666,6 +891,14 @@ func clonePredicates(predicates Predicates) Predicates {
 	return predicates
 }
 
+// Operation is this proposal's closed shape.
+func (p ProposalV2) Operation() (Operation, bool) {
+	if !p.Valid() {
+		return "", false
+	}
+	return p.operation, true
+}
+
 func (p ProposalV2) Dataset() (DatasetProfileRef, bool) {
 	if !p.Valid() {
 		return DatasetProfileRef{}, false
@@ -673,11 +906,13 @@ func (p ProposalV2) Dataset() (DatasetProfileRef, bool) {
 	return p.dataset, true
 }
 
-func (p ProposalV2) Metric() (MetricRef, bool) {
-	if !p.Valid() {
-		return MetricRef{}, false
+// Measure is the AGGREGATE measure reference. A LOOKUP proposal has no
+// measure, so ok is false even though the proposal itself is valid.
+func (p ProposalV2) Measure() (MeasureRef, bool) {
+	if !p.Valid() || p.operation != OperationAGGREGATE {
+		return MeasureRef{}, false
 	}
-	return p.metric, true
+	return p.measure, true
 }
 
 func (p ProposalV2) Period() (PeriodProposal, bool) {
@@ -687,11 +922,22 @@ func (p ProposalV2) Period() (PeriodProposal, bool) {
 	return p.period, true
 }
 
+// Dimensions are the AGGREGATE grouping fields, possibly empty. A LOOKUP
+// proposal has no dimensions.
 func (p ProposalV2) Dimensions() (Dimensions, bool) {
-	if !p.Valid() {
+	if !p.Valid() || p.operation != OperationAGGREGATE {
 		return Dimensions{}, false
 	}
 	return p.dimensions, true
+}
+
+// OutputFields are the LOOKUP fields in request order. An AGGREGATE proposal
+// has no output fields.
+func (p ProposalV2) OutputFields() (OutputFields, bool) {
+	if !p.Valid() || p.operation != OperationLOOKUP {
+		return OutputFields{}, false
+	}
+	return p.outputFields, true
 }
 
 func (p ProposalV2) Sort() (SortKeys, bool) {
@@ -708,6 +954,8 @@ func (p ProposalV2) Limit() (Limit, bool) {
 	return p.limit, true
 }
 
+// Output is the requested answer shape: the configured VALUE or ROWSET of an
+// AGGREGATE proposal, or always ROWSET for LOOKUP.
 func (p ProposalV2) Output() (Output, bool) {
 	if !p.Valid() {
 		return "", false

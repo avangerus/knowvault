@@ -308,6 +308,14 @@ func (transaction Transaction) QueryRow(ctx context.Context, sql string, argumen
 	return transaction.tx.QueryRow(ctx, sql, arguments...)
 }
 
+// ScanRow runs a single-row query and scans it into destinations without
+// exposing the pgx row type to callers. Domain packages use it to re-check
+// their own read footprint inside an already-authorized transaction while the
+// driver stays inside this platform boundary.
+func (transaction Transaction) ScanRow(ctx context.Context, sql string, arguments []any, destinations ...any) error {
+	return transaction.tx.QueryRow(ctx, sql, arguments...).Scan(destinations...)
+}
+
 // Read starts a read-only transaction whose organization/principal/request
 // settings are local to that transaction and therefore cannot leak through a
 // reused pool connection.

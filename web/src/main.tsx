@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ComponentType, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
-import { GovernedPresetPanel } from "./governed-presets";
+import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
+import { PendingAction, type PendingActionState } from "./pending-action";
+import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -277,13 +279,47 @@ function decodeEvidencePathSegment(value: string): string | null {
   }
 }
 
-function buildSearchHash(workspaceID: string): string {
-  return `#search/${encodeURIComponent(workspaceID)}`;
+export type SearchTarget = { workspace: string; conversation?: string };
+
+export function buildSearchHash(workspaceID: string, conversationID?: string | null): string {
+  const base = `#search/${encodeURIComponent(workspaceID)}`;
+  return conversationID ? `${base}?${new URLSearchParams({ conversation: conversationID }).toString()}` : base;
 }
 
-function parseSearchHash(hash: string): string | null {
-  const match = hash.match(/^#search\/([^/?#]+)$/);
-  return match ? decodeEvidencePathSegment(match[1]) : null;
+export function parseSearchHash(hash: string): SearchTarget | null {
+  const match = hash.match(/^#search\/([^/?#]+)(?:\?(.*))?$/);
+  if (!match) return null;
+  const workspace = decodeEvidencePathSegment(match[1]);
+  if (!workspace) return null;
+  if (!match[2]) return { workspace };
+  const params = new URLSearchParams(match[2]);
+  if ([...params.keys()].length !== 1 || params.getAll("conversation").length !== 1) return null;
+  const conversation = params.get("conversation");
+  return conversation ? { workspace, conversation } : null;
+}
+
+export function shouldHandleInAppEvidenceClick(event: Pick<MouseEvent, "button" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">): boolean {
+  return event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+}
+
+export function openEvidenceHistory(
+  hash: string,
+  workspaceID: string | null,
+  conversationID: string | null,
+  history: Pick<History, "replaceState" | "pushState">,
+  pathname: string,
+  search: string,
+  navigationSession: string,
+): string | null {
+  const target = parseEvidenceHash(hash);
+  if (!target) return null;
+  const searchHash = buildSearchHash(workspaceID ?? target.workspace, conversationID);
+  const base = `${pathname}${search}`;
+  // Keep the current conversation in the retained search entry. Queries,
+  // answers and source text stay in the mounted, session-scoped SearchView.
+  history.replaceState(null, "", `${base}${searchHash}`);
+  history.pushState({ knowvaultSearchReturn: navigationSession }, "", `${base}${hash}`);
+  return searchHash;
 }
 
 export function parseEvidenceHash(hash: string): EvidenceTarget | null {
@@ -361,13 +397,25 @@ export async function verifyEvidenceQuoteSelector(
 // and projects; nothing here is invented by the client.
 // ---------------------------------------------------------------------------
 
-type WorkspaceSummary = {
+export type WorkspaceSummary = {
   id: string;
   name: string;
   status: string;
   revision: number;
   role: string;
 };
+
+export function activeWorkspaceSummaries(workspaces: readonly WorkspaceSummary[]): WorkspaceSummary[] {
+  return workspaces.filter((workspace) => workspace.status === "ACTIVE");
+}
+
+export function archivedWorkspaceSummaries(workspaces: readonly WorkspaceSummary[]): WorkspaceSummary[] {
+  return workspaces.filter((workspace) => workspace.status === "ARCHIVED");
+}
+
+export function automaticWorkspaceSelection(workspaces: readonly WorkspaceSummary[]): string | null {
+  return activeWorkspaceSummaries(workspaces)[0]?.id ?? null;
+}
 
 type MemberResponse = { principal_id: string; display_name: string; role: string };
 
@@ -599,11 +647,10 @@ type QuestionFreshness = {
   last_successful_sync_at?: string;
 };
 
-// FIX-2 #1: structured counterpart of an AGGREGATE/LIST answer -- see
+// Structured result beside rendered prose -- see
 // internal/question/structured_result.go's AnswerResult and its nested
-// types. Populated only for a run answered by the snapshot reducer; every
-// other operation leaves it absent, and no field here is shown unless the
-// server actually sent it.
+// types. It carries snapshot reductions and governed live-read receipts; no
+// field here is shown unless the server actually sent it.
 type AnswerFilter = { name: string; value: string };
 type AnswerPeriod = { from?: string; to?: string; label?: string };
 type AnswerKey = { key: string; fields?: Record<string, string> };
@@ -626,6 +673,49 @@ type AnswerFreshness = {
   state?: string;
   captured_at?: string;
   last_successful_sync_at?: string;
+};
+
+type AnswerObservationWindow = {
+  basis?: string;
+  started_at?: string;
+  completed_at?: string;
+};
+
+export type LiveTableReceipt = {
+  execution_id: string;
+  result_digest: string;
+  receipt_digest: string;
+  row_count: number;
+  completeness: string;
+  observation_window?: AnswerObservationWindow;
+};
+
+type LiveTablePayload = {
+  columns: string[];
+  rows: Array<Array<string | null>>;
+  row_count: number;
+};
+
+type ComparisonDay = {
+  date: string;
+  snapshot_at: string;
+  value: string;
+  contributing_rows: number;
+  distinct_subjects: number;
+};
+
+type ComparisonEvidence = {
+  metric_id: string;
+  profile_hash: string;
+  evidence_schema_version: number;
+  exposed_schema_revision: number;
+  unit: string;
+  coverage: "OBSERVED_SNAPSHOT";
+  first: ComparisonDay;
+  second: ComparisonDay;
+  delta: string;
+  percent_change: string;
+  evidence_digest: string;
 };
 
 export type AnswerResult = {
@@ -652,6 +742,9 @@ export type AnswerResult = {
   freshness?: AnswerFreshness;
   evidence_refs?: Array<string | number>;
   audit_receipt?: Array<string | number>;
+  observation_window?: AnswerObservationWindow;
+  receipt_digest?: string;
+  receipts?: LiveTableReceipt[];
 };
 
 // FIX-2 #2 ("Understood as"): populated only when Create spliced a bare period
@@ -713,7 +806,7 @@ type QuestionRun = {
       system: boolean;
       outcome: string;
       duration_ms: number;
-      result: { text: string; is_error?: boolean };
+      result: { text: string; structured?: unknown; is_error?: boolean };
     }>;
   };
 };
@@ -759,6 +852,13 @@ function conversationTitle(conversation: ConversationDetail): string {
   const first = conversation.turns[0]?.question_run?.question;
   if (!first) return "New conversation";
   return first.length > 72 ? `${first.slice(0, 72)}…` : first;
+}
+
+export function sidebarConversations(conversations: readonly ConversationSummary[], selectedID: string | null, query: string): ConversationSummary[] {
+  const needle = query.trim().toLowerCase();
+  return conversations
+    .filter((item) => !item.archived_at && (item.turns.length > 0 || item.conversation_id === selectedID))
+    .filter((item) => needle === "" || conversationTitle(item).toLowerCase().includes(needle));
 }
 
 // ---------------------------------------------------------------------------
@@ -830,6 +930,52 @@ async function apiPost<T>(path: string, body: unknown, idempotencyKey: string): 
   } catch {
     return { kind: "broken", status: 0 };
   }
+}
+
+// A stream is one POST. Older servers may answer with JSON; decode that same
+// response without retrying a question or reusing its idempotency key.
+async function apiPostQuestionStream(
+  path: string, body: unknown, idempotencyKey: string, onAction: (action: QuestionActionFrame) => void,
+): Promise<ApiResult<QuestionRun>> {
+  try {
+    const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
+    if (csrf.kind !== "ok") return csrf;
+    const response = await fetch(path, {
+      method: "POST", cache: "no-store",
+      headers: { Accept: "application/x-ndjson", "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey, "X-KnowVault-CSRF": csrf.value.csrf_token },
+      body: JSON.stringify(body),
+    });
+    notifySessionExpired(response);
+    if (!response.ok) {
+      const failure = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string } } | null;
+      return failure?.error?.code
+        ? { kind: "failure", status: response.status, code: failure.error.code, requestId: failure.error.request_id ?? "", clarification: failure.error.clarification }
+        : { kind: "broken", status: response.status };
+    }
+    if (response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== "application/x-ndjson") {
+      return { kind: "ok", value: (await response.json()) as QuestionRun };
+    }
+    if (!response.body) return { kind: "broken", status: 0 };
+    const terminal = await readQuestionStream<QuestionRun>(response.body, onAction);
+    return terminal.type === "result" ? { kind: "ok", value: terminal.result }
+      : { kind: "failure", status: 500, code: terminal.code, requestId: terminal.request_id };
+  } catch {
+    return { kind: "broken", status: 0 };
+  }
+}
+
+const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["current"]> = {
+  model: "model", document_search: "searching", document_read: "reading",
+  live_data: "checking_data", trusted_comparison: "comparing", other_tool: "working",
+};
+
+export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
+  const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
+  const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome)
+    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome! }));
+  const latest = ordered.at(-1);
+  return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
 }
 
 // Source registration is deliberately content-idempotent on the server and
@@ -1301,10 +1447,44 @@ function ClosedOrError({ result }: { result: ApiFailure | ApiBroken }) {
 // when its Journal tab is selected because the read appends audit.viewed.
 // ---------------------------------------------------------------------------
 
-type WorkspaceDataState =
+export type WorkspaceDataState =
   | { phase: "idle" }
   | { phase: "loading" }
   | { phase: "loaded"; snapshot: ApiResult<WorkspaceSnapshot>; sources: ApiResult<SourcesEnvelope> };
+
+export type GovernedWorkspaceAuthorization = "pending" | "authorized" | "denied";
+export type GovernedRetentionState = { workspaceID: string | null; revision: number | null; phase: GovernedWorkspaceAuthorization; resetKey: number };
+type GovernedRetentionEvent = Pick<GovernedRetentionState, "workspaceID" | "phase" | "revision">;
+export function reduceGovernedRetention(state: GovernedRetentionState, event: GovernedRetentionEvent): GovernedRetentionState {
+  if (state.workspaceID !== event.workspaceID) return { ...event, resetKey: state.resetKey + 1 };
+  if (event.phase === "pending") return state.phase === "pending" ? state : { ...state, phase: "pending" };
+  if (event.phase === "denied") return state.phase === "denied" && state.revision === null ? state : { ...state, phase: "denied", revision: null, resetKey: state.resetKey + 1 };
+  if (state.revision === event.revision && event.revision !== null) {
+    return state.phase === "authorized" ? state : { ...state, phase: "authorized" };
+  }
+  return { ...state, phase: "authorized", revision: event.revision, resetKey: state.resetKey + 1 };
+}
+
+const authorizationDenied = (result: ApiResult<unknown>) => result.kind === "failure" && [401, 403, 404].includes(result.status);
+
+export function governedWorkspaceAuthorization(state: WorkspaceDataState, requestedWorkspaceID: string | null): { phase: GovernedWorkspaceAuthorization; revision: number | null } {
+  if (requestedWorkspaceID === null || state.phase !== "loaded") return { phase: "pending", revision: null };
+  if (state.snapshot.kind !== "ok") return { phase: authorizationDenied(state.snapshot) ? "denied" : "pending", revision: null };
+  if (state.snapshot.value.id !== requestedWorkspaceID || state.snapshot.value.status !== "ACTIVE") return { phase: "denied", revision: null };
+  if (state.sources.kind !== "ok") return { phase: authorizationDenied(state.sources) ? "denied" : "pending", revision: null };
+  return { phase: "authorized", revision: state.snapshot.value.revision };
+}
+
+/** Source metadata is a protected workspace projection. The Ask surface may
+ * pass it to RelyBar only after the same snapshot + source authorization gate
+ * used by the governed and document surfaces has completed. Pending, denied,
+ * stale-workspace and malformed source responses all return an empty summary,
+ * so a previous workspace's source names cannot flash during revalidation. */
+export function authorizedSourcesForAsk(state: WorkspaceDataState, requestedWorkspaceID: string | null): SourceStatus[] {
+  if (governedWorkspaceAuthorization(state, requestedWorkspaceID).phase !== "authorized") return [];
+  if (state.phase !== "loaded" || state.sources.kind !== "ok") return [];
+  return state.sources.value.sources;
+}
 
 function useWorkspaceData(workspaceID: string | null, refreshVersion: number): WorkspaceDataState {
   const [reply, setReply] = useState<{ workspaceID: string; refreshVersion: number; state: WorkspaceDataState } | null>(null);
@@ -1791,7 +1971,9 @@ function App() {
   const [sessionCode, setSessionCode] = useState("");
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceID, setSelectedWorkspaceID] = useState<string | null>(() =>
-    parseEvidenceHash(window.location.hash)?.workspace ?? parseSearchHash(window.location.hash));
+    parseEvidenceHash(window.location.hash)?.workspace ?? parseSearchHash(window.location.hash)?.workspace ?? null);
+  const [selectedConversationID, setSelectedConversationID] = useState<string | null>(() =>
+    parseSearchHash(window.location.hash)?.conversation ?? null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [workspaceRefreshVersion, setWorkspaceRefreshVersion] = useState(0);
@@ -1820,6 +2002,7 @@ function App() {
     setSessionCode("");
     setWorkspaces([]);
     setSelectedWorkspaceID(null);
+    setSelectedConversationID(null);
     setSwitcherOpen(false);
     setCreateWorkspaceOpen(false);
     setWorkspaceRefreshVersion((version) => version + 1);
@@ -1851,9 +2034,11 @@ function App() {
     if (routeHash.current === hash) return;
     const previousEvidence = parseEvidenceHash(routeHash.current);
     const target = parseEvidenceHash(hash);
-    const workspaceID = target?.workspace ?? parseSearchHash(hash);
+    const searchTarget = parseSearchHash(hash);
+    const workspaceID = target?.workspace ?? searchTarget?.workspace;
     routeHash.current = hash;
     if (workspaceID) setSelectedWorkspaceID(workspaceID);
+    setSelectedConversationID(target ? null : searchTarget?.conversation ?? null);
     if (!target && previousEvidence) {
       setSection("search");
       setWorkspaceRefreshVersion((version) => version + 1);
@@ -1864,15 +2049,11 @@ function App() {
   }, []);
 
   function openEvidence(hash: string) {
-    const target = parseEvidenceHash(hash);
-    if (!target || sessionStateRef.current !== "signedIn") return;
-    const searchHash = buildSearchHash(selectedWorkspaceID ?? target.workspace);
-    const base = `${window.location.pathname}${window.location.search}`;
-    // History holds navigation identity only. Queries, answers and source text
-    // stay in the mounted, session-scoped SearchView and never enter storage.
-    window.history.replaceState(null, "", `${base}${searchHash}`);
+    if (sessionStateRef.current !== "signedIn") return;
+    const searchHash = openEvidenceHistory(hash, selectedWorkspaceID, selectedConversationID,
+      window.history, window.location.pathname, window.location.search, navigationSession.current);
+    if (!searchHash) return;
     routeHash.current = searchHash;
-    window.history.pushState({ knowvaultSearchReturn: navigationSession.current }, "", `${base}${hash}`);
     syncLocation();
   }
 
@@ -1923,7 +2104,7 @@ function App() {
         setSessionState("signedIn");
         setWorkspaces(list);
         setSelectedWorkspaceID((current) =>
-          current ?? list[0]?.id ?? null,
+          current ?? automaticWorkspaceSelection(list),
         );
       } else if (result.kind === "failure" && result.status === 401) {
         setSessionState("signedOut");
@@ -2011,6 +2192,7 @@ function App() {
               }}
               onSelect={(id) => {
                 setSelectedWorkspaceID(id);
+                setSelectedConversationID(null);
                 setSwitcherOpen(false);
                 window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${buildSearchHash(id)}`);
                 routeHash.current = window.location.hash;
@@ -2052,7 +2234,13 @@ function App() {
                   aria-label={current.label}
                   className={section === item ? "rail-item active" : "rail-item"}
                   key={item}
-                  onClick={() => { dismissFootnoteTooltip(); setSection(item); }}
+                  onClick={() => {
+                    dismissFootnoteTooltip();
+                    if (item === "search" && section !== "search") {
+                      setWorkspaceRefreshVersion((version) => version + 1);
+                    }
+                    setSection(item);
+                  }}
                   title={current.label}
                   type="button"
                 >
@@ -2100,13 +2288,21 @@ function App() {
             </header>
           )}
 
-          {session === "signedIn" && section === "search" && (
-            <SearchView
-              active={!evidenceTarget}
+          {session === "signedIn" && (
+            <AskSurface
+              active={!evidenceTarget && section === "search"}
               key={`${selectedWorkspaceID}:${searchResetEpoch}`}
               onOpenEvidence={openEvidence}
               onOpenSources={() => { dismissFootnoteTooltip(); setSection("sources"); }}
-              onSessionExpired={expireSession}
+              onConversationChange={(conversationID) => {
+                setSelectedConversationID(conversationID);
+                if (!selectedWorkspaceID) return;
+                const hash = buildSearchHash(selectedWorkspaceID, conversationID);
+                window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+                routeHash.current = hash;
+              }}
+              initialConversationID={selectedConversationID}
+              pushToast={pushToast}
               requestedWorkspaceID={selectedWorkspaceID}
               state={data}
             />
@@ -2156,9 +2352,9 @@ function App() {
   );
 }
 
-// WorkspaceSwitcher lists exactly the workspaces the server returned for the
-// current principal; the selection drives all three workspace surfaces.
-function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, onClose, onCreate }: {
+// WorkspaceSwitcher keeps server-returned records available for deep links
+// and history while presenting ACTIVE workspaces as the primary choices.
+export function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, onClose, onCreate }: {
   workspaces: WorkspaceSummary[];
   selectedID: string | null;
   open: boolean;
@@ -2169,6 +2365,8 @@ function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, o
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const selected = workspaces.find((workspace) => workspace.id === selectedID) ?? null;
+  const activeWorkspaces = activeWorkspaceSummaries(workspaces);
+  const archivedWorkspaces = archivedWorkspaceSummaries(workspaces);
 
   useEffect(() => {
     if (!open) return;
@@ -2198,8 +2396,8 @@ function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, o
       </button>
       {open && (
         <ul className="switcher-pop" role="listbox" aria-label="Workspaces">
-          {workspaces.length === 0 && <li className="switcher-empty">No workspaces</li>}
-          {workspaces.map((workspace) => (
+          {activeWorkspaces.length === 0 && <li className="switcher-empty">No active workspaces</li>}
+          {activeWorkspaces.map((workspace) => (
             <li key={workspace.id}>
               <button
                 aria-selected={workspace.id === selectedID}
@@ -2216,6 +2414,32 @@ function WorkspaceSwitcher({ workspaces, selectedID, open, onToggle, onSelect, o
               </button>
             </li>
           ))}
+          {archivedWorkspaces.length > 0 && (
+            <li>
+              <details className="switcher-archived">
+                <summary>Archived ({archivedWorkspaces.length})</summary>
+                <ul className="switcher-archived-list">
+                  {archivedWorkspaces.map((workspace) => (
+                    <li key={workspace.id}>
+                      <button
+                        aria-selected={workspace.id === selectedID}
+                        className={workspace.id === selectedID ? "switcher-item active" : "switcher-item"}
+                        onClick={() => onSelect(workspace.id)}
+                        role="option"
+                        type="button"
+                      >
+                        <span className="workspace-glyph">{workspace.name.slice(0, 1).toUpperCase()}</span>
+                        <span className="switcher-item-main">
+                          <strong>{workspace.name}</strong>
+                          <small>{workspaceStatusLabel(workspace.status)} · {roleLabel(workspace.role)}</small>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          )}
           <li className="switcher-create-row">
             <button className="switcher-create" onClick={onCreate} type="button">+ New workspace</button>
           </li>
@@ -2441,6 +2665,19 @@ function answerCompletenessIsPartial(completeness: string | undefined | null): b
   return typeof completeness === "string" && completeness.trim() === "PARTIAL";
 }
 
+function answerObservationWindowText(window: AnswerObservationWindow): string {
+  const parts: string[] = [];
+  if (window.basis) parts.push(window.basis);
+  if (window.started_at && window.completed_at) {
+    parts.push(`${formatTime(window.started_at)} – ${formatTime(window.completed_at)}`);
+  } else if (window.started_at) {
+    parts.push(`started ${formatTime(window.started_at)}`);
+  } else if (window.completed_at) {
+    parts.push(`completed ${formatTime(window.completed_at)}`);
+  }
+  return parts.join(" · ");
+}
+
 // The validated QueryIntent, rendered from the fields the server actually
 // sent: no metric id, version, period, filter, output or as_of is guessed.
 function unifiedIntentText(intent: AnswerIntent | undefined): string {
@@ -2548,6 +2785,7 @@ export function UnifiedAnswerRows({ result }: { result?: AnswerResult }) {
 // is invented when the server left a field absent.
 export function AnswerResultBlock({ result }: { result: AnswerResult }) {
   const periodText = answerPeriodText(result.period);
+  const hasObservationWindow = Boolean(result.observation_window);
   const snapshotText = result.snapshot.captured_at
     ? formatTime(result.snapshot.captured_at)
     : result.snapshot.id ?? null;
@@ -2570,14 +2808,25 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
           )}
           {periodText && (<><dt>Period</dt><dd>{periodText}</dd></>)}
           {result.timezone && (<><dt>Time zone</dt><dd>{result.timezone}</dd></>)}
-          {(snapshotText || result.snapshot.row_count > 0) && (
+          {result.observation_window && (
+            <><dt>Observed</dt><dd>{answerObservationWindowText(result.observation_window)}</dd></>
+          )}
+          {result.receipt_digest && (
+            <><dt>Evidence receipt</dt><dd>{result.receipt_digest}</dd></>
+          )}
+          {hasObservationWindow && (result.snapshot.row_count > 0 || result.kind === "LIVE_TABLE") && (
+            <><dt>Rows read</dt><dd>{result.snapshot.row_count}</dd></>
+          )}
+          {(snapshotText || (!hasObservationWindow && result.snapshot.row_count > 0)) && (
             <>
               <dt>Snapshot</dt>
               <dd>{snapshotText ?? "current"}{result.snapshot.row_count > 0 ? `, ${result.snapshot.row_count} rows` : ""}</dd>
             </>
           )}
         </dl>
-        <p className="how-cap"><IconCheckCircle />a server calculation using the snapshot</p>
+        <p className="how-cap"><IconCheckCircle />{result.kind === "LIVE_TABLE"
+          ? "a complete governed live table read; the prose answer interprets its rows"
+          : "a server calculation using the snapshot"}</p>
       </div>
       <UnifiedAnswerRows result={result} />
       {answerCompletenessIsPartial(result.completeness) && (
@@ -2958,6 +3207,21 @@ function renderInline(text: string, ctx: InlineCtx, keyPrefix: string): ReactNod
   return nodes;
 }
 
+// The server escapes source excerpts for Markdown and HTML before storing the
+// answer. Decode that fixed escape set once, then let React create a text node.
+// Passing the quote through renderInline would turn document text into markup.
+function literalSourceExcerpt(escaped: string): string {
+  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", "#34": '"', "#39": "'" };
+  const markdown = escaped.replace(/\\([\\`*_\[\]()#!|])/g, "$1");
+  return markdown.replace(/&(amp|lt|gt|#34|#39);/g, (_match, entity: string) => entities[entity]);
+}
+
+function renderSourceExcerptLine(text: string, ctx: InlineCtx, key: string): ReactNode | null {
+  const match = text.match(/^(Source excerpt|\u0424\u0440\u0430\u0433\u043c\u0435\u043d\u0442 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430) \[(\d+)\]: “(.*)”$/);
+  if (!match) return null;
+  return <p className="ans-p" key={key}>{renderInline(`${match[1]} [${match[2]}]: `, ctx, key)}“{literalSourceExcerpt(match[3])}”</p>;
+}
+
 function renderAnswerBlock(block: AnswerBlock, index: number, ctx: InlineCtx): ReactNode {
   const key = `blk${index}`;
   if (block.kind === "h") {
@@ -2971,12 +3235,13 @@ function renderAnswerBlock(block: AnswerBlock, index: number, ctx: InlineCtx): R
       ? <ol className="ans-list" key={key}>{items}</ol>
       : <ul className="ans-list" key={key}>{items}</ul>;
   }
-  return <p className="ans-p" key={key}>{renderInline(block.text, ctx, key)}</p>;
+  return renderSourceExcerptLine(block.text, ctx, key)
+    ?? <p className="ans-p" key={key}>{renderInline(block.text, ctx, key)}</p>;
 }
 
 const ANSWER_COLLAPSED_BLOCK_COUNT = 8;
 
-function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
+export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
   text: string;
   citations: QuestionCitation[];
   turnId: string;
@@ -3006,6 +3271,241 @@ function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitationId, 
   );
 }
 
+// The same disclosure is used by the conversation view and the single
+// question surface. The standalone surface keeps the result payload hidden:
+// people can see which governed tools ran and whether they completed without
+// putting row values, ids or hashes into the answer itself.
+function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
+  if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
+  return (
+    <details className="tool-trace">
+      <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
+      <ol>
+        {run.tool_loop.calls.map((call, index) => (
+          <li key={`${call.id}-${index}`}>
+            {showResults ? (
+              <details>
+                <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
+                <pre>{call.result.text}</pre>
+              </details>
+            ) : (
+              <span>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+export function hasLiveDataReceipt(run: Pick<QuestionRun, "status" | "answer_result">): boolean {
+  const result = run.answer_result;
+  return run.status === "COMPLETED" && Boolean(
+    result?.receipt_digest || result?.receipts?.some((receipt) => receipt.receipt_digest) ||
+    (result?.result_digest && result.execution_id),
+  );
+}
+
+export function liveTableReceipts(result?: AnswerResult): LiveTableReceipt[] {
+  if (!result || result.kind !== "LIVE_TABLE") return [];
+  if (result.receipts && result.receipts.length > 0) return result.receipts.filter(isLiveTableReceipt).slice(0, 3);
+  if (!result.execution_id || !result.receipt_digest) return [];
+  const receipt: LiveTableReceipt = {
+    execution_id: result.execution_id,
+    result_digest: result.result_digest ?? "",
+    receipt_digest: result.receipt_digest,
+    row_count: result.snapshot.row_count,
+    completeness: result.completeness,
+    observation_window: result.observation_window,
+  };
+  return isLiveTableReceipt(receipt) ? [receipt] : [];
+}
+
+function isLiveTableReceipt(value: unknown): value is LiveTableReceipt {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const receipt = value as Record<string, unknown>;
+  const hash = (candidate: unknown) => typeof candidate === "string" && /^sha256:[0-9a-f]{64}$/.test(candidate);
+  const observation = receipt.observation_window;
+  const observationIsSafe = observation === undefined || (
+    typeof observation === "object" && observation !== null && !Array.isArray(observation) &&
+    ["basis", "started_at", "completed_at"].every((key) => {
+      const field = (observation as Record<string, unknown>)[key];
+      return field === undefined || typeof field === "string";
+    })
+  );
+  return typeof receipt.execution_id === "string" && receipt.execution_id.length > 0 &&
+    receipt.execution_id.length <= 256 && hash(receipt.result_digest) && hash(receipt.receipt_digest) &&
+    typeof receipt.row_count === "number" && Number.isInteger(receipt.row_count) &&
+    receipt.row_count >= 0 && receipt.row_count <= 100 && receipt.completeness === "COMPLETE" && observationIsSafe;
+}
+
+export function liveTablePayloadForReceipt(
+  run: Pick<QuestionRun, "tool_loop">,
+  receipt: LiveTableReceipt,
+): LiveTablePayload | null {
+  const calls = run.tool_loop?.calls ?? [];
+  for (const call of calls) {
+    if (call.name !== "knowvault_ask_live_data" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    const raw = call.result.structured ?? call.result.text;
+    let value: unknown = raw;
+    if (typeof raw === "string") {
+      try {
+        value = JSON.parse(raw) as unknown;
+      } catch {
+        continue;
+      }
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const projection = value as Record<string, unknown>;
+    if (!isLiveTableReceipt(receipt) ||
+      projection.attempt_id !== receipt.execution_id || projection.complete !== true ||
+      projection.result_digest !== receipt.result_digest || projection.receipt_digest !== receipt.receipt_digest) continue;
+    const readWindow = projection.read_window;
+    if (typeof readWindow !== "object" || readWindow === null || Array.isArray(readWindow) ||
+      (readWindow as Record<string, unknown>).complete !== true) continue;
+    const columns = projection.columns;
+    const rows = projection.rows;
+    const rowCount = projection.row_count;
+    if (!Array.isArray(columns) || !Array.isArray(rows) || typeof rowCount !== "number" ||
+      !Number.isInteger(rowCount) || rowCount !== receipt.row_count || rowCount < 0 || rowCount > 100 ||
+      columns.length === 0 || columns.length > 64 || rows.length !== rowCount || rows.length * columns.length > 4096 ||
+      columns.some((column) => typeof column !== "string" || column.length === 0) ||
+      rows.some((row) => !Array.isArray(row) || row.length !== columns.length ||
+        row.some((cell) => cell !== null && typeof cell !== "string"))) continue;
+    return { columns: columns as string[], rows: rows as Array<Array<string | null>>, row_count: rowCount };
+  }
+  return null;
+}
+
+export function comparisonEvidenceForReceipt(
+  run: Pick<QuestionRun, "tool_loop">,
+  receipt: LiveTableReceipt,
+): ComparisonEvidence | null {
+  if (!isLiveTableReceipt(receipt) || receipt.row_count !== 2) return null;
+  const digest = (value: unknown): value is string => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+  const decimal = (value: unknown): value is string => typeof value === "string" && value.length <= 128 && /^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/.test(value);
+  const day = (value: unknown): value is ComparisonDay => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const item = value as Record<string, unknown>;
+    return Object.keys(item).sort().join(",") === "contributing_rows,date,distinct_subjects,snapshot_at,value" &&
+      typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date) &&
+      typeof item.snapshot_at === "string" && !Number.isNaN(Date.parse(item.snapshot_at)) &&
+      decimal(item.value) && Number.isSafeInteger(item.contributing_rows) &&
+      (item.contributing_rows as number) > 0 && item.distinct_subjects === item.contributing_rows;
+  };
+  for (const call of run.tool_loop?.calls ?? []) {
+    if (call.name !== "knowvault_compare_metric" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    let value: unknown = call.result.structured ?? call.result.text;
+    if (typeof value === "string") {
+      try { value = JSON.parse(value) as unknown; } catch { continue; }
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).sort().join(",") !== "attempt_id,coverage,delta,evidence_digest,evidence_schema_version,exposed_schema_revision,first,metric_id,percent_change,profile_hash,raw_result_digest,receipt_digest,second,unit" ||
+      item.attempt_id !== receipt.execution_id || item.raw_result_digest !== receipt.result_digest ||
+      item.receipt_digest !== receipt.receipt_digest || item.evidence_schema_version !== 1 ||
+      !Number.isSafeInteger(item.exposed_schema_revision) || (item.exposed_schema_revision as number) < 1 ||
+      typeof item.metric_id !== "string" || item.metric_id.length === 0 || item.metric_id.length > 128 ||
+      !digest(item.profile_hash) || !digest(item.evidence_digest) ||
+      typeof item.unit !== "string" || item.unit.length === 0 || item.unit.length > 128 ||
+      item.coverage !== "OBSERVED_SNAPSHOT" || !day(item.first) || !day(item.second) ||
+      (item.first as ComparisonDay).date === (item.second as ComparisonDay).date ||
+      !decimal(item.delta) || !(item.percent_change === "" || decimal(item.percent_change))) continue;
+    return item as ComparisonEvidence;
+  }
+  return null;
+}
+
+export function LiveTableEvidenceList({ result, run }: { result: AnswerResult; run: QuestionRun }) {
+  const receipts = liveTableReceipts(result);
+  if (receipts.length === 0) return null;
+  return (
+    <section aria-label="Live result evidence" className="live-table-evidence-list">
+      {receipts.map((receipt, index) => (
+        <LiveTableEvidenceItem key={`${receipt.execution_id}-${index}`} ordinal={index + 1} receipt={receipt} run={run} />
+      ))}
+    </section>
+  );
+}
+
+export function LiveResultEvidencePanel({ run }: { run: QuestionRun }) {
+  if (!run.answer_result || liveTableReceipts(run.answer_result).length === 0) return null;
+  return (
+    <div className="live-result-panel">
+      <p>This answer used live database reads. Each receipt records the result and when the database was read.</p>
+      <LiveTableEvidenceList result={run.answer_result} run={run} />
+    </div>
+  );
+}
+
+function LiveTableEvidenceItem({ ordinal, receipt, run }: {
+  ordinal: number;
+  receipt: LiveTableReceipt;
+  run: QuestionRun;
+}) {
+  const [showTable, setShowTable] = useState(false);
+  const payload = liveTablePayloadForReceipt(run, receipt);
+  const comparison = comparisonEvidenceForReceipt(run, receipt);
+  const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
+  const readStarted = receipt.observation_window?.started_at;
+  const readAt = receipt.observation_window?.completed_at;
+  return (
+    <details className="live-result-evidence">
+      <summary>Live result {ordinal} · {comparison ? `${comparison.first.date}: ${comparison.first.value} → ${comparison.second.date}: ${comparison.second.value}` : `${receipt.row_count.toLocaleString("en-US")} ${receipt.row_count === 1 ? "row" : "rows"}`}{readAt ? ` · read ${formatTime(readAt)}` : ""}</summary>
+      <p>Database read: {readStarted && readAt ? `${formatTime(readStarted)} – ${formatTime(readAt)}` : readAt ? formatTime(readAt) : "time unavailable"}</p>
+      {comparison ? (
+        <div className="live-comparison-evidence">
+          <p>Metric: {comparison.metric_id} · Unit: {comparison.unit === "unknown" ? "unknown" : comparison.unit} · Coverage: observed snapshots only; full population coverage is unknown.</p>
+          <table className="live-table-payload">
+            <caption>Observed values · Live result {ordinal}</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Observed value</th><th scope="col">Snapshot time</th><th scope="col">Observed subjects</th></tr></thead>
+            <tbody>{[comparison.first, comparison.second].map((day) => (
+              <tr key={day.date}><th scope="row">{day.date}</th><td>{day.value}</td><td>{day.snapshot_at}</td><td>{day.distinct_subjects.toLocaleString("en-US")}</td></tr>
+            ))}</tbody>
+          </table>
+          <p>Delta (first − second): {comparison.delta} · Change relative to second: {comparison.percent_change === "" ? "undefined (second value is zero)" : `${comparison.percent_change}%`}</p>
+        </div>
+      ) : payload ? (
+        <>
+          <button aria-controls={tableID} aria-expanded={showTable} className="text-button live-table-toggle" onClick={() => setShowTable((visible) => !visible)} type="button">
+            {showTable ? "Hide returned table" : "Show returned table"}
+          </button>
+          <div className="live-table-scroll" id={tableID}>
+            {showTable && (
+              <table className="live-table-payload">
+                <caption>Returned rows · Live result {ordinal}</caption>
+                <thead><tr>{payload.columns.map((column, index) => <th key={`${column}-${index}`} scope="col">{column}</th>)}</tr></thead>
+                <tbody>{payload.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex}>{row.map((cell, columnIndex) => <td key={columnIndex}>{cell === null ? "NULL" : cell}</td>)}</tr>
+                ))}</tbody>
+              </table>
+            )}
+          </div>
+        </>
+      ) : (
+        <p className="live-table-unavailable">The table payload is unavailable for this receipt.</p>
+      )}
+      <details className="live-receipt-technical">
+        <summary>Technical details</summary>
+        <dl>
+          <dt>Execution ID</dt><dd className="mono">{receipt.execution_id}</dd>
+          <dt>Result digest</dt><dd className="mono">{receipt.result_digest}</dd>
+          <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
+          <dt>Read window start</dt><dd className="mono">{receipt.observation_window?.started_at ?? "—"}</dd>
+          <dt>Read window end</dt><dd className="mono">{receipt.observation_window?.completed_at ?? "—"}</dd>
+          <dt>Read basis</dt><dd className="mono">{receipt.observation_window?.basis ?? "—"}</dd>
+          {comparison && <>
+            <dt>Semantic evidence digest</dt><dd className="mono">{comparison.evidence_digest}</dd>
+            <dt>Profile hash</dt><dd className="mono">{comparison.profile_hash}</dd>
+            <dt>Evidence schema</dt><dd>{comparison.evidence_schema_version}</dd>
+            <dt>Exposed schema revision</dt><dd>{comparison.exposed_schema_revision}</dd>
+          </>}
+        </dl>
+      </details>
+    </details>
+  );
+}
+
 function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCitation }: {
   run: QuestionRun;
   turnId: string;
@@ -3016,7 +3516,6 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   const statusMessage = questionStatusMessage(run);
   const corpusWarning = corpusStatusWarning(run.corpus_status);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
-  const isAddressBound = run.answer_mode === "TOOL_LOOP" || run.verification_method === "ADDRESS_BOUND";
   const showGenericHow = run.status === "COMPLETED" && run.planning_operation === "AGGREGATE" && !run.answer_result;
   // R2 Outcome 3: a structured answer is an aggregate reduction (the rowset
   // LIST reduction is an AGGREGATE function) or a LIST projection. Either way
@@ -3025,6 +3524,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   // branch below are untouched.
   const showUnifiedFallback = run.status === "COMPLETED" && (run.planning_operation === "AGGREGATE" || run.planning_operation === "LIST") && !run.answer_result;
   const hasInsufficientEvidence = run.uncertainties.some((item) => item.code === "INSUFFICIENT_EVIDENCE");
+  const hasLiveReceipt = hasLiveDataReceipt(run);
   // TXT-1 §2: a citation whose "[N]" marker was actually found and woven
   // into the running text (FootnoteMark, inside AnswerBody) needs no second
   // mention. Only a citation the text never referenced — which real server
@@ -3034,25 +3534,13 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   const leftoverCitations = run.citations.filter((citation) => !referencedCitationNumbers.has(citation.number));
   return (
     <>
-      {run.tool_loop && (
-        <details className="tool-trace">
-          <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
-          <ol>
-            {run.tool_loop.calls.map((call, index) => (
-              <li key={`${call.id}-${index}`}>
-                <details>
-                  <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
-                  <pre>{call.result.text}</pre>
-                </details>
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
+      <ToolCallsDisclosure run={run} showResults={false} />
       {run.understood && <UnderstoodBanner understood={run.understood} />}
       {showGenericHow && <HowObtained run={run} />}
       {run.answer_result ? (
-        <AnswerResultBlock result={run.answer_result} />
+        run.answer_result.kind === "LIVE_TABLE"
+          ? null
+          : <AnswerResultBlock result={run.answer_result} />
       ) : (
         // R2 Outcome 3: an older structured answer (AGGREGATE/LIST completed
         // before the unified result existed) still gets the unified panel --
@@ -3076,12 +3564,15 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
             </div>
           ))}
           {run.answer && (
-            <p className="msg-note">{isAddressBound ? (run.tool_loop?.all_claims_bound ? BOUND_CLAIM_LABEL : UNBOUND_CLAIM_LABEL) : `Answer: ${groundingStateText(run.grounding_status)}.`}</p>
+            <p className="msg-note">{questionClaimGroundingLabel(run)}</p>
           )}
           {run.citations.length > 0 && (
             <p className="msg-note">
               {run.citations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.
             </p>
+          )}
+          {hasLiveReceipt && run.answer_result?.kind === "LIVE_TABLE" && (
+            <LiveTableEvidenceList result={run.answer_result} run={run} />
           )}
           {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
           {run.conflicts.map((item) => (
@@ -3090,7 +3581,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
           {run.uncertainties.filter((item) => !(corpusWarning && item.code === "CORPUS_PARTIAL")).map((item) => (
             <p className="msg-note" key={item.code}>{item.message ?? item.code}</p>
           ))}
-          {run.citations.length === 0 ? (
+          {run.citations.length === 0 && !hasLiveReceipt ? (
             <>
               <p className="msg-warning">This answer has no supporting citations: relevant fragments were not found or are unavailable.</p>
               {hasInsufficientEvidence && run.searched && run.searched.length > 0 && <SearchedList searched={run.searched} />}
@@ -3118,7 +3609,7 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   );
 }
 
-function TurnCard({ turn, panelTurnId, selectedCitationId, onSelectTurn, onSelectCitation }: {
+export function TurnCard({ turn, panelTurnId, selectedCitationId, onSelectTurn, onSelectCitation }: {
   turn: ConversationTurn;
   panelTurnId: string | null;
   selectedCitationId: string | null;
@@ -3155,11 +3646,27 @@ function TurnCard({ turn, panelTurnId, selectedCitationId, onSelectTurn, onSelec
 // The rely bar (contract §4): a real count of enabled sources, how many need
 // attention, and — on demand — the same per-source freshness the Sources
 // screen shows, so "what we're relying on" is never a separate fiction.
-function RelyBar({ sources }: { sources: SourceStatus[] }) {
+export type RelySourceSummary = {
+  source_scope_id: string;
+  label: string;
+  headline: string;
+  variant: "ready" | "attention" | "updating" | "disconnected";
+};
+
+export function relySourceSummary(sources: SourceStatus[]): RelySourceSummary[] {
+  return sources.filter((source) => source.enabled).map((source) => ({
+    source_scope_id: source.source_scope_id,
+    label: sourceLabel(source),
+    headline: sourceHeadline(source),
+    variant: sourceCardVariant(source),
+  }));
+}
+
+function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const enabled = sources.filter((source) => source.enabled);
-  const attention = enabled.filter((source) => sourceCardVariant(source) === "attention").length;
+  const enabled = relySourceSummary(sources);
+  const attention = enabled.filter((source) => source.variant === "attention").length;
 
   useEffect(() => {
     if (!open) return;
@@ -3171,7 +3678,16 @@ function RelyBar({ sources }: { sources: SourceStatus[] }) {
   }, [open]);
 
   if (enabled.length === 0) {
-    return <p className="rely-empty">No sources are connected yet. Answers will use the sources added to this workspace.</p>;
+    if (onManageSources) {
+      return (
+        <button aria-label="Manage sources" className="rely-summary" onClick={onManageSources} type="button">
+          <IconSources /><span>Sources: <b>0</b></span>
+        </button>
+      );
+    }
+    return (
+      <p className="rely-empty">No sources are connected yet. Answers will use the sources added to this workspace.</p>
+    );
   }
 
   return (
@@ -3181,11 +3697,12 @@ function RelyBar({ sources }: { sources: SourceStatus[] }) {
           <h3>Workspace sources — {enabled.length}</h3>
           {enabled.map((source) => (
             <div className="rely-row" key={source.source_scope_id}>
-              <span aria-hidden="true" className={`dot dot-${sourceCardVariant(source)}`} />
-              <span className="rely-name">{sourceLabel(source)}</span>
-              <small>{sourceHeadline(source)}</small>
+              <span aria-hidden="true" className={`dot dot-${source.variant}`} />
+              <span className="rely-name">{source.label}</span>
+              <small>{source.headline}</small>
             </div>
           ))}
+          {onManageSources && <button className="text-button rely-manage" onClick={() => { setOpen(false); onManageSources(); }} type="button">Manage sources</button>}
         </div>
       )}
       <button aria-expanded={open} className="rely-summary" onClick={() => setOpen((value) => !value)} type="button">
@@ -3314,6 +3831,16 @@ function groundingStateText(status: string | undefined): string {
   return status === "CONFIRMED_BY_FRAGMENT" ? "supported by a fragment" : "unverified";
 }
 
+// Address-bound/tool-loop answers expose claim binding from the tool trace.
+// Extractive and byte-exact answers use their server grounding state instead;
+// they must never be labelled "unbound" merely because no tool loop exists.
+export function questionClaimGroundingLabel(run: Pick<QuestionRun, "answer_mode" | "verification_method" | "grounding_status" | "tool_loop">): string {
+  const isAddressBound = run.answer_mode === "TOOL_LOOP" || run.verification_method === "ADDRESS_BOUND";
+  return isAddressBound
+    ? (run.tool_loop?.all_claims_bound ? BOUND_CLAIM_LABEL : UNBOUND_CLAIM_LABEL)
+    : `Answer: ${groundingStateText(run.grounding_status)}.`;
+}
+
 function firstAnswerCitation(run: QuestionRun | null | undefined): string | null {
   if (!run) return null;
   for (const number of extractCitationNumbers(run.answer ?? "")) {
@@ -3424,7 +3951,7 @@ function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = fa
   );
 }
 
-function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onSelectCitation }: {
+export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onOpenEvidence, onSelectCitation }: {
   workspaceID: string | null;
   target: PanelTarget;
   turnsByID: Map<string, ConversationTurn>;
@@ -3432,6 +3959,7 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
   allSources: SourceStatus[];
   fullscreen: boolean;
   onToggleFullscreen: () => void;
+  onOpenEvidence: (hash: string) => void;
   onSelectCitation: (turnID: string, citationID: string) => void;
 }) {
   const turn = target && "turnId" in target ? turnsByID.get(target.turnId) ?? null : null;
@@ -3439,6 +3967,9 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
   const activeCitationID = target && "citationId" in target ? target.citationId : null;
   const activeCitation = citations.find((item) => item.citation_id === activeCitationID) ?? null;
   const fragmentID = activeCitation?.evidence_fragment_id ?? null;
+  const liveResultRun = turn?.question_run && hasLiveDataReceipt(turn.question_run) &&
+    liveTableReceipts(turn.question_run.answer_result).length > 0 && !fragmentID
+    ? turn.question_run : null;
   const citationAddress = activeCitation?.address?.startsWith("kv1:") ? activeCitation.address : undefined;
   const requestPath = workspaceID && fragmentID
     ? evidenceRequestPath({ workspace: workspaceID, fragment: fragmentID, canonicalAddress: citationAddress })
@@ -3529,7 +4060,7 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
     <aside aria-label="Answer evidence" className={fullscreen ? "evi evi-full" : "evi"}>
       <header className="evi-h">
         <div className="t">
-          <b>{evidence?.kind === "ok" ? evidenceSourceFilename(evidence.value.source_path) ?? provenanceName : fragmentID ? "Checking source…" : "Evidence unavailable"}</b>
+          <b>{evidence?.kind === "ok" ? evidenceSourceFilename(evidence.value.source_path) ?? provenanceName : fragmentID ? "Checking source…" : liveResultRun ? "Live database evidence" : "Evidence unavailable"}</b>
           {provenanceName && <span>{activeCitation ? `Evidence ${activeCitation.number} · ` : ""}{provenanceName}</span>}
           {/* FIX-6 + UPL-1: anchor is a machine provenance descriptor (for a
               structured cell, a JSON locator with its own canonical_value_hash/
@@ -3541,7 +4072,11 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
         </div>
         {evidence?.kind === "ok" && (
           <div className="evi-actions">
-            {evidencePageURL && <a className="lnk" href={evidencePageURL}>Open separately</a>}
+            {evidencePageURL && <a className="lnk" href={evidencePageURL} onClick={(event) => {
+              if (!shouldHandleInAppEvidenceClick(event)) return;
+              event.preventDefault();
+              onOpenEvidence(new URL(evidencePageURL).hash);
+            }}>Open separately</a>}
             {evidencePageURL && <button className="lnk" onClick={() => void copyEvidencePageLink()} type="button">Copy link</button>}
             <button aria-expanded={fullscreen} className="lnk" onClick={onToggleFullscreen} ref={expandButtonRef} type="button">
               {fullscreen ? <IconCollapse /> : <IconExpand />}
@@ -3595,7 +4130,8 @@ function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection,
       )}
 
       <div className="evi-b" ref={evidenceBodyRef}>
-        {!fragmentID && (
+        {liveResultRun && <LiveResultEvidencePanel run={liveResultRun} />}
+        {!fragmentID && !liveResultRun && (
           <p className="evi-denied">
             <IconInfo />
             {(turn?.question_run?.citations.length ?? 0) === 0
@@ -3687,39 +4223,254 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
   );
 }
 
-type PilotSearchHit = {
-  fragment_id: string;
-  canonical_address: string;
-  source_path?: string;
-  excerpt: string;
-  observed_at?: string;
-};
+export function GovernedPresetPanelHost({ active, onCatalogAvailability, onSessionExpired, requestedWorkspaceID, revalidationKey, state }: {
+  active: boolean; onCatalogAvailability: (availability: GovernedCatalogAvailability) => void; onSessionExpired: () => void;
+  requestedWorkspaceID: string | null; revalidationKey: number; state: WorkspaceDataState;
+}) {
+  const authorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
+  const [catalogEpoch, setCatalogEpoch] = useState<number | null>(null);
+  const [catalogAvailability, setCatalogAvailability] = useState<GovernedCatalogAvailability>({ status: "loading", catalogAvailable: false, liveAskAvailable: false });
+  const [retention, dispatchRetention] = useReducer(reduceGovernedRetention, { workspaceID: null, revision: null, phase: "pending" as GovernedWorkspaceAuthorization, resetKey: 0 });
 
-type PilotSearchPage = {
-  results: PilotSearchHit[];
-  has_more: boolean;
-  partial: boolean;
-  next_offset: number | null;
-};
+  const onCatalogAuthorization = useCallback((availability: GovernedCatalogAvailability) => {
+    setCatalogAvailability(availability);
+    onCatalogAvailability(availability);
+    setCatalogEpoch(availability.catalogAvailable ? revalidationKey : null);
+  }, [onCatalogAvailability, revalidationKey]);
 
-// The pilot presents independent searches. It never sends a conversation ID
-// or loads conversation history; source results do not wait for generation.
-function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, requestedWorkspaceID, active }: {
-  onOpenSources: () => void;
+  useEffect(() => { dispatchRetention({ workspaceID: requestedWorkspaceID, phase: authorization.phase, revision: authorization.revision }); }, [authorization.phase, authorization.revision, requestedWorkspaceID]);
+  useEffect(() => {
+    if (authorization.phase !== "authorized") {
+      onCatalogAuthorization({
+        status: authorization.phase === "pending" ? "loading" : "unavailable",
+        catalogAvailable: false,
+        liveAskAvailable: false,
+      });
+    }
+  }, [authorization.phase, onCatalogAuthorization]);
+
+  if (requestedWorkspaceID === null) return null;
+  const authorized = authorization.phase === "authorized" && authorization.revision !== null;
+  const visible = active && authorized && catalogEpoch === revalidationKey && retention.workspaceID === requestedWorkspaceID
+    && retention.phase === "authorized" && retention.revision === authorization.revision;
+  return (
+    <div className="governed-preset-owner" hidden={!visible}>
+      <GovernedPresetPanel
+        authorized={authorized}
+        key={`${requestedWorkspaceID}:${retention.resetKey}`}
+        liveAskAvailable={catalogAvailability.liveAskAvailable}
+        onCatalogAuthorization={onCatalogAuthorization}
+        onSessionExpired={onSessionExpired}
+        revalidationKey={revalidationKey}
+        visible={visible}
+        workspaceID={requestedWorkspaceID}
+      />
+    </div>
+  );
+}
+
+export type AskExecutionMode = "workspace-search" | "live-database";
+
+export function defaultAskExecutionMode(_catalogAvailable: boolean): AskExecutionMode {
+  return "workspace-search";
+}
+
+export function effectiveAskExecutionMode(requestedMode: AskExecutionMode | null, catalogAvailable: boolean, catalogStatus: GovernedCatalogAvailability["status"] = "available"): AskExecutionMode {
+  const requestedOrDefault = requestedMode ?? defaultAskExecutionMode(catalogAvailable);
+  return requestedOrDefault === "live-database" && catalogStatus === "unavailable" ? "workspace-search" : requestedOrDefault;
+}
+
+export function askExecutionVisibility(mode: AskExecutionMode): { workspaceSearch: boolean; liveDatabase: boolean } {
+  return { workspaceSearch: mode === "workspace-search", liveDatabase: mode === "live-database" };
+}
+
+/** The single question surface. Governed preset checks remain an admin-only
+ * component for a future Diagnostics surface; they are deliberately not
+ * mounted beside the user question composer. */
+export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversationChange, initialConversationID, pushToast, state, requestedWorkspaceID }: {
+  active: boolean;
   onOpenEvidence: (hash: string) => void;
-  onSessionExpired: () => void;
+  onOpenSources: () => void;
+  onConversationChange?: (conversationID: string | null) => void;
+  initialConversationID?: string | null;
+  pushToast?: (kind: "success" | "error", text: string) => void;
+  // Retained as optional compatibility props for callers that used the
+  // retired governed panel host. The main Ask surface no longer mounts it.
+  onSessionExpired?: () => void;
+  revalidationKey?: number;
+  state: WorkspaceDataState;
+  requestedWorkspaceID: string | null;
+}) {
+  const askSources = governedWorkspaceAuthorization(state, requestedWorkspaceID).phase === "authorized"
+    ? authorizedSourcesForAsk(state, requestedWorkspaceID)
+    : null;
+
+  return (
+    <div className="ask-surface" hidden={!active}>
+      <header className="ask-page-header">
+        <h1>Ask</h1>
+        <div className="ask-page-actions">
+          {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
+        </div>
+      </header>
+      <AskView
+        initialConversationID={initialConversationID ?? null}
+        onConversationChange={onConversationChange ?? (() => {})}
+        onOpenEvidence={onOpenEvidence}
+        requestedWorkspaceID={requestedWorkspaceID}
+        state={state}
+        pushToast={pushToast ?? (() => {})}
+      />
+    </div>
+  );
+}
+
+// The Ask surface sends one governed question run per submit. The server owns
+// retrieval and tool orchestration; the browser only presents the resulting
+// answer, citations and actual tool-call disclosure.
+export function questionRunPayload(question: string, model: ModelProfile | null | undefined): {
+  question: string;
+  model_profile_id?: string;
+} {
+  return {
+    question,
+    ...(model ? { model_profile_id: model.id } : {}),
+  };
+}
+
+function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
+  onOpenEvidence: (hash: string) => void;
+  run: QuestionRun;
+  workspaceID: string;
+}) {
+  const statusMessage = questionStatusMessage(run);
+  const corpusWarning = corpusStatusWarning(run.corpus_status);
+  const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
+  const text = run.answer ?? run.clarification;
+  const liveResult = run.answer_result;
+  const liveObservationWindow = liveResult?.observation_window;
+  const liveReceiptDigest = liveResult?.receipt_digest;
+  const isLiveTable = liveResult?.kind === "LIVE_TABLE";
+  const liveReceipts = liveTableReceipts(liveResult);
+  const hasLiveReceipt = Boolean((liveObservationWindow && liveReceiptDigest) || liveReceipts.length > 0);
+  const isLiveScalar = hasLiveReceipt && !isLiveTable;
+  // A live calculation and cited document prose prove different things. Keep
+  // their presentation separate so the model's document context is never
+  // mistaken for the server-owned calculation and receipt.
+  const isCombinedLiveResult = isLiveScalar && run.citations.length > 0;
+  const hasDocumentGroundedContext = isCombinedLiveResult && Boolean(text);
+  const resultValue = liveResult?.value
+    ? `${liveResult.value}${liveResult.unit ? ` ${liveResult.unit}` : ""}`
+    : null;
+  const citationHref = (citation: QuestionCitation): string => buildEvidenceHash({
+    workspace: workspaceID,
+    fragment: citation.evidence_fragment_id,
+    ...(citation.address ? { canonicalAddress: citation.address } : {}),
+    ...(confirmedEvidenceQuoteSelector(citation) ? { selector: confirmedEvidenceQuoteSelector(citation)! } : {}),
+  });
+  const selectCitation = (citationID: string) => {
+    const citation = run.citations.find((item) => item.citation_id === citationID);
+    if (citation) onOpenEvidence(citationHref(citation));
+  };
+  return (
+    <>
+      <ToolCallsDisclosure run={run} showResults={false} />
+      {statusMessage ? <p className="msg-warning">{statusMessage}</p> : hasLiveReceipt ? (
+        <div className="answer-body live-calculation-answer">
+          <span className="badge badge-live"><IconCheckCircle />{isLiveTable ? "Model interpretation of the complete live table" : "Verified live calculation"}</span>
+          {isCombinedLiveResult && resultValue ? (
+            <span className="answer-live-summary">{resultValue}</span>
+          ) : text ? (
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          ) : resultValue ? (
+            <span className="answer-live-summary">{resultValue}</span>
+          ) : null}
+          {isLiveTable && liveResult ? (
+            liveReceipts.length > 0 ? (
+              <LiveTableEvidenceList result={liveResult} run={run} />
+            ) : (
+              <details className="live-calculation-evidence">
+                <summary>Live table receipt</summary>
+                <dl>
+                  <dt>Rows returned</dt><dd>{liveResult.snapshot.row_count}</dd>
+                  <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
+                  <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
+                </dl>
+              </details>
+            )
+          ) : (
+            <details className="live-calculation-evidence">
+              <summary>Evidence for this calculation</summary>
+              <dl>
+                {liveResult?.period && <><dt>Period</dt><dd>{answerPeriodText(liveResult.period) ?? "—"}</dd></>}
+                {liveResult?.timezone && <><dt>Time zone</dt><dd>{liveResult.timezone}</dd></>}
+                <dt>Contributing rows</dt><dd>{liveResult?.snapshot.row_count ?? 0}</dd>
+                <dt>Observed window</dt><dd>{liveObservationWindow ? answerObservationWindowText(liveObservationWindow) || "—" : "—"}</dd>
+                <dt>Receipt digest</dt><dd className="mono">{liveReceiptDigest ?? "—"}</dd>
+              </dl>
+            </details>
+          )}
+        </div>
+      ) : text ? (
+        isQuote ? (
+          <blockquote className="answer-quote">
+            <span className="badge badge-quote"><IconCheckCircle />quote verified</span>
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          </blockquote>
+        ) : (
+          <div className="answer-body">
+            <span className="badge badge-tell">paraphrase</span>
+            <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
+          </div>
+        )
+      ) : resultValue ? (
+        <div className="answer-body">
+          <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={resultValue} turnId={run.question_run_id} />
+          {run.answer_result?.period?.label && <p className="msg-note">Period: {run.answer_result.period.label}</p>}
+        </div>
+      ) : <p className="msg-warning">No answer was returned. Check the sources and try again.</p>}
+      {hasDocumentGroundedContext && (
+        <div className="answer-body document-grounded-context">
+          <span className="badge badge-tell">document-grounded context / paraphrase</span>
+          <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text!} turnId={run.question_run_id} />
+        </div>
+      )}
+      {text && (!hasLiveReceipt || hasDocumentGroundedContext) && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
+      {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
+      {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
+      {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
+      {run.citations.length > 0 && (
+        <ul aria-label="Answer sources" className="search-pilot-citations">
+          {run.citations.map((citation) => {
+            const href = citationHref(citation);
+            return (
+              <li key={citation.citation_id}>
+                <a href={href} onClick={(event) => {
+                  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  onOpenEvidence(href);
+                }}>Source [{citation.number}]</a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
+export function SearchView({ onOpenEvidence, state, requestedWorkspaceID, active }: {
+  onOpenEvidence: (hash: string) => void;
   state: WorkspaceDataState;
   requestedWorkspaceID: string | null;
   active: boolean;
 }) {
   const [question, setQuestion] = useState("");
-  const [includeAnswer, setIncludeAnswer] = useState(true);
   const [selectedModelID, setSelectedModelID] = useState<string | null>(null);
   const [submittedModel, setSubmittedModel] = useState<ModelProfile | null>(null);
   const [searching, setSearching] = useState(false);
   const [answerPending, setAnswerPending] = useState(false);
   const [submitted, setSubmitted] = useState("");
-  const [page, setPage] = useState<ApiResult<PilotSearchPage> | null>(null);
   const [answer, setAnswer] = useState<ApiResult<QuestionRun> | null>(null);
   const [resultWorkspace, setResultWorkspace] = useState<string | null>(null);
   const generation = useRef(0);
@@ -3729,20 +4480,17 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
   const snapshot = snapshotResult?.kind === "ok" ? snapshotResult.value : null;
   const workspaceID = snapshot?.id === requestedWorkspaceID ? snapshot.id : null;
   const workspaceClosed = snapshot?.status === "ARCHIVED" || snapshot?.status === "REVOKED";
+  const workspaceAuthorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
   const models = snapshot?.model_profiles ?? [];
-  const modelCatalogKnown = snapshot?.model_profiles !== undefined;
-  const answerAvailable = !modelCatalogKnown || models.length > 0;
   const selectedModel = selectedModelID === null
     ? models.find((model) => model.is_default) ?? models[0]
     : models.find((model) => model.id === selectedModelID);
-  const modelSelectionMissing = modelCatalogKnown && includeAnswer && answerAvailable && !selectedModel;
   const successfulRevision = useRef(snapshot?.revision);
 
   const clearSearch = useCallback(() => {
     generation.current++;
     setQuestion("");
     setSubmitted("");
-    setPage(null);
     setAnswer(null);
     setSearching(false);
     setAnswerPending(false);
@@ -3757,10 +4505,10 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
     // Revalidation loading is not a new workspace revision. Keep the search in
     // memory, while the stamped workspace hook prevents it being displayed.
     if (!snapshotResult) return;
-    if (!snapshot || workspaceClosed || snapshot.id !== requestedWorkspaceID
+    if (!snapshot || workspaceClosed || workspaceAuthorization.phase === "denied" || snapshot.id !== requestedWorkspaceID
       || (successfulRevision.current !== undefined && successfulRevision.current !== snapshot.revision)) clearSearch();
     successfulRevision.current = snapshot?.revision;
-  }, [snapshotResult, snapshot, workspaceClosed, requestedWorkspaceID, clearSearch]);
+  }, [snapshotResult, snapshot, workspaceAuthorization.phase, workspaceClosed, requestedWorkspaceID, clearSearch]);
 
   useLayoutEffect(() => () => { generation.current++; }, []);
 
@@ -3771,159 +4519,89 @@ function SearchView({ onOpenSources, onOpenEvidence, onSessionExpired, state, re
   async function search(event: FormEvent) {
     event.preventDefault();
     const query = question.trim();
-    if (!query || !workspaceID || workspaceClosed || searching || modelSelectionMissing) return;
+    if (!query || !workspaceID || workspaceClosed || searching) return;
     const epoch = ++generation.current;
     const base = `/api/v1/workspaces/${encodeURIComponent(workspaceID)}`;
     setResultWorkspace(workspaceID);
     setSubmitted(query);
-    setPage(null);
     setAnswer(null);
-    const wantsAnswer = includeAnswer && answerAvailable;
-    setSubmittedModel(wantsAnswer && selectedModel ? { id: selectedModel.id, label: selectedModel.label, location: selectedModel.location } : null);
+    const selected = selectedModel
+      ? { id: selectedModel.id, label: selectedModel.label, location: selectedModel.location }
+      : null;
+    setSubmittedModel(selected);
     setSearching(true);
-    setAnswerPending(wantsAnswer);
+    setAnswerPending(true);
     dismissFootnoteTooltip();
-    const result = await apiGet<PilotSearchPage>(`${base}/tools/search?query=${encodeURIComponent(query)}&limit=10`);
-    if (generation.current !== epoch) return;
-    setPage(result);
-    setSearching(false);
-    if (result.kind !== "ok" || !wantsAnswer) {
-      setAnswerPending(false);
-      return;
-    }
     const summary = await apiPost<QuestionRun>(`${base}/questions`, {
-      question: query,
-      ...(selectedModel ? { model_profile_id: selectedModel.id } : {}),
+      ...questionRunPayload(query, selectedModel),
     }, newIdempotencyKey());
     if (generation.current !== epoch) return;
     if (summary.kind !== "ok" && [401, 403, 404].includes(summary.status)) {
-      // A continuation already in flight must not repopulate protected hits
-      // after the model endpoint has denied this workspace request.
+      // A denied question must not leave a previous protected answer visible.
+      // Keep this failed attempt stamped to the current workspace so the user
+      // gets the ordinary ClosedOrError explanation instead of a silent blank.
       generation.current++;
-      setPage(summary);
-      setAnswer(null);
+      setAnswer(summary);
+      setResultWorkspace(workspaceID);
       setSearching(false);
       setAnswerPending(false);
       return;
     }
+    setSearching(false);
     setAnswer(summary);
     setAnswerPending(false);
-  }
-
-  async function more() {
-    if (!workspaceID || searching || page?.kind !== "ok" || !page.value.has_more || page.value.next_offset === null) return;
-    const epoch = generation.current;
-    const previous = page.value;
-    setSearching(true);
-    const next = await apiGet<PilotSearchPage>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}/tools/search?query=${encodeURIComponent(submitted)}&limit=10&offset=${previous.next_offset}`);
-    if (generation.current !== epoch) return;
-    setSearching(false);
-    // A denied refresh must also remove the earlier protected results.
-    if (next.kind !== "ok") {
-      generation.current++;
-      setPage(next);
-      setAnswer(null);
-      setAnswerPending(false);
-      return;
-    }
-    setPage({ ...next, value: { ...next.value, results: [...previous.results, ...next.value.results] } });
-  }
-
-  function citationHref(citation: QuestionCitation): string {
-    return buildEvidenceHash({ workspace: workspaceID!, fragment: citation.evidence_fragment_id,
-      ...(citation.address ? { canonicalAddress: citation.address } : {}),
-      ...(confirmedEvidenceQuoteSelector(citation) ? { selector: confirmedEvidenceQuoteSelector(citation)! } : {}) });
-  }
-
-  function openSource(event: ReactMouseEvent<HTMLAnchorElement>, hash: string) {
-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    onOpenEvidence(hash);
   }
 
   if (snapshotResult && snapshotResult.kind !== "ok") return <div className="search-pilot" hidden={!active}><ClosedOrError result={snapshotResult} /></div>;
   if (!workspaceID) return <div className="search-pilot" hidden={!active}><p role="status">{requestedWorkspaceID ? "Checking access…" : "Select a workspace."}</p></div>;
   if (workspaceClosed) return <div className="search-pilot" hidden={!active}><p>This workspace is closed.</p></div>;
+  if (workspaceAuthorization.phase !== "authorized") return <div className="search-pilot" hidden={!active}><p role="status">{workspaceAuthorization.phase === "pending" ? "Checking access…" : "This workspace is unavailable."}</p></div>;
   const visible = resultWorkspace === workspaceID;
-  const run = visible && page?.kind === "ok" && answer?.kind === "ok" ? answer.value : null;
-  const hits = visible && page?.kind === "ok" ? page.value.results : [];
+  const run = visible && answer?.kind === "ok" ? answer.value : null;
   const answerModel = run?.model_profile ?? submittedModel;
 
   return (
     <section className="search-pilot" hidden={!active} ref={searchElement}
       onScroll={(event) => { if (active) scrollPosition.current = event.currentTarget.scrollTop; }}>
-      <header>
-        <h1>Search</h1>
-      </header>
-      <form className="search-pilot-form" onSubmit={search}>
-        <label className="sr-only" htmlFor="pilot-question">Search query</label>
-        <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question or search" />
-        <button className="primary-button" disabled={!question.trim() || searching || modelSelectionMissing} type="submit">{searching ? "Searching…" : "Search"}</button>
-      </form>
-      <div className="search-pilot-options">
-        <label><input type="checkbox" checked={includeAnswer && answerAvailable} disabled={!answerAvailable} onChange={(event) => setIncludeAnswer(event.target.checked)} /> {answerAvailable ? "AI answer" : "AI answer unavailable"}</label>
-        {models.length > 0 && <select aria-label="Model" className="search-model-select"
-          value={selectedModel?.id ?? ""} disabled={!includeAnswer} onChange={(event) => setSelectedModelID(event.target.value)}>
-          {!selectedModel && <option disabled value="">Select a model</option>}
-          {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
-        </select>}
-        <button className="text-button" onClick={onOpenSources} type="button">Sources</button>
-      </div>
-      {/* D3B: the administrator-approved live database checks are a separate,
-          secondary surface on the Search screen. They are keyed by workspace so
-          a workspace change discards the whole catalogue and result, and they
-          never touch ordinary document search or the AI answer. */}
-      <GovernedPresetPanel key={workspaceID} onSessionExpired={onSessionExpired} workspaceID={workspaceID} />
-      {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
-      {visible && (answerPending || answer) && (
-        <section aria-label="AI answer" className="search-pilot-answer">
-          {!answerPending && <h2>AI answer <small>{answerModel ? `${answerModel.label} · ` : ""}preview</small></h2>}
-          {answerPending && <div className="search-answer-progress">
-            <p aria-live="polite" aria-atomic="true" className="search-answer-status" role="status"><span aria-hidden="true" className="search-answer-spinner" />{page?.kind === "ok" ? `${answerModel?.label ?? "Model"} is preparing an answer…` : "Searching sources…"}</p>
-            <div aria-hidden="true" className="search-answer-skeleton"><span /><span /><span /></div>
-          </div>}
-          {answer && answer.kind !== "ok" && <p className="msg-warning">AI answer unavailable.</p>}
-          {run && <>
-          <AnswerBody text={run.answer ?? run.clarification ?? "No answer yet. Refine your question or open the sources."}
-            citations={run.citations} turnId={run.question_run_id} panelTurnId={null} selectedCitationId={null}
-            onSelectCitation={(id) => {
-              const citation = run.citations.find((item) => item.citation_id === id);
-              if (citation) onOpenEvidence(citationHref(citation));
-            }} />
-          {corpusStatusWarning(run.corpus_status) && <p className="hint">{corpusStatusWarning(run.corpus_status)}</p>}
-          {run.citations.length > 0 && <ul className="search-pilot-citations">{run.citations.map((citation) => (
-            <li key={citation.citation_id}><a href={citationHref(citation)} onClick={(event) => openSource(event, citationHref(citation))}>Source [{citation.number}]</a></li>
-          ))}</ul>}
-          </>}
-        </section>
-      )}
-      {visible && page && page.kind !== "ok" && <ClosedOrError result={page} />}
-      {visible && page?.kind === "ok" && (
-        <section aria-label="Sources" className="search-pilot-results">
-          {hits.length > 0 && <h2>Sources</h2>}
-          {hits.length === 0 && <p>No results found.</p>}
-          {hits.map((hit, index) => (
-            <article key={`${hit.canonical_address}-${index}`} className="search-pilot-hit">
-              <a href={buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address })}
-                onClick={(event) => openSource(event, buildEvidenceHash({ workspace: workspaceID, fragment: hit.fragment_id, canonicalAddress: hit.canonical_address }))}>
-                {evidenceSourceFilename(hit.source_path) ?? "Source fragment"}
-              </a>
-              {hit.source_path && <p className="search-pilot-path">{hit.source_path}</p>}
-              <p className="search-pilot-excerpt">{hit.excerpt}</p>
-              {hit.observed_at && <p className="hint">Data retrieved: {formatTime(hit.observed_at)}</p>}
-            </article>
-          ))}
-          {page.value.partial && <p className="hint">Only some matches are shown. Refine your query or load more results.</p>}
-          {page.value.has_more && <button className="secondary-button" onClick={() => void more()} disabled={searching} type="button">More results</button>}
-        </section>
-      )}
+      <section aria-labelledby="question-composer-heading" className="document-search-mode">
+        <h2 className="sr-only" id="question-composer-heading">Ask a question</h2>
+        <form className="search-pilot-form" onSubmit={search}>
+          <label className="sr-only" htmlFor="pilot-question">Ask a question</label>
+          <input id="pilot-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question" />
+          <button className="primary-button" disabled={!question.trim() || searching} type="submit">{searching ? "Asking…" : "Ask"}</button>
+        </form>
+        <div className="search-pilot-options">
+          {models.length > 0 && <select aria-label="Model" className="search-model-select"
+            value={selectedModel?.id ?? ""} onChange={(event) => setSelectedModelID(event.target.value)}>
+            {!selectedModel && <option disabled value="">Select a model</option>}
+            {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
+          </select>}
+        </div>
+        {visible && submitted && question.trim() !== submitted && <p className="muted">Results for: {submitted}</p>}
+        {visible && (answerPending || answer) && (
+          <section aria-label="AI answer" className="search-pilot-answer">
+            {!answerPending && <h2>AI answer <small>{answerModel ? `${answerModel.label} · ` : ""}answer</small></h2>}
+            {answerPending && <div className="search-answer-progress">
+              <p aria-live="polite" aria-atomic="true" className="search-answer-status" role="status"><span aria-hidden="true" className="search-answer-spinner" />{answerModel?.label ?? "Model"} is preparing an answer…</p>
+              <div aria-hidden="true" className="search-answer-skeleton"><span /><span /><span /></div>
+            </div>}
+            {answer && answer.kind !== "ok" && <ClosedOrError result={answer} />}
+            {run && <QuestionRunAnswer onOpenEvidence={onOpenEvidence} run={run} workspaceID={workspaceID} />}
+          </section>
+        )}
+      </section>
     </section>
   );
 }
 
-function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWorkspaceID }: {
-  workspaceTitle: string;
-  onOpenSources: () => void;
+export function initialConversationWorkspaceOwner(initialConversationID: string | null, requestedWorkspaceID: string | null): string | null {
+  return initialConversationID ? requestedWorkspaceID : null;
+}
+
+function AskView({ onOpenEvidence, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
+  onOpenEvidence: (hash: string) => void;
+  onConversationChange: (conversationID: string | null) => void;
+  initialConversationID: string | null;
   state: WorkspaceDataState;
   pushToast: (kind: "success" | "error", text: string) => void;
   // The workspace the parent currently has selected. It is available even when
@@ -3933,6 +4611,7 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   requestedWorkspaceID: string | null;
 }) {
   const [question, setQuestion] = useState("");
+  const [selectedModelID, setSelectedModelID] = useState<string | null>(null);
   // The server selects the configured workspace mode. Explicit legacy modes
   // remain available through the API; the chat follows the mounted profile.
   const [submitting, setSubmitting] = useState(false);
@@ -3977,11 +4656,14 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   // loadMoreTopics. A first page that succeeded replaces rows and cursor, and
   // "invalid" still asks for an explicit refresh of a refused cursor.
   const [topicsContinuation, setTopicsContinuation] = useState<"idle" | "pending" | "error" | "refresh-error" | "invalid">("idle");
-  const [selectedConversationID, setSelectedConversationID] = useState<string | null>(null);
+  const [selectedConversationID, setSelectedConversationID] = useState<string | null>(initialConversationID);
+  const routedConversationRef = useRef<string | null>(initialConversationID);
   const [conversation, setConversation] = useState<ApiResult<ConversationEnvelope> | null>(null);
   const [localTurns, setLocalTurns] = useState<ConversationTurn[]>([]);
   const [lastFailure, setLastFailure] = useState<{ question: string; result: ApiFailure | ApiBroken } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [observedActions, setObservedActions] = useState<QuestionActionFrame[]>([]);
+  const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
@@ -4032,6 +4714,10 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   const snapshotResult = state.phase === "loaded" ? state.snapshot : null;
   const snapshot = snapshotResult !== null && snapshotResult.kind === "ok" ? snapshotResult.value : null;
   const workspaceID = snapshot?.id ?? null;
+  const models = snapshot?.model_profiles ?? [];
+  const selectedModel = selectedModelID === null
+    ? models.find((model) => model.is_default) ?? models[0]
+    : models.find((model) => model.id === selectedModelID);
   const workspaceClosed = snapshot !== null && (snapshot.status === "ARCHIVED" || snapshot.status === "REVOKED");
   // The momentary reload window: the workspace snapshot is being (re)fetched, so
   // a null workspaceID does NOT mean the workspace changed. Only this
@@ -4049,6 +4735,15 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   const allSources = state.phase === "loaded" && state.sources.kind === "ok" ? state.sources.value.sources : [];
   const activeSources = allSources.filter((source) => source.enabled && source.confirmation_state === "ACTIVE");
   const sourceNameByConnection = new Map(allSources.map((source) => [source.connection_id, source.connection_name]));
+
+  useEffect(() => {
+    if (routedConversationRef.current === initialConversationID) return;
+    routedConversationRef.current = initialConversationID;
+    setSelectedConversationID(initialConversationID);
+    setConversation(null);
+    setLocalTurns([]);
+    setPanelTarget(null);
+  }, [initialConversationID]);
 
   // First page of the topics list. Server pagination replaces the old
   // unpaginated GET and the client-side 30-row cap, so a continuation can
@@ -4234,7 +4929,12 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   // R2 refresh-fix: the workspace whose protected chat state this component
   // currently shows. Written by the reset effect's definite-change branch and
   // read by the same-workspace refresh check.
-  const ownedWorkspaceIDRef = useRef<string | null>(null);
+  // A deep-linked conversation has an owner before the workspace snapshot
+  // finishes its first authorized hydration. Treat that first load as this
+  // workspace's loading window so the reset path cannot clear the opaque
+  // selection before the conversation GET runs. A normal first visit still
+  // starts ownerless, and a later different workspace still resets.
+  const ownedWorkspaceIDRef = useRef<string | null>(initialConversationWorkspaceOwner(initialConversationID, requestedWorkspaceID));
 
   useEffect(() => {
     const owner = ownedWorkspaceIDRef.current;
@@ -4460,13 +5160,11 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
     return () => { alive = false; };
   }, [workspaceID, workspaceClosed, selectedConversationID]);
 
-  // Opening a topic from the left column shows the basis of its latest turn,
-  // mirroring "select a previous turn to see its evidence" for the turn the
-  // conversation was left on.
+  // Keep the answer readable first; evidence opens when the reader selects a
+  // citation or a turn.
   useEffect(() => {
     if (conversation?.kind !== "ok" || conversation.value.turns.length === 0) return;
-    const last = conversation.value.turns[conversation.value.turns.length - 1];
-    setPanelTarget({ turnId: last.turn_id, citationId: firstAnswerCitation(last.question_run) });
+    setPanelTarget(null);
     setFullscreen(false);
   }, [conversation]);
 
@@ -4475,6 +5173,14 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   const feedTurns = [...remoteTurns, ...localTurns.filter((turn) => !remoteTurnIDs.has(turn.question_run_id))];
   const detailLoading = selectedConversationID !== null && conversation === null;
   const turnsByID = new Map(feedTurns.map((turn) => [turn.turn_id, turn]));
+
+  useEffect(() => {
+    if (pendingQuestion === null) return;
+    const startedAt = Date.now();
+    setPendingElapsedSeconds(0);
+    const interval = window.setInterval(() => setPendingElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingQuestion]);
 
   useEffect(() => {
     const flow = flowRef.current;
@@ -4512,10 +5218,13 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
     setLastFailure(null);
     setQuestion("");
     setPendingQuestion(trimmed);
-    const result = await apiPost<QuestionRun>(
+    setObservedActions([]);
+    const result = await apiPostQuestionStream(
       `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/questions`,
-      { question: trimmed, conversation_id: selectedConversationID },
+      { ...questionRunPayload(trimmed, selectedModel), ...(selectedConversationID ? { conversation_id: selectedConversationID } : {}) },
       newIdempotencyKey(),
+      observationForGeneration(workspaceGeneration, () => workspaceGenerationRef.current,
+        (action) => setObservedActions((current) => [...current, action])),
     );
     // R3: before ANY post-await mutation, drop an answer that belongs to a
     // workspace generation that has since been reset or denied. The pending
@@ -4534,10 +5243,12 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
       };
       dismissFootnoteTooltip();
       setLocalTurns((current) => [...current, turn]);
-      setPanelTarget({ turnId: turn.turn_id, citationId: firstAnswerCitation(result.value) });
+      setPanelTarget(null);
       setFullscreen(false);
       if (result.value.conversation_id && result.value.conversation_id !== selectedConversationID) {
         setSelectedConversationID(result.value.conversation_id);
+        routedConversationRef.current = result.value.conversation_id;
+        onConversationChange(result.value.conversation_id);
       }
       // A successful answer can create a topic or add a turn to the selected
       // topic. Refresh the authorized first server page (limit=50) in both
@@ -4565,6 +5276,8 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   function startNewConversation() {
     dismissFootnoteTooltip();
     setSelectedConversationID(null);
+    routedConversationRef.current = null;
+    onConversationChange(null);
     setConversation(null);
     setLocalTurns([]);
     setLastFailure(null);
@@ -4580,6 +5293,8 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
     setLastFailure(null);
     setLocalTurns([]);
     setSelectedConversationID(conversationID);
+    routedConversationRef.current = conversationID;
+    onConversationChange(conversationID);
   }
 
   async function archiveConversation() {
@@ -4621,9 +5336,7 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
   const examples = exampleQuestions(activeSources);
   const conversationFailure = conversationList?.kind === "failure" || conversationList?.kind === "broken" ? conversationList : null;
   const detailFailure = conversation?.kind === "failure" || conversation?.kind === "broken" ? conversation : null;
-  const visibleConversations = conversations
-    .filter((item) => !item.archived_at)
-    .filter((item) => sidebarQuery.trim() === "" || conversationTitle(item).toLowerCase().includes(sidebarQuery.trim().toLowerCase()));
+  const visibleConversations = sidebarConversations(conversations, selectedConversationID, sidebarQuery);
   const showGreeting = selectedConversationID === null && feedTurns.length === 0 && pendingQuestion === null && !lastFailure;
   const currentTitle = selectedConversationID !== null && conversation?.kind === "ok" ? conversationTitle(conversation.value) : null;
 
@@ -4656,7 +5369,7 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
             </>
           )}
           {conversationList?.kind === "ok" && visibleConversations.length === 0 && (
-            <p className="muted">{conversations.length === 0 ? "No conversations yet." : "No results found."}</p>
+            <p className="muted">{sidebarConversations(conversations, selectedConversationID, "").length === 0 ? "No conversations yet." : "No results found."}</p>
           )}
           {conversationList?.kind === "ok" && visibleConversations.map((item) => (
             <button
@@ -4759,7 +5472,6 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
               ) : (
                 <p>No sources are connected yet. Add them in Sources to see example questions here.</p>
               )}
-              <p className="hint">This question uses the “{workspaceTitle}” workspace. Switching workspaces starts a new conversation using that workspace's sources.</p>
             </div>
           )}
 
@@ -4781,9 +5493,7 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
           {pendingQuestion !== null && (
             <article className="turn turn-on turn-pending">
               <p className="turn-question"><span className="turn-role">Question</span>{pendingQuestion}</p>
-              <p className="lead">Preparing answer.</p>
-              <p aria-live="polite" className="steps-note" role="status">Searching accessible data and preparing an answer with evidence.</p>
-              <p className="steps-note">Response time depends on the source and request queue.</p>
+              <PendingAction elapsedSeconds={pendingElapsedSeconds} state={pendingActionFromEvents(observedActions)} />
             </article>
           )}
 
@@ -4813,15 +5523,23 @@ function AskView({ workspaceTitle, onOpenSources, state, pushToast, requestedWor
               {submitting ? "…" : "→"}
             </button>
           </form>
+          {models.length > 0 && (
+            <label className="question-model">
+              <span>Model</span>
+              <select aria-label="Model" className="search-model-select" value={selectedModel?.id ?? ""} onChange={(event) => setSelectedModelID(event.target.value)}>
+                {!selectedModel && <option disabled value="">Select a model</option>}
+                {models.map((model) => <option key={model.id} value={model.id}>{model.label} · {model.location === "EXTERNAL" ? "cloud" : "local"}</option>)}
+              </select>
+            </label>
+          )}
           <p className="hint" id="ask-keyboard-hint">Enter to ask · Shift + Enter for a new line</p>
-          {feedTurns.length > 0 && <p className="hint">When continuing a conversation, repeat any important conditions or facts from earlier answers that you want to use.</p>}
-          <p className="hint">This question uses the “{workspaceTitle}” workspace. Switching workspaces starts a new conversation. <button className="text-button" onClick={onOpenSources} type="button">Sources →</button></p>
         </div>
       </section>
 
       <EvidencePanel
         allSources={allSources}
         fullscreen={fullscreen}
+        onOpenEvidence={onOpenEvidence}
         onSelectCitation={(turnID, citationID) => {
           const turn = turnsByID.get(turnID);
           if (turn) selectCitation(turn, citationID);

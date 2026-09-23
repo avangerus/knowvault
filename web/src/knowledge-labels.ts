@@ -16,4 +16,5 @@ export const KNOWLEDGE_TOOL_LABELS: Record<string, string> = {
   knowvault_list_objects: "List documents",
   knowvault_sources: "Source status",
   knowvault_refresh: "Refresh sources",
+  knowvault_compare_metric: "Compare metric",
 };

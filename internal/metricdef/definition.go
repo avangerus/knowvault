@@ -138,6 +138,7 @@ type Spec struct {
 	Grain          PeriodGrain
 	Unit           string
 	AllowedFilters []string
+	Binding        DatasetBinding
 }
 
 type normalizedSpec struct {
@@ -147,11 +148,12 @@ type normalizedSpec struct {
 	grain     PeriodGrain
 	unit      string
 	filters   FilterSet
+	binding   DatasetBinding
 }
 
 func normalizeSpec(spec Spec) (normalizedSpec, error) {
 	if !validLabel(spec.Name, maxNameLength) || !spec.Source.valid() || !validFieldName(spec.EntityKey) ||
-		!spec.Grain.valid() || !validOptionalLabel(spec.Unit, maxUnitLength) {
+		!spec.Grain.valid() || !validOptionalLabel(spec.Unit, maxUnitLength) || !spec.Binding.Valid() {
 		return normalizedSpec{}, newError(CodeInvalidDefinition)
 	}
 	filters, err := NewFilterSet(spec.AllowedFilters)
@@ -165,6 +167,7 @@ func normalizeSpec(spec Spec) (normalizedSpec, error) {
 		grain:     spec.Grain,
 		unit:      spec.Unit,
 		filters:   filters,
+		binding:   spec.Binding,
 	}, nil
 }
 
@@ -181,6 +184,10 @@ const (
 	CodeAuditUnavailable    ErrorCode = "METRICDEF_AUDIT_UNAVAILABLE"
 	CodeAuditFailed         ErrorCode = "METRICDEF_AUDIT_FAILED"
 	CodeUnknownVersion      ErrorCode = "METRICDEF_UNKNOWN_VERSION"
+	// CodeBindingApprovalUnavailable refuses approval of a definition whose
+	// binding is populated. Bound approval has no authority checker in this
+	// card, so it is deliberately fail-closed with a content-free code.
+	CodeBindingApprovalUnavailable ErrorCode = "METRICDEF_BINDING_APPROVAL_UNAVAILABLE"
 )
 
 // Error is the typed refusal returned by this package. It never carries
@@ -222,6 +229,7 @@ type Definition struct {
 	grain            PeriodGrain
 	allowedFilters   FilterSet
 	unit             string
+	binding          DatasetBinding
 	status           Status
 }
 
@@ -259,6 +267,10 @@ func (definition Definition) AllowsFilter(name string) bool {
 
 // Unit is the result unit (may be empty for a dimensionless metric).
 func (definition Definition) Unit() string { return definition.unit }
+
+// Binding is the optional immutable dataset/profile/measure reference. The
+// zero value is the explicit legacy/unbound state.
+func (definition Definition) Binding() DatasetBinding { return definition.binding }
 
 // Status is the lifecycle state of this exact version.
 func (definition Definition) Status() Status { return definition.status }
@@ -325,6 +337,7 @@ func NewSeries(id, workspaceID, ownerPrincipalID string, spec Spec) (Series, err
 		grain:            normalized.grain,
 		allowedFilters:   normalized.filters,
 		unit:             normalized.unit,
+		binding:          normalized.binding,
 		status:           StatusDraft,
 	}
 	return Series{
@@ -407,6 +420,7 @@ func (s Series) Supersede(spec Spec) (Series, error) {
 		next.grain = normalized.grain
 		next.allowedFilters = normalized.filters
 		next.unit = normalized.unit
+		next.binding = normalized.binding
 		updated := s.clone()
 		updated.versions[next.version] = next
 		return updated, nil
@@ -422,6 +436,7 @@ func (s Series) Supersede(spec Spec) (Series, error) {
 			grain:            normalized.grain,
 			allowedFilters:   normalized.filters,
 			unit:             normalized.unit,
+			binding:          normalized.binding,
 			status:           StatusDraft,
 		}
 		updated := s.clone()
@@ -459,6 +474,7 @@ func (s Series) ImportVersion(version int64, spec Spec) (Series, error) {
 		grain:            normalized.grain,
 		allowedFilters:   normalized.filters,
 		unit:             normalized.unit,
+		binding:          normalized.binding,
 		status:           StatusDraft,
 	}
 	updated := s.clone()

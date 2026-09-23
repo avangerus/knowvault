@@ -78,7 +78,7 @@ func newAPIClient(cfg config) (*apiClient, error) {
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}
 	return &apiClient{
 		base: cfg.publicOrigin,
-		http: &http.Client{Transport: transport, Jar: jar, Timeout: 30 * time.Second},
+		http: &http.Client{Transport: transport, Jar: jar, Timeout: 120 * time.Second},
 	}, nil
 }
 

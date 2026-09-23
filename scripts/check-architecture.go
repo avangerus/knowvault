@@ -3929,6 +3929,29 @@ func checkVersionLock(root string) []string {
 			problems = append(problems, fmt.Sprintf("version lock mismatch %s: expected %q, got %v", jsonPath, expected, actual))
 		}
 	}
+	// The reviewed data asset is pinned to the exact Go distribution bundle,
+	// builder, bytes and license, not merely to a well-formed shape.
+	for jsonPath, expected := range map[string]string{
+		"data_assets.iana_timezone_database.version":       "1.26.5",
+		"data_assets.iana_timezone_database.source":        "IANA Time Zone Database compiled in Go 1.26.5",
+		"data_assets.iana_timezone_database.source_path":   "lib/time/zoneinfo.zip",
+		"data_assets.iana_timezone_database.artifact_path": pinnedTimezoneArchivePath,
+		"data_assets.iana_timezone_database.builder_image": pinnedDataAssetBuilderImage,
+		"data_assets.iana_timezone_database.sha256":        pinnedTimezoneArchiveDigest,
+		"data_assets.iana_timezone_database.provenance":    "https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README",
+		"data_assets.iana_timezone_database.license":       "LicenseRef-IANA-TZ-Public-Domain",
+	} {
+		if actual, ok := jsonValueAt(lock, jsonPath); !ok || actual != expected {
+			problems = append(problems, fmt.Sprintf("version lock mismatch %s: expected %q, got %v", jsonPath, expected, actual))
+		}
+	}
+	for jsonPath, expected := range map[string]float64{
+		"data_assets.iana_timezone_database.size_bytes": float64(pinnedTimezoneArchiveSize),
+	} {
+		if actual, ok := jsonValueAt(lock, jsonPath); !ok || actual != expected {
+			problems = append(problems, fmt.Sprintf("version lock numeric mismatch %s: expected %v, got %v", jsonPath, expected, actual))
+		}
+	}
 	for _, jsonPath := range []string{
 		"policy.runtime_latest_tags",
 		"policy.runtime_downloads",
@@ -4037,6 +4060,7 @@ var reviewedVersionComponentFields = map[string][]string{
 	"ci_actions.codeql_analyze":                         {"repository", "version", "source_commit", "license", "scope"},
 	"ci_actions.dependency_review":                      {"repository", "version", "source_commit", "license", "scope"},
 	"ci_actions.powershell_probe_runner":                {"repository", "version", "source_commit", "release_artifact", "release_checksum_sha256", "license", "scope", "rule"},
+	"data_assets.iana_timezone_database":                {"version", "source", "source_path", "artifact_path", "builder_image", "size_bytes", "sha256", "provenance", "license"},
 	"data_services.postgresql":                          {"version", "image", "license"},
 	"data_services.opensearch":                          {"version", "image", "license"},
 	// ARC-005: a runtime component of the install needs an ADR as well as a
@@ -4055,6 +4079,7 @@ var reviewedVersionGroups = map[string][]string{
 	"go_dependencies":              {"google_compute_metadata", "oidc", "go_jose", "pgx", "pgpassfile", "pgservicefile", "puddle", "x_oauth2", "x_sync", "x_sys", "x_text", "x_net"},
 	"go_build_tools":               {"oapi_codegen", "sqlc", "syft", "grype"},
 	"ci_actions":                   {"checkout", "upload_artifact", "powershell_probe_runner", "codeql_init", "codeql_analyze", "dependency_review"},
+	"data_assets":                  {"iana_timezone_database"},
 	"data_services":                {"postgresql", "opensearch", "reverse_proxy", "built_in_idp", "embedding_runtime"},
 }
 
@@ -4221,7 +4246,7 @@ func validateVersionInventory(lock any) []string {
 	}
 	var problems []string
 	problems = append(problems, exactObjectKeys(root, "versions", []string{
-		"$schema", "lock_version", "status", "observed_at", "policy", "toolchains", "frontend", "node_transitive_dependencies", "go_dependencies", "go_build_tools", "ci_actions", "data_services", "application_images", "operator_artifact", "supply_chain_lifecycle", "deferred_runtime_locks", "deferred_dependency_locks",
+		"$schema", "lock_version", "status", "observed_at", "policy", "toolchains", "frontend", "node_transitive_dependencies", "go_dependencies", "go_build_tools", "ci_actions", "data_assets", "data_services", "application_images", "operator_artifact", "supply_chain_lifecycle", "deferred_runtime_locks", "deferred_dependency_locks",
 	})...)
 	problems = append(problems, exactNestedKeys(lock, "supply_chain_lifecycle", []string{
 		"states", "DEFERRED", "QUALIFIED_NOT_ACTIVE", "EVIDENCE_ONLY", "ACTIVE", "rule",
@@ -4353,6 +4378,11 @@ func isExactComponentVersion(path, version string) bool {
 	goSemver := regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 	if path == "data_services.postgresql" {
 		return regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(version)
+	}
+	if strings.HasPrefix(path, "data_assets.") {
+		// A reviewed data asset is identified by the exact upstream bundle
+		// version it was extracted from, never by a range or floating tag.
+		return plainSemver.MatchString(version)
 	}
 	if strings.HasPrefix(path, "go_dependencies.") || strings.HasPrefix(path, "go_build_tools.") || strings.HasPrefix(path, "ci_actions.") {
 		return goSemver.MatchString(version)
@@ -4593,6 +4623,13 @@ func validateComponentIntegrity(path string, component map[string]any, lock any)
 		required = map[string]*regexp.Regexp{"source_commit": hex40Pattern, "release_checksum_sha256": hex64Pattern}
 	case strings.HasPrefix(path, "data_services."):
 		required = map[string]*regexp.Regexp{"image": imagePattern}
+	case strings.HasPrefix(path, "data_assets."):
+		// A reviewed data asset is admitted only from the locked builder image
+		// that produced it and only with an exact 64-hex content digest.
+		required = map[string]*regexp.Regexp{
+			"builder_image": regexp.MustCompile("^" + regexp.QuoteMeta(pinnedDataAssetBuilderImage) + "$"),
+			"sha256":        hex64Pattern,
+		}
 	case path == "toolchains.corepack_bundled" || path == "toolchains.npm_bundled" || path == "toolchains.yarn_bundled":
 		builder, ok := jsonValueAt(lock, "toolchains.node.build_image")
 		if !ok || !imagePattern.MatchString(fmt.Sprint(builder)) {
@@ -9628,7 +9665,7 @@ var requiredCiExecutableCommands = []string{
 	"corepack pnpm exec esbuild --version",
 	"go test -count=1 ./...",
 	`go test -mod=readonly -count=1 "${unit_packages[@]}" -timeout=10m`,
-	"go test -mod=readonly -count=1 -timeout=30m ./tests/integration/postgres",
+	"go test -mod=readonly -count=1 -timeout=45m ./tests/integration/postgres",
 	"go test -mod=readonly -json -tags e2e ./tests/e2e -run=^TestE2ER3FullLoop$ -count=1 -timeout 30m 2>&1 | tee /tmp/knowvault-r3-go-test.json",
 	"go run ./scripts/check-architecture.go -verify-e2e-json /tmp/knowvault-r3-go-test.json -verify-e2e-package knowvault.local/verified-workspace/tests/e2e -verify-e2e-test TestE2ER3FullLoop",
 	"go run ./tests/contracts/mutation-runner -root /src",
@@ -9983,13 +10020,14 @@ func checkLicensePolicy(root string) []string {
 	// misspelled or non-SPDX license and would contradict the repository's
 	// default-deny supply-chain policy.
 	allowed := map[string]bool{
-		"Apache-2.0":   true,
-		"MIT":          true,
-		"BSD-2-Clause": true,
-		"BSD-3-Clause": true,
-		"PostgreSQL":   true,
-		"PSF-2.0":      true,
-		"ISC":          true,
+		"Apache-2.0":                       true,
+		"MIT":                              true,
+		"BSD-2-Clause":                     true,
+		"BSD-3-Clause":                     true,
+		"PostgreSQL":                       true,
+		"PSF-2.0":                          true,
+		"ISC":                              true,
+		"LicenseRef-IANA-TZ-Public-Domain": true,
 	}
 	conditionallyAllowed := map[string]map[string]bool{
 		// ADR-0009 permits this exact bundled, unused build-image component.
@@ -10011,6 +10049,7 @@ func checkLicensePolicy(root string) []string {
 		"go_dependencies.puddle": "puddle", "go_dependencies.x_oauth2": "golang.org/x/oauth2", "go_dependencies.x_sync": "golang.org/x/sync", "go_dependencies.x_sys": "golang.org/x/sys", "go_dependencies.x_text": "golang.org/x/text", "go_dependencies.x_net": "golang.org/x/net",
 		"go_build_tools.oapi_codegen": "oapi-codegen", "go_build_tools.sqlc": "sqlc", "go_build_tools.syft": "Syft", "go_build_tools.grype": "Grype",
 		"ci_actions.checkout": "actions/checkout", "ci_actions.upload_artifact": "actions/upload-artifact", "data_services.postgresql": "PostgreSQL", "data_services.opensearch": "OpenSearch",
+		"data_assets.iana_timezone_database": "IANA Time Zone Database",
 	}
 	for _, component := range reviewedEsbuildPlatformPackages {
 		reviewedNames["node_transitive_dependencies."+component.Key] = component.SelectedName
@@ -10021,6 +10060,11 @@ func checkLicensePolicy(root string) []string {
 		if !locked || !reviewed || lockedLicense != selected.License || selected.Status != "ACTIVE" {
 			problems = append(problems, fmt.Sprintf("version/license inventory mismatch %s (%s): lock=%v policy=%q status=%q", path, selectedName, lockedLicense, selected.License, selected.Status))
 		}
+	}
+	ianaProvenance, provenanceBound := jsonValueAt(lock, "data_assets.iana_timezone_database.provenance")
+	ianaSelected, selectedBound := selectedComponents["IANA Time Zone Database"]
+	if !provenanceBound || !selectedBound || ianaSelected.Source != ianaProvenance {
+		problems = append(problems, fmt.Sprintf("data asset/license provenance mismatch data_assets.iana_timezone_database (IANA Time Zone Database): lock=%v policy=%q", ianaProvenance, ianaSelected.Source))
 	}
 	problems = append(problems, validateSelectedComponentInventory(selectedComponents)...)
 	problems = append(problems, checkLicensePolicyMutationTests(policy, selectedComponents, lock, allowed, conditionallyAllowed)...)
@@ -10072,6 +10116,7 @@ var expectedSelectedComponentStatus = map[string]string{
 	"json-schema-traverse": "ACTIVE", "require-from-string": "ACTIVE", "scheduler": "ACTIVE", "csstype": "ACTIVE",
 	"oapi-codegen": "ACTIVE", "cloud.google.com/go/compute/metadata": "ACTIVE", "go-oidc": "ACTIVE", "go-jose": "ACTIVE", "golang.org/x/oauth2": "ACTIVE", "pgx": "ACTIVE", "pgpassfile": "ACTIVE", "pgservicefile": "ACTIVE", "puddle": "ACTIVE", "golang.org/x/sync": "ACTIVE", "golang.org/x/sys": "ACTIVE", "golang.org/x/text": "ACTIVE", "sqlc": "ACTIVE", "Syft": "ACTIVE", "Grype": "ACTIVE",
 	"actions/checkout": "ACTIVE", "actions/upload-artifact": "ACTIVE", "PostgreSQL": "ACTIVE", "OpenSearch": "ACTIVE", "golang.org/x/net": "ACTIVE",
+	"IANA Time Zone Database":         "ACTIVE",
 	"libc6 (isolated parser runtime)": "DEFERRED",
 	"Apache POI":                      "DEFERRED", "Apache PDFBox": "DEFERRED", "Tesseract OCR": "DEFERRED", "tessdata (Tesseract trained data)": "DEFERRED", "Leptonica": "DEFERRED", "vLLM": "DEFERRED",
 	"Qwen3-Embedding-0.6B": "DEFERRED", "Qwen3-Reranker-0.6B": "DEFERRED", "Qwen3-14B": "DEFERRED",
@@ -10490,6 +10535,36 @@ func parseAllowedBinaries(guardrails string) ([]string, []string) {
 	return entries, problems
 }
 
+const (
+	pinnedTimezoneArchivePath   = "internal/tzrules/zoneinfo.zip"
+	pinnedTimezoneArchiveSize   = 408125
+	pinnedTimezoneArchiveDigest = "8f55634d05f8bca1f7bc7c69c5933428c69357e0bdf565e5ba224e3f88ff12e8"
+	// pinnedDataAssetBuilderImage is the locked Go 1.26.5 distribution builder
+	// that compiled the reviewed archive; the data_assets record cannot name a
+	// different builder and the application-language exception derives from it.
+	pinnedDataAssetBuilderImage = "golang:1.26.5-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669"
+)
+
+// pinnedTimezoneArchive admits exactly one archive into the default-deny
+// application tree: the normalized pinned path holding a regular, non-symlink
+// file whose size and SHA-256 match the frozen zoneinfo bundle. The archive is
+// never admitted by name or extension alone.
+func pinnedTimezoneArchive(root, path string, entry os.DirEntry) bool {
+	if !entry.Type().IsRegular() || filepath.ToSlash(relative(root, path)) != pinnedTimezoneArchivePath {
+		return false
+	}
+	info, err := entry.Info()
+	if err != nil || info.Size() != pinnedTimezoneArchiveSize {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]) == pinnedTimezoneArchiveDigest
+}
+
 func checkApplicationLanguages(root string) []string {
 	// Application directories are default-deny. The list includes the approved
 	// source languages plus inert configuration/document/asset formats needed by
@@ -10516,13 +10591,16 @@ func checkApplicationLanguages(root string) []string {
 				return nil
 			}
 			if entry.IsDir() {
+				if filepath.ToSlash(relative(root, path)) == pinnedTimezoneArchivePath {
+					problems = append(problems, "forbidden or unknown application file type: "+relative(root, path))
+				}
 				if path != applicationRoot && skippedDirectories[entry.Name()] {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 			extension := strings.ToLower(filepath.Ext(path))
-			if !allowedApplicationExtensions[extension] {
+			if !allowedApplicationExtensions[extension] && !pinnedTimezoneArchive(root, path, entry) {
 				problems = append(problems, "forbidden or unknown application file type: "+relative(root, path))
 			}
 			return nil
@@ -10852,6 +10930,57 @@ func isUnconditionalNilReturn(signature *ast.FuncType, body *ast.BlockStmt) bool
 	return ok && nilLiteral.Name == "nil"
 }
 
+// timezoneAuthorityOwner names the exact production file that parses explicit,
+// content-addressed TZif bytes with time.LoadLocationFromTZData. It is retained
+// in diagnostics; it is not an exception for host timezone lookup.
+const timezoneAuthorityOwner = "internal/tzrules/loader.go"
+
+// validateTimezoneAuthorityBoundary rejects direct standard-library host
+// timezone database authority (time.LoadLocation) everywhere. References are
+// resolved from the file's own AST import table, so a normal or aliased import
+// is rejected, taking the function as a value is rejected, and a dot import is
+// rejected in full. An import path that cannot be unquoted fails closed.
+// internal/tzrules.Load and time.LoadLocationFromTZData stay allowed.
+func validateTimezoneAuthorityBoundary(rel string, parsed *ast.File) []string {
+	names := map[string]bool{}
+	dotImported := false
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return []string{"unresolvable Go import path in " + rel}
+		}
+		if importPath != "time" {
+			continue
+		}
+		switch {
+		case spec.Name == nil:
+			names["time"] = true
+		case spec.Name.Name == ".":
+			dotImported = true
+		case spec.Name.Name != "_":
+			names[spec.Name.Name] = true
+		}
+	}
+	if len(names) == 0 && !dotImported {
+		return nil
+	}
+	problem := "host timezone database authority is forbidden; pinned authority owner " + timezoneAuthorityOwner + ": " + rel
+	if dotImported {
+		return []string{problem}
+	}
+	var problems []string
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.SelectorExpr:
+			if identifier, ok := value.X.(*ast.Ident); ok && names[identifier.Name] && value.Sel.Name == "LoadLocation" {
+				problems = append(problems, problem)
+			}
+		}
+		return true
+	})
+	return problems
+}
+
 func checkGoBoundaries(root string) []string {
 	var problems []string
 	problems = append(problems, scanFiles(filepath.Join(root, "internal"), func(path, content string) []string {
@@ -10860,11 +10989,12 @@ func checkGoBoundaries(root string) []string {
 		}
 
 		rel := filepath.ToSlash(relative(root, path))
-		parsed, err := parser.ParseFile(token.NewFileSet(), path, content, parser.ImportsOnly)
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, content, 0)
 		if err != nil {
-			return []string{"cannot parse Go imports in " + rel + ": " + err.Error()}
+			return []string{"cannot parse Go source in " + rel + ": " + err.Error()}
 		}
 		var found []string
+		found = append(found, validateTimezoneAuthorityBoundary(rel, parsed)...)
 		if strings.Contains(content, "NewOIDCServiceAccess(") &&
 			rel != "internal/platform/database/database.go" &&
 			rel != "internal/platform/database/database_test.go" &&
@@ -10922,6 +11052,17 @@ func checkGoBoundaries(root string) []string {
 			}
 		}
 		return found
+	})...)
+	problems = append(problems, scanFiles(filepath.Join(root, "cmd"), func(path, content string) []string {
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		rel := filepath.ToSlash(relative(root, path))
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, content, 0)
+		if err != nil {
+			return []string{"cannot parse Go source in " + rel + ": " + err.Error()}
+		}
+		return validateTimezoneAuthorityBoundary(rel, parsed)
 	})...)
 	return problems
 }

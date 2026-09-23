@@ -74,14 +74,25 @@ type Proposal struct {
 type ErrorCode string
 
 const (
-	CodeInvalidProposal    ErrorCode = "QUERYINTENT_INVALID_PROPOSAL"
-	CodeUnknownMetric      ErrorCode = "QUERYINTENT_UNKNOWN_METRIC"
-	CodeUnknownVersion     ErrorCode = "QUERYINTENT_UNKNOWN_VERSION"
-	CodeRetiredVersion     ErrorCode = "QUERYINTENT_RETIRED_VERSION"
-	CodeNotApproved        ErrorCode = "QUERYINTENT_NOT_APPROVED"
-	CodeFilterNotAllowed   ErrorCode = "QUERYINTENT_FILTER_NOT_ALLOWED"
-	CodeMalformedPeriod    ErrorCode = "QUERYINTENT_MALFORMED_PERIOD"
-	CodeCatalogUnavailable ErrorCode = "QUERYINTENT_CATALOG_UNAVAILABLE"
+	CodeInvalidProposal           ErrorCode = "QUERYINTENT_INVALID_PROPOSAL"
+	CodeUnknownMetric             ErrorCode = "QUERYINTENT_UNKNOWN_METRIC"
+	CodeUnknownVersion            ErrorCode = "QUERYINTENT_UNKNOWN_VERSION"
+	CodeRetiredVersion            ErrorCode = "QUERYINTENT_RETIRED_VERSION"
+	CodeNotApproved               ErrorCode = "QUERYINTENT_NOT_APPROVED"
+	CodeFilterNotAllowed          ErrorCode = "QUERYINTENT_FILTER_NOT_ALLOWED"
+	CodeMalformedPeriod           ErrorCode = "QUERYINTENT_MALFORMED_PERIOD"
+	CodeCatalogUnavailable        ErrorCode = "QUERYINTENT_CATALOG_UNAVAILABLE"
+	CodeCatalogBindingMismatch    ErrorCode = "QUERYINTENT_CATALOG_BINDING_MISMATCH"
+	CodeDatasetProfileUnavailable ErrorCode = "QUERYINTENT_DATASET_PROFILE_UNAVAILABLE"
+	CodeMeasureUnavailable        ErrorCode = "QUERYINTENT_MEASURE_UNAVAILABLE"
+	CodeDimensionUnavailable      ErrorCode = "QUERYINTENT_DIMENSION_UNAVAILABLE"
+	CodeOutputFieldUnavailable    ErrorCode = "QUERYINTENT_OUTPUT_FIELD_UNAVAILABLE"
+	CodeSortUnavailable           ErrorCode = "QUERYINTENT_SORT_UNAVAILABLE"
+	CodeLimitExceeded             ErrorCode = "QUERYINTENT_LIMIT_EXCEEDED"
+	CodePeriodUnavailable         ErrorCode = "QUERYINTENT_PERIOD_UNAVAILABLE"
+	CodePeriodInvalid             ErrorCode = "QUERYINTENT_PERIOD_INVALID"
+	CodePeriodLimitExceeded       ErrorCode = "QUERYINTENT_PERIOD_LIMIT_EXCEEDED"
+	CodeTrustedNowRequired        ErrorCode = "QUERYINTENT_TRUSTED_NOW_REQUIRED"
 )
 
 func clarificationFor(code ErrorCode) string {
@@ -102,6 +113,28 @@ func clarificationFor(code ErrorCode) string {
 		return "The requested period is missing or does not match this metric definition's grain. Provide a start and end that match the definition grain."
 	case CodeCatalogUnavailable:
 		return "Metric definitions are temporarily unavailable. Try again later."
+	case CodeCatalogBindingMismatch:
+		return "The snapshot this request was checked against is not the snapshot now installed. Refresh and try again."
+	case CodeDatasetProfileUnavailable:
+		return "This dataset profile is not available in the current catalog. Choose a dataset profile that is active."
+	case CodeMeasureUnavailable:
+		return "This measure is not available in the selected dataset profile. Choose a measure that profile defines."
+	case CodeDimensionUnavailable:
+		return "A requested grouping field is not available in the selected dataset profile. Choose a field this profile allows grouping by."
+	case CodeOutputFieldUnavailable:
+		return "A requested output field is not available in the selected dataset profile. Choose a field this profile allows in results."
+	case CodeSortUnavailable:
+		return "A requested sort is not available in the selected dataset profile. Sort by a field or measure this profile allows."
+	case CodeLimitExceeded:
+		return "The requested row limit is above what the selected dataset profile allows. Ask for fewer rows."
+	case CodePeriodUnavailable:
+		return "The requested period is not available. Choose a period the definition covers."
+	case CodePeriodInvalid:
+		return "The requested period is not valid. Provide a start and end the definition allows."
+	case CodePeriodLimitExceeded:
+		return "The requested period is wider than allowed. Ask for a shorter period."
+	case CodeTrustedNowRequired:
+		return "This request needs a trusted current time that is not available. Try again later."
 	default:
 		return "The request could not be validated. Adjust it and try again."
 	}

@@ -2246,6 +2246,174 @@ func TestLicensePolicyGuardRejectsReviewedEntryRemoval(t *testing.T) {
 	}
 }
 
+// TestTimezoneDataAssetMutationsAreRejected proves that the embedded timezone
+// bundle is a closed, content-addressed supply-chain component.
+func TestTimezoneDataAssetMutationsAreRejected(t *testing.T) {
+	versionRaw, err := os.ReadFile(filepath.Join("..", "architecture", "versions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseline map[string]any
+	if err := json.Unmarshal(versionRaw, &baseline); err != nil {
+		t.Fatal(err)
+	}
+	mutations := map[string]func(map[string]any){
+		"unknown asset": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["unexpected"] = map[string]any{}
+		},
+		"missing sha256": func(lock map[string]any) {
+			delete(lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any), "sha256")
+		},
+		"changed sha256": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["sha256"] = strings.Repeat("0", 64)
+		},
+		"changed size": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["size_bytes"] = float64(1)
+		},
+		"floating builder": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["builder_image"] = "golang:1.26.5-bookworm"
+		},
+		"unknown license": func(lock map[string]any) {
+			lock["data_assets"].(map[string]any)["iana_timezone_database"].(map[string]any)["license"] = "Unknown-License"
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			lock, cloneErr := cloneJSONValue(baseline)
+			if cloneErr != nil {
+				t.Fatal(cloneErr)
+			}
+			mutate(lock.(map[string]any))
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "architecture"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeJSONFixture(t, filepath.Join(root, "architecture", "versions.json"), lock)
+			if problems := checkVersionLock(root); len(problems) == 0 {
+				t.Fatal("timezone data asset mutation was accepted")
+			}
+		})
+	}
+
+	policyRaw, err := os.ReadFile(filepath.Join("..", "architecture", "licenses.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const entry = "  - name: IANA Time Zone Database\n    status: ACTIVE\n    role: embedded deterministic timezone rules\n    license: LicenseRef-IANA-TZ-Public-Domain\n    source: https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README\n"
+	t.Run("removed selected component", func(t *testing.T) {
+		root := t.TempDir()
+		writeFixtureFile(t, root, "architecture/versions.json", versionRaw)
+		mutated := strings.Replace(string(policyRaw), entry, "", 1)
+		if mutated == string(policyRaw) {
+			t.Fatal("IANA selected component anchor is not unique")
+		}
+		writeFixtureFile(t, root, "architecture/licenses.yaml", []byte(mutated))
+		if problems := checkLicensePolicy(root); len(problems) == 0 {
+			t.Fatal("removing the IANA timezone selected component was accepted")
+		}
+	})
+	t.Run("source drift", func(t *testing.T) {
+		root := t.TempDir()
+		writeFixtureFile(t, root, "architecture/versions.json", versionRaw)
+		mutated := strings.Replace(string(policyRaw), "source: https://raw.githubusercontent.com/golang/go/go1.26.5/lib/time/README", "source: https://example.invalid/iana", 1)
+		if mutated == string(policyRaw) {
+			t.Fatal("IANA provenance anchor is absent")
+		}
+		writeFixtureFile(t, root, "architecture/licenses.yaml", []byte(mutated))
+		if problems := checkLicensePolicy(root); len(problems) == 0 {
+			t.Fatal("IANA source provenance drift was accepted")
+		}
+	})
+}
+
+// TestGoBoundaryRejectsHostTimezoneAuthority proves the AST boundary that keeps
+// standard-library host timezone database authority out of every production
+// caller: normal, aliased and dot imports are rejected, including the exact
+// loader file, explicit TZif parsing and unrelated time APIs are accepted, and
+// unparseable Go fails closed.
+func TestGoBoundaryRejectsHostTimezoneAuthority(t *testing.T) {
+	bypassPath := "internal/tzperiod/bypass.go"
+	for name, bypass := range map[string]struct{ path, source string }{
+		"normal import": {bypassPath, `package tzperiod
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+		"aliased import": {bypassPath, `package tzperiod
+import clock "time"
+func at(name string) { _, _ = clock.LoadLocation(name) }
+`},
+		"dot import": {bypassPath, `package tzperiod
+import . "time"
+func at(name string) { _, _ = LoadLocation(name) }
+`},
+		"function value": {bypassPath, `package tzperiod
+import "time"
+var at = time.LoadLocation
+`},
+		"dot function value": {bypassPath, `package tzperiod
+import . "time"
+var at = LoadLocation
+`},
+		"sibling of the approved owner": {"internal/tzrules/sibling.go", `package tzrules
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+		"command caller": {"cmd/tzperiod/main.go", `package main
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+		"owner direct host lookup": {timezoneAuthorityOwner, `package tzrules
+import "time"
+func at(name string) { _, _ = time.LoadLocation(name) }
+`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixtureFile(t, root, bypass.path, []byte(bypass.source))
+			problems := checkGoBoundaries(root)
+			if len(problems) == 0 {
+				t.Fatal("host timezone database authority was accepted")
+			}
+			if !strings.Contains(problems[0], timezoneAuthorityOwner) {
+				t.Fatalf("rejection does not name the exact owner: %v", problems)
+			}
+		})
+	}
+	for name, approved := range map[string]struct{ path, source string }{
+		"TZif parser owner": {timezoneAuthorityOwner, `package tzrules
+import "time"
+func at(data []byte, name string) { _, _ = time.LoadLocationFromTZData(name, data) }
+`},
+		"unrelated time APIs": {bypassPath, `package tzperiod
+import "time"
+func zone() *time.Location { return time.FixedZone("fixed", 3600) }
+func now() time.Time { return time.Now().In(time.UTC) }
+`},
+		"internal tzrules Load caller": {bypassPath, `package tzperiod
+import (
+	"time"
+	"knowvault.local/verified-workspace/internal/tzrules"
+)
+func at(name string) (*time.Location, error) { return tzrules.Load(name) }
+`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFixtureFile(t, root, approved.path, []byte(approved.source))
+			if problems := checkGoBoundaries(root); len(problems) != 0 {
+				t.Fatalf("approved timezone authority was rejected: %v", problems)
+			}
+		})
+	}
+	t.Run("unparseable source fails closed", func(t *testing.T) {
+		root := t.TempDir()
+		writeFixtureFile(t, root, bypassPath, []byte("package tzperiod\n\nimport \"time\"\n\nfunc at() { _ = time.Now( }\n"))
+		if problems := checkGoBoundaries(root); len(problems) == 0 {
+			t.Fatal("unparseable Go source was accepted")
+		}
+	})
+}
+
 // TestSupplyChainGuardRejectsNonExactGoModuleVersions is the executable mutation
 // proof behind the architecture.supply.non-exact-version checker-native
 // invariant: the real module manifest reconciles to the exact version lock, and
@@ -2847,4 +3015,79 @@ func TestGovernedQueryBoundaryAcceptance(t *testing.T) {
 	if problems := checkGoBoundaries(".."); len(problems) != 0 {
 		t.Fatalf("accepted tree fails the governed query boundary: %v", problems)
 	}
+}
+
+// TestApplicationLanguageArchiveException proves the application-language
+// default-deny admits exactly the pinned IANA timezone bundle: the real bytes
+// at the normalized path only, never the same bytes under another path,
+// altered bytes, a directory, or a symlink.
+func TestApplicationLanguageArchiveException(t *testing.T) {
+	pinned, err := os.ReadFile(filepath.Join("..", "internal", "tzrules", "zoneinfo.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := func(t *testing.T, relativePath string, contents []byte) {
+		t.Helper()
+		root := t.TempDir()
+		writeFixtureFile(t, root, relativePath, contents)
+		if problems := checkApplicationLanguages(root); len(problems) != 0 {
+			t.Fatalf("%s was rejected: %v", relativePath, problems)
+		}
+	}
+	rejected := func(t *testing.T, relativePath string, contents []byte) {
+		t.Helper()
+		root := t.TempDir()
+		writeFixtureFile(t, root, relativePath, contents)
+		if problems := checkApplicationLanguages(root); len(problems) == 0 {
+			t.Fatalf("%s was accepted", relativePath)
+		}
+	}
+	t.Run("pinned archive at exact path", func(t *testing.T) {
+		accepted(t, pinnedTimezoneArchivePath, pinned)
+		for _, problem := range checkApplicationLanguages("..") {
+			if strings.Contains(problem, "zoneinfo.zip") {
+				t.Fatalf("real repository asset was rejected: %v", problem)
+			}
+		}
+	})
+	t.Run("pinned bytes at another path", func(t *testing.T) {
+		rejected(t, "internal/tzrules/timezones.zip", pinned)
+	})
+	t.Run("altered bytes at exact path", func(t *testing.T) {
+		altered := append([]byte(nil), pinned...)
+		altered[len(altered)/2] ^= 0xff
+		rejected(t, "internal/tzrules/zoneinfo.zip", altered)
+	})
+	t.Run("directory at exact path", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "internal", "tzrules", "zoneinfo.zip"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if problems := checkApplicationLanguages(root); len(problems) == 0 {
+			t.Fatal("directory at the pinned archive path was accepted")
+		}
+	})
+	t.Run("symlink at exact path", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(root, "pinned.zip")
+		if err := os.WriteFile(target, pinned, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(root, "internal", "tzrules", "zoneinfo.zip")
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks are unavailable on this platform: %v", err)
+		}
+		if problems := checkApplicationLanguages(root); len(problems) == 0 {
+			t.Fatal("symlink at the pinned archive path was accepted")
+		}
+	})
+	t.Run("approved extension", func(t *testing.T) {
+		accepted(t, "internal/tzrules/tzdata.json", []byte("{\"version\":1}\n"))
+	})
+	t.Run("unknown extension", func(t *testing.T) {
+		rejected(t, "internal/tzrules/tzdata.dat", []byte("zone data"))
+	})
 }

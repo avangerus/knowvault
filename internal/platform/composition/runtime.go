@@ -17,12 +17,14 @@ import (
 	"knowvault.local/verified-workspace/internal/knowledgegraph"
 	"knowvault.local/verified-workspace/internal/metricdef"
 	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/platform/analyticcatalog"
 	"knowvault.local/verified-workspace/internal/platform/apphttp"
 	"knowvault.local/verified-workspace/internal/platform/browserauth"
 	"knowvault.local/verified-workspace/internal/platform/buildinfo"
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/platform/httpserver"
+	"knowvault.local/verified-workspace/internal/platform/metriccomparemount"
 	"knowvault.local/verified-workspace/internal/platform/oidc"
 	"knowvault.local/verified-workspace/internal/platform/oidctransport"
 	"knowvault.local/verified-workspace/internal/platform/oidcweb"
@@ -40,6 +42,7 @@ import (
 	"knowvault.local/verified-workspace/internal/serviceprincipal"
 	sourcediscovery "knowvault.local/verified-workspace/internal/source/discovery"
 	"knowvault.local/verified-workspace/internal/source/evidence"
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	"knowvault.local/verified-workspace/internal/source/registration"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
@@ -334,6 +337,43 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}
+	// R1.1 (micro-card C): the trusted analytic DatasetProfile catalog is
+	// wired only behind its own explicit administrator mount
+	// (analyticcatalog.LoadMounted), exactly like the generation mount
+	// below. A wholly absent mount keeps the document-only capability; a
+	// present-but-invalid mount is a startup failure so drift can never look
+	// like a safe partial deployment. The same mounted catalog value and the
+	// already constructed workspaceStore install together, so no later path
+	// can hold a different catalog or an independently supplied resolver.
+	datasetProfileCatalog, datasetProfileMountErr := analyticcatalog.LoadMounted()
+	if datasetProfileMountErr != nil {
+		if analyticcatalog.CodeOf(datasetProfileMountErr) != analyticcatalog.CodeMountUnavailable {
+			return fail(StartupStageDatasetProfileMount)
+		}
+	} else {
+		sourceBundle, sourceTrustErr := trustbundle.LoadSourceMounted()
+		if sourceTrustErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		sourceDatabaseRoots, sourceRootsErr := sourceBundle.DatabaseRoots()
+		if sourceRootsErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		connector, connectorErr := postgresqlquery.NewLiveConnectorWithTrust(secrets, sourceDatabaseRoots)
+		if connectorErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		authorizedReader, readerErr := workspacerepository.NewPostgreSQLAuthorizedReader(workspaceStore, connector)
+		if readerErr != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		if err := questions.EnableDatasetProfileCatalog(datasetProfileCatalog, workspaceStore); err != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+		if err := questions.EnableAnalyticScalarExecutor(authorizedReader); err != nil {
+			return fail(StartupStageDatasetProfileMount)
+		}
+	}
 	// GEN-2 (ADR-0088): the interim GENERATIVE adapter/verifier are wired only
 	// behind their own explicit administrator mount, exactly like the
 	// embedding mount above. A wholly absent mount keeps GENERATIVE an
@@ -411,6 +451,32 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		governedAskService.EnableGovernedQueryConfig(governedQueryConfig)
 		if generationAdapter != nil {
 			governedAskService.EnableGovernedQuery(governedQueryConfig, generationAdapter)
+			if !governedQueryConfig.PresetOnly {
+				if err := questions.EnableGovernedAsk(governedAskService); err != nil {
+					return fail(StartupStageWorkspaceHandler)
+				}
+			}
+		}
+	}
+	// A comparison profile is an optional operator capability bound to the
+	// governed connection. Reject a present profile if that connection is
+	// unavailable or differs from the profile's declared binding.
+	metricComparisonMount, metricComparisonMountErr := metriccomparemount.LoadMounted()
+	if metricComparisonMountErr != nil {
+		if metriccomparemount.CodeOf(metricComparisonMountErr) != metriccomparemount.CodeMountUnavailable {
+			return fail(StartupStageMetricCompareMount)
+		}
+	} else {
+		if governedQueryMountErr != nil ||
+			metricComparisonMount.ConnectionID != governedQueryConfig.ConnectionID ||
+			metricComparisonMount.WorkspaceID != governedQueryConfig.WorkspaceID {
+			return fail(StartupStageMetricCompareMount)
+		}
+		if err := governedAskService.EnableMetricComparison(metricComparisonMount.WorkspaceID, metricComparisonMount.Profile); err != nil {
+			return fail(StartupStageMetricCompareMount)
+		}
+		if err := questions.EnableTrustedMetricComparison(governedAskService); err != nil {
+			return fail(StartupStageMetricCompareMount)
 		}
 	}
 	conversations, err := conversation.New(databaseStore, auditStore)

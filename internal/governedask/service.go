@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/audit"
@@ -130,6 +131,14 @@ const (
 		"carriage return, tab, other control character, or leading/trailing whitespace. " +
 		"The SQL text must not contain bidirectional-control characters: " +
 		"U+200E, U+200F, U+202A-U+202E, or U+2066-U+2069. " +
+		"For a natural-language comparison across periods, infer the requested metric, " +
+		"period grain and aggregation from the question and supplied Evidence, and return " +
+		"one row per distinct requested period with the period, aggregate and an explicit " +
+		"coverage value. Aggregate across all rows contributing to each period. If Evidence " +
+		"specifies snapshots, first select the latest snapshot for each period and then " +
+		"aggregate that snapshot's contributing rows. Do not use LIMIT N raw rows as a proxy " +
+		"for N periods; LIMIT may only be applied after period selection/grouping when the " +
+		"question explicitly requires it. " +
 		"unknown_reason is exactly null, evidence_ids is a nonempty array of identifiers for the schema fragments used, " +
 		"supporting_claim_ids is exactly []; " +
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
@@ -175,6 +184,17 @@ type Service struct {
 	enabled bool
 	adapter *modelgateway.LabAdapter
 	now     func() time.Time
+	// disclosureCheck, when non-nil, replaces the real reauthorization +
+	// live-queries gate in reauthorizeDisclosure. It exists only so package
+	// tests can drive discloseExecutedAttempt without a live database; nil in
+	// production, where the real checks always run.
+	disclosureCheck func(context.Context, database.AccessContext, string) error
+	// attemptLoader is a package-test seam for ReauthorizeAttempt. Production
+	// always uses loadExecutedAttempt, which scopes the append-only record to
+	// the caller organization, workspace and mounted connection.
+	attemptLoader      func(context.Context, database.AccessContext, string, string) (governedquery.ExecutedAttempt, error)
+	comparisonMu       sync.RWMutex
+	comparisonProfiles map[string]map[string]comparisonBinding
 }
 
 func New(db *database.Store, auditor auditAppender) (*Service, error) {
@@ -283,6 +303,31 @@ func (service *Service) Ask(ctx context.Context, access database.AccessContext, 
 	})
 }
 
+// AskWorkspace is the connection-free entry point for a server-owned caller
+// such as the Question tool loop. The caller supplies only workspace scope and
+// natural-language question; this service binds the request to its one
+// administrator-mounted connection and retains Ask's authorization, audit,
+// execution and disclosure gates. Preset-only mounts deliberately expose no
+// ad-hoc path, even to an in-process caller.
+func (service *Service) AskWorkspace(ctx context.Context, access database.AccessContext, workspaceID, question string) (AskResult, error) {
+	return service.askWorkspaceWith(ctx, access, workspaceID, question, service.Ask)
+}
+
+// askWorkspaceWith keeps the server-owned connection binding explicit and
+// provides a narrow package-test seam without retaining a replaceable runtime
+// callback on Service.
+func (service *Service) askWorkspaceWith(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID, question string,
+	ask func(context.Context, database.AccessContext, string, string, string) (AskResult, error),
+) (AskResult, error) {
+	if service == nil || !service.enabled || service.adapter == nil || service.config.PresetOnly || ask == nil {
+		return AskResult{}, &Error{code: CodeUnavailable}
+	}
+	return ask(ctx, access, workspaceID, service.config.ConnectionID, question)
+}
+
 // askAdmitted is Ask()'s governed body: it runs only after the mandatory
 // admission event is durable and performs every governed read and execution.
 func (service *Service) askAdmitted(ctx context.Context, access database.AccessContext, workspaceID, question string) (AskResult, error) {
@@ -291,7 +336,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		return AskResult{}, err
 	}
 	if !liveQueriesEnabled {
-		service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+		if auditErr := service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
 		return AskResult{}, &Error{code: CodeLiveQueriesOff}
 	}
 	schema, revision, err := service.loadExposedSchema(ctx, access, workspaceID)
@@ -299,7 +346,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		return AskResult{}, err
 	}
 	if schema == nil {
-		service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+		if auditErr := service.auditAttempt(ctx, access, workspaceID, 0, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
 		return AskResult{}, &Error{code: CodeSchemaUnavailable}
 	}
 
@@ -333,13 +382,17 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 				service.logModelAttempt(outerAttempt, innerAttempt, result)
 			})
 		if genErr != nil {
-			service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			lastErr = &Error{code: CodeGenerationFailed, cause: genErr}
 			continue
 		}
 		sqlText, ok := candidateSQL(plan)
 		if !ok {
-			service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			lastErr = &Error{code: CodeGenerationFailed}
 			continue
 		}
@@ -349,6 +402,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		})
 		auditErr := service.auditAttempt(ctx, access, workspaceID, revision, attempt.SQLHash, string(attempt.Outcome),
 			costPointer(attempt), rowCountPointer(attempt), digestPointer(attempt))
+		if auditErr != nil {
+			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
 		if execErr != nil {
 			lastErr = &Error{code: CodeExecutionFailed, cause: execErr}
 			if ctx.Err() != nil {
@@ -417,6 +473,27 @@ func newAdmissionID() (string, error) {
 	return ids.New("gqad")
 }
 
+// reauthorizeDisclosure re-checks, at the moment of disclosure, that the
+// caller still holds workspace.ask and that live queries are still enabled for
+// this workspace. A test-injected disclosureCheck takes precedence so package
+// tests can drive this gate without a live database; nil uses the real checks.
+func (service *Service) reauthorizeDisclosure(ctx context.Context, access database.AccessContext, workspaceID string) error {
+	if service.disclosureCheck != nil {
+		return service.disclosureCheck(ctx, access, workspaceID)
+	}
+	if err := service.authorize(ctx, access, workspaceID, policy.OperationWorkspaceAsk); err != nil {
+		return err
+	}
+	enabled, err := service.liveQueriesEnabled(ctx, access, workspaceID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return &Error{code: CodeLiveQueriesOff}
+	}
+	return nil
+}
+
 // discloseExecutedAttempt is Ask()'s disclosure gate for one governed query
 // that already executed successfully (execErr == nil): its own mandatory
 // audit record is a precondition of returning any row to the caller. auditErr
@@ -433,6 +510,12 @@ func (service *Service) discloseExecutedAttempt(ctx context.Context, access data
 	// about its result is disclosed without the audit receipt.
 	if auditErr != nil {
 		return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+	}
+	// Disclosure also requires the caller to still be authorized and live
+	// queries to still be enabled; a failure here returns before any row,
+	// answer or saved-attempt record is produced.
+	if err := service.reauthorizeDisclosure(ctx, access, workspaceID); err != nil {
+		return AskResult{}, err
 	}
 	answer := "The database returned " + strconv.Itoa(result.RowCount) + " row(s) for your query."
 	// Record what actually ran before answering. This row is the only

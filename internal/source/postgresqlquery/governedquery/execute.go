@@ -321,3 +321,16 @@ func resultDigest(result QueryResult) string {
 	}
 	return sha256Hex(string(value))
 }
+
+// VerifyTextTableResultDigest re-computes the canonical digest for the exact
+// public text-table projection returned by a governed read. It is intentionally
+// narrow: callers supply only the result fields covered by the digest, and the
+// function accepts only the canonical lowercase sha256 spelling used by this
+// package's attempt records.
+func VerifyTextTableResultDigest(columns []string, rowCount int, rows [][]*string, digest string) bool {
+	if !validSQLHash(digest) || rowCount < 0 || rowCount != len(rows) {
+		return false
+	}
+	actual := resultDigest(QueryResult{Columns: columns, RowCount: rowCount, Rows: rows})
+	return actual != "" && actual == digest
+}

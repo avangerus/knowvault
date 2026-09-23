@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -91,7 +92,11 @@ func TestSchemaEvidenceOneItemPerObject(t *testing.T) {
 // recordExecutedAttempt, which needs a real *database.Store this test never
 // constructs, so the mutant reliably goes RED.
 func TestDiscloseExecutedAttemptFailsClosedOnAuditError(t *testing.T) {
-	service := &Service{}
+	calls := 0
+	service := &Service{disclosureCheck: func(context.Context, database.AccessContext, string) error {
+		calls++
+		return nil
+	}}
 	auditErr := errors.New("audit append failed")
 	value := "3"
 	result := governedquery.QueryResult{Columns: []string{"count"}, Rows: [][]*string{{&value}}, RowCount: 1}
@@ -109,6 +114,10 @@ func TestDiscloseExecutedAttemptFailsClosedOnAuditError(t *testing.T) {
 	}
 	if !errors.Is(err, auditErr) {
 		t.Fatalf("expected the disclosure error to wrap the audit append error, got %v", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("expected the audit-error branch to skip disclosure reauthorization, got %d call(s)", calls)
 	}
 }
 
@@ -200,5 +209,127 @@ func TestAskSystemInstructionsStateClaimTextBoundary(t *testing.T) {
 		if !strings.Contains(askSystemInstructions, required) {
 			t.Fatalf("governed query instructions do not state the SQL text boundary %q", required)
 		}
+	}
+}
+
+func TestAskWorkspaceDelegatesOnlyWithMountedConnection(t *testing.T) {
+	service := &Service{
+		config:  governedquery.Config{ConnectionID: "conn_mounted"},
+		enabled: true,
+		adapter: new(modelgateway.LabAdapter),
+	}
+	ctx := context.Background()
+	access := database.AccessContext{OrganizationID: "org_demo", PrincipalID: "principal_demo"}
+	var (
+		gotContext context.Context
+		gotAccess  database.AccessContext
+		gotArgs    []string
+	)
+	wantResult := AskResult{AttemptID: "attempt_demo"}
+	got, err := service.askWorkspaceWith(ctx, access, "ws_demo", "how many trips?",
+		func(callCtx context.Context, callAccess database.AccessContext, workspaceID, connectionID, question string) (AskResult, error) {
+			gotContext, gotAccess = callCtx, callAccess
+			gotArgs = []string{workspaceID, connectionID, question}
+			return wantResult, nil
+		})
+	if err != nil {
+		t.Fatalf("unexpected AskWorkspace delegation error: %v", err)
+	}
+	if !reflect.DeepEqual(got, wantResult) {
+		t.Fatalf("AskWorkspace result = %+v, want %+v", got, wantResult)
+	}
+	if gotContext != ctx || !reflect.DeepEqual(gotAccess, access) {
+		t.Fatal("AskWorkspace did not preserve the caller context and access")
+	}
+	if want := []string{"ws_demo", "conn_mounted", "how many trips?"}; !reflect.DeepEqual(gotArgs, want) {
+		t.Fatalf("AskWorkspace delegated args = %#v, want %#v", gotArgs, want)
+	}
+}
+
+func TestAskWorkspaceUnavailableAndPresetOnlyFailClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		service *Service
+	}{
+		{name: "nil service"},
+		{name: "unmounted", service: &Service{}},
+		{name: "config only", service: &Service{enabled: true, config: governedquery.Config{ConnectionID: "conn_mounted"}}},
+		{name: "preset only", service: &Service{enabled: true, adapter: new(modelgateway.LabAdapter), config: governedquery.Config{ConnectionID: "conn_mounted", PresetOnly: true}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.service.AskWorkspace(context.Background(), database.AccessContext{}, "ws_demo", "how many trips?")
+			var typed *Error
+			if !errors.As(err, &typed) || typed.code != CodeUnavailable {
+				t.Fatalf("expected fail-closed CodeUnavailable, got result=%+v err=%v", got, err)
+			}
+			if !reflect.DeepEqual(got, AskResult{}) {
+				t.Fatalf("unavailable AskWorkspace returned data: %+v", got)
+			}
+		})
+	}
+}
+
+func TestAskWorkspacePassesCanceledContextUnchanged(t *testing.T) {
+	service := &Service{
+		config:  governedquery.Config{ConnectionID: "conn_mounted"},
+		enabled: true,
+		adapter: new(modelgateway.LabAdapter),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := service.askWorkspaceWith(ctx, database.AccessContext{}, "ws_demo", "how many trips?",
+		func(callCtx context.Context, _ database.AccessContext, _, _, _ string) (AskResult, error) {
+			if callCtx != ctx {
+				t.Fatal("AskWorkspace replaced the caller's canceled context")
+			}
+			return AskResult{}, callCtx.Err()
+		})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation to reach the delegated Ask, got result=%+v err=%v", got, err)
+	}
+}
+
+// TestDiscloseExecutedAttemptReauthorizesBeforeDisclosure guards the
+// disclosure-time reauthorization gate: even with a successful audit append and
+// a real, nonempty result, a denied caller or a workspace with live queries
+// disabled must receive exactly the typed error and a completely zero
+// AskResult. The injected counter proves the gate ran exactly once, and the
+// nonempty QueryResult proves the gate -- not an empty result -- is what
+// suppresses disclosure.
+func TestDiscloseExecutedAttemptReauthorizesBeforeDisclosure(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		gateErr  error
+		wantCode ErrorCode
+	}{
+		{name: "denied", gateErr: &Error{code: CodeDenied}, wantCode: CodeDenied},
+		{name: "live queries off", gateErr: &Error{code: CodeLiveQueriesOff}, wantCode: CodeLiveQueriesOff},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			calls := 0
+			gateErr := testCase.gateErr
+			service := &Service{disclosureCheck: func(context.Context, database.AccessContext, string) error {
+				calls++
+				return gateErr
+			}}
+			value := "3"
+			result := governedquery.QueryResult{Columns: []string{"count"}, Rows: [][]*string{{&value}}, RowCount: 1}
+			attempt := governedquery.Attempt{SQLHash: "deadbeef", Outcome: governedquery.OutcomeSucceeded}
+
+			got, err := service.discloseExecutedAttempt(context.Background(), database.AccessContext{}, "ws_demo", 1,
+				"SELECT count(*) FROM fleet_trips", attempt, result, nil)
+
+			if calls != 1 {
+				t.Fatalf("expected exactly one disclosure reauthorization call, got %d", calls)
+			}
+			var typed *Error
+			if !errors.As(err, &typed) || typed.code != testCase.wantCode {
+				t.Fatalf("expected a %s *Error, got %v", testCase.wantCode, err)
+			}
+			if !reflect.DeepEqual(got, AskResult{}) {
+				t.Fatalf("expected a completely zero AskResult when disclosure is refused, got %+v", got)
+			}
+		})
 	}
 }

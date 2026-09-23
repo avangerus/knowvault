@@ -17,8 +17,10 @@ import (
 
 	artifactrepository "knowvault.local/verified-workspace/internal/artifact/repository"
 	"knowvault.local/verified-workspace/internal/audit"
+	"knowvault.local/verified-workspace/internal/metricdef"
 	"knowvault.local/verified-workspace/internal/platform/artifactcrypto"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/queryintent"
 	"knowvault.local/verified-workspace/internal/retrieval"
 )
 
@@ -756,5 +758,112 @@ func assertRowsetAdmissionThenFailure(t *testing.T, journal *recordingAdmissionJ
 	}
 	if *failure.ErrorCode != rowsetReadFailureCode {
 		t.Fatalf("failure error code = %q, want %q", *failure.ErrorCode, rowsetReadFailureCode)
+	}
+}
+
+// orderingCatalog, orderingProposer and orderingExecutor are minimal test-only
+// wrappers around the real definition-lister, proposal and sealed-intent
+// execution seams. Each records its own stage in the shared journal before
+// delegating to the existing gate fakes, so one assertion can pin the full
+// admission -> catalog -> proposal -> execute order of a structured-intent
+// Create.
+type orderingCatalog struct {
+	journal     *recordingAdmissionJournal
+	definitions []metricdef.Definition
+}
+
+func (catalog *orderingCatalog) List(_ context.Context, _ database.AccessContext, _ string) ([]metricdef.Definition, error) {
+	catalog.journal.order = append(catalog.journal.order, "catalog")
+	return catalog.definitions, nil
+}
+
+type orderingProposer struct {
+	journal  *recordingAdmissionJournal
+	proposal queryintent.Proposal
+}
+
+func (proposer *orderingProposer) Propose(_ context.Context, _, _ string) (queryintent.Proposal, bool) {
+	proposer.journal.order = append(proposer.journal.order, "proposal")
+	return proposer.proposal, true
+}
+
+type orderingExecutor struct {
+	journal *recordingAdmissionJournal
+	run     Run
+}
+
+func (executor *orderingExecutor) ExecuteIntent(_ context.Context, _ database.AccessContext, _ IntentExecutionRequest) (Run, error) {
+	executor.journal.order = append(executor.journal.order, "execute")
+	return executor.run, nil
+}
+
+// TestCreateStructuredIntentAdmitsBeforeCatalogProposalAndExecution proves that
+// Create persists the durable admission before the structured-intent path reads
+// the definition catalog, consults the proposer or executes the sealed intent,
+// and that the sealed-intent executor's run is what Create returns.
+func TestCreateStructuredIntentAdmitsBeforeCatalogProposalAndExecution(t *testing.T) {
+	journal := &recordingAdmissionJournal{}
+	service := testCreateService(journal)
+	sentinel := Run{ID: "qrun_sentinel", WorkspaceID: "ws_0001", Answer: "sentinel answer"}
+	service.intentDefinitions = &orderingCatalog{journal: journal, definitions: gateTestDefinitions(t)}
+	service.intentProposer = &orderingProposer{journal: journal, proposal: gateValidProposal()}
+	service.intentExecutor = &orderingExecutor{journal: journal, run: sentinel}
+	// The free-text planner/idempotency path must never be reached once a
+	// structured intent is sealed.
+	service.lookupIdempotencyFn = func(context.Context, database.AccessContext, string, string, string) (Run, bool, error) {
+		t.Fatal("free-text/idempotency path was reached on the structured-intent path")
+		return Run{}, false, nil
+	}
+
+	got, err := service.Create(context.Background(), questionAccess(database.ActorKindHuman), questionCreateRequest())
+	if err != nil {
+		t.Fatalf("Create = %v, want the executor's sentinel run", err)
+	}
+	want := []string{"admission", "catalog", "proposal", "execute"}
+	if len(journal.order) != len(want) {
+		t.Fatalf("execution order = %v, want exactly %v", journal.order, want)
+	}
+	for i, stage := range want {
+		if journal.order[i] != stage {
+			t.Fatalf("execution order = %v, want exactly %v", journal.order, want)
+		}
+	}
+	if got.ID != sentinel.ID || got.Answer != sentinel.Answer {
+		t.Fatalf("Create run = %#v, want the executor's sentinel run %#v", got, sentinel)
+	}
+	if len(journal.appended) != 1 || journal.appended[0].Outcome != audit.OutcomeSuccess {
+		t.Fatalf("appended = %#v, want exactly one successful admission", journal.appended)
+	}
+}
+
+// TestCreateStructuredIntentAdmissionFailureStopsBeforeCatalogProposalAndExecution
+// proves that a failed admission fails Create closed: the definition catalog,
+// the proposer and the sealed-intent executor are never consulted, the result
+// is zero, and the typed unavailable error still carries the journal error.
+func TestCreateStructuredIntentAdmissionFailureStopsBeforeCatalogProposalAndExecution(t *testing.T) {
+	service := testCreateService(failingAdmissionJournal{})
+	catalog := &gateTestCatalog{definitions: gateTestDefinitions(t)}
+	proposer := &gateTestProposer{proposal: gateValidProposal(), ok: true}
+	executor := &gateTestExecutor{}
+	service.intentDefinitions = catalog
+	service.intentProposer = proposer
+	service.intentExecutor = executor
+
+	got, err := service.Create(context.Background(), questionAccess(database.ActorKindHuman), questionCreateRequest())
+	if err == nil {
+		t.Fatal("Create with a failed admission = nil, want the injected journal failure")
+	}
+	if CodeOf(err) != CodeUnavailable {
+		t.Fatalf("admission failure code = %q, want %q", CodeOf(err), CodeUnavailable)
+	}
+	if !errors.Is(err, errInjectedAdmissionFailure) {
+		t.Fatalf("admission failure must retain the journal error, got %v", err)
+	}
+	if catalog.calls != 0 || proposer.calls != 0 || executor.calls != 0 {
+		t.Fatalf("structured-intent stages ran after a failed admission: catalog=%d proposal=%d execute=%d",
+			catalog.calls, proposer.calls, executor.calls)
+	}
+	if got.ID != "" || got.Answer != "" || len(got.Citations) != 0 || got.FailureCode != "" {
+		t.Fatalf("admission failure leaked a partial result: %#v", got)
 	}
 }

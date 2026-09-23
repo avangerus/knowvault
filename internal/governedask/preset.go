@@ -114,12 +114,16 @@ func (service *Service) RunPreset(ctx context.Context, access database.AccessCon
 	var disclosed PresetRunResult
 	_, admissionErr := service.withAdmission(ctx, access, workspaceID, func() (AskResult, error) {
 		if connectionID != service.config.ConnectionID {
-			_ = service.auditAttempt(ctx, access, workspaceID, 1, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, 1, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			return AskResult{}, &Error{code: CodeConnectionUnavailable}
 		}
 		preset, ok := service.config.PresetByID(workspaceID, presetID)
 		if !ok {
-			_ = service.auditAttempt(ctx, access, workspaceID, 1, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, 1, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			return AskResult{}, &Error{code: CodeRequestInvalid}
 		}
 		enabled, err := service.liveQueriesEnabled(ctx, access, workspaceID)
@@ -127,6 +131,9 @@ func (service *Service) RunPreset(ctx context.Context, access database.AccessCon
 			return AskResult{}, err
 		}
 		if !enabled {
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, 1, preset.SQLHash, audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			return AskResult{}, &Error{code: CodeLiveQueriesOff}
 		}
 		schema, revision, err := service.loadExposedSchema(ctx, access, workspaceID)
@@ -134,7 +141,9 @@ func (service *Service) RunPreset(ctx context.Context, access database.AccessCon
 			return AskResult{}, err
 		}
 		if schema == nil {
-			_ = service.auditAttempt(ctx, access, workspaceID, 1, preset.SQLHash, audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, 1, preset.SQLHash, audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			return AskResult{}, &Error{code: CodeSchemaUnavailable}
 		}
 		// The preset mount carries no SQL. Resolve only the already executed
@@ -142,16 +151,18 @@ func (service *Service) RunPreset(ctx context.Context, access database.AccessCon
 		// anchors before re-executing: attempt id, SQL hash and schema revision.
 		sourceAttempt, loadErr := service.loadExecutedAttempt(ctx, access, workspaceID, preset.SourceAttemptID)
 		if loadErr != nil || !preset.Binds(sourceAttempt) || revision != preset.ExposedSchemaRevision {
-			_ = service.auditAttempt(ctx, access, workspaceID, revision, preset.SQLHash, audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
+			if auditErr := service.auditAttempt(ctx, access, workspaceID, revision, preset.SQLHash, audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
+				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
 			return AskResult{}, &Error{code: CodeRequestInvalid, cause: loadErr}
 		}
 		result, attempt, execErr := governedquery.Execute(ctx, service.config, governedquery.ExecuteParams{SQLText: sourceAttempt.SQLText, ExposedSchemaRevision: revision})
 		auditErr := service.auditAttempt(ctx, access, workspaceID, revision, attempt.SQLHash, string(attempt.Outcome), costPointer(attempt), rowCountPointer(attempt), digestPointer(attempt))
-		if execErr != nil {
-			return AskResult{}, &Error{code: CodeExecutionFailed, cause: execErr}
-		}
 		if auditErr != nil {
 			return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+		}
+		if execErr != nil {
+			return AskResult{}, &Error{code: CodeExecutionFailed, cause: execErr}
 		}
 		attemptID, recordErr := service.recordExecutedAttempt(ctx, access, workspaceID, revision, sourceAttempt.SQLText, attempt.SQLHash, result.RowCount)
 		if recordErr != nil {
@@ -167,11 +178,6 @@ func (service *Service) RunPreset(ctx context.Context, access database.AccessCon
 		return AskResult{}, nil
 	})
 	if admissionErr != nil {
-		// An execution failure already carries the governed outcome audit. The
-		// admission event remains the required pre-read receipt.
-		if CodeOf(admissionErr) == CodeLiveQueriesOff {
-			_ = service.auditAttempt(ctx, access, workspaceID, 1, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil)
-		}
 		return PresetRunResult{}, admissionErr
 	}
 	return disclosed, nil

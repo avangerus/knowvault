@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -3644,14 +3645,57 @@ func (handler *Handler) questionCreate(writer http.ResponseWriter, request *http
 		writeValidationError(writer, request, requestID, "REQUEST_INVALID", invalidFields)
 		return
 	}
-	run, err := handler.questions.Create(request.Context(), access, question.CreateRequest{
+	createContext := request.Context()
+	var stream *questionEventStream
+	var streamWriteFailed atomic.Bool
+	if acceptsQuestionEventStream(request.Header.Get("Accept")) {
+		var cancel context.CancelFunc
+		createContext, cancel = context.WithCancel(createContext)
+		defer cancel()
+		stream = newQuestionEventStream(writer)
+		createContext = question.WithActionObserver(createContext, func(event question.ActionEvent) {
+			if err := stream.action(event); err != nil {
+				streamWriteFailed.Store(true)
+				cancel()
+			}
+		})
+	}
+	run, err := handler.questions.Create(createContext, access, question.CreateRequest{
 		WorkspaceID: workspaceID, ConversationID: valueOrEmpty(body.ConversationID), Question: *body.Question, AnswerMode: mode, ModelProfileID: modelProfileID, IdempotencyKey: key,
 	})
+	if stream != nil {
+		if streamWriteFailed.Load() || createContext.Err() != nil {
+			return
+		}
+		if err != nil {
+			_ = stream.failure(requestID)
+			return
+		}
+		_ = stream.result(run)
+		return
+	}
 	if err != nil {
 		handleQuestionError(writer, err, requestID, true)
 		return
 	}
 	writeJSON(writer, http.StatusOK, run)
+}
+
+func acceptsQuestionEventStream(accept string) bool {
+	for _, offered := range strings.Split(accept, ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(offered))
+		if err != nil || mediaType != questionStreamContentType {
+			continue
+		}
+		if quality, hasQuality := params["q"]; hasQuality {
+			value, err := strconv.ParseFloat(quality, 64)
+			if err != nil || !(value > 0 && value <= 1) {
+				continue
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (handler *Handler) questionGet(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, runID string) {

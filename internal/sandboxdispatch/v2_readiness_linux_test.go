@@ -4,6 +4,7 @@ package sandboxdispatch
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"os"
@@ -166,7 +167,11 @@ func TestNativeReadinessClientRejectsUnavailableAndMalformedReplies(t *testing.T
 				case "unavailable":
 					body = []byte(nativeUnavailableBodyV2)
 				case "oversize":
-					body = make([]byte, 1024)
+					var header [5]byte
+					header[0] = byte(kindNativeReadinessResultV2)
+					binary.BigEndian.PutUint32(header[1:], uint32(len(nativeUnavailableBodyV2)+1))
+					done <- writeAll(conn, header[:])
+					return
 				}
 				done <- writeFrame(conn, kind, body)
 			}()

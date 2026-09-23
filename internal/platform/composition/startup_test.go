@@ -43,6 +43,8 @@ func TestStartupStageOfAcceptsOnlyTheClosedRuntimeStartupTaxonomy(t *testing.T) 
 		StartupStageRetrievalExecutor,
 		StartupStageGenerationMount,
 		StartupStageGovernedQueryMount,
+		StartupStageMetricCompareMount,
+		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
 		StartupStageWebUI,
 		StartupStageHTTPDispatcher,
@@ -71,6 +73,15 @@ func TestStartupStageOfAcceptsOnlyTheClosedRuntimeStartupTaxonomy(t *testing.T) 
 	}
 	if got := StartupStageOf(&Error{code: CodeRuntimeStartupFailed, stage: StartupStage("not-allowlisted")}); got != StartupStageUnknown {
 		t.Fatalf("malformed stage = %q, want %q", got, StartupStageUnknown)
+	}
+}
+
+// TestStartupStageDatasetProfileMountPinsTheExactWireValue keeps the R1.1
+// micro-card C stage a stable, non-secret identifier for deployment and
+// observability consumers; the closed-list test above covers allowlisting.
+func TestStartupStageDatasetProfileMountPinsTheExactWireValue(t *testing.T) {
+	if got := string(StartupStageDatasetProfileMount); got != "DATASET_PROFILE_MOUNT" {
+		t.Fatalf("stage value = %q, want %q", got, "DATASET_PROFILE_MOUNT")
 	}
 }
 
