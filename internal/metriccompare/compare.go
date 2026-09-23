@@ -54,6 +54,34 @@ func (p Profile) MetricID() string    { return p.spec.MetricID }
 func (p Profile) Description() string { return p.spec.Description }
 func (p Profile) Unit() string        { return p.spec.Unit }
 
+// PlanningEvidence projects only sealed source semantics for the SQL planner.
+// Filters are part of the scope: the calendar is never a workspace default.
+func (p Profile) PlanningEvidence() string {
+	if p.hash == "" {
+		return ""
+	}
+	filters := make(map[string]string, len(p.spec.Filters))
+	for _, filter := range p.spec.Filters {
+		filters[filter.Column] = filter.Value
+	}
+	value := struct {
+		MetricID          string            `json:"metric_id"`
+		Relation          string            `json:"relation"`
+		Filters           map[string]string `json:"required_equal_filters"`
+		ReportingTimezone string            `json:"reporting_timezone"`
+		SnapshotColumn    string            `json:"snapshot_column"`
+		MeasureColumn     string            `json:"measure_column"`
+		SubjectColumn     string            `json:"subject_column"`
+		Unit              string            `json:"unit"`
+		SnapshotRule      string            `json:"snapshot_rule"`
+		Coverage          string            `json:"population_coverage"`
+	}{p.spec.MetricID, p.spec.Schema + "." + p.spec.View, filters, p.spec.Timezone,
+		p.spec.SnapshotColumn, p.spec.MeasureColumn, p.spec.SubjectColumn, p.spec.Unit,
+		"latest snapshot within the requested local reporting date; aggregate its contributing rows", "UNKNOWN"}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
 var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var metricID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 var literal = regexp.MustCompile(`^[A-Za-z0-9_.:/+-]+$`)

@@ -3619,17 +3619,25 @@ func (service *Service) storeCitationArtifacts(ctx context.Context, tx database.
 }
 
 func (service *Service) reportFailureCleanup(ctx context.Context, access database.AccessContext, runID, workspaceID string, cause error) {
-	if err := service.fail(ctx, access, runID, workspaceID, "QUESTION_EXECUTION_FAILED"); err != nil {
+	status, code := questionFailureTerminal(ctx, cause)
+	if err := service.fail(ctx, access, runID, workspaceID, status, code); err != nil {
 		slog.Error("question failure persistence failed", "error_code", CodeOf(err), "error_type", fmt.Sprintf("%T", err), "sqlstate", database.SQLStateCode(err), "constraint", database.SQLConstraintName(err), "cause_code", CodeOf(cause))
 	}
 }
 
-func (service *Service) fail(ctx context.Context, access database.AccessContext, runID, workspaceID, failureCode string) error {
+func questionFailureTerminal(ctx context.Context, cause error) (status, code string) {
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
+		return "CANCELLED", "QUESTION_CANCELLED"
+	}
+	return "FAILED", "QUESTION_EXECUTION_FAILED"
+}
+
+func (service *Service) fail(ctx context.Context, access database.AccessContext, runID, workspaceID, status, failureCode string) error {
 	cleanupCtx, cancel := questionFailureCleanupContext(ctx)
 	defer cancel()
 	return service.db.Write(cleanupCtx, access, func(txCtx context.Context, tx database.Transaction) error {
 		completedAt := service.now().UTC()
-		updated, err := tx.Exec(txCtx, `UPDATE public.question_run SET result_status = 'FAILED', completed_at = $4, failure_code = $5 WHERE organization_id = $1 AND id = $2 AND workspace_id = $3 AND result_status IN ('QUEUED','RUNNING')`, access.OrganizationID, runID, workspaceID, completedAt, failureCode)
+		updated, err := tx.Exec(txCtx, `UPDATE public.question_run SET result_status = $4, completed_at = $5, failure_code = $6 WHERE organization_id = $1 AND id = $2 AND workspace_id = $3 AND result_status IN ('QUEUED','RUNNING')`, access.OrganizationID, runID, workspaceID, status, completedAt, failureCode)
 		if err != nil {
 			return err
 		}
@@ -4751,7 +4759,7 @@ type structuredAnswer struct {
 	governedQueryDependencies []governedQueryDependency
 }
 
-// A v2 presentation is three copies of one exact answer digest: the sealed
+// A versioned presentation is three copies of one exact answer digest: the sealed
 // presentation envelope, the sealed structured answer, and question_run. A
 // missing or changed markdown artifact must close both governed read paths
 // before either path projects answer or evidence. Legacy records have no
@@ -4761,7 +4769,7 @@ func storedTypedMetricAnswerMatches(answer, runAnswerHash string, structured str
 	if loop == nil || (loop.PresentationVersion == nil && loop.PresentationLanguage == nil && loop.PresentationAnswerHash == nil) {
 		return true
 	}
-	if loop.PresentationVersion == nil || *loop.PresentationVersion != "metric-comparison-v2" ||
+	if loop.PresentationVersion == nil || !supportedMetricPresentation(*loop.PresentationVersion) ||
 		loop.PresentationLanguage == nil || loop.PresentationAnswerHash == nil || answer == "" {
 		return false
 	}
@@ -4769,14 +4777,14 @@ func storedTypedMetricAnswerMatches(answer, runAnswerHash string, structured str
 	return answerHash == *loop.PresentationAnswerHash && answerHash == structured.AnswerHash && answerHash == runAnswerHash
 }
 
-// A v2 answer may quote a sealed structured citation. Before either governed
+// A versioned answer may quote a sealed structured citation. Before either governed
 // read discloses it, bind that copy to the separately gated citation row and
 // CitedExcerpt artifact. Legacy runs retain their existing citation behavior.
 func typedMetricCitationsMatchGated(loop *ToolLoopRecord, structured, gated []Citation) bool {
 	if loop == nil || loop.PresentationVersion == nil {
 		return true
 	}
-	if *loop.PresentationVersion != "metric-comparison-v2" || len(structured) != len(gated) {
+	if !supportedMetricPresentation(*loop.PresentationVersion) || len(structured) != len(gated) {
 		return false
 	}
 	byID := make(map[string]Citation, len(gated))

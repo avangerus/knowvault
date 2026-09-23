@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
+import { PendingAction, type PendingActionState } from "./pending-action";
+import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -704,6 +706,9 @@ type ComparisonDay = {
 
 type ComparisonEvidence = {
   metric_id: string;
+  profile_hash: string;
+  evidence_schema_version: number;
+  exposed_schema_revision: number;
   unit: string;
   coverage: "OBSERVED_SNAPSHOT";
   first: ComparisonDay;
@@ -925,6 +930,52 @@ async function apiPost<T>(path: string, body: unknown, idempotencyKey: string): 
   } catch {
     return { kind: "broken", status: 0 };
   }
+}
+
+// A stream is one POST. Older servers may answer with JSON; decode that same
+// response without retrying a question or reusing its idempotency key.
+async function apiPostQuestionStream(
+  path: string, body: unknown, idempotencyKey: string, onAction: (action: QuestionActionFrame) => void,
+): Promise<ApiResult<QuestionRun>> {
+  try {
+    const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
+    if (csrf.kind !== "ok") return csrf;
+    const response = await fetch(path, {
+      method: "POST", cache: "no-store",
+      headers: { Accept: "application/x-ndjson", "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey, "X-KnowVault-CSRF": csrf.value.csrf_token },
+      body: JSON.stringify(body),
+    });
+    notifySessionExpired(response);
+    if (!response.ok) {
+      const failure = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string } } | null;
+      return failure?.error?.code
+        ? { kind: "failure", status: response.status, code: failure.error.code, requestId: failure.error.request_id ?? "", clarification: failure.error.clarification }
+        : { kind: "broken", status: response.status };
+    }
+    if (response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase() !== "application/x-ndjson") {
+      return { kind: "ok", value: (await response.json()) as QuestionRun };
+    }
+    if (!response.body) return { kind: "broken", status: 0 };
+    const terminal = await readQuestionStream<QuestionRun>(response.body, onAction);
+    return terminal.type === "result" ? { kind: "ok", value: terminal.result }
+      : { kind: "failure", status: 500, code: terminal.code, requestId: terminal.request_id };
+  } catch {
+    return { kind: "broken", status: 0 };
+  }
+}
+
+const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["current"]> = {
+  model: "model", document_search: "searching", document_read: "reading",
+  live_data: "checking_data", trusted_comparison: "comparing", other_tool: "working",
+};
+
+export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
+  const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
+  const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome)
+    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome! }));
+  const latest = ordered.at(-1);
+  return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
 }
 
 // Source registration is deliberately content-idempotent on the server and
@@ -3396,14 +3447,12 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
   const payload = liveTablePayloadForReceipt(run, receipt);
   const comparison = comparisonEvidenceForReceipt(run, receipt);
   const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
+  const readStarted = receipt.observation_window?.started_at;
+  const readAt = receipt.observation_window?.completed_at;
   return (
     <details className="live-result-evidence">
-      <summary>Live result {ordinal} · {receipt.row_count.toLocaleString("en-US")} {receipt.row_count === 1 ? "row" : "rows"}</summary>
-      <dl>
-        <dt>Row count</dt><dd>{receipt.row_count.toLocaleString("en-US")}</dd>
-        <dt>Observation window</dt><dd>{receipt.observation_window ? answerObservationWindowText(receipt.observation_window) || "—" : "—"}</dd>
-        <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
-      </dl>
+      <summary>Live result {ordinal} · {comparison ? `${comparison.first.date}: ${comparison.first.value} → ${comparison.second.date}: ${comparison.second.value}` : `${receipt.row_count.toLocaleString("en-US")} ${receipt.row_count === 1 ? "row" : "rows"}`}{readAt ? ` · read ${formatTime(readAt)}` : ""}</summary>
+      <p>Database read: {readStarted && readAt ? `${formatTime(readStarted)} – ${formatTime(readAt)}` : readAt ? formatTime(readAt) : "time unavailable"}</p>
       {comparison ? (
         <div className="live-comparison-evidence">
           <p>Metric: {comparison.metric_id} · Unit: {comparison.unit === "unknown" ? "unknown" : comparison.unit} · Coverage: observed snapshots only; full population coverage is unknown.</p>
@@ -3415,7 +3464,6 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
             ))}</tbody>
           </table>
           <p>Delta (first − second): {comparison.delta} · Change relative to second: {comparison.percent_change === "" ? "undefined (second value is zero)" : `${comparison.percent_change}%`}</p>
-          <details><summary>Semantic evidence digest</summary><code className="mono">{comparison.evidence_digest}</code></details>
         </div>
       ) : payload ? (
         <>
@@ -3437,6 +3485,23 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
       ) : (
         <p className="live-table-unavailable">The table payload is unavailable for this receipt.</p>
       )}
+      <details className="live-receipt-technical">
+        <summary>Technical details</summary>
+        <dl>
+          <dt>Execution ID</dt><dd className="mono">{receipt.execution_id}</dd>
+          <dt>Result digest</dt><dd className="mono">{receipt.result_digest}</dd>
+          <dt>Receipt digest</dt><dd className="mono">{receipt.receipt_digest}</dd>
+          <dt>Read window start</dt><dd className="mono">{receipt.observation_window?.started_at ?? "—"}</dd>
+          <dt>Read window end</dt><dd className="mono">{receipt.observation_window?.completed_at ?? "—"}</dd>
+          <dt>Read basis</dt><dd className="mono">{receipt.observation_window?.basis ?? "—"}</dd>
+          {comparison && <>
+            <dt>Semantic evidence digest</dt><dd className="mono">{comparison.evidence_digest}</dd>
+            <dt>Profile hash</dt><dd className="mono">{comparison.profile_hash}</dd>
+            <dt>Evidence schema</dt><dd>{comparison.evidence_schema_version}</dd>
+            <dt>Exposed schema revision</dt><dd>{comparison.exposed_schema_revision}</dd>
+          </>}
+        </dl>
+      </details>
     </details>
   );
 }
@@ -4252,11 +4317,9 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
         initialConversationID={initialConversationID ?? null}
         onConversationChange={onConversationChange ?? (() => {})}
         onOpenEvidence={onOpenEvidence}
-        onOpenSources={onOpenSources}
         requestedWorkspaceID={requestedWorkspaceID}
         state={state}
         pushToast={pushToast ?? (() => {})}
-        workspaceTitle={state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value.name : "Workspace"}
       />
     </div>
   );
@@ -4535,9 +4598,7 @@ export function initialConversationWorkspaceOwner(initialConversationID: string 
   return initialConversationID ? requestedWorkspaceID : null;
 }
 
-function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
-  workspaceTitle: string;
-  onOpenSources: () => void;
+function AskView({ onOpenEvidence, onConversationChange, initialConversationID, state, pushToast, requestedWorkspaceID }: {
   onOpenEvidence: (hash: string) => void;
   onConversationChange: (conversationID: string | null) => void;
   initialConversationID: string | null;
@@ -4601,6 +4662,8 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
   const [localTurns, setLocalTurns] = useState<ConversationTurn[]>([]);
   const [lastFailure, setLastFailure] = useState<{ question: string; result: ApiFailure | ApiBroken } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [observedActions, setObservedActions] = useState<QuestionActionFrame[]>([]);
+  const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
@@ -5097,13 +5160,11 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
     return () => { alive = false; };
   }, [workspaceID, workspaceClosed, selectedConversationID]);
 
-  // Opening a topic from the left column shows the basis of its latest turn,
-  // mirroring "select a previous turn to see its evidence" for the turn the
-  // conversation was left on.
+  // Keep the answer readable first; evidence opens when the reader selects a
+  // citation or a turn.
   useEffect(() => {
     if (conversation?.kind !== "ok" || conversation.value.turns.length === 0) return;
-    const last = conversation.value.turns[conversation.value.turns.length - 1];
-    setPanelTarget({ turnId: last.turn_id, citationId: firstAnswerCitation(last.question_run) });
+    setPanelTarget(null);
     setFullscreen(false);
   }, [conversation]);
 
@@ -5112,6 +5173,14 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
   const feedTurns = [...remoteTurns, ...localTurns.filter((turn) => !remoteTurnIDs.has(turn.question_run_id))];
   const detailLoading = selectedConversationID !== null && conversation === null;
   const turnsByID = new Map(feedTurns.map((turn) => [turn.turn_id, turn]));
+
+  useEffect(() => {
+    if (pendingQuestion === null) return;
+    const startedAt = Date.now();
+    setPendingElapsedSeconds(0);
+    const interval = window.setInterval(() => setPendingElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingQuestion]);
 
   useEffect(() => {
     const flow = flowRef.current;
@@ -5149,10 +5218,13 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
     setLastFailure(null);
     setQuestion("");
     setPendingQuestion(trimmed);
-    const result = await apiPost<QuestionRun>(
+    setObservedActions([]);
+    const result = await apiPostQuestionStream(
       `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/questions`,
       { ...questionRunPayload(trimmed, selectedModel), ...(selectedConversationID ? { conversation_id: selectedConversationID } : {}) },
       newIdempotencyKey(),
+      observationForGeneration(workspaceGeneration, () => workspaceGenerationRef.current,
+        (action) => setObservedActions((current) => [...current, action])),
     );
     // R3: before ANY post-await mutation, drop an answer that belongs to a
     // workspace generation that has since been reset or denied. The pending
@@ -5171,7 +5243,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
       };
       dismissFootnoteTooltip();
       setLocalTurns((current) => [...current, turn]);
-      setPanelTarget({ turnId: turn.turn_id, citationId: firstAnswerCitation(result.value) });
+      setPanelTarget(null);
       setFullscreen(false);
       if (result.value.conversation_id && result.value.conversation_id !== selectedConversationID) {
         setSelectedConversationID(result.value.conversation_id);
@@ -5421,9 +5493,7 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
           {pendingQuestion !== null && (
             <article className="turn turn-on turn-pending">
               <p className="turn-question"><span className="turn-role">Question</span>{pendingQuestion}</p>
-              <p className="lead">Preparing answer.</p>
-              <p aria-live="polite" className="steps-note" role="status">Searching accessible data and preparing an answer with evidence.</p>
-              <p className="steps-note">Response time depends on the source and request queue.</p>
+              <PendingAction elapsedSeconds={pendingElapsedSeconds} state={pendingActionFromEvents(observedActions)} />
             </article>
           )}
 
@@ -5463,7 +5533,6 @@ function AskView({ workspaceTitle, onOpenSources, onOpenEvidence, onConversation
             </label>
           )}
           <p className="hint" id="ask-keyboard-hint">Enter to ask · Shift + Enter for a new line</p>
-          <p className="hint">Workspace: {workspaceTitle} · Switching workspaces starts a new conversation. <button className="text-button" onClick={onOpenSources} type="button">Sources →</button></p>
         </div>
       </section>
 

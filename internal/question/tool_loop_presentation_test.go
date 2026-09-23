@@ -53,6 +53,18 @@ func TestToolLoopPresentationEnvelopeBindsCanonicalAnswer(t *testing.T) {
 	if !validateToolLoopClaimEvidence("qrun_current", russian, &russianRecord, dependencies, nil) {
 		t.Fatal("valid Russian v2 answer was rejected")
 	}
+	readableRecord := *record
+	readableRecord.PresentationVersion = presentationString("metric-comparison-v3")
+	readable, err := renderTypedMetricAnswer("qrun_current", &readableRecord, dependencies, nil, "en")
+	if err != nil || readable == canonical {
+		t.Fatalf("v3 presentation: %q, %v", readable, err)
+	}
+	readableRecord.PresentationAnswerHash = presentationString(canon.Hash([]byte(readable)))
+	if !validateToolLoopClaimEvidence("qrun_current", readable, &readableRecord, dependencies, nil) ||
+		validateToolLoopClaimEvidence("qrun_current", canonical, &readableRecord, dependencies, nil) ||
+		validateToolLoopClaimEvidence("qrun_current", readable, record, dependencies, nil) {
+		t.Fatal("v2/v3 presentation bytes were not independently bound")
+	}
 	for _, test := range []struct {
 		name   string
 		answer string
@@ -74,7 +86,7 @@ func TestToolLoopPresentationEnvelopeBindsCanonicalAnswer(t *testing.T) {
 			r.ClaimEvidence = nil
 		}},
 		{"unknown version", canonical, func(r *ToolLoopRecord, _ *[]governedQueryDependency) {
-			r.PresentationVersion = presentationString("metric-comparison-v3")
+			r.PresentationVersion = presentationString("metric-comparison-v99")
 		}},
 		{"missing version", canonical, func(r *ToolLoopRecord, _ *[]governedQueryDependency) {
 			r.PresentationVersion = nil

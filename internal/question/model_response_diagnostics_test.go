@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"knowvault.local/verified-workspace/internal/modelgateway"
 )
@@ -30,7 +31,7 @@ func TestModelGatewayReasonCodesAreClosedSortedAndContentFree(t *testing.T) {
 	}
 }
 
-func TestToolLoopFailureKeepsExistingTerminalVocabularyAndDeadlinePriority(t *testing.T) {
+func TestToolLoopFailureDistinguishesCancellationAndDeadline(t *testing.T) {
 	for _, example := range []struct {
 		diagnostic modelgateway.ResponseDiagnostic
 		want       string
@@ -49,8 +50,13 @@ func TestToolLoopFailureKeepsExistingTerminalVocabularyAndDeadlinePriority(t *te
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if got := toolLoopModelFailureStopReason(ctx, attempt); got != "TIME_LIMIT" {
+		if got := toolLoopModelFailureStopReason(ctx, attempt); got != "CANCELLED" {
 			t.Fatalf("cancelled run changed to %q", got)
+		}
+		deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Time{})
+		defer deadlineCancel()
+		if got := toolLoopModelFailureStopReason(deadlineCtx, attempt); got != "TIME_LIMIT" {
+			t.Fatalf("expired run changed to %q", got)
 		}
 	}
 }

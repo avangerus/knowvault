@@ -511,6 +511,13 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .step-wait svg { color: var(--line); }
 .steps-note { margin: 0; font-size: var(--fs-caption); color: var(--ink-tertiary); max-width: 64ch; }
 .turn-pending { cursor: default; }
+.pending-action { color: var(--ink-secondary); font-size: var(--fs-meta); }
+.pending-action-line { display: flex; align-items: center; gap: 12px; }
+.pending-action-label { display: inline-flex; align-items: center; gap: 8px; }
+.pending-action-elapsed { color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
+.pending-action-history { margin-top: 8px; font-size: var(--fs-caption); }
+.pending-action-history summary { cursor: pointer; color: var(--accent-strong); }
+.pending-action-history ol { margin: 6px 0 0; padding-left: 20px; }
 
 /* ---------------------------------------------------------------------------
    Conversation footer: rely bar + composer, pinned outside the scrolling flow.

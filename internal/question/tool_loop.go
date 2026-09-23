@@ -430,7 +430,7 @@ func bindToolLiveReadReferences(questionRunID string, references []toolLiveReadR
 // answer must require a nonempty value so v2 compares the exact displayed bytes.
 func validateToolLoopClaimEvidence(questionRunID, answerMarkdown string, record *ToolLoopRecord, dependencies []governedQueryDependency, citations []Citation) bool {
 	if record != nil && (record.PresentationVersion != nil || record.PresentationLanguage != nil || record.PresentationAnswerHash != nil) {
-		if record.PresentationVersion == nil || *record.PresentationVersion != "metric-comparison-v2" ||
+		if record.PresentationVersion == nil || !supportedMetricPresentation(*record.PresentationVersion) ||
 			record.PresentationLanguage == nil || (*record.PresentationLanguage != "en" && *record.PresentationLanguage != "ru") ||
 			record.PresentationAnswerHash == nil || *record.PresentationAnswerHash == "" ||
 			record.ClaimEvidenceVersion != "v1" ||
@@ -1068,6 +1068,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	var retainedAnalyticScalarPair *analyticScalarPair
 	var liveDataState liveDataRunState
 	invoke := func(id, name string, args json.RawMessage, system bool) (workspacetools.Result, error) {
+		if err := ctx.Err(); err != nil {
+			return workspacetools.Result{}, err
+		}
 		if scopeChanged {
 			return workspacetools.Result{IsError: true, Text: toolScopeChangedError}, workspacetools.ErrScopeChanged
 		}
@@ -1079,6 +1082,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			return toolFinalizationRefusal(), nil
 		}
 		callCtx := toolLoopOperationContext(ctx, researchCtx, system)
+		finishAction := beginToolAction(callCtx, name)
 		started := time.Now()
 		var result workspacetools.Result
 		var callErr error
@@ -1100,6 +1104,10 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			}
 		} else {
 			result, callErr = service.tools.Invoke(callCtx, scope, name, args)
+		}
+		if err := ctx.Err(); err != nil {
+			finishAction(false)
+			return workspacetools.Result{}, err
 		}
 		if callErr != nil {
 			if errors.Is(callErr, workspacetools.ErrScopeChanged) {
@@ -1130,6 +1138,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if outcome != "SUCCEEDED" {
 			metricEvidence = nil
 		}
+		finishAction(outcome == "SUCCEEDED")
 		record.Calls = append(record.Calls, ToolCallRecord{ID: id, Name: name, Arguments: append(json.RawMessage(nil), args...), ArgumentsHash: canon.Hash(args), System: system, Outcome: outcome, DurationMS: time.Since(started).Milliseconds(), Result: result, Evidence: metricEvidence})
 		if callErr == nil && !result.IsError {
 			collectToolAddresses(result.Structured, observed)
@@ -1145,6 +1154,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	}
 	appendResult := func(call modelgateway.ToolCall, result workspacetools.Result, callErr error) {
 		text := result.Text
+		if call.Function.Name == liveDataToolName && callErr == nil && !result.IsError {
+			if projection, ok := decodeLiveDataProjection(result.Structured); ok {
+				if payload, err := liveDataModelPayload(projection); err == nil && len(payload) <= profile.MaxToolResultBytes {
+					text = string(payload)
+				}
+			}
+		}
 		if len(text) > profile.MaxToolResultBytes {
 			text = fmt.Sprintf(`{"error":"MODEL_RESULT_BUDGET","result_bytes":%d,"limit_bytes":%d,"advice":"Repeat the tool with a smaller limit or narrower query. Full result remains in the source panel."}`, len(text), profile.MaxToolResultBytes)
 		}
@@ -1176,7 +1192,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			break
 		}
 		if ctx.Err() != nil {
-			record.StopReason = "TIME_LIMIT"
+			record.StopReason = toolLoopContextStopReason(ctx)
 			break
 		}
 		finalizing = finalizing || turn == profile.MaxTurns-1 || len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx)
@@ -1186,7 +1202,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			turnDefinitions, finalizationErr = toolFinalizationDefinitions(ctx, service.tools, scope)
 			if finalizationErr != nil {
 				if ctx.Err() != nil {
-					record.StopReason = "TIME_LIMIT"
+					record.StopReason = toolLoopContextStopReason(ctx)
 					break
 				}
 				if errors.Is(finalizationErr, workspacetools.ErrScopeChanged) {
@@ -1210,7 +1226,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 		started := service.now()
 		modelCtx := toolLoopOperationContext(ctx, researchCtx, finalizing)
-		response, attempt, converseErr := generation.adapter.Converse(modelCtx, run.WorkspaceID, messages, turnDefinitions)
+		response, attempt, converseErr := converseWithActionObserver(modelCtx, func() (modelgateway.ConverseResult, modelgateway.AttemptResult, error) {
+			return generation.adapter.Converse(modelCtx, run.WorkspaceID, messages, turnDefinitions)
+		})
 		attemptCtx, attemptCancel := modelAttemptPersistenceContext(parent)
 		addresses := make([]string, 0, len(observed))
 		for value := range observed {
@@ -1220,6 +1238,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		evidenceSet, _ := json.Marshal(addresses)
 		persistErr := service.persistGatewayAttempt(attemptCtx, access, run.ID, run.WorkspaceID, turn+1, canon.Hash(evidenceSet), attempt, generation.adapter.RuntimeScope(), started, service.now())
 		attemptCancel()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if persistErr != nil {
 			return persistErr
 		}
@@ -1286,6 +1307,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				break
 			}
 			for _, call := range response.Message.ToolCalls {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx) {
 					finalizing = true
 					// Complete the assistant/tool pairing for the whole batch;
@@ -1314,6 +1338,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if !requestFormatRepair() {
 			break
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	answer, citations, selected := noWorkspaceData, []Citation{}, []candidate{}
 	if !scopeChanged && final != nil && !final.NoData && final.Clarification == "" {
@@ -1559,6 +1586,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			}
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var scalarPair *analyticScalarPair
 	if retainedAnalyticScalarPair != nil && !scopeChanged {
 		scalarPair = retainedAnalyticScalarPair
@@ -1600,11 +1630,13 @@ func completedTypedMetricAnswer(runID, questionText string, record *ToolLoopReco
 	if containsCyrillic(questionText) {
 		language = "ru"
 	}
-	answer, err := renderTypedMetricAnswer(runID, record, dependencies, citations, language)
+	version := "metric-comparison-v3"
+	presentationRecord := *record
+	presentationRecord.PresentationVersion = &version
+	answer, err := renderTypedMetricAnswer(runID, &presentationRecord, dependencies, citations, language)
 	if err != nil {
 		return "", true, err
 	}
-	version := "metric-comparison-v2"
 	hash := canon.Hash([]byte(answer))
 	record.PresentationVersion = &version
 	record.PresentationLanguage = &language
@@ -1614,12 +1646,19 @@ func completedTypedMetricAnswer(runID, questionText string, record *ToolLoopReco
 
 func toolLoopModelFailureStopReason(ctx context.Context, attempt modelgateway.AttemptResult) string {
 	if ctx.Err() != nil {
-		return "TIME_LIMIT"
+		return toolLoopContextStopReason(ctx)
 	}
 	if attempt.ResponseDiagnostic == modelgateway.ResponseOutputLimit {
 		return "OUTPUT_LIMIT"
 	}
 	return "MODEL_UNAVAILABLE"
+}
+
+func toolLoopContextStopReason(ctx context.Context) string {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "CANCELLED"
+	}
+	return "TIME_LIMIT"
 }
 
 // A sole Markdown JSON fence is a presentation wrapper, not answer content.

@@ -13,6 +13,7 @@ import {
   LiveResultEvidencePanel,
   liveTablePayloadForReceipt,
   parseSearchHash,
+  pendingActionFromEvents,
   questionClaimGroundingLabel,
   questionRunPayload,
   relySourceSummary,
@@ -122,10 +123,32 @@ check(renderSearch(false).includes("hidden"), "document search remains mounted w
 const searchStart = mainSource.indexOf("export function SearchView");
 const searchEnd = mainSource.indexOf("function AskView", searchStart);
 const searchSource = searchStart >= 0 && searchEnd > searchStart ? mainSource.slice(searchStart, searchEnd) : "";
+const askViewStart = mainSource.indexOf("function AskView", searchEnd);
+const askViewEnd = mainSource.indexOf("function sourceHeadline", askViewStart);
+const askSource = askViewStart >= 0 && askViewEnd > askViewStart ? mainSource.slice(askViewStart, askViewEnd) : "";
 const answerStart = mainSource.indexOf("function QuestionRunAnswer");
 const answerSource = answerStart >= 0 && searchStart > answerStart ? mainSource.slice(answerStart, searchStart) : "";
-check((searchSource.match(/apiPost<QuestionRun>/g) ?? []).length === 1, "one question submit performs exactly one QuestionRun POST");
+check((searchSource.match(/apiPost<QuestionRun>/g) ?? []).length === 1, "document search retains its one QuestionRun POST");
+check((askSource.match(/apiPostQuestionStream\(/g) ?? []).length === 1, "Ask submits exactly one opt-in QuestionRun POST");
 check(!searchSource.includes("tools/search") && !searchSource.includes("apiGet<"), "question submit does not issue a preliminary document-search GET");
+check(mainSource.includes('Accept: "application/x-ndjson"') && mainSource.includes('response.json()) as QuestionRun')
+  && !askSource.includes("apiPost<QuestionRun>("), "streaming falls back to the same JSON response without replay");
+check(askSource.includes("observationForGeneration(workspaceGeneration, () => workspaceGenerationRef.current")
+  && askSource.includes("if (workspaceGenerationRef.current !== workspaceGeneration) return;"),
+"a workspace switch blocks both delayed progress frames and the final answer");
+const orderedProgress = pendingActionFromEvents([
+  { type: "action", sequence: 3, phase: "action_finished", label: "document_read", outcome: "succeeded", duration_ms: 3 },
+  { type: "action", sequence: 1, phase: "action_started", label: "document_search" },
+  { type: "action", sequence: 2, phase: "action_started", label: "document_read" },
+]);
+check(orderedProgress.current === "working" && JSON.stringify(orderedProgress.completed) === JSON.stringify([{ kind: "reading", outcome: "succeeded" }]),
+"progress follows server sequence and shows observed outcomes");
+const failedProgress = pendingActionFromEvents([
+  { type: "action", sequence: 4, phase: "action_finished", label: "document_search", outcome: "failed", duration_ms: 3 },
+  { type: "action", sequence: 5, phase: "action_started", label: "model" },
+]);
+check(failedProgress.current === "model" && JSON.stringify(failedProgress.completed) === JSON.stringify([{ kind: "searching", outcome: "failed" }]),
+"a failed tool attempt stays in history while the next model step is neutral");
 check(searchSource.includes("<QuestionRunAnswer") && answerSource.includes("<AnswerBody") && answerSource.includes("run.citations") && answerSource.includes("onOpenEvidence"), "QuestionRun renders the existing answer, citations and evidence actions");
 check(answerSource.includes("isLiveScalar") && answerSource.includes("Verified live calculation") && answerSource.includes("live-calculation-evidence")
   && answerSource.includes("Contributing rows") && answerSource.includes("Observed window") && answerSource.includes("Receipt digest"), "shipped QuestionRun live scalars render the compact verified-calculation disclosure");
@@ -234,7 +257,11 @@ check(livePanelMarkup.includes("live database reads") && livePanelMarkup.include
   "live-only evidence panel presents the receipt without a document-citation warning");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`Live result ${ordinal}`)), "every current live receipt has a separately labelled evidence disclosure");
 check([1, 2, 3].every((ordinal) => liveEvidenceMarkup.includes(`sha256:${String(ordinal).repeat(64)}`))
-  && liveEvidenceMarkup.includes("Row count") && liveEvidenceMarkup.includes("Observation window"), "live evidence disclosures carry row count, observation window and each receipt digest");
+  && liveEvidenceMarkup.includes("Database read:"), "live evidence disclosures carry read times and each receipt digest");
+check(liveEvidenceMarkup.includes(" · read ") && liveEvidenceMarkup.indexOf("Database read:") < liveEvidenceMarkup.indexOf("<summary>Technical details</summary>")
+  && liveEvidenceMarkup.indexOf("Receipt digest") > liveEvidenceMarkup.indexOf("<summary>Technical details</summary>")
+  && liveEvidenceMarkup.includes("Execution ID") && liveEvidenceMarkup.includes("Result digest"),
+  "live receipt shows read time first and keeps identifiers and hashes in closed technical details");
 check(liveEvidenceMarkup.includes("Show returned table") && !liveEvidenceMarkup.includes("PRIVATE_LIVE_ROW_"), "the receipt UI keeps table rows out of default markup and offers an explicit disclosure control");
 const matchingLivePayload = liveTablePayloadForReceipt(liveRunFixture, liveReceipts[1]);
 check(matchingLivePayload?.rows[0]?.[0] === "PRIVATE_LIVE_ROW_2", "a returned table is available only from the successful call matching the exact live receipt");
@@ -279,6 +306,10 @@ check(comparisonMarkup.includes("32520") && comparisonMarkup.includes("36454")
   && comparisonMarkup.includes("-10.79%") && comparisonMarkup.includes("full population coverage is unknown")
   && comparisonMarkup.includes(`sha256:${"e".repeat(64)}`) && !comparisonMarkup.includes("table payload is unavailable")
   && !comparisonMarkup.includes("SELECT *"), "comparison receipt renders compact observed evidence without SQL");
+check(comparisonMarkup.indexOf("2026-09-10: 32520") < comparisonMarkup.indexOf("<summary>Technical details</summary>")
+  && comparisonMarkup.indexOf("Semantic evidence digest") > comparisonMarkup.indexOf("<summary>Technical details</summary>")
+  && comparisonMarkup.includes(comparisonResult.profile_hash) && comparisonMarkup.includes("Exposed schema revision"),
+  "comparison values and dates precede its closed provenance details");
 check(mainSource.includes("<ToolCallsDisclosure run={run} showResults={false} />")
   && !mainSource.includes("<ToolCallsDisclosure run={run} showResults={true}"), "live table disclosure leaves generic tool outputs hidden");
 const activeConversationRun = {

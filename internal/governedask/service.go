@@ -39,6 +39,7 @@ const (
 	CodeSchemaUnavailable     ErrorCode = "GOVERNED_ASK_SCHEMA_UNAVAILABLE"
 	CodeConnectionUnavailable ErrorCode = "GOVERNED_ASK_CONNECTION_UNAVAILABLE"
 	CodeGenerationFailed      ErrorCode = "GOVERNED_ASK_GENERATION_FAILED"
+	CodeClarificationRequired ErrorCode = "GOVERNED_ASK_CLARIFICATION_REQUIRED"
 	CodeExecutionFailed       ErrorCode = "GOVERNED_ASK_EXECUTION_FAILED"
 	CodePersistence           ErrorCode = "GOVERNED_ASK_PERSISTENCE_FAILED"
 )
@@ -139,6 +140,16 @@ const (
 		"aggregate that snapshot's contributing rows. Do not use LIMIT N raw rows as a proxy " +
 		"for N periods; LIMIT may only be applied after period selection/grouping when the " +
 		"question explicitly requires it. " +
+		"For a date-only question, use the matching operator-confirmed metric reporting_timezone " +
+		"and snapshot rule supplied in Evidence. This metadata applies only to its exact relation " +
+		"and required_equal_filters; never apply it to another metric or dataset. Use local midnight " +
+		"to the next local midnight in that timezone, not UTC or the database session timezone. " +
+		"If the reporting timezone is absent, ambiguous, or conflicts with the requested timezone, " +
+		"return UNKNOWN so the caller can clarify; never invent a calendar. " +
+		"An empty interval or NULL aggregate is not a numeric zero. Preserve NULL measures; " +
+		"do not COALESCE a missing measure to zero. Population coverage is UNKNOWN unless an " +
+		"explicit expected-population denominator is supplied by Evidence; zero returned rows " +
+		"or a complete query result does not establish zero or complete population coverage. " +
 		"unknown_reason is exactly null, evidence_ids is a nonempty array of identifiers for the schema fragments used, " +
 		"supporting_claim_ids is exactly []; " +
 		"UNKNOWN: text MUST be null (JSON null), unknown_reason=\"NO_RELEVANT_EVIDENCE\", " +
@@ -352,7 +363,7 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		return AskResult{}, &Error{code: CodeSchemaUnavailable}
 	}
 
-	evidence, err := schemaEvidence(*schema)
+	evidence, err := service.planningEvidence(workspaceID, *schema)
 	if err != nil {
 		return AskResult{}, &Error{code: CodeRequestInvalid, cause: err}
 	}
@@ -392,6 +403,9 @@ func (service *Service) askAdmitted(ctx context.Context, access database.AccessC
 		if !ok {
 			if auditErr := service.auditAttempt(ctx, access, workspaceID, revision, "", audit.GovernedQueryOutcomeRejectedStatic, nil, nil, nil); auditErr != nil {
 				return AskResult{}, &Error{code: CodeUnavailable, cause: auditErr}
+			}
+			if len(plan.Claims) == 1 && plan.Claims[0].Kind == "UNKNOWN" {
+				return AskResult{}, &Error{code: CodeClarificationRequired}
 			}
 			lastErr = &Error{code: CodeGenerationFailed}
 			continue
