@@ -9,8 +9,10 @@ import (
 
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/metriccompare"
+	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/source/canon"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 type trustedMetricProbe struct {
@@ -161,5 +163,46 @@ func TestTrustedMetricToolRejectsResultDigestTampering(t *testing.T) {
 		json.RawMessage(`{"metric_id":"work.assignments","date_a":"2026-09-10","date_b":"2026-09-09"}`), 8192)
 	if err != nil || !result.IsError || retained != nil {
 		t.Fatalf("tampered result accepted: %#v / %v", result, err)
+	}
+}
+
+func TestTrustedMetricComparisonInstallAndPersistedEvidence(t *testing.T) {
+	probe := &trustedMetricProbe{result: trustedMetricFixture(t)}
+	service := &Service{}
+	if err := service.EnableTrustedMetricComparison(probe); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnableTrustedMetricComparison(probe); err == nil {
+		t.Fatal("comparison capability was installed twice")
+	}
+	result, execution, err := invokeTrustedMetricToolRetained(context.Background(), database.AccessContext{},
+		"ws_current", "qrun_current", probe, trustedMetricCatalog(),
+		json.RawMessage(`{"metric_id":"work.assignments","date_a":"2026-09-10","date_b":"2026-09-09"}`), 8192)
+	if err != nil || result.IsError || execution == nil {
+		t.Fatalf("comparison result = %#v, execution = %#v, error = %v", result, execution, err)
+	}
+	record := &ToolLoopRecord{Profile: modelgateway.ToolLoopProfile{MaxToolResultBytes: 8192}, Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "SUCCEEDED", Result: result, Evidence: &execution.projection,
+	}}}
+	if got, success, valid := governedQueryToolExecutions("qrun_current", []governedQueryDependency{execution.dependency}, record); !valid || !success || len(got) != 1 {
+		t.Fatalf("persisted comparison was not bound: valid=%v success=%v count=%d", valid, success, len(got))
+	}
+	var altered metricToolResult
+	if err := json.Unmarshal(result.Structured, &altered); err != nil {
+		t.Fatal(err)
+	}
+	altered.Delta = "1"
+	corrupted, err := json.Marshal(altered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Calls[0].Result = workspacetools.Result{Text: string(corrupted), Structured: corrupted}
+	if _, _, valid := governedQueryToolExecutions("qrun_current", []governedQueryDependency{execution.dependency}, record); valid {
+		t.Fatal("tampered comparison was accepted")
+	}
+	record.Calls[0].Result = result
+	record.Calls[0].Evidence = nil
+	if _, _, valid := governedQueryToolExecutions("qrun_current", []governedQueryDependency{execution.dependency}, record); valid {
+		t.Fatal("comparison without original observation was accepted")
 	}
 }

@@ -3,14 +3,64 @@ package question
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"math/big"
 	"reflect"
 	"strings"
 	"unicode/utf8"
 
+	"knowvault.local/verified-workspace/internal/metriccompare"
 	"knowvault.local/verified-workspace/internal/source/canon"
 )
+
+// The encrypted call record retains the original two-row observation while
+// the model receives only the concise metric comparison.
+func decodeTrustedMetricProjection(questionRunID string, raw json.RawMessage, evidence *liveDataProjection) (liveDataProjection, bool) {
+	var result metricToolResult
+	if err := jsonv2.Unmarshal(raw, &result, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil ||
+		!validGovernedID(result.MetricID) || result.Unit == "" || len(result.Unit) > 128 ||
+		result.Coverage != metriccompare.ObservedSnapshot || result.First.Date == result.Second.Date ||
+		evidence == nil || result.AttemptID != evidence.AttemptID || result.ReceiptDigest != evidence.ReceiptDigest {
+		return liveDataProjection{}, false
+	}
+	projectionBytes, err := json.Marshal(evidence)
+	if err != nil {
+		return liveDataProjection{}, false
+	}
+	projection, ok := decodeLiveDataProjection(projectionBytes)
+	receiptDigest, receiptErr := liveDataReceiptDigest(questionRunID, projection)
+	if !ok || receiptErr != nil || receiptDigest != result.ReceiptDigest {
+		return liveDataProjection{}, false
+	}
+	if !ok || !comparisonMatchesRows(metriccompare.Comparison{
+		First: metriccompare.DailyValue{Date: result.First.Date, SnapshotAt: result.First.SnapshotAt,
+			Value: result.First.Value, ContributingRows: result.First.ContributingRows, DistinctSubjects: result.First.DistinctSubjects},
+		Second: metriccompare.DailyValue{Date: result.Second.Date, SnapshotAt: result.Second.SnapshotAt,
+			Value: result.Second.Value, ContributingRows: result.Second.ContributingRows, DistinctSubjects: result.Second.DistinctSubjects},
+	}, projection) {
+		return liveDataProjection{}, false
+	}
+	first, firstOK := new(big.Rat).SetString(result.First.Value)
+	second, secondOK := new(big.Rat).SetString(result.Second.Value)
+	delta, deltaOK := new(big.Rat).SetString(result.Delta)
+	if !firstOK || !secondOK || !deltaOK || new(big.Rat).Sub(first, second).Cmp(delta) != 0 {
+		return liveDataProjection{}, false
+	}
+	if second.Sign() == 0 {
+		if result.PercentChange != "" {
+			return liveDataProjection{}, false
+		}
+	} else {
+		percent := new(big.Rat).Mul(delta, big.NewRat(100, 1))
+		percent.Quo(percent, second)
+		if percent.FloatString(2) != result.PercentChange {
+			return liveDataProjection{}, false
+		}
+	}
+	return projection, true
+}
 
 // governedQueryDependency is the private dependency of a validated live-table
 // result. It is serialized only as an opaque member of encrypted
@@ -216,11 +266,11 @@ func governedQueryToolExecutions(questionRunID string, dependencies []governedQu
 	projections := make([]liveDataProjection, 0, len(dependencies))
 	if record != nil {
 		for _, call := range record.Calls {
-			if call.Name != liveDataToolName {
+			if call.Name != liveDataToolName && call.Name != trustedMetricToolName {
 				continue
 			}
 			if call.Outcome == "REFUSED" {
-				if !call.Result.IsError {
+				if !call.Result.IsError || call.Evidence != nil {
 					return nil, false, false
 				}
 				continue
@@ -230,7 +280,16 @@ func governedQueryToolExecutions(questionRunID string, dependencies []governedQu
 				len(call.Result.Structured) > record.Profile.MaxToolResultBytes {
 				return nil, false, false
 			}
-			projection, ok := decodeLiveDataProjection(call.Result.Structured)
+			var projection liveDataProjection
+			var ok bool
+			if call.Name == trustedMetricToolName {
+				projection, ok = decodeTrustedMetricProjection(questionRunID, call.Result.Structured, call.Evidence)
+			} else {
+				if call.Evidence != nil {
+					return nil, false, false
+				}
+				projection, ok = decodeLiveDataProjection(call.Result.Structured)
+			}
 			if !ok {
 				return nil, false, false
 			}

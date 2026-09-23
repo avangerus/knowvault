@@ -623,10 +623,25 @@ type Service struct {
 	// analyticScalarExecutor is the one-shot executor that
 	// installAnalyticScalarExecutor builds from that installed resolver and one
 	// concrete authorized reader. It stays nil until that install succeeds.
-	datasetProfileCatalog  analytic.DatasetProfileCatalog
-	analyticSourceResolver *analyticsource.Resolver
-	analyticScalarExecutor *analyticsource.ScalarExecutor
-	liveDataAsk            GovernedAsk
+	datasetProfileCatalog   analytic.DatasetProfileCatalog
+	analyticSourceResolver  *analyticsource.Resolver
+	analyticScalarExecutor  *analyticsource.ScalarExecutor
+	liveDataAsk             GovernedAsk
+	trustedMetricComparison TrustedMetricComparison
+}
+
+// EnableTrustedMetricComparison installs the optional approved comparison
+// capability once. Its catalog is resolved for each authorized workspace run.
+func (service *Service) EnableTrustedMetricComparison(compare TrustedMetricComparison) error {
+	if service == nil || compare == nil || service.trustedMetricComparison != nil {
+		return &Error{code: CodeInvalid}
+	}
+	value := reflect.ValueOf(compare)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return &Error{code: CodeInvalid}
+	}
+	service.trustedMetricComparison = compare
+	return nil
 }
 
 // EnableGovernedAsk installs the optional connection-free live-data capability
