@@ -31,6 +31,7 @@ type FixedFilter struct {
 type ProfileSpec struct {
 	ExposedSchemaRevision int64
 	MetricID              string
+	Description           string
 	Unit                  string
 	Schema                string
 	View                  string
@@ -48,9 +49,10 @@ type Profile struct {
 	hash string
 }
 
-func (p Profile) Hash() string     { return p.hash }
-func (p Profile) MetricID() string { return p.spec.MetricID }
-func (p Profile) Unit() string     { return p.spec.Unit }
+func (p Profile) Hash() string        { return p.hash }
+func (p Profile) MetricID() string    { return p.spec.MetricID }
+func (p Profile) Description() string { return p.spec.Description }
+func (p Profile) Unit() string        { return p.spec.Unit }
 
 var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 var metricID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
@@ -100,9 +102,24 @@ func safeUnit(value string) bool {
 	return true
 }
 
+func safeDescription(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 256 || !utf8.ValidString(value) || strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r != ' ' && !unicode.IsPrint(r)) || (unicode.IsSpace(r) && r != ' ') {
+			return false
+		}
+	}
+	return true
+}
+
 func NewProfile(spec ProfileSpec) (Profile, error) {
 	if spec.ExposedSchemaRevision < 1 || len(spec.MetricID) > 128 || !metricID.MatchString(spec.MetricID) ||
-		!safeUnit(spec.Unit) || !safeIdentifier(spec.Schema) ||
+		!safeDescription(spec.Description) || !safeUnit(spec.Unit) || !safeIdentifier(spec.Schema) ||
 		!safeIdentifier(spec.View) || !safeIdentifier(spec.SubjectColumn) ||
 		!safeIdentifier(spec.SnapshotColumn) || !safeIdentifier(spec.MeasureColumn) ||
 		spec.SubjectColumn == spec.SnapshotColumn || spec.SubjectColumn == spec.MeasureColumn ||

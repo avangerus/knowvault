@@ -67,20 +67,26 @@ func TestCompileDeterministicLatestCommonSnapshot(t *testing.T) {
 
 func TestInvalidProfilesRefused(t *testing.T) {
 	tests := map[string]func(*ProfileSpec){
-		"schema injection":     func(s *ProfileSpec) { s.Schema = `public"; DROP TABLE x` },
-		"zero schema revision": func(s *ProfileSpec) { s.ExposedSchemaRevision = 0 },
-		"reserved view":        func(s *ProfileSpec) { s.View = "delete" },
-		"empty subject":        func(s *ProfileSpec) { s.SubjectColumn = "" },
-		"literal quote":        func(s *ProfileSpec) { s.Filters[0].Value = "x' OR true" },
-		"literal comment":      func(s *ProfileSpec) { s.Filters[0].Value = "x--y" },
-		"literal keyword":      func(s *ProfileSpec) { s.Filters[0].Value = "drop" },
-		"duplicate filter":     func(s *ProfileSpec) { s.Filters[1].Column = s.Filters[0].Column },
-		"measure filter":       func(s *ProfileSpec) { s.Filters[0].Column = s.MeasureColumn },
-		"invalid timezone":     func(s *ProfileSpec) { s.Timezone = "Invalid/Unknown" },
-		"unsafe timezone":      func(s *ProfileSpec) { s.Timezone = "../UTC" },
-		"local timezone":       func(s *ProfileSpec) { s.Timezone = "Local" },
-		"empty unit":           func(s *ProfileSpec) { s.Unit = "" },
-		"control unit":         func(s *ProfileSpec) { s.Unit = "tasks\nraw" },
+		"schema injection":         func(s *ProfileSpec) { s.Schema = `public"; DROP TABLE x` },
+		"zero schema revision":     func(s *ProfileSpec) { s.ExposedSchemaRevision = 0 },
+		"reserved view":            func(s *ProfileSpec) { s.View = "delete" },
+		"empty subject":            func(s *ProfileSpec) { s.SubjectColumn = "" },
+		"literal quote":            func(s *ProfileSpec) { s.Filters[0].Value = "x' OR true" },
+		"literal comment":          func(s *ProfileSpec) { s.Filters[0].Value = "x--y" },
+		"literal keyword":          func(s *ProfileSpec) { s.Filters[0].Value = "drop" },
+		"duplicate filter":         func(s *ProfileSpec) { s.Filters[1].Column = s.Filters[0].Column },
+		"measure filter":           func(s *ProfileSpec) { s.Filters[0].Column = s.MeasureColumn },
+		"invalid timezone":         func(s *ProfileSpec) { s.Timezone = "Invalid/Unknown" },
+		"unsafe timezone":          func(s *ProfileSpec) { s.Timezone = "../UTC" },
+		"local timezone":           func(s *ProfileSpec) { s.Timezone = "Local" },
+		"empty unit":               func(s *ProfileSpec) { s.Unit = "" },
+		"control unit":             func(s *ProfileSpec) { s.Unit = "tasks\nraw" },
+		"description newline":      func(s *ProfileSpec) { s.Description = "Human\nlabel" },
+		"description tab":          func(s *ProfileSpec) { s.Description = "Human\tlabel" },
+		"description nbsp":         func(s *ProfileSpec) { s.Description = "Human\u00a0label" },
+		"description too long":     func(s *ProfileSpec) { s.Description = strings.Repeat("x", 257) },
+		"description invalid utf8": func(s *ProfileSpec) { s.Description = string([]byte{0xff}) },
+		"description whitespace":   func(s *ProfileSpec) { s.Description = "   " },
 		"five filters": func(s *ProfileSpec) {
 			s.Filters = append(s.Filters, FixedFilter{"a", "a"}, FixedFilter{"b", "b"}, FixedFilter{"c", "c"})
 		},
@@ -93,6 +99,26 @@ func TestInvalidProfilesRefused(t *testing.T) {
 				t.Fatalf("got %v, want ErrInvalid", err)
 			}
 		})
+	}
+}
+
+func TestOptionalDescriptionIsSealedAndNotSQL(t *testing.T) {
+	base, err := NewProfile(exampleSpec())
+	if err != nil || base.Description() != "" {
+		t.Fatalf("empty optional description: %v", err)
+	}
+	spec := exampleSpec()
+	spec.Description = "Résumé of assigned work by agreement; observed metric."
+	withDescription, err := NewProfile(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withDescription.Description() != spec.Description || withDescription.Hash() == base.Hash() {
+		t.Fatal("description lost or absent from profile hash")
+	}
+	compiled, err := Compile(withDescription, "2026-09-10", "2026-09-09")
+	if err != nil || strings.Contains(compiled.SQL, spec.Description) {
+		t.Fatalf("description entered SQL: %v", err)
 	}
 }
 
