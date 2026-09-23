@@ -515,9 +515,8 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .pending-action-line { display: flex; align-items: center; gap: 12px; }
 .pending-action-label { display: inline-flex; align-items: center; gap: 8px; }
 .pending-action-elapsed { color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
-.pending-action-history { margin-top: 8px; font-size: var(--fs-caption); }
-.pending-action-history summary { cursor: pointer; color: var(--accent-strong); }
-.pending-action-history ol { margin: 6px 0 0; padding-left: 20px; }
+.pending-action-history { margin: 8px 0 0; padding-left: 20px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.pending-action-history li + li { margin-top: 3px; }
 
 /* ---------------------------------------------------------------------------
    Conversation footer: rely bar + composer, pinned outside the scrolling flow.

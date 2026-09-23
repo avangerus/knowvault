@@ -2,7 +2,7 @@ export type PendingActionKind = "working" | "model" | "searching" | "reading" | 
 
 export type PendingActionState = {
   current: PendingActionKind;
-  completed: readonly { kind: PendingActionKind; outcome: "succeeded" | "failed" }[];
+  completed: readonly { kind: PendingActionKind; outcome: "succeeded" | "failed"; durationMS?: number }[];
 };
 
 const actionLabels: Record<PendingActionKind, string> = {
@@ -25,10 +25,14 @@ export function PendingAction({ state, elapsedSeconds }: { state: PendingActionS
         <span aria-label={`Elapsed ${elapsed} seconds`} className="pending-action-elapsed" role="timer">{elapsed}s</span>
       </div>
       {state.completed.length > 0 && (
-        <details className="pending-action-history">
-          <summary>{state.completed.length} finished {state.completed.length === 1 ? "action" : "actions"}</summary>
-          <ol>{state.completed.map((action, index) => <li key={`${action.kind}-${index}`}>{actionLabels[action.kind]}{action.outcome === "failed" ? " · failed" : ""}</li>)}</ol>
-        </details>
+        <ol className="pending-action-history" aria-label="Completed actions">
+          {state.completed.map((action, index) => (
+            <li key={`${action.kind}-${index}`}>
+              {actionLabels[action.kind]} · {action.outcome === "failed" ? "failed" : "done"}
+              {action.durationMS !== undefined ? ` · ${(action.durationMS / 1000).toFixed(1)}s` : ""}
+            </li>
+          ))}
+        </ol>
       )}
     </div>
   );
