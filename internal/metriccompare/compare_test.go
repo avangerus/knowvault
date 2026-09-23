@@ -4,11 +4,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 )
 
 func exampleSpec() ProfileSpec {
 	return ProfileSpec{
-		MetricID: "work.assignments", Unit: "unknown", Schema: "reporting", View: "v_metric",
+		ExposedSchemaRevision: 7,
+		MetricID:              "work.assignments", Unit: "unknown", Schema: "reporting", View: "v_metric",
 		SubjectColumn: "team_id", SnapshotColumn: "observed_at", MeasureColumn: "amount",
 		Timezone: "Europe/Moscow", Filters: []FixedFilter{
 			{Column: "range_kind", Value: "METER"}, {Column: "metric_code", Value: "work.assignments"},
@@ -41,7 +44,8 @@ func TestCompileDeterministicLatestCommonSnapshot(t *testing.T) {
 		`src."observed_at" = l.snapshot_at`,
 		`COUNT(DISTINCT src."team_id")`,
 		`COUNT(src."observed_at") = COUNT(DISTINCT src."team_id")`,
-		`THEN SUM(src."amount"::numeric) ELSE NULL`,
+		`COUNT(src."observed_at") = COUNT(src."amount") FILTER (WHERE src."amount"::text NOT IN ('NaN', 'Infinity', '-Infinity'))`,
+		`THEN SUM(src."amount"::numeric) FILTER (WHERE src."amount"::text NOT IN ('NaN', 'Infinity', '-Infinity'))`,
 		`src."metric_code" = 'work.assignments'`,
 		`src."range_kind" = 'METER'`,
 		`FROM totals ORDER BY local_date DESC`,
@@ -63,19 +67,20 @@ func TestCompileDeterministicLatestCommonSnapshot(t *testing.T) {
 
 func TestInvalidProfilesRefused(t *testing.T) {
 	tests := map[string]func(*ProfileSpec){
-		"schema injection": func(s *ProfileSpec) { s.Schema = `public"; DROP TABLE x` },
-		"reserved view":    func(s *ProfileSpec) { s.View = "delete" },
-		"empty subject":    func(s *ProfileSpec) { s.SubjectColumn = "" },
-		"literal quote":    func(s *ProfileSpec) { s.Filters[0].Value = "x' OR true" },
-		"literal comment":  func(s *ProfileSpec) { s.Filters[0].Value = "x--y" },
-		"literal keyword":  func(s *ProfileSpec) { s.Filters[0].Value = "drop" },
-		"duplicate filter": func(s *ProfileSpec) { s.Filters[1].Column = s.Filters[0].Column },
-		"measure filter":   func(s *ProfileSpec) { s.Filters[0].Column = s.MeasureColumn },
-		"invalid timezone": func(s *ProfileSpec) { s.Timezone = "Invalid/Unknown" },
-		"unsafe timezone":  func(s *ProfileSpec) { s.Timezone = "../UTC" },
-		"local timezone":   func(s *ProfileSpec) { s.Timezone = "Local" },
-		"empty unit":       func(s *ProfileSpec) { s.Unit = "" },
-		"control unit":     func(s *ProfileSpec) { s.Unit = "tasks\nraw" },
+		"schema injection":     func(s *ProfileSpec) { s.Schema = `public"; DROP TABLE x` },
+		"zero schema revision": func(s *ProfileSpec) { s.ExposedSchemaRevision = 0 },
+		"reserved view":        func(s *ProfileSpec) { s.View = "delete" },
+		"empty subject":        func(s *ProfileSpec) { s.SubjectColumn = "" },
+		"literal quote":        func(s *ProfileSpec) { s.Filters[0].Value = "x' OR true" },
+		"literal comment":      func(s *ProfileSpec) { s.Filters[0].Value = "x--y" },
+		"literal keyword":      func(s *ProfileSpec) { s.Filters[0].Value = "drop" },
+		"duplicate filter":     func(s *ProfileSpec) { s.Filters[1].Column = s.Filters[0].Column },
+		"measure filter":       func(s *ProfileSpec) { s.Filters[0].Column = s.MeasureColumn },
+		"invalid timezone":     func(s *ProfileSpec) { s.Timezone = "Invalid/Unknown" },
+		"unsafe timezone":      func(s *ProfileSpec) { s.Timezone = "../UTC" },
+		"local timezone":       func(s *ProfileSpec) { s.Timezone = "Local" },
+		"empty unit":           func(s *ProfileSpec) { s.Unit = "" },
+		"control unit":         func(s *ProfileSpec) { s.Unit = "tasks\nraw" },
 		"five filters": func(s *ProfileSpec) {
 			s.Filters = append(s.Filters, FixedFilter{"a", "a"}, FixedFilter{"b", "b"}, FixedFilter{"c", "c"})
 		},
@@ -98,6 +103,7 @@ func TestInvalidDatesRefused(t *testing.T) {
 	}
 	for _, dates := range [][2]string{
 		{"2026-09-10", "2026-09-10"}, {"2026-02-30", "2026-03-01"},
+		{"0000-01-01", "2026-03-01"},
 		{"2026-9-10", "2026-09-09"}, {"2026-09-10'; DROP", "2026-09-09"},
 		{"", "2026-09-09"},
 	} {
@@ -107,6 +113,57 @@ func TestInvalidDatesRefused(t *testing.T) {
 		}
 	}
 	if _, err := Compile(Profile{}, "2026-09-10", "2026-09-09"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero profile: %v", err)
+	}
+}
+
+func exposedSchema() governedquery.ExposedSchema {
+	return governedquery.ExposedSchema{
+		Revision: 7,
+		Objects: []governedquery.ExposedObject{{
+			SchemaName: "reporting", TableName: "v_metric", Description: "Approved metric observations.",
+			Columns: []governedquery.ExposedColumn{
+				{Name: "team_id", DataType: "integer", Description: "Subject identity."},
+				{Name: "observed_at", DataType: "timestamp with time zone", Description: "Observation time."},
+				{Name: "amount", DataType: "numeric", Description: "Measured value."},
+				{Name: "range_kind", DataType: "text", Description: "Range."},
+				{Name: "metric_code", DataType: "text", Description: "Metric code."},
+			},
+		}},
+	}
+}
+
+func TestValidateAgainstExposedSchema(t *testing.T) {
+	profile, err := NewProfile(exampleSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAgainstExposedSchema(profile, exposedSchema()); err != nil {
+		t.Fatalf("valid projection rejected: %v", err)
+	}
+	integral := exposedSchema()
+	integral.Objects[0].Columns[2].DataType = "bigint"
+	if err := ValidateAgainstExposedSchema(profile, integral); err != nil {
+		t.Fatalf("safe integral measure rejected: %v", err)
+	}
+	tests := map[string]func(*governedquery.ExposedSchema){
+		"stale revision":      func(s *governedquery.ExposedSchema) { s.Revision++ },
+		"missing object":      func(s *governedquery.ExposedSchema) { s.Objects[0].TableName = "other_view" },
+		"missing filter":      func(s *governedquery.ExposedSchema) { s.Objects[0].Columns = s.Objects[0].Columns[:4] },
+		"wrong snapshot type": func(s *governedquery.ExposedSchema) { s.Objects[0].Columns[1].DataType = "timestamp without time zone" },
+		"float measure":       func(s *governedquery.ExposedSchema) { s.Objects[0].Columns[2].DataType = "double precision" },
+		"missing subject":     func(s *governedquery.ExposedSchema) { s.Objects[0].Columns[0].Name = "other_id" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			schema := exposedSchema()
+			mutate(&schema)
+			if err := ValidateAgainstExposedSchema(profile, schema); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("got %v, want ErrInvalid", err)
+			}
+		})
+	}
+	if err := ValidateAgainstExposedSchema(Profile{}, exposedSchema()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("zero profile: %v", err)
 	}
 }

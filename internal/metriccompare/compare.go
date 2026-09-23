@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 )
 
 var ErrInvalid = errors.New("invalid metric comparison")
@@ -27,15 +29,16 @@ type FixedFilter struct {
 // ProfileSpec names one approved metric and its physical read projection.
 // Unit must be an operator supplied label or the literal "unknown".
 type ProfileSpec struct {
-	MetricID       string
-	Unit           string
-	Schema         string
-	View           string
-	SubjectColumn  string
-	SnapshotColumn string
-	MeasureColumn  string
-	Timezone       string
-	Filters        []FixedFilter
+	ExposedSchemaRevision int64
+	MetricID              string
+	Unit                  string
+	Schema                string
+	View                  string
+	SubjectColumn         string
+	SnapshotColumn        string
+	MeasureColumn         string
+	Timezone              string
+	Filters               []FixedFilter
 }
 
 // Profile is sealed by NewProfile. Its fields and filter slice cannot be
@@ -98,10 +101,12 @@ func safeUnit(value string) bool {
 }
 
 func NewProfile(spec ProfileSpec) (Profile, error) {
-	if len(spec.MetricID) > 128 || !metricID.MatchString(spec.MetricID) ||
+	if spec.ExposedSchemaRevision < 1 || len(spec.MetricID) > 128 || !metricID.MatchString(spec.MetricID) ||
 		!safeUnit(spec.Unit) || !safeIdentifier(spec.Schema) ||
 		!safeIdentifier(spec.View) || !safeIdentifier(spec.SubjectColumn) ||
 		!safeIdentifier(spec.SnapshotColumn) || !safeIdentifier(spec.MeasureColumn) ||
+		spec.SubjectColumn == spec.SnapshotColumn || spec.SubjectColumn == spec.MeasureColumn ||
+		spec.SnapshotColumn == spec.MeasureColumn ||
 		!safeLiteral(spec.Timezone) ||
 		(spec.Timezone != "UTC" && !strings.Contains(spec.Timezone, "/")) ||
 		len(spec.Filters) > 4 {
@@ -129,6 +134,42 @@ func NewProfile(spec ProfileSpec) (Profile, error) {
 	return Profile{spec: spec, hash: "sha256:" + hex.EncodeToString(digest[:])}, nil
 }
 
+// ValidateAgainstExposedSchema refuses a stale or mismatched projection before
+// a compiled read can be handed to the governed-query executor.
+func ValidateAgainstExposedSchema(profile Profile, schema governedquery.ExposedSchema) error {
+	if profile.hash == "" || schema.Validate() != nil || schema.Revision != profile.spec.ExposedSchemaRevision {
+		return ErrInvalid
+	}
+	s := profile.spec
+	for _, object := range schema.Objects {
+		if object.SchemaName != s.Schema || object.TableName != s.View {
+			continue
+		}
+		columns := make(map[string]string, len(object.Columns))
+		for _, column := range object.Columns {
+			columns[column.Name] = column.DataType
+		}
+		if columns[s.SnapshotColumn] != "timestamp with time zone" {
+			return ErrInvalid
+		}
+		switch columns[s.MeasureColumn] {
+		case "numeric", "smallint", "integer", "bigint":
+		default:
+			return ErrInvalid
+		}
+		if columns[s.SubjectColumn] == "" {
+			return ErrInvalid
+		}
+		for _, filter := range s.Filters {
+			if columns[filter.Column] == "" {
+				return ErrInvalid
+			}
+		}
+		return nil
+	}
+	return ErrInvalid
+}
+
 // Compiled holds only SQL derived from the sealed profile and validated dates.
 // A null value means no snapshot, duplicate subjects, or missing measures.
 type Compiled struct {
@@ -143,7 +184,7 @@ func validDate(value string) bool {
 		return false
 	}
 	parsed, err := time.Parse("2006-01-02", value)
-	return err == nil && parsed.Format("2006-01-02") == value
+	return err == nil && parsed.Year() >= 1 && parsed.Format("2006-01-02") == value
 }
 
 // Compile accepts exactly two distinct explicit dates. Dates determine read
@@ -162,8 +203,9 @@ func Compile(profile Profile, firstDate, secondDate string) (Compiled, error) {
 		filters += ` AND src."` + filter.Column + `" = '` + filter.Value + `'`
 	}
 	// Each date first finds the latest timestamp shared by that date's rows.
-	// At that exact timestamp, SUM is allowed only for a complete one-row-per-
-	// subject snapshot. A malformed or incomplete snapshot yields NULL.
+	// At that exact timestamp, SUM covers observed rows only. Duplicate subjects,
+	// null measures, and non-finite numeric values yield NULL; no population
+	// completeness is inferred from the observed row count.
 	sql := fmt.Sprintf(`WITH requested(local_date) AS (
   VALUES (DATE '%s'), (DATE '%s')
 ), latest AS (
@@ -180,7 +222,9 @@ func Compile(profile Profile, firstDate, secondDate string) (Compiled, error) {
     CASE WHEN COUNT(%s) > 0
       AND COUNT(%s) = COUNT(DISTINCT %s)
       AND COUNT(%s) = COUNT(%s)
-      THEN SUM(%s::numeric) ELSE NULL END AS value
+      AND COUNT(%s) = COUNT(%s) FILTER (WHERE %s::text NOT IN ('NaN', 'Infinity', '-Infinity'))
+      THEN SUM(%s::numeric) FILTER (WHERE %s::text NOT IN ('NaN', 'Infinity', '-Infinity'))
+      ELSE NULL END AS value
   FROM latest AS l
   LEFT JOIN %s AS src ON %s = l.snapshot_at%s
   GROUP BY l.local_date, l.snapshot_at
@@ -189,6 +233,6 @@ SELECT local_date, snapshot_at, contributing_rows, distinct_subjects, nonnull_co
 FROM totals ORDER BY local_date DESC`, firstDate, secondDate,
 		snapshot, table, snapshot, s.Timezone, snapshot, s.Timezone, filters,
 		snapshot, subject, measure, snapshot, snapshot, subject, snapshot, measure,
-		measure, table, snapshot, filters)
+		snapshot, measure, measure, measure, measure, table, snapshot, filters)
 	return Compiled{SQL: sql, ProfileHash: profile.hash, MetricID: s.MetricID, Unit: s.Unit}, nil
 }
