@@ -518,7 +518,7 @@
     "internal/question/model_response_diagnostics_test.go": "78ee6dff380d38e1363062ceff81bf95f90ea7b71191b39e5aad686e19e67dfe",
     "internal/question/service.go": "f0914dc869c4de6d43c78d552bac2d8257ca91dcfb005404e859a32d65eebb66",
     "internal/question/tool_finalization_test.go": "12a71c25ed5549bf0b5787849d23c4aa22f817e7b24102d7e31db3b2097a3a9b",
-    "internal/question/tool_loop.go": "894d53c01dcaeb5427659413401260b315eed89fde3de512421d5f7d7bf4d2aa",
+    "internal/question/tool_loop.go": "ff8aeb00ac249993a7842749a67d5aa084168205da3c747196bb7d3380fc3340",
     "internal/retrieval/workspace_copy_units_test.go": "522e5bc44f8d9f754e0d0e5424535fb73207b0c71f22c5e92942376259c684d1",
     "internal/retrieval/workspace_groups.go": "09d822913c78c5bbb6efefaf3f10f844a8c98f121ad5573e12e64e02d4929f9b",
     "internal/retrieval/workspacesearch.go": "701983d8c8a41c537f22cb2d12e564d12e6f940ff92316497e93443b10c649f2",
