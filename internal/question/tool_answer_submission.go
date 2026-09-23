@@ -32,7 +32,7 @@ var submitAnswerParameters = json.RawMessage(`{
         "required":["text","citations"],
         "properties":{
           "text":{"type":"string","minLength":1,"maxLength":8192},
-        "citations":{
+          "citations":{
             "type":"array",
             "maxItems":3,
             "items":{
@@ -48,9 +48,8 @@ var submitAnswerParameters = json.RawMessage(`{
                 {"required":["fragment_id"],"not":{"required":["address"]}}
               ]
             }
-          }
-        },
-        "live_reads":{
+          },
+          "live_reads":{
           "type":"array",
           "maxItems":3,
           "items":{
@@ -58,9 +57,10 @@ var submitAnswerParameters = json.RawMessage(`{
             "additionalProperties":false,
             "required":["result_id","receipt_digest"],
             "properties":{
-              "result_id":{"type":"string","minLength":1,"maxLength":200},
+              "result_id":{"type":"string","description":"Copy the attempt_id field from knowvault_ask_live_data output.","minLength":1,"maxLength":200},
               "receipt_digest":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}
             }
+          }
           }
         }
       }

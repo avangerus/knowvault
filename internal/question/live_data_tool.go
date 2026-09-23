@@ -36,7 +36,7 @@ func liveDataToolDefinition() modelgateway.ToolDefinition {
 		Type: "function",
 		Function: modelgateway.ToolFunction{
 			Name:        liveDataToolName,
-			Description: "Answer one natural-language question from the workspace's administrator-governed live company data. Ask a focused question; the workspace and database are selected by the server.",
+			Description: "Answer one natural-language question from the workspace's administrator-governed live company data. Ask a focused question; the workspace and database are selected by the server. For a supported claim, copy this result's attempt_id as live_reads.result_id and copy receipt_digest exactly.",
 			Parameters:  json.RawMessage(liveDataToolSchema),
 		},
 	}
