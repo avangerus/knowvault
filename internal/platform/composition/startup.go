@@ -56,6 +56,9 @@ const (
 	// SERVICE_UNAVAILABLE (see internal/governedask.Service, capability
 	// absent by default).
 	StartupStageGovernedQueryMount StartupStage = "GOVERNED_QUERY_MOUNT"
+	// StartupStageMetricCompareMount identifies an invalid or mismatched
+	// optional comparison profile without disclosing its configuration.
+	StartupStageMetricCompareMount StartupStage = "METRIC_COMPARE_MOUNT"
 	// StartupStageDatasetProfileMount is R1.1 (micro-card C): a present but
 	// invalid analyticcatalog mount, or a mounted catalog the Question
 	// authority refuses to install, is a startup failure, exactly like the
@@ -116,6 +119,7 @@ func knownStartupStage(stage StartupStage) bool {
 		StartupStageRetrievalExecutor,
 		StartupStageGenerationMount,
 		StartupStageGovernedQueryMount,
+		StartupStageMetricCompareMount,
 		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
 		StartupStageWebUI,

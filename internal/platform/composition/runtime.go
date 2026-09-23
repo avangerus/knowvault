@@ -24,6 +24,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/platform/httpserver"
+	"knowvault.local/verified-workspace/internal/platform/metriccomparemount"
 	"knowvault.local/verified-workspace/internal/platform/oidc"
 	"knowvault.local/verified-workspace/internal/platform/oidctransport"
 	"knowvault.local/verified-workspace/internal/platform/oidcweb"
@@ -455,6 +456,24 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 					return fail(StartupStageWorkspaceHandler)
 				}
 			}
+		}
+	}
+	// A comparison profile is an optional operator capability bound to the
+	// governed connection. Reject a present profile if that connection is
+	// unavailable or differs from the profile's declared binding.
+	metricComparisonMount, metricComparisonMountErr := metriccomparemount.LoadMounted()
+	if metricComparisonMountErr != nil {
+		if metriccomparemount.CodeOf(metricComparisonMountErr) != metriccomparemount.CodeMountUnavailable {
+			return fail(StartupStageMetricCompareMount)
+		}
+	} else {
+		if governedQueryMountErr != nil ||
+			metricComparisonMount.ConnectionID != governedQueryConfig.ConnectionID ||
+			metricComparisonMount.WorkspaceID != governedQueryConfig.WorkspaceID {
+			return fail(StartupStageMetricCompareMount)
+		}
+		if err := governedAskService.EnableMetricComparison(metricComparisonMount.WorkspaceID, metricComparisonMount.Profile); err != nil {
+			return fail(StartupStageMetricCompareMount)
 		}
 	}
 	conversations, err := conversation.New(databaseStore, auditStore)

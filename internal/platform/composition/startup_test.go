@@ -43,6 +43,7 @@ func TestStartupStageOfAcceptsOnlyTheClosedRuntimeStartupTaxonomy(t *testing.T) 
 		StartupStageRetrievalExecutor,
 		StartupStageGenerationMount,
 		StartupStageGovernedQueryMount,
+		StartupStageMetricCompareMount,
 		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
 		StartupStageWebUI,
