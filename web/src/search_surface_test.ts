@@ -17,21 +17,15 @@ import {
   questionClaimGroundingLabel,
   questionRunPayload,
   relySourceSummary,
-  reduceGovernedRetention,
   sidebarConversations,
   TurnCard,
-  type GovernedRetentionState,
   type WorkspaceDataState,
 } from "./main";
-import { governedCatalogAvailability, type GovernedPresetCatalog } from "./governed-presets";
 
 // This probe is bundled as a CommonJS node script. Keep the small source-shape
-// assertions dependency-free: the governed catalogue starts in a loading state
-// during server rendering, so its post-load controls are not present in that
-// static render.
+// assertions dependency-free.
 declare const require: (moduleName: string) => { readFileSync(path: string, encoding: "utf8"): string };
 const fs = require("fs");
-const governedSource = fs.readFileSync("src/governed-presets.tsx", "utf8");
 const mainSource = fs.readFileSync("src/main.tsx", "utf8");
 const stylesSource = fs.readFileSync("src/styles.css", "utf8");
 let failures = 0;
@@ -48,8 +42,6 @@ const renderAsk = (state: WorkspaceDataState, active = true) => renderToStaticMa
   active,
   onOpenEvidence: () => {},
   onOpenSources: () => {},
-  onSessionExpired: () => {},
-  revalidationKey: 0,
   requestedWorkspaceID: "workspace-1",
   state,
 }));
@@ -169,11 +161,6 @@ const byteExactLabel = questionClaimGroundingLabel({ answer_mode: "DOCUMENT", ve
 check(byteExactLabel.includes("supported by a fragment") && !byteExactLabel.toLowerCase().includes("unbound"), "byte-exact verified answers use grounding state instead of an unbound tool-loop label");
 check(JSON.stringify(questionRunPayload("show contracts", { id: "model-1", label: "Local", location: "INTERNAL" })) === JSON.stringify({ question: "show contracts", model_profile_id: "model-1" }), "selected model is sent with the governed question");
 check(JSON.stringify(questionRunPayload("show contracts", null)) === JSON.stringify({ question: "show contracts" }), "one QuestionRun remains usable when no model catalog is exposed");
-const readyCatalog = { connection_id: "connection-1", database_identity: "gm", presets: [{ id: "p", version: "v1", name: "P", description: "", phrases: [], preset_hash: "h", source_attempt_id: "a", sql_hash: "s", exposed_schema_revision: 1 }] } as GovernedPresetCatalog;
-check(JSON.stringify(governedCatalogAvailability(null)) === JSON.stringify({ status: "loading", catalogAvailable: false, liveAskAvailable: false }), "catalog revalidation reports loading without final denial");
-check(JSON.stringify(governedCatalogAvailability({ ...readyCatalog, presets: [] }, true)) === JSON.stringify({ status: "unavailable", catalogAvailable: false, liveAskAvailable: false }), "empty catalog is a final unavailable state");
-check(JSON.stringify(governedCatalogAvailability(readyCatalog, false)) === JSON.stringify({ status: "available", catalogAvailable: true, liveAskAvailable: false }), "preset-only catalog keeps Live database and Diagnostics but hides ad hoc ask");
-check(JSON.stringify(governedCatalogAvailability(readyCatalog, true)) === JSON.stringify({ status: "available", catalogAvailable: true, liveAskAvailable: true }), "advertised ask capability enables the ad hoc composer");
 check(!mainSource.includes("document-search-disclosure"), "the old document-search details wrapper is removed");
 const ownerStart = mainSource.indexOf("export function AskSurface");
 const ownerEnd = mainSource.indexOf("// The Ask surface sends one governed question run", ownerStart);
@@ -369,36 +356,7 @@ check(askViewSource.includes("{feedTurns.map((turn) => (") && askViewSource.incl
   && mainSource.includes("export function TurnCard"), "the exercised TurnCard is mounted by the active AskView conversation feed");
 check(mainSource.includes("run.citations.length === 0 && !hasLiveReceipt"), "TurnAnswer keeps the no-citation warning for unsupported document claims");
 check(!askOwnerSource.includes('aria-label="Search source"') && !askOwnerSource.includes("Workspace search") && !askOwnerSource.includes("Live database"), "Ask owner contains no execution-mode labels");
-check(mainSource.includes('<div className="governed-preset-owner" hidden={!visible}>'), "the governed host remains available for a future Diagnostics surface");
-
-check((governedSource.match(/<h1[^>]*>Ask company data<\/h1>/g) ?? []).length === 0, "governed panel does not add a second page heading");
-check(governedSource.includes('<label className="sr-only" htmlFor="governed-ask-input">Ask company data</label>'), "governed ask keeps an accessible field label");
-check(governedSource.includes('placeholder="Ask a question"'), "governed ask uses a useful placeholder");
-check(governedSource.includes("onCatalogAuthorization(governedCatalogAvailability(null))") && governedSource.includes('governedCatalogAvailability(null, false, "unavailable")') && governedSource.includes('setCatalogState({ phase: "empty" })'), "loading, empty and unavailable catalog outcomes are distinguished");
-check(governedSource.includes("governedMCPAskCapability(fetch)") && governedSource.includes("governedCatalogAvailability(outcome.value, askCapability.kind === \"ok\" && askCapability.value)"), "only the tools/list ask capability plus a ready catalog can authorize live ask");
-check(governedSource.includes("liveAskAvailable: boolean") && governedSource.includes("catalog && liveAskAvailable"), "PRESET_ONLY keeps the catalog and Diagnostics while hiding only the ad hoc form");
-check(governedSource.includes('GOVERNED_QUERY_ASK_TOOL = "knowvault_governed_query_ask"') && governedSource.includes('method, params'), "capability probe uses the existing content-free MCP transport");
-const diagnosticsMatch = governedSource.match(/\{catalog && <details className="governed-reviewed-checks">[\s\S]*?<\/details>\}/);
-const diagnosticsBlock = diagnosticsMatch?.[0] ?? "";
-check(diagnosticsBlock.includes("<summary>Diagnostics</summary>"), "reviewed checks are under Diagnostics");
-check(!/<details[^>]*\bopen\b/.test(diagnosticsBlock), "Diagnostics is closed by default");
-check(diagnosticsBlock.includes("Reviewed checks") && diagnosticsBlock.includes("governed-preset-select") && diagnosticsBlock.includes("run(catalog)"), "reviewed check controls remain inside Diagnostics");
-const runStart = governedSource.indexOf("async function run");
-const askStart = governedSource.indexOf("function ask");
-check(runStart >= 0 && governedSource.indexOf("setAskState({ phase: \"idle\" })", runStart) < askStart, "starting a reviewed check clears a prior ask result");
-check(askStart >= 0 && governedSource.indexOf("setRunState({ phase: \"idle\" })", askStart) >= askStart, "starting an ask clears a prior reviewed-check result");
-
-const initial: GovernedRetentionState = { workspaceID: null, revision: null, phase: "pending", resetKey: 0 };
-const pending = reduceGovernedRetention(initial, { workspaceID: "workspace-1", phase: "pending", revision: null });
-const authorized = reduceGovernedRetention(pending, { workspaceID: "workspace-1", phase: "authorized", revision: 7 });
-const away = reduceGovernedRetention(authorized, { workspaceID: "workspace-1", phase: "pending", revision: null });
-const back = reduceGovernedRetention(away, { workspaceID: "workspace-1", phase: "authorized", revision: 7 });
-const revised = reduceGovernedRetention(back, { workspaceID: "workspace-1", phase: "authorized", revision: 8 });
-const denied = reduceGovernedRetention(revised, { workspaceID: "workspace-1", phase: "denied", revision: null });
-check(away.phase === "pending" && away.revision === 7 && away.resetKey === authorized.resetKey, "same-revision revalidation hides while retaining the live result identity");
-check(back.phase === "authorized" && back.revision === 7 && back.resetKey === authorized.resetKey, "same-revision return reveals without reset or resubmit");
-check(revised.resetKey === back.resetKey + 1 && revised.revision === 8, "revision change resets retained state");
-check(denied.phase === "denied" && denied.revision === null && denied.resetKey === revised.resetKey + 1, "denial clears retained state");
+check(!mainSource.includes("governed-preset-owner") && !mainSource.includes("GovernedPresetPanelHost"), "the retired governed preset panel host is not present in the Ask surface");
 
 const sidebarRows = [
   { conversation_id: "empty-old", turns: [] },
