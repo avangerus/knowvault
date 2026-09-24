@@ -1,6 +1,7 @@
 {
   "algorithm": "SHA256",
   "accepted": {
+    "docs/adr/0097-workspace-source-tools-accepted.md": "0f5aab6f3718f72861fe8d3a4bf2e5e299d75978427e0a9842b57de348dd8ea4",
     "docs/adr/0001-go-modular-monolith-accepted.md": "45879c7e45c1c9901be78048cad0a9a4f40b4b215e5ba000d62a675cce9a4e0e",
     "docs/adr/0002-postgres-opensearch-accepted.md": "b1de879ad2dd0eabd30a76ba623de41588230288278d6cdd635af0b0ab64d426",
     "docs/adr/0003-immutable-one-shot-accepted.md": "f96195c6fc7c6debf8adde1ccb51043a9b2bbcf0808f14b5f5c38a7f5d301ca7",
