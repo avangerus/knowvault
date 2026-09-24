@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
-import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
 import { PendingAction, type PendingActionKind, type PendingActionState, type PendingActionStep } from "./pending-action";
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
@@ -1487,17 +1486,6 @@ export type WorkspaceDataState =
   | { phase: "loaded"; snapshot: ApiResult<WorkspaceSnapshot>; sources: ApiResult<SourcesEnvelope> };
 
 export type GovernedWorkspaceAuthorization = "pending" | "authorized" | "denied";
-export type GovernedRetentionState = { workspaceID: string | null; revision: number | null; phase: GovernedWorkspaceAuthorization; resetKey: number };
-type GovernedRetentionEvent = Pick<GovernedRetentionState, "workspaceID" | "phase" | "revision">;
-export function reduceGovernedRetention(state: GovernedRetentionState, event: GovernedRetentionEvent): GovernedRetentionState {
-  if (state.workspaceID !== event.workspaceID) return { ...event, resetKey: state.resetKey + 1 };
-  if (event.phase === "pending") return state.phase === "pending" ? state : { ...state, phase: "pending" };
-  if (event.phase === "denied") return state.phase === "denied" && state.revision === null ? state : { ...state, phase: "denied", revision: null, resetKey: state.resetKey + 1 };
-  if (state.revision === event.revision && event.revision !== null) {
-    return state.phase === "authorized" ? state : { ...state, phase: "authorized" };
-  }
-  return { ...state, phase: "authorized", revision: event.revision, resetKey: state.resetKey + 1 };
-}
 
 const authorizationDenied = (result: ApiResult<unknown>) => result.kind === "failure" && [401, 403, 404].includes(result.status);
 
@@ -4263,70 +4251,8 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
   );
 }
 
-export function GovernedPresetPanelHost({ active, onCatalogAvailability, onSessionExpired, requestedWorkspaceID, revalidationKey, state }: {
-  active: boolean; onCatalogAvailability: (availability: GovernedCatalogAvailability) => void; onSessionExpired: () => void;
-  requestedWorkspaceID: string | null; revalidationKey: number; state: WorkspaceDataState;
-}) {
-  const authorization = governedWorkspaceAuthorization(state, requestedWorkspaceID);
-  const [catalogEpoch, setCatalogEpoch] = useState<number | null>(null);
-  const [catalogAvailability, setCatalogAvailability] = useState<GovernedCatalogAvailability>({ status: "loading", catalogAvailable: false, liveAskAvailable: false });
-  const [retention, dispatchRetention] = useReducer(reduceGovernedRetention, { workspaceID: null, revision: null, phase: "pending" as GovernedWorkspaceAuthorization, resetKey: 0 });
-
-  const onCatalogAuthorization = useCallback((availability: GovernedCatalogAvailability) => {
-    setCatalogAvailability(availability);
-    onCatalogAvailability(availability);
-    setCatalogEpoch(availability.catalogAvailable ? revalidationKey : null);
-  }, [onCatalogAvailability, revalidationKey]);
-
-  useEffect(() => { dispatchRetention({ workspaceID: requestedWorkspaceID, phase: authorization.phase, revision: authorization.revision }); }, [authorization.phase, authorization.revision, requestedWorkspaceID]);
-  useEffect(() => {
-    if (authorization.phase !== "authorized") {
-      onCatalogAuthorization({
-        status: authorization.phase === "pending" ? "loading" : "unavailable",
-        catalogAvailable: false,
-        liveAskAvailable: false,
-      });
-    }
-  }, [authorization.phase, onCatalogAuthorization]);
-
-  if (requestedWorkspaceID === null) return null;
-  const authorized = authorization.phase === "authorized" && authorization.revision !== null;
-  const visible = active && authorized && catalogEpoch === revalidationKey && retention.workspaceID === requestedWorkspaceID
-    && retention.phase === "authorized" && retention.revision === authorization.revision;
-  return (
-    <div className="governed-preset-owner" hidden={!visible}>
-      <GovernedPresetPanel
-        authorized={authorized}
-        key={`${requestedWorkspaceID}:${retention.resetKey}`}
-        liveAskAvailable={catalogAvailability.liveAskAvailable}
-        onCatalogAuthorization={onCatalogAuthorization}
-        onSessionExpired={onSessionExpired}
-        revalidationKey={revalidationKey}
-        visible={visible}
-        workspaceID={requestedWorkspaceID}
-      />
-    </div>
-  );
-}
-
-export type AskExecutionMode = "workspace-search" | "live-database";
-
-export function defaultAskExecutionMode(_catalogAvailable: boolean): AskExecutionMode {
-  return "workspace-search";
-}
-
-export function effectiveAskExecutionMode(requestedMode: AskExecutionMode | null, catalogAvailable: boolean, catalogStatus: GovernedCatalogAvailability["status"] = "available"): AskExecutionMode {
-  const requestedOrDefault = requestedMode ?? defaultAskExecutionMode(catalogAvailable);
-  return requestedOrDefault === "live-database" && catalogStatus === "unavailable" ? "workspace-search" : requestedOrDefault;
-}
-
-export function askExecutionVisibility(mode: AskExecutionMode): { workspaceSearch: boolean; liveDatabase: boolean } {
-  return { workspaceSearch: mode === "workspace-search", liveDatabase: mode === "live-database" };
-}
-
-/** The single question surface. Governed preset checks remain an admin-only
- * component for a future Diagnostics surface; they are deliberately not
- * mounted beside the user question composer. */
+/** The single question surface; it never mounts governed preset checks
+ * beside the user question composer. */
 export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversationChange, initialConversationID, pushToast, state, requestedWorkspaceID }: {
   active: boolean;
   onOpenEvidence: (hash: string) => void;
@@ -4334,10 +4260,6 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
   onConversationChange?: (conversationID: string | null) => void;
   initialConversationID?: string | null;
   pushToast?: (kind: "success" | "error", text: string) => void;
-  // Retained as optional compatibility props for callers that used the
-  // retired governed panel host. The main Ask surface no longer mounts it.
-  onSessionExpired?: () => void;
-  revalidationKey?: number;
   state: WorkspaceDataState;
   requestedWorkspaceID: string | null;
 }) {
