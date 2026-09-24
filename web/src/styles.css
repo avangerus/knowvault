@@ -356,7 +356,7 @@ svg { display: block; }
 .topics-new:hover { border-color: var(--accent); color: var(--accent); }
 
 .talk { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
-.flow { flex: 1 1 auto; overflow-y: auto; padding: 20px 26px 8px; }
+.flow { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding: 20px 26px 8px; }
 .flow-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 .flow-head h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 
@@ -370,7 +370,7 @@ svg { display: block; }
 .turn { border-left: 2px solid transparent; padding: 0 0 16px 14px; margin-bottom: 16px; border-bottom: 1px solid var(--line); cursor: default; }
 .turn:last-child { border-bottom: none; }
 .turn.turn-on { border-left-color: var(--accent); }
-.turn-question { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-body-lg); font-weight: 600; margin: 0 0 10px; }
+.turn-question { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-body-lg); font-weight: 600; margin: 0 0 10px; overflow-wrap: anywhere; }
 .turn-question time { margin-left: auto; font-size: var(--fs-caption); font-weight: 400; color: var(--ink-tertiary); white-space: nowrap; }
 .turn-role { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-tertiary); font-weight: 700; }
 
@@ -429,8 +429,8 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .badge-quote svg { width: 12px; height: 12px; }
 .badge-live { background: var(--success-tint); color: var(--success); }
 .badge-live svg { width: 12px; height: 12px; }
-.answer-quote { margin: 0 0 10px; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); font-size: var(--fs-meta); line-height: 1.6; color: var(--ink); max-width: 64ch; }
-.answer-body { margin: 0 0 10px; max-width: 88ch; font-size: var(--fs-body-lg); line-height: 1.65; color: var(--ink); }
+.answer-quote { margin: 0 0 10px; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); font-size: var(--fs-meta); line-height: 1.6; color: var(--ink); max-width: 64ch; overflow-wrap: anywhere; }
+.answer-body { margin: 0 0 10px; max-width: 88ch; font-size: var(--fs-body-lg); line-height: 1.65; color: var(--ink); overflow-wrap: anywhere; }
 .answer-live-summary { font-weight: 650; }
 .live-calculation-evidence { margin-top: 8px; font-size: var(--fs-caption); color: var(--ink-secondary); }
 .live-calculation-evidence summary { cursor: pointer; }
@@ -490,8 +490,18 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .fn-tip q { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin: 0 0 6px; color: #E8EAEC; font-size: var(--fs-caption); quotes: "«" "»"; }
 .fn-tip .fn-tip-hint { display: block; color: #9AA0A4; font-size: 11px; }
 
-.msg-warning { margin: 0 0 10px; color: #5E3D0C; background: var(--warning-tint); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-meta); line-height: 1.5; max-width: 64ch; }
-.msg-note { margin: 0 0 10px; color: var(--ink-secondary); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-caption); line-height: 1.5; max-width: 64ch; }
+.msg-warning { margin: 0 0 10px; color: #5E3D0C; background: var(--warning-tint); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-meta); line-height: 1.5; max-width: 64ch; overflow-wrap: anywhere; }
+.msg-note { margin: 0 0 10px; color: var(--ink-secondary); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-caption); line-height: 1.5; max-width: 64ch; overflow-wrap: anywhere; }
+/* A closed/cancelled turn is one fact ("not enough evidence, code X"), not a
+   reading experience -- one line, ellipsised, full text on hover/focus via
+   the element's title attribute. */
+.msg-compact { max-width: 64ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* TXT-2: verification status folded into the collapsed tool-trace disclosure
+   instead of its own always-visible box (see ToolCallsDisclosure `footer`). */
+.tool-trace-evidence { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.tool-trace-evidence p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.tool-trace-evidence p:last-child { margin-bottom: 0; }
 
 .basis-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .basis { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-caption); color: var(--accent); border: 1px solid #C9D9EA; background: #F5F9FD; border-radius: var(--r-sm); padding: 6px 11px; max-width: 340px; }
@@ -512,10 +522,15 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .steps-note { margin: 0; font-size: var(--fs-caption); color: var(--ink-tertiary); max-width: 64ch; }
 .turn-pending { cursor: default; }
 .pending-action { color: var(--ink-secondary); font-size: var(--fs-meta); }
-.pending-action-line { display: flex; align-items: center; gap: 12px; }
-.pending-action-label { display: inline-flex; align-items: center; gap: 8px; }
-.pending-action-elapsed { color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
+/* One line per step, always -- a step's request/detail text is truncated
+   with an ellipsis (full text on hover/focus via title) rather than
+   wrapping, so new steps arriving does not reflow or jump the layout. */
+.pending-action-line { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pending-action-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
+.pending-action-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pending-action-elapsed { flex: 0 0 auto; color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
 .pending-action-history { margin: 8px 0 0; padding-left: 20px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.pending-action-history li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-action-history li + li { margin-top: 3px; }
 
 /* ---------------------------------------------------------------------------

@@ -2623,10 +2623,10 @@ function exampleQuestions(sources: SourceStatus[]): string[] {
   const names = Array.from(new Set(sources.map((source) => sourceLabel(source)).filter(Boolean)));
   if (names.length === 0) return [];
   const templates = [
-    (name: string) => `What's new in “${name}”?`,
-    (name: string) => `What data is available in “${name}”?`,
-    (name: string) => `When was “${name}” last updated?`,
-    (name: string) => `Summarize what is recorded in “${name}”`,
+    (name: string) => `Что нового в «${name}»?`,
+    (name: string) => `Какие данные есть в «${name}»?`,
+    (name: string) => `Когда обновлялся «${name}»?`,
+    (name: string) => `Кратко: что записано в «${name}»?`,
   ];
   const count = Math.min(4, Math.max(3, names.length));
   const out: string[] = [];
@@ -3309,10 +3309,22 @@ export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitat
 // question surface. The standalone surface keeps the result payload hidden:
 // people can see which governed tools ran and whether they completed without
 // putting row values, ids or hashes into the answer itself.
-function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
-  if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
+// TXT-2: the collapsed "how it was found" disclosure is the one place a turn
+// discloses both its tool steps and (via `footer`, TurnAnswer only) its
+// evidence-verification status, so the same information is never printed a
+// second time as standalone boxes. Closed by default -- a demo reader should
+// not be shown a wall of trace text before reading the answer.
+function ToolCallsDisclosure({ run, showResults = true, footer }: { run: QuestionRun; showResults?: boolean; footer?: ReactNode }) {
+  if (!run.tool_loop || run.tool_loop.calls.length === 0) {
+    return footer ? (
+      <details className="tool-trace">
+        <summary>{TOOL_CALLS_TITLE}</summary>
+        {footer}
+      </details>
+    ) : null;
+  }
   return (
-    <details className="tool-trace" open>
+    <details className="tool-trace">
       <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
       <ol>
         {run.tool_loop.calls.map((call, index) => {
@@ -3334,6 +3346,7 @@ function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; sh
           );
         })}
       </ol>
+      {footer}
     </details>
   );
 }
@@ -3572,9 +3585,24 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   // drop — falls back to the old basis-row list below.
   const referencedCitationNumbers = run.answer ? extractCitationNumbers(run.answer) : new Set<number>();
   const leftoverCitations = run.citations.filter((citation) => !referencedCitationNumbers.has(citation.number));
+  // TXT-2: routine "it checked out" verification status is disclosure, not a
+  // warning -- it belongs folded into the one collapsed "how it was found"
+  // panel below, not repeated as its own always-open box. Only a claim or
+  // citation that actually failed verification stays visible on its own.
+  const isAddressBound = run.answer_mode === "TOOL_LOOP" || run.verification_method === "ADDRESS_BOUND";
+  const claimIsNegative = isAddressBound ? !run.tool_loop?.all_claims_bound : run.grounding_status !== "CONFIRMED_BY_FRAGMENT";
+  const ungroundedCitations = run.citations.filter((citation) => citation.grounding_status !== "CONFIRMED_BY_FRAGMENT");
+  const evidenceFooter = run.answer ? (
+    <div className="tool-trace-evidence">
+      <p>{questionClaimGroundingLabel(run)}</p>
+      {run.citations.length > 0 && (
+        <p>{run.citations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.</p>
+      )}
+    </div>
+  ) : null;
   return (
     <>
-      <ToolCallsDisclosure run={run} showResults={false} />
+      <ToolCallsDisclosure footer={evidenceFooter} run={run} showResults={false} />
       {run.understood && <UnderstoodBanner understood={run.understood} />}
       {showGenericHow && <HowObtained run={run} />}
       {run.answer_result ? (
@@ -3589,7 +3617,9 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
         showUnifiedFallback && <UnifiedAnswerRows />
       )}
       {statusMessage ? (
-        <p className="msg-warning">{statusMessage}{run.failure_code ? ` Code: ${run.failure_code}.` : ""}</p>
+        <p className="msg-warning msg-compact" title={`${statusMessage}${run.failure_code ? ` Code: ${run.failure_code}.` : ""}`}>
+          {statusMessage}{run.failure_code ? ` Code: ${run.failure_code}.` : ""}
+        </p>
       ) : (
         <>
           {run.answer && (isQuote ? (
@@ -3603,12 +3633,12 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
               <AnswerBody citations={run.citations} onSelectCitation={onSelectCitation} panelTurnId={panelTurnId} selectedCitationId={selectedCitationId} text={run.answer} turnId={turnId} />
             </div>
           ))}
-          {run.answer && (
-            <p className="msg-note">{questionClaimGroundingLabel(run)}</p>
+          {run.answer && claimIsNegative && (
+            <p className="msg-warning">{questionClaimGroundingLabel(run)}</p>
           )}
-          {run.citations.length > 0 && (
-            <p className="msg-note">
-              {run.citations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.
+          {ungroundedCitations.length > 0 && (
+            <p className="msg-warning">
+              {ungroundedCitations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.
             </p>
           )}
           {hasLiveReceipt && run.answer_result?.kind === "LIVE_TABLE" && (

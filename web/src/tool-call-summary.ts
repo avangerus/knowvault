@@ -19,7 +19,10 @@ function bounded(value: string): string {
 // Select a short, readable projection instead of putting raw tool payloads in the answer.
 export function toolCallSummary(call: ToolCallSummaryInput): { request: string | null; result: string } {
   const args = fields(call.arguments);
-  const request = args && ["question", "query", "address", "fragment_id"]
+  // "address" / "fragment_id" are internal storage locators (kv1:object_…~fragment_…;version…),
+  // never human-readable -- never project them as step text. Only "question"/"query" are
+  // phrased by a person and safe to echo back.
+  const request = args && ["question", "query"]
     .map((key) => args[key]).find((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (call.outcome !== "SUCCEEDED") return { request: request ? bounded(request) : null, result: "No result" };
   const result = fields(call.result.structured);
