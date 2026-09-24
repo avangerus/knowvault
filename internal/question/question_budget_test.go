@@ -106,17 +106,16 @@ func TestQuestionContextErrorDoesNotTrustAnUnrelatedDeadlineExceededCause(t *tes
 		t.Fatalf("unrelated DeadlineExceeded cause with a healthy ctx = %v, want nil", err)
 	}
 
-	// When ctx itself actually IS the question's own expired budget context,
-	// questionContextError still reports it -- and marks it, so
-	// questionFailureTerminal can trust it downstream.
+	// An expired ctx is still reported, but unmarked: only executeToolLoop,
+	// which owns the question budget, marks TIME_LIMIT.
 	expired, stop := context.WithDeadline(context.Background(), time.Time{})
 	defer stop()
 	err := questionContextError(expired, nil)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expired question-budget ctx = %v, want a DeadlineExceeded", err)
 	}
-	if !errors.Is(err, errQuestionTimeBudgetExpired) {
-		t.Fatalf("expired question-budget ctx = %v, want it marked errQuestionTimeBudgetExpired", err)
+	if errors.Is(err, errQuestionTimeBudgetExpired) {
+		t.Fatalf("expired caller ctx = %v, want it unmarked", err)
 	}
 }
 

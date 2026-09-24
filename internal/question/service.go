@@ -1035,7 +1035,7 @@ func markQuestionTimeBudgetExpired(ctx context.Context, err error) error {
 func questionContextError(ctx context.Context, cause error) error {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
-			return markQuestionTimeBudgetExpired(ctx, err)
+			return err
 		}
 	}
 	// F2: cause alone is trusted only for Canceled (client disconnect
@@ -3672,34 +3672,17 @@ func (service *Service) reportFailureCleanup(ctx context.Context, access databas
 // cancelled) must both still report QUESTION_EXECUTION_FAILED, never a false
 // CANCELLED.
 //
-// R2/F2: TIME_LIMIT is reported only when the question's OWN configured time
-// budget is what expired, proven one of two ways:
-//  1. cause carries errQuestionTimeBudgetExpired -- set only by code that
-//     checked its own local question-budget context (executeToolLoop's
-//     profile.TimeoutSeconds-bound ctx; questionContextError's ctx, e.g.
-//     questionRunContext's generativeQuestionRunBudget-bound runCtx) via
-//     markQuestionTimeBudgetExpired. This covers the tool loop, whose
-//     bare-return-err sites surface that tighter, request-scoped budget's own
-//     ctx.Err() while the wider caller ctx passed in here may still have time
-//     left.
-//  2. ctx itself (the exact context passed to THIS call) is independently
-//     also DeadlineExceeded, mirroring the CANCELLED branch's own
-//     corroboration requirement above.
-//
-// A DeadlineExceeded cause on its own, with neither of those, is NOT enough:
-// that was F2's exact gap -- the model gateway's own bounded HTTP client
-// timeout (modelgateway/gateway.go's Client.http.Timeout) is independent of,
-// and typically shorter than, the question's own budget, and must keep its
-// real classification (QUESTION_EXECUTION_FAILED here, or -- at each
-// generative call site that already has modelgateway.CodeOf(genErr) --
-// its normal retry/degrade handling, once questionContextError stops
-// short-circuiting it).
+// R2/F2: TIME_LIMIT is reported only when cause carries
+// errQuestionTimeBudgetExpired, which executeToolLoop sets when its own
+// profile.TimeoutSeconds budget context expired (markQuestionTimeBudgetExpired).
+// Any other deadline -- the caller's own deadline on the legacy generative
+// path, or the model gateway's HTTP client timeout -- keeps the existing
+// QUESTION_EXECUTION_FAILED classification and audit code.
 func questionFailureTerminal(ctx context.Context, cause error) (status, code string) {
 	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
 		return "CANCELLED", "QUESTION_CANCELLED"
 	}
-	if errors.Is(cause, errQuestionTimeBudgetExpired) ||
-		(ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && errors.Is(cause, context.DeadlineExceeded)) {
+	if errors.Is(cause, errQuestionTimeBudgetExpired) {
 		return "FAILED", "TIME_LIMIT"
 	}
 	return "FAILED", "QUESTION_EXECUTION_FAILED"
