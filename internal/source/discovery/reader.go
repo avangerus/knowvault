@@ -64,6 +64,16 @@ type SelectedView struct {
 	ConnectionID       string
 	ConnectionRevision int64
 	Projection         postgresqlquery.Projection
+	// RelationComment, ApproxRowCount and CatalogColumns are the bounded
+	// catalog display metadata observed for exactly this relation at discovery
+	// time: pg_class.reltuples, the relation comment and each discovered
+	// column's native type name, comment and primary-key membership. They are
+	// display-only (ADR-0097, never a security check) and ADR-0097's
+	// knowvault_source_schema tool must answer from them without a live call,
+	// so the registration boundary persists them next to the projection.
+	RelationComment string
+	ApproxRowCount  int64
+	CatalogColumns  []Column
 }
 
 // Column is read-only catalog metadata. Roles are present only when the
@@ -170,6 +180,8 @@ func (reader *Reader) Select(ctx context.Context, access database.AccessContext,
 			RequestID: requestID, ResultID: result.ResultID, Selector: selector,
 			ConnectionID:       projection.ConnectionID,
 			ConnectionRevision: result.connectionRevision, Projection: projection,
+			RelationComment: view.Comment, ApproxRowCount: view.ApproxRowCount,
+			CatalogColumns: cloneColumns(view.Columns),
 		}, nil
 	}
 	return SelectedView{}, &Error{code: CodeNotFound}
@@ -284,6 +296,15 @@ func cloneProjection(projection postgresqlquery.Projection) postgresqlquery.Proj
 	}
 	projection.Columns = columns
 	return projection
+}
+
+func cloneColumns(columns []Column) []Column {
+	cloned := make([]Column, len(columns))
+	for index, column := range columns {
+		column.Roles = append([]postgresqlquery.Role(nil), column.Roles...)
+		cloned[index] = column
+	}
+	return cloned
 }
 
 func (reader *Reader) viewSelector(resultID string, view postgresqlquery.ViewDiscovery) (string, error) {

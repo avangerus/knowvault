@@ -62,6 +62,48 @@ type fakeSourceService struct {
 
 	uploadRequest registration.UploadDocumentsRequest
 	uploadResult  registration.UploadDocumentsResult
+
+	// S3 card 1's optional SourceSchemaProvider capability: the stored source
+	// schema read behind knowvault_source_schema.
+	schemaSources       []workspacerepository.SourceSchemaSource
+	schemaSourceListErr error
+	schemaResult        workspacerepository.SourceSchema
+	schemaErr           error
+	schemaSourceID      string
+	schemaTable         string
+	schemaOffset        int
+	schemaLimit         int
+	schemaCalls         int
+}
+
+func (service *fakeSourceService) ListSourceSchemas(_ context.Context, access database.AccessContext, _ string) ([]workspacerepository.SourceSchemaSource, error) {
+	service.call, service.access = "list_source_schemas", access
+	if service.schemaSourceListErr != nil {
+		return nil, service.schemaSourceListErr
+	}
+	return service.schemaSources, nil
+}
+
+func (service *fakeSourceService) SourceSchema(_ context.Context, access database.AccessContext, _, sourceID, table string, offset, limit int) (workspacerepository.SourceSchema, error) {
+	service.call, service.access = "source_schema", access
+	service.schemaSourceID, service.schemaTable, service.schemaOffset, service.schemaLimit = sourceID, table, offset, limit
+	service.schemaCalls++
+	if service.schemaErr != nil {
+		return workspacerepository.SourceSchema{}, service.schemaErr
+	}
+	// Emulate the repository's own page window so the transport's has_more /
+	// next_offset contract is exercised against a provider that really pages.
+	result := service.schemaResult
+	if offset > len(result.Tables) {
+		offset = len(result.Tables)
+	}
+	end := offset + limit
+	if end > len(result.Tables) {
+		end = len(result.Tables)
+	}
+	result.HasMore = end < len(result.Tables)
+	result.Tables = result.Tables[offset:end]
+	return result, nil
 }
 
 func (service *fakeSourceService) save(call string, access database.AccessContext) error {

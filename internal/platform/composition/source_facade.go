@@ -74,6 +74,7 @@ var _ workspaceapi.SourceConnectionBootstrap = sourceServiceFacade{}
 var _ workspaceapi.SourceDiscovery = sourceServiceFacade{}
 var _ workspaceapi.SourceDiscoveryRegistration = sourceServiceFacade{}
 var _ workspaceapi.SourceConnectionDrafts = sourceServiceFacade{}
+var _ workspaceapi.SourceSchemaProvider = sourceServiceFacade{}
 
 // newAppArtifactCodec mounts the application-side artifact codec on the same
 // wrap key the worker uses, so source artifacts sealed by the web process open
@@ -195,6 +196,20 @@ func (facade sourceServiceFacade) DiscardSourceConnectionDraft(ctx context.Conte
 // added only because it widens the shared SourceService boundary.
 func (facade sourceServiceFacade) UploadDocuments(ctx context.Context, access database.AccessContext, request registration.UploadDocumentsRequest) (registration.UploadDocumentsResult, error) {
 	return facade.registration.UploadDocuments(ctx, access, request)
+}
+
+// ListSourceSchemas and SourceSchema expose ADR-0097's read-only source schema
+// capability on the production facade. Both are pure delegations to the
+// workspace repository's sourceMetadataRead boundary, which owns the
+// authorization, the cross-tenant denial and the source.metadata.read.* audit
+// journal; this method adds no logic of its own, exactly like the other
+// delegations on this facade, and touches no external source database.
+func (facade sourceServiceFacade) ListSourceSchemas(ctx context.Context, access database.AccessContext, workspaceID string) ([]workspacerepository.SourceSchemaSource, error) {
+	return facade.workspaces.ListSourceSchemas(ctx, access, workspaceID)
+}
+
+func (facade sourceServiceFacade) SourceSchema(ctx context.Context, access database.AccessContext, workspaceID, sourceID, table string, offset, limit int) (workspacerepository.SourceSchema, error) {
+	return facade.workspaces.SourceSchema(ctx, access, workspaceID, sourceID, table, offset, limit)
 }
 
 // ConnectorCatalog exposes the registration-owned source-connector catalog on

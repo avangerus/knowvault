@@ -305,6 +305,12 @@ const mcpToolRefresh = "knowvault_refresh"
 // evidence.
 const mcpToolWorkspaceContext = "knowvault_workspace_context"
 
+// mcpToolSourceSchema is ADR-0097's read-only source schema knowledge tool:
+// the tables, columns, types, primary keys and row estimates of one enabled
+// PostgreSQL source, plus the workspace model context notes, answered from
+// stored projections and discovery metadata only.
+const mcpToolSourceSchema = "knowvault_source_schema"
+
 // mcpRefreshArguments is the closed argument envelope for knowvault_refresh:
 // the workspace whose refreshable sources are refreshed, an optional
 // source_scope_id narrowing the call to exactly one bound scope, and the
@@ -708,6 +714,16 @@ func mcpToolCatalog(access database.AccessContext) []any {
 				"section":      map[string]any{"type": "string", "enum": []string{"all", "glossary", "rules", "sources"}},
 			}},
 		},
+		map[string]any{
+			"name": mcpToolSourceSchema, "description": "Read the schema of one PostgreSQL source enabled in this workspace (ADR-0097): its tables, columns, native types, primary keys and pg_class row estimates, plus the workspace model context notes for the source, its tables and columns. Columns excluded at registration are never returned. Read-only and served from stored projections and discovery metadata; it opens no source database and runs no SQL. Without source_id it lists the workspace's PostgreSQL sources (id, name, table_count); with source_id it returns one page of tables, optionally narrowed to one schema.name table.",
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id"}, "properties": map[string]any{
+				"workspace_id": map[string]any{"type": "string"},
+				"source_id":    map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "The source connection id returned by knowvault_sources. Omit it to list the workspace's PostgreSQL sources."},
+				"table":        map[string]any{"type": "string", "minLength": 3, "maxLength": maxSourceSchemaToolTableChars, "description": "Optional schema.name selector for one table."},
+				"offset":       map[string]any{"type": "integer", "minimum": 0},
+				"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": maxSourceSchemaToolLimit, "default": maxSourceSchemaToolLimit},
+			}},
+		},
 	}
 	return mcpToolsForActor(all, access)
 }
@@ -873,6 +889,8 @@ func (handler *Handler) mcpKnowledgeToolCall(writer http.ResponseWriter, request
 		handler.mcpGrepToolCall(writer, request, access, envelope, params)
 	case workspacetools.KindWorkspaceContext:
 		handler.mcpWorkspaceContextToolCall(writer, request, access, envelope, params)
+	case workspacetools.KindSourceSchema:
+		handler.mcpSourceSchemaToolCall(writer, request, access, envelope, params)
 	default:
 		writeMCPError(writer, envelope.ID, -32602, "invalid tool call")
 	}

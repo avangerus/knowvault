@@ -3,7 +3,8 @@
 // product's canonical contract for the tool names, compatibility aliases,
 // service-principal exposure and tools/list mount gating of knowvault_search,
 // knowvault_read, knowvault_list_objects, knowvault_related, knowvault_grep,
-// knowvault_sources, knowvault_refresh and knowvault_workspace_context.
+// knowvault_sources, knowvault_refresh, knowvault_workspace_context and,
+// per ADR-0097, knowvault_source_schema.
 //
 // The registry is deliberately transport-free: it carries identifiers and
 // dispatch kinds, never an HTTP handler, so the MCP adapter and the REST parity
@@ -34,6 +35,14 @@ const (
 	// only -- never evidence, and never a change to the tool catalog, a
 	// grant of another tool, a write or access.
 	KindWorkspaceContext Kind = "workspace_context"
+	// KindSourceSchema is ADR-0097's read-only source schema tool
+	// (knowvault_source_schema): the tables, columns, types, primary keys and
+	// row estimates of one PostgreSQL source enabled in the caller's
+	// workspace, plus the source/table/column notes of the workspace model
+	// context. It reads stored projections and discovery metadata only; it
+	// never opens the source database, never runs SQL and never exposes a
+	// column excluded at registration.
+	KindSourceSchema Kind = "source_schema"
 )
 
 // Capability names the optional mounted evidence capability a dynamic tool needs
@@ -186,6 +195,7 @@ var knowledgeTools = New([]Tool{
 	{Kind: KindSources, Name: "knowvault_sources", RESTPath: "sources", Aliases: []string{"knowvault_sources_list"}, Service: true},
 	{Kind: KindRefresh, Name: "knowvault_refresh", RESTPath: "refresh", Service: true},
 	{Kind: KindWorkspaceContext, Name: "knowvault_workspace_context", RESTPath: "workspace-context", Service: true},
+	{Kind: KindSourceSchema, Name: "knowvault_source_schema", RESTPath: "source-schema", Service: true},
 })
 
 // KnowledgeTools returns the canonical R3a-1 workspace knowledge tool registry.

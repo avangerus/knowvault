@@ -86,6 +86,8 @@ func (handler *Handler) workspaceToolDispatch(writer http.ResponseWriter, reques
 			endpoint.refreshSourceScopeID, endpoint.refreshOffset, endpoint.refreshLimit)
 	case workspacetools.KindWorkspaceContext:
 		handler.workspaceToolWorkspaceContext(writer, request, access, requestID, endpoint.workspaceID)
+	case workspacetools.KindSourceSchema:
+		handler.workspaceToolSourceSchema(writer, request, access, requestID, endpoint.workspaceID)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
 	}

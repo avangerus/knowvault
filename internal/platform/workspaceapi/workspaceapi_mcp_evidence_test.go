@@ -54,7 +54,7 @@ func TestMCPToolsListAdvertisesEvidenceGetTool(t *testing.T) {
 		case "knowvault_question", "knowvault_conversations_list", "knowvault_conversation_get", "knowvault_conversation_archive",
 			"knowvault_confirmation_grant_issue", "knowvault_confirmation_grant_revoke", "knowvault_managed_source_confirm", "knowvault_managed_confirmation_revoke",
 			"knowvault_verify_connection_trust", "knowvault_source_enable", "knowvault_source_sync", "knowvault_governed_query_ask",
-			"knowvault_metric_definitions_list", "knowvault_metric_definition_get", mcpToolSourcesList, mcpToolEvidenceRead, mcpToolWorkspaceList, mcpToolRefresh, mcpToolWorkspaceContext:
+			"knowvault_metric_definitions_list", "knowvault_metric_definition_get", mcpToolSourcesList, mcpToolEvidenceRead, mcpToolWorkspaceList, mcpToolRefresh, mcpToolWorkspaceContext, mcpToolSourceSchema:
 			// existing, ADR-0087 §1 confirmation tools, the ADR-0087 §2
 			// verify-trust tool, the ADR-0087 §3 enable/sync tools, the
 			// ADR-0089 governed-query ask tool and the R2 Outcome 1

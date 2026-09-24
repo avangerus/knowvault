@@ -220,6 +220,20 @@ type SourceDiscoveryRegistration interface {
 	RegisterDiscoveredView(context.Context, database.AccessContext, string, string, []int) (registration.RegisterResult, error)
 }
 
+// SourceSchemaProvider is ADR-0097's optional, read-only source schema
+// capability behind the knowvault_source_schema knowledge tool. It is
+// discovered on the injected source service exactly like the other optional
+// source capabilities, so a service that does not implement it leaves the
+// tool failing closed rather than widening the required SourceService
+// interface. The production implementation is the workspace repository's
+// sourceMetadataRead boundary: authorization, cross-tenant invisibility and
+// the source.metadata.read.* audit journal stay there, and neither method
+// touches the external source database.
+type SourceSchemaProvider interface {
+	ListSourceSchemas(context.Context, database.AccessContext, string) ([]workspacerepository.SourceSchemaSource, error)
+	SourceSchema(context.Context, database.AccessContext, string, string, string, int, int) (workspacerepository.SourceSchema, error)
+}
+
 // EvidenceService is the read boundary for the Evidence viewer route. The
 // fail-closed authorization gate (ADR-0073 §1.2) lives inside the viewer:
 // every denial is the same ErrNotFound, so this handler must never distinguish
@@ -740,7 +754,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.modelContextProposalReject(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
 	case endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep,
 		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh,
-		endpointWorkspaceToolWorkspaceContext:
+		endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema:
 		handler.workspaceToolDispatch(writer, request, access, requestID, endpoint)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
@@ -935,6 +949,16 @@ const (
 	// tools/workspace-context has exactly one implementation, the one that
 	// is byte-identical with MCP and chat (S2-CONTRACT.md "Tool parity").
 	endpointWorkspaceToolWorkspaceContext
+	// endpointWorkspaceToolSourceSchema is ADR-0097's REST tool-parity route
+	// for the knowvault_source_schema knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/source-schema, POST-only
+	// like the workspace-context route: its optional source_id/table/offset/
+	// limit arguments travel in a JSON body). It dispatches through the
+	// identical injected SourceSchemaProvider and shared
+	// sourceSchemaToolResult core the MCP tool and the chat tool runtime
+	// compose, so the projection, the page window and the content-free denial
+	// are the same implementation, not a re-derivation.
+	endpointWorkspaceToolSourceSchema
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -969,6 +993,8 @@ func workspaceToolEndpointKind(kind workspacetools.Kind) (endpointKind, bool) {
 		return endpointWorkspaceToolRefresh, true
 	case workspacetools.KindWorkspaceContext:
 		return endpointWorkspaceToolWorkspaceContext, true
+	case workspacetools.KindSourceSchema:
+		return endpointWorkspaceToolSourceSchema, true
 	default:
 		return 0, false
 	}
@@ -2242,10 +2268,11 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		return method == http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return method == http.MethodGet || method == http.MethodPost
-	case endpointWorkspaceToolWorkspaceContext:
+	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema:
 		// ADR-0098's tool-parity route is POST-only (S2-CONTRACT.md "Tool
 		// parity"): its optional filter travels in a JSON body, unlike the
-		// other six GET/POST workspace tool-parity routes.
+		// other six GET/POST workspace tool-parity routes. ADR-0097's
+		// source-schema route follows the same shape.
 		return method == http.MethodPost
 	case endpointWorkspaceSourceRemove:
 		return method == http.MethodDelete
@@ -2275,7 +2302,7 @@ func allowedMethods(endpoint endpoint) string {
 		return http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return http.MethodGet + ", " + http.MethodPost
-	case endpointWorkspaceToolWorkspaceContext:
+	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema:
 		return http.MethodPost
 	case endpointWorkspaceSourceDrafts:
 		return http.MethodGet

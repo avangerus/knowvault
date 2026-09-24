@@ -101,6 +101,7 @@ var openAPIRoutes = map[endpointKind]describedRoute{
 	endpointModelContextProposalAccept:    {"/workspaces/{workspace_id}/model-context/proposals/{proposal_id}:accept", "endpointModelContextProposalAccept"},
 	endpointModelContextProposalReject:    {"/workspaces/{workspace_id}/model-context/proposals/{proposal_id}:reject", "endpointModelContextProposalReject"},
 	endpointWorkspaceToolWorkspaceContext: {"/workspaces/{workspace_id}/tools/workspace-context", "endpointWorkspaceToolWorkspaceContext"},
+	endpointWorkspaceToolSourceSchema:     {"/workspaces/{workspace_id}/tools/source-schema", "endpointWorkspaceToolSourceSchema"},
 }
 
 var httpMethodsUnderTest = []string{

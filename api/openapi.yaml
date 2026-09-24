@@ -3574,6 +3574,53 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/tools/source-schema:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: workspaceSourceSchemaToolParity
+      tags: [Sources]
+      summary: "REST parity of the knowvault_source_schema MCP tool (ADR-0097, S3)"
+      description: >-
+        Read-only REST twin of the knowvault_source_schema knowledge tool, served from the stored
+        projections and discovery metadata of the PostgreSQL sources enabled in the workspace. The
+        optional body carries source_id (the source connection id knowvault_sources returns), an
+        optional schema.name table selector and the offset/limit page window (at most 50 tables per
+        page); without source_id the response lists the workspace's PostgreSQL sources. Columns
+        excluded at registration are never returned. An unknown, foreign, disabled or non-member
+        source is a single content-free 404 NOT_FOUND. Every call is audited through the existing
+        source.metadata.read.* boundary; no external database is opened and no SQL is composed.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceSchemaToolRequest"
+      responses:
+        "200":
+          description: "One page of the source schema, or the workspace's PostgreSQL source list when source_id is omitted."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSchemaToolResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/governed-query-connections/{connection_id}:set-live-queries:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -6264,6 +6311,103 @@ components:
         notice:
           type: string
           enum: ["context, not evidence"]
+    SourceSchemaToolRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        table:
+          type: string
+          maxLength: 257
+          pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}\.[A-Za-z_][A-Za-z0-9_]{0,127}$'
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+    SourceSchemaToolResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSchemaToolSource"
+        source_id:
+          type: string
+        database_identity:
+          type: string
+        context_version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        source_note:
+          type: string
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSchemaToolTable"
+        next_offset:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        has_more:
+          type: boolean
+    SourceSchemaToolSource:
+      type: object
+      additionalProperties: false
+      required: [id, name, table_count]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        table_count:
+          type: integer
+          minimum: 0
+    SourceSchemaToolTable:
+      type: object
+      additionalProperties: false
+      required: [schema, name, kind, row_estimate, note, columns]
+      properties:
+        schema:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [TABLE, PARTITIONED_TABLE, VIEW, MATERIALIZED_VIEW]
+        row_estimate:
+          type: integer
+          minimum: -1
+          maximum: 9007199254740991
+        note:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSchemaToolColumn"
+    SourceSchemaToolColumn:
+      type: object
+      additionalProperties: false
+      required: [name, type, nullable, primary_key, note]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        nullable:
+          type: boolean
+        primary_key:
+          type: boolean
+        note:
+          type: string
   responses:
     CSRFResponse:
       description: Derived CSRF proof.

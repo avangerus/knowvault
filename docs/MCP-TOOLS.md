@@ -705,6 +705,8 @@ four events, with the caller's request ID, `HUMAN` or `SERVICE` actor and
 `WORKSPACE` resource. The only metadata is one closed `reason_codes` value:
 `SOURCE_STATUS_LIST` or `SOURCE_CONFIRMATION_CONTEXT`. The source inventory,
 connection names, grants and text are absent from audit metadata.
+`knowvault_source_schema`'s two reads use `SOURCE_SCHEMA_LIST` and
+`SOURCE_SCHEMA` in that same closed field.
 
 Denials persist admitted/failed with outcome `DENIED` and
 `SOURCE_METADATA_READ_DENIED`; an unknown or foreign-organization workspace
@@ -921,6 +923,95 @@ Example response (identical to the MCP `structuredContent` above):
     }
   }
 }
+```
+
+## `knowvault_source_schema`
+
+Read-only schema of one PostgreSQL source enabled in the caller's workspace
+(ADR-0097, S3 card 1): its tables, columns, native types, primary keys and
+`pg_class` row estimates, plus the workspace model context notes for the
+source, its tables and its columns. It answers from data an earlier
+registration already stored -- the immutable, exclusion-narrowed
+`postgresql_query_projection` rows and their `postgresql_query_relation_catalog`
+companion -- so it opens no source database, composes no SQL and runs no
+statement. A column the administrator excluded at registration was never
+written into the projection and is therefore never returned.
+
+Without `source_id` the tool lists the workspace's enabled PostgreSQL sources:
+id (the source connection id `knowvault_sources` returns), display name and the
+number of registered tables. With `source_id` it returns one page of tables,
+optionally narrowed to one `schema.name`. `limit` is at most 50 and an omitted
+limit is 50; `has_more`/`next_offset` page the table list explicitly, with no
+silent truncation. A note authored in the workspace model context wins; the
+discovery-time relation/column comment is the fallback, and `context_version`
+reports the model context version the notes were read from (0 when no reader is
+mounted).
+
+Every call is authorized exactly like `knowvault_sources`: the two repository
+reads go through the same admission-before-data `source.metadata.read.*`
+boundary, so an unknown, foreign, disabled or non-member source is the single
+content-free `NOT_FOUND` (`-32004` over MCP) with no schema content and no
+source-id echo. A composition mounted without the capability fails closed with
+`-32000`.
+
+### Parameters
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `workspace_id` | string | yes | The workspace whose enabled PostgreSQL sources are read. |
+| `source_id` | string | no | The source connection id. Omit it to list the workspace's PostgreSQL sources. |
+| `table` | string | no | Optional `schema.name` selector. |
+| `offset` | integer | no | Zero-based table offset. |
+| `limit` | integer | no | Page size, 1..50; defaults to 50. |
+
+The schema is closed: an unknown member, a limit over 50, a negative offset or a
+malformed `table` selector is rejected with JSON-RPC error `-32602` before the
+provider is touched.
+
+### Request
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "schema1",
+  "method": "tools/call",
+  "params": {
+    "name": "knowvault_source_schema",
+    "arguments": { "workspace_id": "ws_alpha", "source_id": "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ" }
+  }
+}
+```
+
+### Response (example)
+
+```json
+{
+  "source_id": "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ",
+  "database_identity": "pgdb:4d2a0f6c8b1e5a9d3c7f2b6e0a4d8c1f5b9e3a7d2c6f0b4e8a1d5c9f3b7e2a6d",
+  "context_version": 3,
+  "source_note": "Primary operational database.",
+  "tables": [
+    {
+      "schema": "public",
+      "name": "contract",
+      "kind": "TABLE",
+      "row_estimate": 17030,
+      "note": "Договоры",
+      "columns": [
+        { "name": "id", "type": "uuid", "nullable": false, "primary_key": true, "note": "surrogate key" },
+        { "name": "amount", "type": "numeric", "nullable": true, "primary_key": false, "note": "Сумма договора" }
+      ]
+    }
+  ],
+  "next_offset": 0,
+  "has_more": false
+}
+```
+
+Without `source_id`:
+
+```json
+{ "sources": [ { "id": "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", "name": "Ops database", "table_count": 3 } ] }
 ```
 
 ## `knowvault_refresh`
