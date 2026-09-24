@@ -566,7 +566,7 @@ func validOutcome(outcome Outcome) bool {
 
 func validResource(resource ResourceType) bool {
 	switch resource {
-	case ResourceOrganization, ResourceIdentity, ResourceWorkspace, ResourceWorkspaceMember, ResourceWorkspaceSource, ResourceWorkspaceAuthorityCommand, ResourceSourceConnection, ResourceSourceScope, ResourceSourceObject, ResourceConversation, ResourceQuestionRun, ResourceAnswerDocument, ResourceCitation, ResourceModelRun, ResourcePolicy, ResourceSigningKey, ResourceAuditCheckpoint, ResourceCryptoKey, ResourceGovernedQueryAttempt, ResourceSearchProfile:
+	case ResourceOrganization, ResourceIdentity, ResourceWorkspace, ResourceWorkspaceMember, ResourceWorkspaceSource, ResourceWorkspaceAuthorityCommand, ResourceSourceConnection, ResourceSourceScope, ResourceSourceObject, ResourceConversation, ResourceQuestionRun, ResourceAnswerDocument, ResourceCitation, ResourceModelRun, ResourcePolicy, ResourceSigningKey, ResourceAuditCheckpoint, ResourceCryptoKey, ResourceGovernedQueryAttempt, ResourceSearchProfile, ResourceWorkspaceModelContext, ResourceWorkspaceContextProposal:
 		return true
 	default:
 		return false
@@ -578,6 +578,8 @@ func validAction(action Action) bool {
 	case ActionSourceObjectMissing, ActionSourceObjectRestored:
 		return true
 	case ActionSourceMetadataReadAdmitted, ActionSourceMetadataReadCompleted, ActionSourceMetadataReadFailed:
+		return true
+	case ActionWorkspaceModelContextRevised, ActionWorkspaceModelContextRead, ActionWorkspaceContextProposalCreated, ActionWorkspaceContextProposalDecided:
 		return true
 	case ActionIdentityLogin, ActionIdentityLoginFailed, ActionIdentityDeprovisioned, ActionSessionTerminated, ActionWorkspaceCreated, ActionWorkspaceUpdated, ActionWorkspaceArchived, ActionWorkspaceMemberAdded, ActionWorkspaceMemberRemoved, ActionWorkspaceRoleChanged, ActionWorkspaceSourceAdded, ActionWorkspaceSourceRemoved, ActionWorkspaceSourceConfirmationGrantIssued, ActionWorkspaceSourceConfirmationGrantRevoked, ActionWorkspaceSourceConfirmed, ActionWorkspaceSourceConfirmationRevoked, ActionPolicyDecision, ActionAuditViewed, ActionAuditExported, ActionSourceScopeChanged, ActionSourceScopeActivated, ActionSourceRegistrationCreated, ActionSourceActivationRequested, ActionSourceObjectIngested, ActionSourceObjectDeleted, ActionSourceVersionCreated, ActionSourceVersionPurging, ActionSourceVersionPurged, ActionSourceExtractionActive, ActionQuestionCreated, ActionQuestionCompleted, ActionQuestionFailed, ActionModelGatewayAttempt, ActionConversationArchived, ActionConversationPurging, ActionConversationPurged, ActionCitationOpened, ActionEvidenceReadAdmitted, ActionEvidenceReadFailed, ActionQuestionRunAdmitted, ActionGovernedQueryAdmitted, ActionAnswerDocumentAmended, ActionKeyRotationBegin, ActionKeyRotationComplete, ActionSourceConnectionTrustVerified, ActionGovernedQueryAttempted, ActionSearchProfileRevisionRequested, ActionSearchProfileCallLexical, ActionSearchProfileCallVector, ActionSearchProfileCallHybrid:
 		return true
@@ -706,6 +708,9 @@ func validActionProjection(input EventInput) bool {
 	}
 	if isSearchProfileAction(input.Action) || input.ResourceType == ResourceSearchProfile {
 		return validSearchProfileProjection(input)
+	}
+	if isModelContextAction(input.Action) || input.ResourceType == ResourceWorkspaceModelContext || input.ResourceType == ResourceWorkspaceContextProposal {
+		return validModelContextProjection(input)
 	}
 	if input.Action != ActionWorkspaceSourceAdded && input.Action != ActionWorkspaceSourceRemoved {
 		return input.ResourceType != ResourceWorkspaceSource && !hasAuthorityMetadata(input.Metadata) && !hasRotationMetadata(input.Metadata) && !hasAnswerMetadata(input.Metadata) && !hasGovernedQueryMetadata(input.Metadata)

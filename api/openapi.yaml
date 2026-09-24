@@ -3076,6 +3076,416 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/model-context:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: getWorkspaceModelContext
+      tags: [ModelContext]
+      summary: "Current workspace model context (ADR-0098, S2)"
+      description: >-
+        The workspace's explicit description, answer rules, glossary and source/table/column notes:
+        visible configuration, never hidden model memory or evidence. A workspace with no saved
+        context yet returns version 0 with an empty document. editable is true only for a caller
+        currently holding OWNER or MANAGER. Exactly one content-free
+        workspace.model_context_read audit event is appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: "Current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    put:
+      operationId: saveWorkspaceModelContext
+      tags: [ModelContext]
+      summary: "Save a new workspace model context version (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        Creates the next immutable version and moves the current pointer to it. New rules/glossary
+        items are sent with "id": "" and the server assigns their ids. Every data_locations entry
+        and every source/table/column note must reference a relation or column already registered
+        by a source enabled in this workspace; an S1-excluded column is rejected. Exactly one
+        content-free workspace.model_context_revised audit event is appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ModelContextIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceModelContextSaveRequest"
+      responses:
+        "200":
+          description: "Newly created current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "412":
+          $ref: "#/components/responses/RevisionConflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/versions:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceModelContextVersions
+      tags: [ModelContext]
+      summary: "Workspace model context version history (ADR-0098, S2)"
+      description: "Newest-first metadata only; the document content itself is on the exact-version read."
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          description: "The version number (from a previous next_cursor) to page strictly before."
+          schema:
+            type: string
+            pattern: '^[1-9][0-9]{0,18}$'
+      responses:
+        "200":
+          description: "A page of version history, newest first."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContextVersionList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/versions/{version}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextVersionParam"
+    get:
+      operationId: getWorkspaceModelContextVersion
+      tags: [ModelContext]
+      summary: "One historical workspace model context version (ADR-0098, S2)"
+      description: >-
+        editable is always false: a historical version is read-only, restorable but never itself
+        editable. Exactly one content-free workspace.model_context_read audit event is appended on
+        success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: "Requested context version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/versions/{version}:restore:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextVersionParam"
+    post:
+      operationId: restoreWorkspaceModelContextVersion
+      tags: [ModelContext]
+      summary: "Restore a historical version as the new current context (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        Creates a new version (change_kind RESTORE) whose document is byte-identical to the named
+        historical version; history is never rewritten. The request body is empty. Exactly one
+        content-free workspace.model_context_revised audit event is appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ModelContextIfMatch"
+      responses:
+        "200":
+          description: "Newly created current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "412":
+          $ref: "#/components/responses/RevisionConflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/proposals:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceContextProposals
+      tags: [ModelContext]
+      summary: "Deterministic glossary-change proposal review queue (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        A MEMBER (or any caller without OWNER/MANAGER standing) receives 404 NOT_FOUND, never 403:
+        this queue's existence is not disclosed to a non-manager. examples lists only runs the
+        current viewer can read now; question_excerpt is at most 300 characters.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: "Defaults to PROPOSED."
+          schema:
+            type: string
+            enum: [PROPOSED, ACCEPTED, REJECTED, WITHDRAWN]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OpaqueID"
+      responses:
+        "200":
+          description: "A page of proposals matching status."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceContextProposalList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/proposals/{proposal_id}:accept:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextProposalIDParam"
+    post:
+      operationId: acceptWorkspaceContextProposal
+      tags: [ModelContext]
+      summary: "Accept a glossary-change proposal (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        Applies the proposal's own candidate term/suggested text, or the optional body's override,
+        to the current document and mints a new version (change_kind PROPOSAL_ACCEPTED) atomically
+        with the decision. A non-manager, an absent proposal, or one no longer PROPOSED all collapse
+        to 404 NOT_FOUND. Exactly one content-free workspace.context_proposal_decided audit event is
+        appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ModelContextIfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceContextProposalAcceptRequest"
+      responses:
+        "200":
+          description: "Newly created current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/RevisionConflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/proposals/{proposal_id}:reject:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextProposalIDParam"
+    post:
+      operationId: rejectWorkspaceContextProposal
+      tags: [ModelContext]
+      summary: "Reject a glossary-change proposal (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        The context document is unchanged; only the proposal's own status moves to REJECTED. A
+        non-manager, an absent proposal, or one no longer PROPOSED all collapse to 404 NOT_FOUND.
+        Exactly one content-free workspace.context_proposal_decided audit event is appended on
+        success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: "Rejected proposal id and its new status."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceContextProposalRejectResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/tools/workspace-context:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: workspaceContextToolParity
+      tags: [ModelContext]
+      summary: "REST parity of the knowvault_workspace_context MCP tool (ADR-0098, S2)"
+      description: >-
+        Filters the current document by the optional terms/section body: terms matches a
+        glossary entry's term or any synonym case-insensitively; section narrows the projection to
+        one of glossary/rules/sources (default: all). notice is always the fixed string "context,
+        not evidence": this surface is never a citation source, and sources always covers enabled
+        sources only (a note can only exist here if it referenced an enabled source when saved).
+        Exactly one content-free workspace.model_context_read audit event is appended on success.
+        Card A implements this route directly on internal/workspacecontext.Store; card C's MCP tool
+        knowvault_workspace_context is a separate transport over the same document and may reuse or
+        re-route this path.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceContextToolRequest"
+      responses:
+        "200":
+          description: "Rendered context, section-filtered when section is given."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceContextToolResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/governed-query-connections/{connection_id}:set-live-queries:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -3436,6 +3846,32 @@ components:
       schema:
         type: string
         pattern: '^"sha256:[0-9a-f]{64}"$'
+    ModelContextVersionParam:
+      name: version
+      in: path
+      required: true
+      description: "Immutable context version number: a positive decimal integer without a sign or leading zeros."
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 9007199254740991
+    ModelContextProposalIDParam:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueID"
+    ModelContextIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        Exactly one strong ETag: the current context's content hash, or the literal
+        "sha256:empty" when the workspace has no saved context yet (version 0). Weak tags,
+        wildcards, and lists are prohibited.
+      schema:
+        type: string
+        pattern: '^"sha256:(empty|[0-9a-f]{64})"$'
   headers:
     NoStore:
       description: "All handler JSON responses are noncacheable."
@@ -3461,6 +3897,14 @@ components:
       schema:
         type: string
         const: nosniff
+    ModelContextETag:
+      description: >-
+        Strong ETag exact match to the returned context's content_hash, or "sha256:empty" for a
+        workspace with no saved context yet (version 0).
+      required: true
+      schema:
+        type: string
+        pattern: '^"sha256:(empty|[0-9a-f]{64})"$'
   schemas:
     GovernedQueryResult:
       type: object
@@ -5331,6 +5775,331 @@ components:
           enum: [NOT_COVERED, NO_MATCHES, UNAVAILABLE]
         message:
           type: string
+    WorkspaceModelContextDataLocation:
+      type: object
+      additionalProperties: false
+      required: [source_connection_id, relation]
+      properties:
+        source_connection_id:
+          $ref: "#/components/schemas/OpaqueID"
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        column:
+          type: string
+          maxLength: 256
+        hint:
+          type: string
+          maxLength: 200
+    WorkspaceModelContextRule:
+      type: object
+      additionalProperties: false
+      required: [id, text]
+      properties:
+        id:
+          type: string
+          description: "Server-assigned (rule_<ULID>). Empty on a new rule in a save request."
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+    WorkspaceModelContextTerm:
+      type: object
+      additionalProperties: false
+      required: [id, term]
+      properties:
+        id:
+          type: string
+          description: "Server-assigned (term_<ULID>). Empty on a new term in a save request."
+        term:
+          type: string
+          minLength: 1
+          maxLength: 80
+        synonyms:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+        definition:
+          type: string
+          maxLength: 1000
+        data_locations:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextDataLocation"
+    WorkspaceModelContextColumn:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        note:
+          type: string
+          maxLength: 500
+    WorkspaceModelContextTable:
+      type: object
+      additionalProperties: false
+      required: [relation]
+      properties:
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        note:
+          type: string
+          maxLength: 1000
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextColumn"
+    WorkspaceModelContextSource:
+      type: object
+      additionalProperties: false
+      required: [source_connection_id]
+      properties:
+        source_connection_id:
+          $ref: "#/components/schemas/OpaqueID"
+        description:
+          type: string
+          maxLength: 2000
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextTable"
+    WorkspaceModelContextDocument:
+      type: object
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+          maxLength: 4000
+        rules:
+          type: array
+          maxItems: 30
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextRule"
+        glossary:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextTerm"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextSource"
+    WorkspaceModelContext:
+      type: object
+      additionalProperties: false
+      required: [version, content_hash, editable, document, updated_at, updated_by]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: "0 means the workspace has no saved context yet; document is then empty."
+        content_hash:
+          type: string
+          pattern: '^sha256:(empty|[0-9a-f]{64})$'
+        editable:
+          type: boolean
+          description: "True only for a caller currently holding OWNER or MANAGER. Always false on a historical version read."
+        document:
+          $ref: "#/components/schemas/WorkspaceModelContextDocument"
+        updated_at:
+          type: string
+          description: "RFC 3339 timestamp of this version, or empty string at version 0."
+        updated_by:
+          type: string
+          description: "Principal id that created this version, or empty string at version 0."
+    WorkspaceModelContextSaveRequest:
+      type: object
+      additionalProperties: false
+      required: [document]
+      properties:
+        document:
+          $ref: "#/components/schemas/WorkspaceModelContextDocument"
+    WorkspaceModelContextVersionSummary:
+      type: object
+      additionalProperties: false
+      required: [version, content_hash, change_kind, created_at, created_by]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        content_hash:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        change_kind:
+          type: string
+          enum: [EDIT, PROPOSAL_ACCEPTED, RESTORE]
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          $ref: "#/components/schemas/OpaqueID"
+        proposal_id:
+          type: string
+          description: "Present only when change_kind is PROPOSAL_ACCEPTED."
+    WorkspaceModelContextVersionList:
+      type: object
+      additionalProperties: false
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextVersionSummary"
+        next_cursor:
+          type: string
+          description: "Pass as ?cursor= to continue. Absent on the last page."
+    WorkspaceContextProposalExample:
+      type: object
+      additionalProperties: false
+      required: [conversation_id, question_excerpt]
+      properties:
+        conversation_id:
+          $ref: "#/components/schemas/OpaqueID"
+        question_excerpt:
+          type: string
+          maxLength: 300
+    WorkspaceContextProposal:
+      type: object
+      additionalProperties: false
+      required:
+        - proposal_id
+        - kind
+        - candidate_term
+        - target_term_id
+        - target_term
+        - suggested_text
+        - status
+        - occurrences
+        - created_at
+        - examples
+        - hidden_examples
+      properties:
+        proposal_id:
+          type: string
+        kind:
+          type: string
+          enum: [NEW_TERM, SYNONYM, DEFINITION_CORRECTION]
+        candidate_term:
+          type: string
+          maxLength: 80
+        target_term_id:
+          type: string
+          description: "Empty for a NEW_TERM proposal, which names no existing term."
+        target_term:
+          type: string
+          description: "Current display name of target_term_id, resolved server-side; empty when target_term_id is empty."
+        suggested_text:
+          type: string
+          maxLength: 300
+        status:
+          type: string
+          enum: [PROPOSED, ACCEPTED, REJECTED, WITHDRAWN]
+        occurrences:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        examples:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/WorkspaceContextProposalExample"
+        hidden_examples:
+          type: integer
+          minimum: 0
+          description: "Count of this proposal's evidence rows not resolvable into an example for the current viewer."
+    WorkspaceContextProposalList:
+      type: object
+      additionalProperties: false
+      required: [proposals]
+      properties:
+        proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceContextProposal"
+        next_cursor:
+          type: string
+          description: "Pass as ?cursor= to continue. Absent on the last page."
+    WorkspaceContextProposalAcceptRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        term:
+          type: string
+          maxLength: 80
+        synonyms:
+          type: array
+          items:
+            type: string
+            maxLength: 80
+        definition:
+          type: string
+          maxLength: 1000
+    WorkspaceContextProposalRejectResponse:
+      type: object
+      additionalProperties: false
+      required: [proposal_id, status]
+      properties:
+        proposal_id:
+          type: string
+        status:
+          type: string
+          enum: [REJECTED]
+    WorkspaceContextToolRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        terms:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            maxLength: 80
+        section:
+          type: string
+          enum: [all, glossary, rules, sources]
+    WorkspaceContextToolResponse:
+      type: object
+      additionalProperties: false
+      required: [version, content_hash, description, rules, glossary, sources, notice]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        content_hash:
+          type: string
+          pattern: '^sha256:(empty|[0-9a-f]{64})$'
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextRule"
+        glossary:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextTerm"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextSource"
+        notice:
+          type: string
+          enum: ["context, not evidence"]
   responses:
     CSRFResponse:
       description: Derived CSRF proof.
@@ -5390,6 +6159,9 @@ components:
       $ref: "#/components/responses/ErrorResponse"
     CreateForbiddenOrCSRFRejected:
       description: CSRF validation failed or create operation was denied.
+      $ref: "#/components/responses/ErrorResponse"
+    Forbidden:
+      description: Caller is a readable workspace member but not a current OWNER or MANAGER.
       $ref: "#/components/responses/ErrorResponse"
     NotFound:
       description: Route absent, malformed canonical resource path, or resource unavailable to this access context.

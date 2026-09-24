@@ -90,6 +90,15 @@ var openAPIRoutes = map[endpointKind]describedRoute{
 	endpointWorkspaceToolRead:           {"/workspaces/{workspace_id}/tools/read", "endpointWorkspaceToolRead"},
 	endpointWorkspaceToolSources:        {"/workspaces/{workspace_id}/tools/sources", "endpointWorkspaceToolSources"},
 	endpointWorkspaceToolRefresh:        {"/workspaces/{workspace_id}/tools/refresh", "endpointWorkspaceToolRefresh"},
+	endpointModelContextGet:             {"/workspaces/{workspace_id}/model-context", "endpointModelContextGet"},
+	endpointModelContextSave:            {"/workspaces/{workspace_id}/model-context", "endpointModelContextSave"},
+	endpointModelContextVersions:        {"/workspaces/{workspace_id}/model-context/versions", "endpointModelContextVersions"},
+	endpointModelContextVersionGet:      {"/workspaces/{workspace_id}/model-context/versions/{version}", "endpointModelContextVersionGet"},
+	endpointModelContextRestore:         {"/workspaces/{workspace_id}/model-context/versions/{version}:restore", "endpointModelContextRestore"},
+	endpointModelContextProposals:       {"/workspaces/{workspace_id}/model-context/proposals", "endpointModelContextProposals"},
+	endpointModelContextProposalAccept:  {"/workspaces/{workspace_id}/model-context/proposals/{proposal_id}:accept", "endpointModelContextProposalAccept"},
+	endpointModelContextProposalReject:  {"/workspaces/{workspace_id}/model-context/proposals/{proposal_id}:reject", "endpointModelContextProposalReject"},
+	endpointModelContextTool:            {"/workspaces/{workspace_id}/tools/workspace-context", "endpointModelContextTool"},
 }
 
 var httpMethodsUnderTest = []string{

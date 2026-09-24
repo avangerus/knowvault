@@ -40,6 +40,7 @@ import (
 	sourceupload "knowvault.local/verified-workspace/internal/source/upload"
 	"knowvault.local/verified-workspace/internal/workspace"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacecontext"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -366,6 +367,19 @@ type Handler struct {
 	// means a presented profile header is ignored, because granting it without
 	// an authority to journal the decision would be an unrecorded ablation.
 	searchProfiles SearchProfileChannel
+	// modelContext is S2 card A's optional PostgreSQL-backed workspace model
+	// context capability (ADR-0098), wired by composition only once
+	// internal/workspacecontext.Store is mounted. A nil value keeps every
+	// model-context document route content-free SERVICE_UNAVAILABLE.
+	modelContext ModelContextService
+	// modelContextProposals is card E's optional workspacecontext.ProposalService
+	// implementation. A nil value keeps every proposal route content-free
+	// SERVICE_UNAVAILABLE, per S2-CONTRACT.md.
+	modelContextProposals workspacecontext.ProposalService
+	// modelContextProposalExamples is the optional example-dialogue resolver
+	// (see model_context.go's file-level deviation note 3). A nil value keeps
+	// every listed proposal's examples empty and hidden_examples at 0.
+	modelContextProposalExamples ProposalExampleResolver
 }
 
 // GovernedQueryService is the ADR-0089 orchestration boundary
@@ -677,6 +691,24 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	case endpointMetricDefinitionApprove:
 		handler.metricDefinitionApprove(writer, request, access, requestID, endpoint.workspaceID,
 			endpoint.metricDefinitionID)
+	case endpointModelContextGet:
+		handler.modelContextGet(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextSave:
+		handler.modelContextSave(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextVersions:
+		handler.modelContextVersionsList(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextVersionGet:
+		handler.modelContextVersionGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextVersion)
+	case endpointModelContextRestore:
+		handler.modelContextRestore(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextVersion)
+	case endpointModelContextProposals:
+		handler.modelContextProposalsList(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextProposalAccept:
+		handler.modelContextProposalAccept(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
+	case endpointModelContextProposalReject:
+		handler.modelContextProposalReject(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
+	case endpointModelContextTool:
+		handler.modelContextToolParity(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep,
 		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		handler.workspaceToolDispatch(writer, request, access, requestID, endpoint)
@@ -823,6 +855,35 @@ const (
 	// denial and the projection are the same implementation, not a
 	// re-derivation.
 	endpointWorkspaceToolRefresh
+	// endpointModelContextGet/endpointModelContextSave are S2 card A's
+	// (ADR-0098) current-context routes on the same path
+	// (GET / PUT /api/v1/workspaces/{workspace_id}/model-context), split into
+	// two kinds exactly like endpointWorkspaceGet/endpointWorkspaceUpdate so
+	// each keeps its own single HTTP method.
+	endpointModelContextGet
+	endpointModelContextSave
+	// endpointModelContextVersions is the read-only history list
+	// (GET .../model-context/versions).
+	endpointModelContextVersions
+	// endpointModelContextVersionGet is the exact-version read
+	// (GET .../model-context/versions/{version}).
+	endpointModelContextVersionGet
+	// endpointModelContextRestore mints a new version from a historical one
+	// (POST .../model-context/versions/{version}:restore).
+	endpointModelContextRestore
+	// endpointModelContextProposals is the OWNER/MANAGER-only proposal review
+	// queue (GET .../model-context/proposals).
+	endpointModelContextProposals
+	// endpointModelContextProposalAccept/endpointModelContextProposalReject are
+	// the OWNER/MANAGER-only proposal decisions
+	// (POST .../model-context/proposals/{proposal_id}:accept|:reject).
+	endpointModelContextProposalAccept
+	endpointModelContextProposalReject
+	// endpointModelContextTool is the REST parity path of the
+	// knowvault_workspace_context MCP tool
+	// (POST .../tools/workspace-context): the same closed, content-free
+	// rendering, filtered by the optional terms/section body.
+	endpointModelContextTool
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -878,6 +939,13 @@ type endpoint struct {
 	// int64; an unparsable segment never reaches here as a route.
 	metricDefinitionID      string
 	metricDefinitionVersion int64
+	// modelContextVersion is the parsed exact-version read/restore target for
+	// GET/POST .../model-context/versions/{version}[:restore] (S2 card A): a
+	// validated positive decimal int64, exactly like metricDefinitionVersion.
+	// modelContextProposalID is the parsed {proposal_id} segment of
+	// .../model-context/proposals/{proposal_id}:accept|:reject.
+	modelContextVersion    int64
+	modelContextProposalID string
 	// journalBeforeSequence is the parsed, validated before_sequence cursor for
 	// the audit-journal continuation route. It is nil for the legacy first
 	// screen (no query) and never carries a client value the route did not
@@ -1933,6 +2001,53 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 		return endpoint{kind: endpointMetricDefinitionGet, workspaceID: parts[0],
 			metricDefinitionID: parts[2], metricDefinitionVersion: version}, ""
 	}
+	// S2 card A (ADR-0098): the workspace model context document, its version
+	// history and its deterministic-proposal review queue. GET/PUT share one
+	// path exactly like the bare workspace route above; every other action is
+	// its own colon path so the GET routes keep 405-on-POST.
+	if len(parts) == 2 && parts[1] == "model-context" && validOpaqueID(parts[0]) {
+		if request.Method == http.MethodGet {
+			return endpoint{kind: endpointModelContextGet, workspaceID: parts[0]}, ""
+		}
+		return endpoint{kind: endpointModelContextSave, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 3 && parts[1] == "model-context" && parts[2] == "versions" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointModelContextVersions, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 4 && parts[1] == "model-context" && parts[2] == "versions" && validOpaqueID(parts[0]) {
+		if strings.HasSuffix(parts[3], ":restore") && len(parts[3]) > len(":restore") {
+			version, ok := modelContextVersionSegment(strings.TrimSuffix(parts[3], ":restore"))
+			if !ok {
+				return endpoint{}, "NOT_FOUND"
+			}
+			return endpoint{kind: endpointModelContextRestore, workspaceID: parts[0], modelContextVersion: version}, ""
+		}
+		version, ok := modelContextVersionSegment(parts[3])
+		if !ok {
+			return endpoint{}, "NOT_FOUND"
+		}
+		return endpoint{kind: endpointModelContextVersionGet, workspaceID: parts[0], modelContextVersion: version}, ""
+	}
+	if len(parts) == 3 && parts[1] == "model-context" && parts[2] == "proposals" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointModelContextProposals, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 4 && parts[1] == "model-context" && parts[2] == "proposals" && validOpaqueID(parts[0]) {
+		if strings.HasSuffix(parts[3], ":accept") && len(parts[3]) > len(":accept") {
+			proposalID := strings.TrimSuffix(parts[3], ":accept")
+			if validOpaqueID(proposalID) {
+				return endpoint{kind: endpointModelContextProposalAccept, workspaceID: parts[0], modelContextProposalID: proposalID}, ""
+			}
+			return endpoint{}, "NOT_FOUND"
+		}
+		if strings.HasSuffix(parts[3], ":reject") && len(parts[3]) > len(":reject") {
+			proposalID := strings.TrimSuffix(parts[3], ":reject")
+			if validOpaqueID(proposalID) {
+				return endpoint{kind: endpointModelContextProposalReject, workspaceID: parts[0], modelContextProposalID: proposalID}, ""
+			}
+			return endpoint{}, "NOT_FOUND"
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
 	if len(parts) == 2 && parts[1] == "access-codes" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointAccessCodes, workspaceID: parts[0]}, ""
 	}
@@ -1955,6 +2070,16 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	}
 	if len(parts) == 3 && parts[1] == "evidence" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		return endpoint{kind: endpointEvidenceGet, workspaceID: parts[0], fragmentID: parts[2]}, ""
+	}
+	// S2 card A (ADR-0098): the workspace-context tool's REST parity path,
+	// resolved ahead of the generic tools/{segment} registry lookup below
+	// (card C's workspacetools.KnowledgeTools() does not need a
+	// KindWorkspaceContext entry for this specific REST path to work; it may
+	// still register one for the MCP tool and any REST re-routing it prefers,
+	// since this early, exact match takes the segment before the generic
+	// lookup ever sees it).
+	if len(parts) == 3 && parts[1] == "tools" && parts[2] == "workspace-context" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointModelContextTool, workspaceID: parts[0]}, ""
 	}
 	// R3a-1: the workspace-scoped REST parity surface of the workspace
 	// knowledge tools. Every tools/{segment} subpath is resolved through the
@@ -2060,7 +2185,8 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 
 func methodAllowed(endpoint endpoint, method string) bool {
 	switch endpoint.kind {
-	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet:
+	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals:
 		return method == http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return method == http.MethodGet || method == http.MethodPost
@@ -2071,9 +2197,10 @@ func methodAllowed(endpoint endpoint, method string) bool {
 	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
 		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
-		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove:
+		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
+		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject, endpointModelContextTool:
 		return method == http.MethodPost
-	case endpointWorkspaceUpdate, endpointMemberChange:
+	case endpointWorkspaceUpdate, endpointMemberChange, endpointModelContextSave:
 		return method == http.MethodPut
 	case endpointMemberRemove:
 		return method == http.MethodDelete
@@ -2084,7 +2211,8 @@ func methodAllowed(endpoint endpoint, method string) bool {
 
 func allowedMethods(endpoint endpoint) string {
 	switch endpoint.kind {
-	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet:
+	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals:
 		return http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return http.MethodGet + ", " + http.MethodPost
@@ -2095,9 +2223,10 @@ func allowedMethods(endpoint endpoint) string {
 	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
 		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
-		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove:
+		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
+		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject, endpointModelContextTool:
 		return http.MethodPost
-	case endpointWorkspaceUpdate, endpointMemberChange:
+	case endpointWorkspaceUpdate, endpointMemberChange, endpointModelContextSave:
 		return http.MethodPut
 	case endpointMemberRemove:
 		return http.MethodDelete
