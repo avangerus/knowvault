@@ -156,6 +156,14 @@ const (
 	// ADR-0087 §2: CONNECTOR_ADMIN-gated source connection trust verification
 	// (DRAFT -> VERIFIED). See TrustVerificationID/TrustVerificationHash below.
 	ActionSourceConnectionTrustVerified Action = "source.connection_trust_verified"
+	// ActionSourceQueryCredentialSet and ActionSourceQueryCredentialCleared are
+	// S3 card 2b's organization-OWNER control over one PostgreSQL source
+	// connection's opaque SQL query credential reference (ADR-0097). The two
+	// actions distinguish set from clear without the reserved 'enabled' metadata
+	// key; the event carries the connection id and never the reference, a DSN or
+	// any secret value.
+	ActionSourceQueryCredentialSet     Action = "source.query_credential_set"
+	ActionSourceQueryCredentialCleared Action = "source.query_credential_cleared"
 )
 
 // Metadata is an allowlisted projection only. It intentionally has no title,
@@ -580,6 +588,8 @@ func validAction(action Action) bool {
 	case ActionSourceMetadataReadAdmitted, ActionSourceMetadataReadCompleted, ActionSourceMetadataReadFailed:
 		return true
 	case ActionWorkspaceModelContextRevised, ActionWorkspaceModelContextRead, ActionWorkspaceContextProposalCreated, ActionWorkspaceContextProposalDecided:
+		return true
+	case ActionSourceQueryCredentialSet, ActionSourceQueryCredentialCleared:
 		return true
 	case ActionIdentityLogin, ActionIdentityLoginFailed, ActionIdentityDeprovisioned, ActionSessionTerminated, ActionWorkspaceCreated, ActionWorkspaceUpdated, ActionWorkspaceArchived, ActionWorkspaceMemberAdded, ActionWorkspaceMemberRemoved, ActionWorkspaceRoleChanged, ActionWorkspaceSourceAdded, ActionWorkspaceSourceRemoved, ActionWorkspaceSourceConfirmationGrantIssued, ActionWorkspaceSourceConfirmationGrantRevoked, ActionWorkspaceSourceConfirmed, ActionWorkspaceSourceConfirmationRevoked, ActionPolicyDecision, ActionAuditViewed, ActionAuditExported, ActionSourceScopeChanged, ActionSourceScopeActivated, ActionSourceRegistrationCreated, ActionSourceActivationRequested, ActionSourceObjectIngested, ActionSourceObjectDeleted, ActionSourceVersionCreated, ActionSourceVersionPurging, ActionSourceVersionPurged, ActionSourceExtractionActive, ActionQuestionCreated, ActionQuestionCompleted, ActionQuestionFailed, ActionModelGatewayAttempt, ActionConversationArchived, ActionConversationPurging, ActionConversationPurged, ActionCitationOpened, ActionEvidenceReadAdmitted, ActionEvidenceReadFailed, ActionQuestionRunAdmitted, ActionGovernedQueryAdmitted, ActionAnswerDocumentAmended, ActionKeyRotationBegin, ActionKeyRotationComplete, ActionSourceConnectionTrustVerified, ActionGovernedQueryAttempted, ActionSearchProfileRevisionRequested, ActionSearchProfileCallLexical, ActionSearchProfileCallVector, ActionSearchProfileCallHybrid:
 		return true

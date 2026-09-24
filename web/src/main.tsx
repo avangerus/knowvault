@@ -6870,14 +6870,56 @@ function LatestProcessingNote({ source }: { source: SourceStatus }) {
   );
 }
 
+// Card S3.2b: the organization OWNER's control over one PostgreSQL source
+// connection's SQL query credential (ADR-0097). It accepts only the opaque
+// 'cred' reference the server resolves from its mounted credentials; no DSN,
+// password or other secret value is entered or returned here. The control is
+// rendered by SourceConnectionCard only for an OWNER.
+export function SourceQueryCredentialControl({ connectionID, sqlAvailable, busy = false, onSet, onClear }: {
+  connectionID: string;
+  sqlAvailable: boolean;
+  busy?: boolean;
+  onSet: (connectionID: string, credentialReference: string) => void;
+  onClear: (connectionID: string) => void;
+}) {
+  const [reference, setReference] = useState("");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const trimmed = reference.trim();
+    if (trimmed === "" || busy) return;
+    onSet(connectionID, trimmed);
+  };
+  return (
+    <form className="source-sql-control" onSubmit={submit}>
+      <label className="source-sql-control-field">
+        <span>Query credential reference</span>
+        <input
+          autoComplete="off"
+          disabled={busy}
+          onChange={(event) => setReference(event.target.value)}
+          placeholder="cred_…"
+          spellCheck={false}
+          value={reference}
+        />
+      </label>
+      <button className="secondary-button" disabled={busy || reference.trim() === ""} type="submit">Save</button>
+      {sqlAvailable && (
+        <button className="secondary-button" disabled={busy} onClick={() => onClear(connectionID)} type="button">Clear</button>
+      )}
+    </form>
+  );
+}
+
 // Card S5.1: the one card a database connection gets in Sources. Its collapsed
 // body carries the connection state, the registered/indexed table counts and
 // the rolled-up freshness; its expansion lists each registered table with its
 // own state, and renderTableExtra keeps the per-table actions reachable, so no
 // operator control is lost by folding the rows into one card.
-export function SourceConnectionCard({ group, renderTableExtra }: {
+export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL = false, sqlControl }: {
   group: SourceConnectionGroup;
   renderTableExtra?: (source: SourceStatus) => ReactNode;
+  canConfigureSQL?: boolean;
+  sqlControl?: ReactNode;
 }) {
   const summary = sourceConnectionSummary(group);
   return (
@@ -6896,6 +6938,7 @@ export function SourceConnectionCard({ group, renderTableExtra }: {
         <p className="source-note source-sql-availability">
           {summary.sql_available ? "SQL available" : "SQL not configured"}
         </p>
+        {canConfigureSQL && sqlControl}
         <details className="source-connection-tables">
           <summary>Tables ({summary.table_count})</summary>
           <ul className="source-table-rows">
@@ -7004,6 +7047,8 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
   const [draftsResult, setDraftsResult] = useState<ApiResult<SourceConnectionDraftEnvelope> | null>(null);
   const [draftsVersion, setDraftsVersion] = useState(0);
   const [draftBusyID, setDraftBusyID] = useState<string | null>(null);
+  // Card S3.2b: the connection whose SQL credential control is mid-request.
+  const [sqlCredentialBusyID, setSqlCredentialBusyID] = useState<string | null>(null);
   const [continuedDraft, setContinuedDraft] = useState<SourceConnectionDraft | null>(null);
   const snapshot = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value : null;
   const etag = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.etag : undefined;
@@ -7046,8 +7091,51 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
     }
   }
 
-  // ADR-0087 §1: confirm a pending WORKSPACE_MANAGED binding. If the caller
-  // already holds a live workspace.source.confirm grant (confirmationContext.
+  // Card S3.2b: the OWNER sets or clears one connection's opaque SQL query
+  // credential reference. The request carries only the reference the server
+  // resolves from its mounted credentials; a DSN or a password is never sent.
+  // The server validates the reference against the source's database identity
+  // and its excluded columns before anything changes, so a failed check is one
+  // closed code and no change.
+  async function setSourceQueryCredential(connectionID: string, credentialReference: string) {
+    if (!snapshot || sqlCredentialBusyID !== null) return;
+    setSqlCredentialBusyID(connectionID);
+    setMutationResult(null);
+    const result = await apiPost<{ connection_id: string; sql_available: boolean }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/source-connections/${encodeURIComponent(connectionID)}:set-query-credential`,
+      { credential_reference: credentialReference },
+      newIdempotencyKey(),
+    );
+    setSqlCredentialBusyID(null);
+    setMutationResult(result);
+    if (result.kind === "ok") {
+      pushToast("success", "SQL query credential updated.");
+      onChanged();
+    } else {
+      pushToast("error", closedText(result));
+    }
+  }
+
+  async function clearSourceQueryCredential(connectionID: string) {
+    if (!snapshot || sqlCredentialBusyID !== null) return;
+    setSqlCredentialBusyID(connectionID);
+    setMutationResult(null);
+    const result = await apiPost<{ connection_id: string; sql_available: boolean }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/source-connections/${encodeURIComponent(connectionID)}:clear-query-credential`,
+      {},
+      newIdempotencyKey(),
+    );
+    setSqlCredentialBusyID(null);
+    setMutationResult(result);
+    if (result.kind === "ok") {
+      pushToast("success", "SQL query credential cleared.");
+      onChanged();
+    } else {
+      pushToast("error", closedText(result));
+    }
+  }
+
+  // ADR-0087 §1: confirm a pending WORKSPACE_MANAGED binding. If the caller  // already holds a live workspace.source.confirm grant (confirmationContext.
   // self_grant) it is reused as-is; otherwise, if the caller is an
   // organization OWNER/ADMIN, a fresh self-targeted grant is issued first. A
   // freshly issued grant always starts at revision 1 (the repository never
@@ -7376,9 +7464,19 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
             <ul className="source-rows">
               {cardEntries.map((entry) => entry.kind === "connection" ? (
                 <SourceConnectionCard
+                  canConfigureSQL={role === "OWNER"}
                   group={entry.group}
                   key={entry.key}
                   renderTableExtra={(source) => renderTableExtra(source)}
+                  sqlControl={
+                    <SourceQueryCredentialControl
+                      busy={sqlCredentialBusyID === entry.group.connection_id}
+                      connectionID={entry.group.connection_id}
+                      onClear={(connectionID) => void clearSourceQueryCredential(connectionID)}
+                      onSet={(connectionID, reference) => void setSourceQueryCredential(connectionID, reference)}
+                      sqlAvailable={entry.group.tables.some((table) => table.sql_available === true)}
+                    />
+                  }
                 />
               ) : (
                 <li className={`source-row source-row-${sourceCardVariant(entry.source)}`} key={entry.key}>

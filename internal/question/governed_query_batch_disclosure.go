@@ -19,6 +19,7 @@ func authorizeGovernedQueryDisclosureBatch(
 	candidateRunIDs []string,
 	dependencies map[string]*governedQueryDependency,
 	reauthorizer governedAttemptReauthorizer,
+	sourceReauthorizer sourceSQLAttemptReauthorizer,
 ) ([]string, error) {
 	multiple := make(map[string][]governedQueryDependency, len(dependencies))
 	for runID, dependency := range dependencies {
@@ -26,7 +27,7 @@ func authorizeGovernedQueryDisclosureBatch(
 			multiple[runID] = []governedQueryDependency{*dependency}
 		}
 	}
-	return authorizeGovernedQueryDisclosureBatchMany(ctx, access, workspaceID, candidateRunIDs, multiple, reauthorizer)
+	return authorizeGovernedQueryDisclosureBatchMany(ctx, access, workspaceID, candidateRunIDs, multiple, reauthorizer, sourceReauthorizer)
 }
 
 func authorizeGovernedQueryDisclosureBatchMany(
@@ -36,6 +37,7 @@ func authorizeGovernedQueryDisclosureBatchMany(
 	candidateRunIDs []string,
 	dependencies map[string][]governedQueryDependency,
 	reauthorizer governedAttemptReauthorizer,
+	sourceReauthorizer sourceSQLAttemptReauthorizer,
 ) ([]string, error) {
 	unique := make(map[string]struct{}, len(candidateRunIDs))
 	for _, runID := range candidateRunIDs {
@@ -58,7 +60,7 @@ func authorizeGovernedQueryDisclosureBatchMany(
 		if len(dependencyList) == 0 {
 			continue
 		}
-		err := authorizeGovernedQueryDisclosures(ctx, access, workspaceID, runID, dependencyList, reauthorizer)
+		err := authorizeGovernedQueryDisclosuresByKind(ctx, access, workspaceID, runID, dependencyList, reauthorizer, sourceReauthorizer)
 		if err == nil {
 			continue
 		}
@@ -82,11 +84,8 @@ func (service *Service) authorizeGovernedQueryDisclosureBatch(
 	candidateRunIDs []string,
 	dependencies map[string]*governedQueryDependency,
 ) ([]string, error) {
-	var reauthorizer governedAttemptReauthorizer
-	if service != nil {
-		reauthorizer, _ = service.liveDataAsk.(governedAttemptReauthorizer)
-	}
-	return authorizeGovernedQueryDisclosureBatch(ctx, access, workspaceID, candidateRunIDs, dependencies, reauthorizer)
+	return authorizeGovernedQueryDisclosureBatch(ctx, access, workspaceID, candidateRunIDs, dependencies,
+		service.liveDataReauthorizer(), service.sourceSQLReauthorizer())
 }
 
 func (service *Service) authorizeGovernedQueryDisclosureBatchMany(
@@ -96,9 +95,6 @@ func (service *Service) authorizeGovernedQueryDisclosureBatchMany(
 	candidateRunIDs []string,
 	dependencies map[string][]governedQueryDependency,
 ) ([]string, error) {
-	var reauthorizer governedAttemptReauthorizer
-	if service != nil {
-		reauthorizer, _ = service.liveDataAsk.(governedAttemptReauthorizer)
-	}
-	return authorizeGovernedQueryDisclosureBatchMany(ctx, access, workspaceID, candidateRunIDs, dependencies, reauthorizer)
+	return authorizeGovernedQueryDisclosureBatchMany(ctx, access, workspaceID, candidateRunIDs, dependencies,
+		service.liveDataReauthorizer(), service.sourceSQLReauthorizer())
 }

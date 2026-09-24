@@ -43,6 +43,13 @@ const (
 	CodeMountInvalid      ErrorCode = "GOVERNED_QUERY_MOUNT_INVALID"
 	CodeSchemaUnavailable ErrorCode = "GOVERNED_QUERY_SCHEMA_UNAVAILABLE"
 	CodeExternalFailure   ErrorCode = "GOVERNED_QUERY_EXTERNAL_FAILURE"
+	// S3 card 2b's closed query-credential check vocabulary. The first two are
+	// the distinct refusals the card names (wrong database identity, and a role
+	// that can read an excluded column); the third covers a connection that is
+	// not read-only or cannot be reached at all.
+	CodeQueryCredentialDatabaseMismatch ErrorCode = "SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH"
+	CodeQueryCredentialColumnPrivilege  ErrorCode = "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE"
+	CodeQueryCredentialRejected         ErrorCode = "SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED"
 )
 
 type Error struct {

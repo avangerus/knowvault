@@ -170,7 +170,12 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 			              AND confirmation.confirmed_by = $3
 			              AND confirmation.source_scope_id = conflict_scope.id
 			       ) AS viewer_verify_conflict,
-			       (connection_revision.query_credential_reference IS NOT NULL) AS sql_available
+			       EXISTS (
+			           SELECT 1
+			             FROM public.source_query_credential AS query_credential
+			            WHERE query_credential.organization_id = scope_revision.organization_id
+			              AND query_credential.connection_id = scope_revision.connection_id
+			       ) AS sql_available
 			FROM app.workspace_source_status_v3($1) AS status
 			JOIN public.source_scope_revision AS scope_revision
 			  ON scope_revision.organization_id = $2
@@ -182,11 +187,7 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 			 AND projection.source_scope_id = scope_revision.source_scope_id
 			 AND projection.source_scope_revision = scope_revision.revision
 			 AND projection.connection_id = scope_revision.connection_id
-			 AND scope_revision.source_type = 'POSTGRESQL_QUERY'
-			LEFT JOIN public.source_connection_revision AS connection_revision
-			  ON connection_revision.organization_id = scope_revision.organization_id
-			 AND connection_revision.connection_id = scope_revision.connection_id
-			 AND connection_revision.revision = scope_revision.connection_revision`, workspaceID, access.OrganizationID, access.PrincipalID)
+			 AND scope_revision.source_type = 'POSTGRESQL_QUERY'`, workspaceID, access.OrganizationID, access.PrincipalID)
 		if queryErr != nil {
 			return queryErr
 		}

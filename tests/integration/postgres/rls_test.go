@@ -1950,6 +1950,7 @@ var migrationSequence = []string{
 	"000114_stage4_source_connection_drafts.sql",
 	"000115_stage4_postgresql_query_relation_catalog.sql",
 	"000116_stage4_source_query_credential.sql",
+	"000117_stage4_source_query_credential_control.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert

@@ -83,6 +83,19 @@ type fakeSourceService struct {
 	sqlSQL      string
 	sqlPurpose  string
 	sqlCalls    int
+
+	// S3 card 2b's optional SourceQueryCredential capability: the owner-only
+	// set/clear of one connection's opaque SQL query credential reference.
+	queryCredentialReference string
+	queryCredentialErr       error
+	queryCredentialCalls     int
+}
+
+func (service *fakeSourceService) SetSourceQueryCredential(_ context.Context, access database.AccessContext, _, _, credentialReference string) error {
+	service.call, service.access = "set_source_query_credential", access
+	service.queryCredentialReference = credentialReference
+	service.queryCredentialCalls++
+	return service.queryCredentialErr
 }
 
 func (service *fakeSourceService) SourceSQL(_ context.Context, access database.AccessContext, _ string, request SourceSQLRequest) (SourceSQLResult, error) {

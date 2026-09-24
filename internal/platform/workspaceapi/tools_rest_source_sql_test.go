@@ -32,6 +32,7 @@ func testSourceSQLResult() SourceSQLResult {
 		Format: "postgres-text-table-v1", Columns: []string{"count"}, Rows: [][]*string{{&count}}, RowCount: 1,
 		AttemptID: "gqat_01H9ABCDEFGHJKMNPQRSTVWXYZ", SQLHash: "sha256:" + strings.Repeat("a", 64),
 		ResultDigest: "sha256:" + strings.Repeat("b", 64), DatabaseIdentity: "pgdb:alpha",
+		SourceID: testSourceSQLSourceID, ExposedSchemaRevision: 7,
 		ExecutionStartedAt:   time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
 		ExecutionCompletedAt: time.Date(2026, 9, 24, 10, 0, 1, 0, time.UTC),
 	}
@@ -90,7 +91,7 @@ func TestWorkspaceToolSourceSQLRESTMatchesMCPAndChatProjection(t *testing.T) {
 			harness.sources.sqlSourceID, harness.sources.sqlSQL, harness.sources.sqlPurpose, harness.sources.sqlCalls)
 	}
 	wantKeys := []string{"format", "columns", "rows", "row_count", "attempt_id", "sql_hash", "result_digest",
-		"database_identity", "execution_started_at", "execution_completed_at", "complete"}
+		"database_identity", "source_id", "exposed_schema_revision", "execution_started_at", "execution_completed_at", "complete"}
 	if len(restBody) != len(wantKeys) {
 		t.Fatalf("REST projection has %d fields, want exactly %d: %#v", len(restBody), len(wantKeys), restBody)
 	}
@@ -104,6 +105,9 @@ func TestWorkspaceToolSourceSQLRESTMatchesMCPAndChatProjection(t *testing.T) {
 	}
 	if restBody["sql_hash"] != "sha256:"+strings.Repeat("a", 64) || restBody["result_digest"] != "sha256:"+strings.Repeat("b", 64) {
 		t.Fatalf("REST projection hashes = %#v", restBody)
+	}
+	if restBody["source_id"] != testSourceSQLSourceID || restBody["exposed_schema_revision"] != float64(7) {
+		t.Fatalf("REST projection source binding = %#v", restBody)
 	}
 
 	mcpEnvelope := callMCPSourceSQL(t, harness, `{"workspace_id":"ws_alpha",`+strings.TrimPrefix(body, "{"))

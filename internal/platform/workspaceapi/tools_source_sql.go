@@ -27,7 +27,9 @@ import (
 	"unicode/utf8"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/question"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 const (
@@ -53,16 +55,25 @@ type SourceSQLRequest struct {
 // server's own text rendering, so the digest the provider computed covers
 // exactly what the caller is shown.
 type SourceSQLResult struct {
-	Format               string
-	Columns              []string
-	Rows                 [][]*string
-	RowCount             int
-	AttemptID            string
-	SQLHash              string
-	ResultDigest         string
-	DatabaseIdentity     string
-	ExecutionStartedAt   time.Time
-	ExecutionCompletedAt time.Time
+	Format string
+	// SourceID is the workspace source the statement ran against. It is one
+	// half of the chat receipt a citing answer binds to (the other is
+	// ResultDigest); it is the same content-free source identifier the caller
+	// already named in the request.
+	SourceID string
+	// ExposedSchemaRevision is the source scope revision the attempt was
+	// audited against; it is the read's immutable scope identity, never a
+	// request field.
+	ExposedSchemaRevision int64
+	Columns               []string
+	Rows                  [][]*string
+	RowCount              int
+	AttemptID             string
+	SQLHash               string
+	ResultDigest          string
+	DatabaseIdentity      string
+	ExecutionStartedAt    time.Time
+	ExecutionCompletedAt  time.Time
 }
 
 // SourceSQLProvider is ADR-0097's optional agent-authored SQL capability behind
@@ -169,18 +180,45 @@ func sourceSQLProjection(result SourceSQLResult) map[string]any {
 		rows = append(rows, cells)
 	}
 	return map[string]any{
-		"format":                 "postgres-text-table-v1",
-		"columns":                columns,
-		"rows":                   rows,
-		"row_count":              result.RowCount,
-		"attempt_id":             result.AttemptID,
-		"sql_hash":               result.SQLHash,
-		"result_digest":          result.ResultDigest,
-		"database_identity":      result.DatabaseIdentity,
-		"execution_started_at":   result.ExecutionStartedAt.UTC().Format(time.RFC3339Nano),
-		"execution_completed_at": result.ExecutionCompletedAt.UTC().Format(time.RFC3339Nano),
-		"complete":               true,
+		"format":                  "postgres-text-table-v1",
+		"columns":                 columns,
+		"rows":                    rows,
+		"row_count":               result.RowCount,
+		"attempt_id":              result.AttemptID,
+		"sql_hash":                result.SQLHash,
+		"result_digest":           result.ResultDigest,
+		"database_identity":       result.DatabaseIdentity,
+		"source_id":               result.SourceID,
+		"exposed_schema_revision": result.ExposedSchemaRevision,
+		"execution_started_at":    result.ExecutionStartedAt.UTC().Format(time.RFC3339Nano),
+		"execution_completed_at":  result.ExecutionCompletedAt.UTC().Format(time.RFC3339Nano),
+		"complete":                true,
 	}
+}
+
+// SourceSQLAttemptReauthority is the optional read-time check behind
+// question's source-SQL disclosure gate: it re-verifies that the current
+// caller may still read the workspace source a stored agent-authored SQL
+// receipt came from. The production facade implements it by pure delegation to
+// the same repository boundary the tool itself uses; a source service that does
+// not leaves the gate failing closed.
+type SourceSQLAttemptReauthority interface {
+	ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error
+}
+
+// ReauthorizeSourceSQLAttempt is the chat runtime's current-authorization check
+// for one stored source-SQL receipt. It is discovered on the injected source
+// service exactly like the other optional source capabilities, so no new
+// composition install path exists and an unmounted capability fails closed.
+func (handler *Handler) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {
+	if handler == nil || handler.sources == nil {
+		return workspacetools.ErrUnavailable
+	}
+	reauthority, ok := handler.sources.(SourceSQLAttemptReauthority)
+	if !ok {
+		return workspacetools.ErrUnavailable
+	}
+	return reauthority.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, disclosure)
 }
 
 // workspaceToolSourceSQL is the REST parity of the MCP knowvault_source_sql

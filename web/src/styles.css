@@ -819,6 +819,12 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .source-table .source-success-time { margin: 4px 0 0; }
 .source-table .source-row-actions { margin-top: 8px; justify-content: flex-start; }
 
+/* Card S3.2b: the OWNER's SQL query credential control on the database card.
+   It accepts only the opaque mounted reference, never a DSN or a secret. */
+.source-sql-control { margin-top: 8px; display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.source-sql-control-field { display: grid; gap: 4px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.source-sql-control-field input { min-width: 260px; font-family: var(--font-mono, monospace); }
+
 /* ---------------------------------------------------------------------------
    UI-4.3: Access -- a single-screen code issue window (create -> show once
    -> hide), replacing the always-visible inline create/reveal form.

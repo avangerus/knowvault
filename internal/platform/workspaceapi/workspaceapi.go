@@ -702,6 +702,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.managedConfirmationRevoke(writer, request, access, requestID, endpoint.workspaceID, endpoint.authorityID)
 	case endpointSourceConnectionVerifyTrust:
 		handler.verifyConnectionTrust(writer, request, access, requestID, endpoint.connectionID)
+	case endpointSourceQueryCredentialSet:
+		handler.setSourceQueryCredential(writer, request, access, requestID, endpoint.workspaceID, endpoint.connectionID)
+	case endpointSourceQueryCredentialClear:
+		handler.clearSourceQueryCredential(writer, request, access, requestID, endpoint.workspaceID, endpoint.connectionID)
 	case endpointAccessCodes:
 		if request.Method == http.MethodGet {
 			handler.accessCodeList(writer, request, access, requestID, endpoint.workspaceID)
@@ -970,6 +974,20 @@ const (
 	// a re-derivation. The route is the agent-facing parity surface ADR-0097
 	// §2 permits; no UI, operator or user-facing field accepts SQL.
 	endpointWorkspaceToolSourceSQL
+	// endpointSourceQueryCredentialSet is S3 card 2b's organization-OWNER
+	// control that sets or clears the opaque SQL query credential reference of
+	// one PostgreSQL source connection
+	// (POST /api/v1/workspaces/{workspace_id}/source-connections/{connection_id}:set-query-credential).
+	// The reference is an opaque 'cred' id; no DSN, password or secret value is
+	// ever accepted or returned. A non-owner, an unknown workspace and a
+	// foreign connection are one content-free 404, like every other OWNER
+	// source operation.
+	endpointSourceQueryCredentialSet
+	// endpointSourceQueryCredentialClear is the removal half
+	// (POST /api/v1/workspaces/{workspace_id}/source-connections/{connection_id}:clear-query-credential).
+	// After it the tool answers SOURCE_SQL_NOT_CONFIGURED and the Sources card
+	// shows "SQL not configured".
+	endpointSourceQueryCredentialClear
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -2053,6 +2071,24 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	if len(parts) == 2 && parts[1] == "source-drafts" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointWorkspaceSourceDrafts, workspaceID: parts[0]}, ""
 	}
+	// S3 card 2b: the organization-OWNER control over one source connection's
+	// SQL query credential (ADR-0097). The connection id is the same
+	// workspace source id the Sources card shows.
+	if len(parts) == 3 && parts[1] == "source-connections" && validOpaqueID(parts[0]) {
+		if strings.HasSuffix(parts[2], ":set-query-credential") {
+			connectionID := strings.TrimSuffix(parts[2], ":set-query-credential")
+			if validOpaqueID(connectionID) {
+				return endpoint{kind: endpointSourceQueryCredentialSet, workspaceID: parts[0], connectionID: connectionID}, ""
+			}
+		}
+		if strings.HasSuffix(parts[2], ":clear-query-credential") {
+			connectionID := strings.TrimSuffix(parts[2], ":clear-query-credential")
+			if validOpaqueID(connectionID) {
+				return endpoint{kind: endpointSourceQueryCredentialClear, workspaceID: parts[0], connectionID: connectionID}, ""
+			}
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
 	if len(parts) == 3 && parts[1] == "source-drafts" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		if request.Method == http.MethodDelete {
 			return endpoint{kind: endpointWorkspaceSourceDraftDiscard, workspaceID: parts[0], connectionID: parts[2]}, ""
@@ -2296,6 +2332,7 @@ func methodAllowed(endpoint endpoint, method string) bool {
 	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
 		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
+		endpointSourceQueryCredentialSet, endpointSourceQueryCredentialClear,
 		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
 		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject:
 		return method == http.MethodPost
@@ -2328,6 +2365,7 @@ func allowedMethods(endpoint endpoint) string {
 	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
 		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
+		endpointSourceQueryCredentialSet, endpointSourceQueryCredentialClear,
 		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
 		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject:
 		return http.MethodPost

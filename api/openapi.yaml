@@ -1024,6 +1024,129 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/source-connections/{connection_id}:set-query-credential:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/OpaqueID"
+    post:
+      operationId: setSourceQueryCredential
+      tags: [Sources]
+      summary: "Set the SQL query credential reference of a PostgreSQL source connection (ADR-0097)"
+      description: >-
+        Card 2b: the organization OWNER configures which mounted query credential
+        knowvault_source_sql uses for this connection. The body carries only the opaque
+        'cred' reference; a DSN, a password or any other secret value is never accepted or
+        returned. Before the reference is accepted the server resolves it in its mounted
+        credentials, opens a read-only connection and checks it reaches the source's own
+        database identity, and checks the role cannot read any column excluded from the
+        registered tables. Any failed check returns its closed code and changes nothing.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [credential_reference]
+              properties:
+                credential_reference:
+                  type: string
+                  minLength: 31
+                  maxLength: 31
+      responses:
+        "200":
+          description: "The connection and its new SQL availability."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [connection_id, sql_available]
+                properties:
+                  connection_id:
+                    type: string
+                  sql_available:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The candidate reference failed a check; the closed code names which one
+            (SOURCE_QUERY_CREDENTIAL_UNRESOLVED, SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH,
+            SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE, SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED).
+            Nothing changed.
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/source-connections/{connection_id}:clear-query-credential:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/OpaqueID"
+    post:
+      operationId: clearSourceQueryCredential
+      tags: [Sources]
+      summary: "Clear the SQL query credential reference of a PostgreSQL source connection (ADR-0097)"
+      description: >-
+        Card 2b: the organization OWNER removes the connection's query credential. After it
+        knowvault_source_sql answers SOURCE_SQL_NOT_CONFIGURED and the Sources card shows
+        "SQL not configured". The body is empty.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: "The connection and its cleared SQL availability."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [connection_id, sql_available]
+                properties:
+                  connection_id:
+                    type: string
+                  sql_available:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/questions:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"

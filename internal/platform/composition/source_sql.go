@@ -30,6 +30,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/secretmount"
 	"knowvault.local/verified-workspace/internal/platform/trustbundle"
 	"knowvault.local/verified-workspace/internal/platform/workspaceapi"
+	"knowvault.local/verified-workspace/internal/question"
 	"knowvault.local/verified-workspace/internal/source/ids"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
@@ -153,7 +154,9 @@ func (executor sourceSQLExecutor) SourceSQL(ctx context.Context, access database
 		return workspaceapi.SourceSQLResult{}, &workspaceapi.SourceSQLRefusal{Code: string(governedquery.CodeDatabaseRejected)}
 	}
 	return workspaceapi.SourceSQLResult{
-		Format: "postgres-text-table-v1", Columns: result.Columns, Rows: result.Rows, RowCount: result.RowCount,
+		Format: "postgres-text-table-v1", SourceID: target.SourceID,
+		ExposedSchemaRevision: target.ScopeRevision,
+		Columns:               result.Columns, Rows: result.Rows, RowCount: result.RowCount,
 		AttemptID: attemptID, SQLHash: attempt.SQLHash, ResultDigest: attempt.ResultDigest,
 		DatabaseIdentity:   target.DatabaseIdentity,
 		ExecutionStartedAt: result.ExecutionStartedAt, ExecutionCompletedAt: result.ExecutionCompletedAt,
@@ -251,4 +254,82 @@ func sourceSQLRefusalCode(err error) string {
 	default:
 		return string(governedquery.CodeDatabaseRejected)
 	}
+}
+
+// SetSourceQueryCredential is S3 card 2b's owner-only control over one source
+// connection's SQL query credential (ADR-0097). It sets the opaque mounted
+// reference (or clears it when reference is empty) only after all three card
+// checks pass: the reference resolves, a read-only connection reaches the
+// source's own database identity, and the role cannot read a column excluded
+// from the registered tables. Every failure is a closed
+// workspaceapi.SourceQueryCredentialRefusal and nothing is written.
+func (executor sourceSQLExecutor) SetSourceQueryCredential(ctx context.Context, access database.AccessContext, workspaceID, connectionID, credentialReference string) error {
+	if executor.workspaces == nil || executor.resolver == nil || executor.roots == nil || ctx == nil || ctx.Err() != nil {
+		return &workspaceapi.SourceQueryCredentialRefusal{Code: string(governedquery.CodeQueryCredentialRejected)}
+	}
+	// The owner-gated target read is deliberately first: a non-owner, an
+	// unknown workspace and a foreign connection all resolve to the
+	// repository's content-free CodeNotFound before any mounted credential is
+	// touched or any external connection is opened.
+	target, err := executor.workspaces.SourceQueryCredentialTarget(ctx, access, workspaceID, connectionID)
+	if err != nil {
+		return err
+	}
+	if credentialReference != "" {
+		dsn, resolveErr := executor.resolver.ResolveReference(ctx, credentialReference)
+		if resolveErr != nil || dsn == "" {
+			return &workspaceapi.SourceQueryCredentialRefusal{Code: workspaceapi.SourceQueryCredentialUnresolved}
+		}
+		roots, rootsErr := executor.roots.NewCertPool()
+		if rootsErr != nil || roots == nil || len(roots.Subjects()) == 0 {
+			return &workspaceapi.SourceQueryCredentialRefusal{Code: string(governedquery.CodeQueryCredentialRejected)}
+		}
+		config := governedquery.Config{
+			ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
+			DSN: dsn, TrustRoots: roots, Limits: executor.limits,
+		}
+		if verifyErr := governedquery.VerifyQueryCredential(ctx, config, governedquery.QueryCredentialParams{
+			Relations: sourceSQLRelations(target),
+		}); verifyErr != nil {
+			return &workspaceapi.SourceQueryCredentialRefusal{Code: sourceQueryCredentialRefusalCode(verifyErr)}
+		}
+	}
+	// The repository re-checks the OWNER inside its write and appends the one
+	// content-free audit event in the same transaction.
+	return executor.workspaces.SetSourceQueryCredential(ctx, access, workspaceID, connectionID, credentialReference)
+}
+
+// sourceQueryCredentialRefusalCode keeps only the card's closed check
+// vocabulary; every other governed error folds into the connection-rejected
+// code so a driver message can never reach the operator.
+func sourceQueryCredentialRefusalCode(err error) string {
+	switch governedquery.CodeOf(err) {
+	case governedquery.CodeQueryCredentialDatabaseMismatch:
+		return string(governedquery.CodeQueryCredentialDatabaseMismatch)
+	case governedquery.CodeQueryCredentialColumnPrivilege:
+		return string(governedquery.CodeQueryCredentialColumnPrivilege)
+	default:
+		return string(governedquery.CodeQueryCredentialRejected)
+	}
+}
+
+// ReauthorizeSourceSQLAttempt is the read-time check for one stored
+// agent-authored SQL receipt: it re-reads the source through the same
+// owner/member source-metadata boundary the tool itself authorizes with, so a
+// caller who has lost access to the source (or a scope revision that has moved)
+// can no longer disclose the receipt. It opens no external connection and
+// carries no SQL, row or credential.
+func (executor sourceSQLExecutor) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {
+	if executor.workspaces == nil || ctx == nil || ctx.Err() != nil {
+		return errors.New("SOURCE_SQL_REAUTHORIZATION_UNAVAILABLE")
+	}
+	target, err := executor.workspaces.SourceQuery(ctx, access, workspaceID, disclosure.ConnectionID)
+	if err != nil {
+		return err
+	}
+	if target.SourceID != disclosure.ConnectionID || target.ScopeRevision != disclosure.ExposedSchemaRevision ||
+		target.DatabaseIdentity == "" {
+		return errors.New("SOURCE_SQL_REAUTHORIZATION_MISMATCH")
+	}
+	return nil
 }

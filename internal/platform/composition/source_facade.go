@@ -11,6 +11,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/platform/secretmount"
 	"knowvault.local/verified-workspace/internal/platform/workspaceapi"
+	"knowvault.local/verified-workspace/internal/question"
 	sourcediscovery "knowvault.local/verified-workspace/internal/source/discovery"
 	"knowvault.local/verified-workspace/internal/source/ids"
 	"knowvault.local/verified-workspace/internal/source/registration"
@@ -89,6 +90,23 @@ type sourceServiceFacadeWithSQL struct {
 }
 
 var _ workspaceapi.SourceSQLProvider = sourceServiceFacadeWithSQL{}
+var _ workspaceapi.SourceQueryCredential = sourceServiceFacadeWithSQL{}
+var _ workspaceapi.SourceSQLAttemptReauthority = sourceServiceFacadeWithSQL{}
+
+// ReauthorizeSourceSQLAttempt is the read-time reauthorization of one stored
+// agent-authored SQL receipt. It is a pure delegation to the executor, which
+// owns the current source-access check.
+func (facade sourceServiceFacadeWithSQL) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {
+	return facade.sourceSQL.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, disclosure)
+}
+
+// SetSourceQueryCredential is S3 card 2b's owner-only control over the source
+// connection's SQL query credential. The executor owns the owner gate (through
+// the repository target read), the mounted-credential resolution, the
+// read-only/identity/column-privilege checks and the audited write.
+func (facade sourceServiceFacadeWithSQL) SetSourceQueryCredential(ctx context.Context, access database.AccessContext, workspaceID, connectionID, credentialReference string) error {
+	return facade.sourceSQL.SetSourceQueryCredential(ctx, access, workspaceID, connectionID, credentialReference)
+}
 
 // SourceSQL is a pure delegation to the executor, which owns the authorization,
 // credential resolution, the single governedquery execution path and the

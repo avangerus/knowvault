@@ -103,6 +103,8 @@ var openAPIRoutes = map[endpointKind]describedRoute{
 	endpointWorkspaceToolWorkspaceContext: {"/workspaces/{workspace_id}/tools/workspace-context", "endpointWorkspaceToolWorkspaceContext"},
 	endpointWorkspaceToolSourceSchema:     {"/workspaces/{workspace_id}/tools/source-schema", "endpointWorkspaceToolSourceSchema"},
 	endpointWorkspaceToolSourceSQL:        {"/workspaces/{workspace_id}/tools/source-sql", "endpointWorkspaceToolSourceSQL"},
+	endpointSourceQueryCredentialSet:      {"/workspaces/{workspace_id}/source-connections/{connection_id}:set-query-credential", "endpointSourceQueryCredentialSet"},
+	endpointSourceQueryCredentialClear:    {"/workspaces/{workspace_id}/source-connections/{connection_id}:clear-query-credential", "endpointSourceQueryCredentialClear"},
 }
 
 var httpMethodsUnderTest = []string{

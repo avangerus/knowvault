@@ -67,61 +67,12 @@ func (store *Store) SourceQuery(ctx context.Context, access database.AccessConte
 }
 
 func (store *Store) sourceQuery(ctx context.Context, access database.AccessContext, workspaceID, sourceID string) (SourceQuerySource, error) {
-	result := SourceQuerySource{SourceID: sourceID}
-	notFound := false
+	var result SourceQuerySource
+	var notFound bool
 	err := store.database.Read(ctx, access, func(transactionContext context.Context, transaction database.Transaction) error {
-		rows, queryErr := transaction.Query(transactionContext, `
-			SELECT projection.schema_name, projection.relation_name, projection.columns_json,
-			       scope_revision.revision, projection.database_identity,
-			       connection_revision.query_credential_reference
-			FROM app.workspace_source_status_v3($1) AS status
-			JOIN public.source_scope_revision AS scope_revision
-			  ON scope_revision.organization_id = $2
-			 AND scope_revision.source_scope_id = status.source_scope_id
-			 AND scope_revision.revision = status.source_scope_revision
-			 AND scope_revision.connection_id = status.connection_id
-			 AND scope_revision.source_type = 'POSTGRESQL_QUERY'
-			JOIN public.postgresql_query_projection AS projection
-			  ON projection.organization_id = scope_revision.organization_id
-			 AND projection.source_scope_id = scope_revision.source_scope_id
-			 AND projection.source_scope_revision = scope_revision.revision
-			 AND projection.connection_id = scope_revision.connection_id
-			LEFT JOIN public.source_connection_revision AS connection_revision
-			  ON connection_revision.organization_id = scope_revision.organization_id
-			 AND connection_revision.connection_id = scope_revision.connection_id
-			 AND connection_revision.revision = scope_revision.connection_revision
-			WHERE status.enabled AND status.connection_id = $3
-			ORDER BY projection.schema_name, projection.relation_name`,
-			workspaceID, access.OrganizationID, sourceID)
-		if queryErr != nil {
-			return queryErr
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var relation SourceQueryRelation
-			var columnsRaw []byte
-			var credentialReference *string
-			if scanErr := rows.Scan(&relation.Schema, &relation.Table, &columnsRaw,
-				&result.ScopeRevision, &result.DatabaseIdentity, &credentialReference); scanErr != nil {
-				return scanErr
-			}
-			columns, decodeErr := sourceQueryColumns(columnsRaw)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			relation.Columns = columns
-			result.Relations = append(result.Relations, relation)
-			if credentialReference != nil {
-				result.QueryCredentialReference = *credentialReference
-			}
-		}
-		if rowsErr := rows.Err(); rowsErr != nil {
-			return rowsErr
-		}
-		if len(result.Relations) == 0 {
-			notFound = true
-		}
-		return nil
+		var readErr error
+		result, notFound, readErr = readSourceQueryRelations(transactionContext, transaction, access.OrganizationID, workspaceID, sourceID)
+		return readErr
 	})
 	if err != nil {
 		return SourceQuerySource{}, &Error{code: CodePersistence, cause: err}
@@ -130,6 +81,64 @@ func (store *Store) sourceQuery(ctx context.Context, access database.AccessConte
 		return SourceQuerySource{}, &Error{code: CodeNotFound}
 	}
 	return result, nil
+}
+
+// readSourceQueryRelations is the shared relation-scope read behind the tool
+// boundary and the owner-gated credential control. It runs on the caller's
+// already-authorized transaction and never authorizes anything itself.
+func readSourceQueryRelations(ctx context.Context, transaction database.Transaction, organizationID, workspaceID, sourceID string) (SourceQuerySource, bool, error) {
+	result := SourceQuerySource{SourceID: sourceID}
+	rows, queryErr := transaction.Query(ctx, `
+		SELECT projection.schema_name, projection.relation_name, projection.columns_json,
+		       scope_revision.revision, projection.database_identity,
+		       query_credential.credential_reference
+		FROM app.workspace_source_status_v3($1) AS status
+		JOIN public.source_scope_revision AS scope_revision
+		  ON scope_revision.organization_id = $2
+		 AND scope_revision.source_scope_id = status.source_scope_id
+		 AND scope_revision.revision = status.source_scope_revision
+		 AND scope_revision.connection_id = status.connection_id
+		 AND scope_revision.source_type = 'POSTGRESQL_QUERY'
+		JOIN public.postgresql_query_projection AS projection
+		  ON projection.organization_id = scope_revision.organization_id
+		 AND projection.source_scope_id = scope_revision.source_scope_id
+		 AND projection.source_scope_revision = scope_revision.revision
+		 AND projection.connection_id = scope_revision.connection_id
+		LEFT JOIN public.source_query_credential AS query_credential
+		  ON query_credential.organization_id = scope_revision.organization_id
+		 AND query_credential.connection_id = scope_revision.connection_id
+		WHERE status.enabled AND status.connection_id = $3
+		ORDER BY projection.schema_name, projection.relation_name`,
+		workspaceID, organizationID, sourceID)
+	if queryErr != nil {
+		return SourceQuerySource{}, false, queryErr
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var relation SourceQueryRelation
+		var columnsRaw []byte
+		var credentialReference *string
+		if scanErr := rows.Scan(&relation.Schema, &relation.Table, &columnsRaw,
+			&result.ScopeRevision, &result.DatabaseIdentity, &credentialReference); scanErr != nil {
+			return SourceQuerySource{}, false, scanErr
+		}
+		columns, decodeErr := sourceQueryColumns(columnsRaw)
+		if decodeErr != nil {
+			return SourceQuerySource{}, false, decodeErr
+		}
+		relation.Columns = columns
+		result.Relations = append(result.Relations, relation)
+		if credentialReference != nil {
+			result.QueryCredentialReference = *credentialReference
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return SourceQuerySource{}, false, rowsErr
+	}
+	if len(result.Relations) == 0 {
+		return SourceQuerySource{}, true, nil
+	}
+	return result, false, nil
 }
 
 // sourceQueryColumns decodes the projection's own columns_json. The projection

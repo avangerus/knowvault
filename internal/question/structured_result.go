@@ -88,6 +88,10 @@ type AnswerResult struct {
 	// Governed live read receipt fields (additive; absent for legacy answers).
 	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
 	ReceiptDigest     string                   `json:"receipt_digest,omitempty"`
+	// SourceID is the workspace source an agent-authored SQL live read ran
+	// against (ADR-0097). It is absent for an administrator-governed
+	// live-table read, whose receipt is bound by result_digest alone.
+	SourceID string `json:"source_id,omitempty"`
 	// Receipts carries every successful governed live read used by one answer.
 	// The top-level live-table fields remain the first receipt for compatibility.
 	Receipts []LiveTableReceipt `json:"receipts,omitempty"`
@@ -103,6 +107,8 @@ type LiveTableReceipt struct {
 	RowCount          int                      `json:"row_count"`
 	Completeness      string                   `json:"completeness"`
 	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
+	// SourceID binds an agent-authored SQL receipt to its workspace source.
+	SourceID string `json:"source_id,omitempty"`
 }
 
 // AnswerObservationWindow is the server-observed wall-clock window around a

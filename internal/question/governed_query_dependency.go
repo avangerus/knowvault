@@ -75,6 +75,15 @@ func decodeTrustedMetricProjection(questionRunID string, raw json.RawMessage, ev
 	return projection, true
 }
 
+// governedQueryKindSourceSQL marks a dependency produced by ADR-0097's
+// agent-authored knowvault_source_sql tool rather than ADR-0089's administrator
+// mounted governed connection. The kind is additive and omitted on the wire for
+// a live-table dependency, so every existing dependency keeps its exact bytes;
+// it lets the read-time disclosure gate reauthorize a source SQL receipt
+// through the source boundary instead of requiring a mounted governed-ask
+// service the deployment may not have.
+const governedQueryKindSourceSQL = "SOURCE_SQL"
+
 // governedQueryDependency is the private dependency of a validated live-table
 // result. It is serialized only as an opaque member of encrypted
 // AnswerStructured and is never projected onto Run or another public type.
@@ -85,6 +94,7 @@ type governedQueryDependency struct {
 	sqlHash               string
 	exposedSchemaRevision int64
 	resultDigest          string
+	kind                  string
 }
 
 type governedQueryDependencyWire struct {
@@ -94,6 +104,7 @@ type governedQueryDependencyWire struct {
 	SQLHash               string `json:"sql_hash"`
 	ExposedSchemaRevision int64  `json:"exposed_schema_revision"`
 	ResultDigest          string `json:"result_digest"`
+	Kind                  string `json:"kind,omitempty"`
 }
 
 func (dependency governedQueryDependency) validForRun(questionRunID string) bool {
@@ -101,7 +112,8 @@ func (dependency governedQueryDependency) validForRun(questionRunID string) bool
 		validOpaque(dependency.questionRunID) && validGovernedID(dependency.attemptID) &&
 		strings.HasPrefix(dependency.attemptID, "gqat_") && validGovernedID(dependency.connectionID) &&
 		validGovernedSHA256(dependency.sqlHash) && dependency.exposedSchemaRevision > 0 &&
-		validGovernedSHA256(dependency.resultDigest)
+		validGovernedSHA256(dependency.resultDigest) &&
+		(dependency.kind == "" || dependency.kind == governedQueryKindSourceSQL)
 }
 
 func validGovernedID(value string) bool {
@@ -141,6 +153,7 @@ func encodeGovernedQueryDependency(questionRunID string, dependency governedQuer
 		QuestionRunID: dependency.questionRunID, AttemptID: dependency.attemptID,
 		ConnectionID: dependency.connectionID, SQLHash: dependency.sqlHash,
 		ExposedSchemaRevision: dependency.exposedSchemaRevision, ResultDigest: dependency.resultDigest,
+		Kind: dependency.kind,
 	}
 	raw, err := canon.CanonicalJSON(wire)
 	if err != nil || len(raw) == 0 {
@@ -171,6 +184,7 @@ func encodeGovernedQueryDependencies(questionRunID string, dependencies []govern
 			QuestionRunID: dependency.questionRunID, AttemptID: dependency.attemptID,
 			ConnectionID: dependency.connectionID, SQLHash: dependency.sqlHash,
 			ExposedSchemaRevision: dependency.exposedSchemaRevision, ResultDigest: dependency.resultDigest,
+			Kind: dependency.kind,
 		})
 	}
 	raw, err := canon.CanonicalJSON(wire)
@@ -212,6 +226,7 @@ func decodeGovernedQueryDependency(questionRunID string, encoded jsontext.Value)
 		questionRunID: wire.QuestionRunID, attemptID: wire.AttemptID,
 		connectionID: wire.ConnectionID, sqlHash: wire.SQLHash,
 		exposedSchemaRevision: wire.ExposedSchemaRevision, resultDigest: wire.ResultDigest,
+		kind: wire.Kind,
 	}
 	if !dependency.validForRun(questionRunID) {
 		return nil, &Error{code: CodeUnavailable}
@@ -260,6 +275,7 @@ func decodeGovernedQueryDependencies(questionRunID string, encoded jsontext.Valu
 			questionRunID: item.QuestionRunID, attemptID: item.AttemptID,
 			connectionID: item.ConnectionID, sqlHash: item.SQLHash,
 			exposedSchemaRevision: item.ExposedSchemaRevision, resultDigest: item.ResultDigest,
+			kind: item.Kind,
 		}
 		if !dependency.validForRun(questionRunID) {
 			return nil, &Error{code: CodeUnavailable}
@@ -279,7 +295,7 @@ func governedQueryToolExecutions(questionRunID string, dependencies []governedQu
 	projections := make([]liveDataProjection, 0, len(dependencies))
 	if record != nil {
 		for _, call := range record.Calls {
-			if call.Name != liveDataToolName && call.Name != trustedMetricToolName {
+			if call.Name != liveDataToolName && call.Name != trustedMetricToolName && call.Name != sourceSQLToolName {
 				continue
 			}
 			if call.Outcome == "REFUSED" {

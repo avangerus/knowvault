@@ -9,6 +9,11 @@ package question
 // agent may correct a statement and retry.
 
 import (
+	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"time"
+
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -42,6 +47,71 @@ func (state *sourceSQLRunState) record(result workspacetools.Result) {
 
 // refused renders the content-free refusal the fourth successful call receives.
 func (state *sourceSQLRunState) refused() workspacetools.Result {
-	payload := `{"error":"SQL_LIMIT_REACHED","advice":"At most three successful SQL statements per answer. Use the results already returned."}`
-	return workspacetools.Result{Text: payload, Structured: []byte(payload), IsError: true}
+	return sourceSQLRefusal("SQL_LIMIT_REACHED")
+}
+
+func sourceSQLRefusal(code string) workspacetools.Result {
+	payload := `{"error":"` + code + `","advice":"Finish the answer from the SQL results already returned."}`
+	return workspacetools.Result{Text: payload, Structured: json.RawMessage(payload), IsError: true}
+}
+
+// sourceSQLRetainResult turns one successful knowvault_source_sql tool result
+// into the same retained live execution the governed live-data tool produces,
+// so a SQL answer cites it through the identical live_reads binding and the UI
+// renders it as one LIVE_TABLE result. The provider's projection is already the
+// content-free text table; this function adds only the run-scoped receipt
+// digest that binds the exact attempt and source to this question run.
+//
+// It returns the model-facing result, the retained execution, and false when
+// the provider's result cannot be authenticated as a complete text table. A
+// result too large for the live-table projection is refused with the closed
+// SOURCE_SQL_RESULT_TOO_LARGE code rather than silently dropped.
+func sourceSQLRetainResult(questionRunID string, result workspacetools.Result, maxResultBytes int) (workspacetools.Result, *liveDataExecution, bool) {
+	if len(result.Structured) == 0 || !json.Valid(result.Structured) {
+		return sourceSQLRefusal("SOURCE_SQL_UNAVAILABLE"), nil, false
+	}
+	var projection liveDataProjection
+	if err := jsonv2.Unmarshal(result.Structured, &projection,
+		jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
+		return sourceSQLRefusal("SOURCE_SQL_UNAVAILABLE"), nil, false
+	}
+	if projection.SourceID == "" || projection.ExposedSchemaRevision < 1 {
+		return sourceSQLRefusal("SOURCE_SQL_UNAVAILABLE"), nil, false
+	}
+	// The governed SQL provider returns the complete text table; the live
+	// projection's read window is the full result, exactly as the live-data
+	// tool sets it.
+	projection.ReadWindow = liveDataReadWindow{
+		Offset: 0, Limit: projection.RowCount, ReturnedRows: projection.RowCount,
+		TotalRows: projection.RowCount, Complete: true,
+	}
+	projection.Complete = true
+	projection.ReceiptDigest = ""
+	dependency := governedQueryDependency{
+		questionRunID: questionRunID, attemptID: projection.AttemptID, connectionID: projection.SourceID,
+		sqlHash: projection.SQLHash, exposedSchemaRevision: projection.ExposedSchemaRevision,
+		resultDigest: projection.ResultDigest, kind: governedQueryKindSourceSQL,
+	}
+	if !dependency.validForRun(questionRunID) || !validLiveDataProjection(projection, time.Now().UTC()) {
+		return sourceSQLRefusal("SOURCE_SQL_UNAVAILABLE"), nil, false
+	}
+	receiptDigest, err := liveDataReceiptDigest(questionRunID, projection)
+	if err != nil || !validGovernedSHA256(receiptDigest) {
+		return sourceSQLRefusal("SOURCE_SQL_UNAVAILABLE"), nil, false
+	}
+	projection.ReceiptDigest = receiptDigest
+	owned, err := json.Marshal(projection)
+	if err != nil {
+		return sourceSQLRefusal("SOURCE_SQL_UNAVAILABLE"), nil, false
+	}
+	if len(owned) > maxResultBytes {
+		return workspacetools.Result{
+			Text:       `{"error":"SOURCE_SQL_RESULT_TOO_LARGE","advice":"Narrow the statement, add an aggregate, or add a LIMIT of at most 100 rows so the result can be cited."}`,
+			Structured: json.RawMessage(`{"error":"SOURCE_SQL_RESULT_TOO_LARGE","advice":"Narrow the statement, add an aggregate, or add a LIMIT of at most 100 rows so the result can be cited."}`),
+			IsError:    true,
+		}, nil, false
+	}
+	owned = append(json.RawMessage(nil), owned...)
+	return workspacetools.Result{Text: string(owned), Structured: owned},
+		&liveDataExecution{projection: projection, dependency: dependency}, true
 }

@@ -74,6 +74,11 @@ type liveDataProjection struct {
 	ExecutionCompletedAt  string             `json:"execution_completed_at"`
 	ReceiptDigest         string             `json:"receipt_digest,omitempty"`
 	Complete              bool               `json:"complete"`
+	// SourceID is the workspace source an agent-authored SQL read ran against.
+	// It is empty for an administrator-governed live-data read and is part of
+	// the receipt digest only when present, so every existing LIVE_TABLE
+	// receipt keeps its exact bytes.
+	SourceID string `json:"source_id,omitempty"`
 }
 
 func liveDataRefusal(code string) workspacetools.Result {
@@ -197,6 +202,7 @@ func validLiveDataProjection(projection liveDataProjection, now time.Time) bool 
 		projection.RowCount*len(projection.Columns) > liveDataMaxCells || !validLiveDataAttemptID(projection.AttemptID) ||
 		!validGovernedSHA256(projection.SQLHash) || projection.ExposedSchemaRevision < 1 ||
 		!validGovernedSHA256(projection.ResultDigest) || !validGovernedID(projection.DatabaseIdentity) ||
+		(projection.SourceID != "" && !validGovernedID(projection.SourceID)) ||
 		(projection.ReceiptDigest != "" && !validGovernedSHA256(projection.ReceiptDigest)) ||
 		projection.ReadWindow != (liveDataReadWindow{Offset: 0, Limit: projection.RowCount, ReturnedRows: projection.RowCount, TotalRows: projection.RowCount, Complete: true}) {
 		return false
@@ -326,6 +332,10 @@ type liveTableReceiptProjection struct {
 	RowCount              int                     `json:"row_count"`
 	Completeness          string                  `json:"completeness"`
 	ObservationWindow     AnswerObservationWindow `json:"observation_window"`
+	// SourceID binds an agent-authored SQL receipt to the workspace source it
+	// read. It is absent for an administrator-governed live-table receipt, so
+	// those receipts keep their exact digest.
+	SourceID string `json:"source_id,omitempty"`
 }
 
 func liveDataAnswerResult(questionRunID string, execution liveDataExecution) (*AnswerResult, error) {
@@ -334,7 +344,8 @@ func liveDataAnswerResult(questionRunID string, execution liveDataExecution) (*A
 		!execution.dependency.validForRun(questionRunID) ||
 		projection.AttemptID != execution.dependency.attemptID || projection.SQLHash != execution.dependency.sqlHash ||
 		projection.ExposedSchemaRevision != execution.dependency.exposedSchemaRevision ||
-		projection.ResultDigest != execution.dependency.resultDigest {
+		projection.ResultDigest != execution.dependency.resultDigest ||
+		(projection.SourceID != "" && projection.SourceID != execution.dependency.connectionID) {
 		return nil, &Error{code: CodeUnavailable}
 	}
 	window := AnswerObservationWindow{
@@ -352,6 +363,7 @@ func liveDataAnswerResult(questionRunID string, execution liveDataExecution) (*A
 		ExecutionID:       projection.AttemptID,
 		ResultDigest:      projection.ResultDigest,
 		ObservationWindow: &window,
+		SourceID:          projection.SourceID,
 	}
 	receiptDigest, err := liveDataReceiptDigest(questionRunID, projection)
 	if err != nil || receiptDigest == "" || (projection.ReceiptDigest != "" && projection.ReceiptDigest != receiptDigest) {
@@ -376,6 +388,7 @@ func liveDataReceiptDigest(questionRunID string, projection liveDataProjection) 
 			Basis: "SERVER_GOVERNED_QUERY_EXECUTION", StartedAt: projection.ExecutionStartedAt,
 			CompletedAt: projection.ExecutionCompletedAt,
 		},
+		SourceID: projection.SourceID,
 	}
 	canonical, err := canon.CanonicalJSON(receipt)
 	if err != nil || len(canonical) == 0 {
@@ -408,7 +421,7 @@ func liveDataAnswerResults(questionRunID string, executions []liveDataExecution)
 			primary.Receipts = append(primary.Receipts, LiveTableReceipt{
 				ExecutionID: answer.ExecutionID, ResultDigest: answer.ResultDigest,
 				ReceiptDigest: answer.ReceiptDigest, RowCount: answer.Snapshot.RowCount,
-				Completeness: answer.Completeness, ObservationWindow: &window,
+				Completeness: answer.Completeness, ObservationWindow: &window, SourceID: answer.SourceID,
 			})
 		}
 	}
@@ -455,4 +468,20 @@ func (state *liveDataRunState) discardRetainedResult() {
 		state.retained = nil
 		state.executions = nil
 	}
+}
+
+// retain appends an already-authenticated execution from the other governed
+// read surface (ADR-0097's agent-authored SQL tool). Both surfaces share the
+// one retained-execution list, so the answer citation check, the persisted
+// dependency list and the live-table receipt projection treat them
+// identically: a SQL read is a live read.
+func (state *liveDataRunState) retain(execution *liveDataExecution) {
+	if state == nil || execution == nil {
+		return
+	}
+	state.successfulCall = true
+	if state.retained == nil {
+		state.retained = execution
+	}
+	state.executions = append(state.executions, *execution)
 }
