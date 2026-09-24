@@ -65,6 +65,28 @@ func TestQuestionEventStreamActionAndTerminalFrames(t *testing.T) {
 	}
 }
 
+// R1: the started frame carries a short, safe description of the request
+// (e.g. the search query text) and the finished frame carries a short, safe
+// outcome summary (e.g. a hit count), so the browser can show live steps as
+// they happen instead of only after the final answer.
+func TestQuestionEventStreamActionCarriesRequestAndDetail(t *testing.T) {
+	writer := &countingStreamWriter{ResponseRecorder: httptest.NewRecorder()}
+	stream := newQuestionEventStream(writer)
+	if err := stream.action(question.ActionEvent{Sequence: 1, Type: "action_started", Label: "document_search", Request: "termination clause"}); err != nil {
+		t.Fatal(err)
+	}
+	duration := int64(42)
+	if err := stream.action(question.ActionEvent{Sequence: 2, Type: "action_finished", Label: "document_search", Outcome: "succeeded", DurationMS: &duration, Detail: "3 hits: Termination requires 30 days notice."}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(writer.Body.String()), "\n")
+	if len(lines) != 2 ||
+		lines[0] != `{"type":"action","sequence":1,"phase":"action_started","label":"document_search","request":"termination clause"}` ||
+		lines[1] != `{"type":"action","sequence":2,"phase":"action_finished","label":"document_search","outcome":"succeeded","duration_ms":42,"detail":"3 hits: Termination requires 30 days notice."}` {
+		t.Fatalf("unexpected action wire frames: %q", writer.Body.String())
+	}
+}
+
 func TestQuestionEventStreamRejectsUntrustedEventFields(t *testing.T) {
 	writer := &countingStreamWriter{ResponseRecorder: httptest.NewRecorder()}
 	stream := newQuestionEventStream(writer)
