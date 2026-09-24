@@ -3625,9 +3625,28 @@ func (service *Service) reportFailureCleanup(ctx context.Context, access databas
 	}
 }
 
+// questionFailureTerminal classifies a question run's terminal failure. It
+// requires the caller's OWN context to agree before ever trusting a wrapped
+// context.Canceled in cause: an unrelated failure that merely raced a
+// concurrent cancellation (cause carries no context.Canceled of its own) or an
+// unrelated component's own internal cancellation (ctx itself was never
+// cancelled) must both still report QUESTION_EXECUTION_FAILED, never a false
+// CANCELLED.
+//
+// R2: a DeadlineExceeded cause is trusted on its own, without requiring ctx to
+// also already be expired. The tool loop's own bare-return-err sites (see
+// executeToolLoop) surface ctx.Err() from their tighter, request-scoped budget
+// (profile.TimeoutSeconds / generativeQuestionRunBudget) while the wider
+// caller ctx passed in here may still have time left; that inner deadline IS
+// the question's time budget expiring, and every such expiry -- wherever in
+// the loop it is observed -- must land on the same TIME_LIMIT terminal
+// outcome rather than the generic QUESTION_EXECUTION_FAILED code.
 func questionFailureTerminal(ctx context.Context, cause error) (status, code string) {
 	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
 		return "CANCELLED", "QUESTION_CANCELLED"
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return "FAILED", "TIME_LIMIT"
 	}
 	return "FAILED", "QUESTION_EXECUTION_FAILED"
 }
