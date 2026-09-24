@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 func TestModelActionLifecyclePrecedesBlockedModelAndStaysContentFree(t *testing.T) {
@@ -98,11 +99,11 @@ func TestToolActionLifecycleIsOrderedAndAllowlisted(t *testing.T) {
 	ctx := WithActionObserver(context.Background(), func(event ActionEvent) { events <- event })
 	release := make(chan struct{})
 	done := make(chan struct{})
+	sensitiveArgs := json.RawMessage(`{"sql":"` + sensitive + `","query":"` + sensitive + `"}`)
 	go func() {
-		finish := beginToolAction(ctx, sensitive)
+		finish := beginToolAction(ctx, sensitive, sensitiveArgs)
 		<-release // Fake tool blocks with sensitive arguments and result.
-		_ = map[string]string{"sql": sensitive, "result": sensitive}
-		finish(false)
+		finish(false, workspacetools.Result{IsError: true, Text: sensitive, Structured: json.RawMessage(`{"error":"` + sensitive + `"}`)})
 		close(done)
 	}()
 	var started ActionEvent
@@ -113,6 +114,12 @@ func TestToolActionLifecycleIsOrderedAndAllowlisted(t *testing.T) {
 	}
 	if started.Sequence != 1 || started.Type != actionStarted || started.Label != actionOther || started.Outcome != "" || started.DurationMS != nil {
 		t.Fatalf("start event = %#v", started)
+	}
+	// An unrecognized tool name (never reviewed for its argument shape) must
+	// never surface a request summary, even when its arguments look like a
+	// recognized field (query) alongside something sensitive (sql).
+	if started.Request != "" {
+		t.Fatalf("unrecognized tool leaked a request summary: %#v", started)
 	}
 	select {
 	case event := <-events:
@@ -128,6 +135,11 @@ func TestToolActionLifecycleIsOrderedAndAllowlisted(t *testing.T) {
 	finished := <-events
 	if finished.Sequence != 2 || finished.Type != actionFinished || finished.Label != actionOther || finished.Outcome != actionFailed || finished.DurationMS == nil || *finished.DurationMS < 0 {
 		t.Fatalf("finish event = %#v", finished)
+	}
+	// The failure detail is the fixed, generic "Failed" phrase, never the
+	// tool's own error text (which could itself echo back sensitive content).
+	if finished.Detail != "Failed" {
+		t.Fatalf("finish event detail = %q, want the generic failure phrase", finished.Detail)
 	}
 	encoded, err := json.Marshal([]ActionEvent{started, finished})
 	if err != nil || strings.Contains(string(encoded), sensitive) {

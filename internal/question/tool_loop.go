@@ -1090,7 +1090,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			return toolFinalizationRefusal(), nil
 		}
 		callCtx := toolLoopOperationContext(ctx, researchCtx, system)
-		finishAction := beginToolAction(callCtx, name)
+		finishAction := beginToolAction(callCtx, name, args)
 		started := time.Now()
 		var result workspacetools.Result
 		var callErr error
@@ -1114,7 +1114,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			result, callErr = service.tools.Invoke(callCtx, scope, name, args)
 		}
 		if err := ctx.Err(); err != nil {
-			finishAction(false)
+			finishAction(false, workspacetools.Result{})
 			return workspacetools.Result{}, err
 		}
 		if callErr != nil {
@@ -1146,7 +1146,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if outcome != "SUCCEEDED" {
 			metricEvidence = nil
 		}
-		finishAction(outcome == "SUCCEEDED")
+		finishAction(outcome == "SUCCEEDED", result)
 		record.Calls = append(record.Calls, ToolCallRecord{ID: id, Name: name, Arguments: append(json.RawMessage(nil), args...), ArgumentsHash: canon.Hash(args), System: system, Outcome: outcome, DurationMS: time.Since(started).Milliseconds(), Result: result, Evidence: metricEvidence})
 		if callErr == nil && !result.IsError {
 			collectToolAddresses(result.Structured, observed)
