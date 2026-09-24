@@ -52,6 +52,33 @@ refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
 refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
   type: "action", sequence: 1, phase: "action_started", label: "model", secret: "leak",
 }) + "\n")), "extra action fields are refused");
+
+// R1/R2: the started frame's request and the finished frame's detail carry
+// the live step content (the search query text, a hit count, and so on).
+// They decode as ordinary bounded strings and never on the wrong phase.
+const withContent = new QuestionStreamDecoder<unknown>();
+const started = withContent.push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_started", label: "document_search", request: "termination clause",
+}) + "\n"))[0];
+check(started.type === "action" && started.phase === "action_started" && started.request === "termination clause",
+  "a started frame's request decodes as visible step content");
+const finished = withContent.push(encode(JSON.stringify({
+  type: "action", sequence: 2, phase: "action_finished", label: "document_search", outcome: "succeeded", detail: "3 hits",
+}) + "\n"))[0];
+check(finished.type === "action" && finished.phase === "action_finished" && finished.detail === "3 hits",
+  "a finished frame's detail decodes as visible step content");
+refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_finished", label: "document_search", outcome: "succeeded", request: "leaked after the fact",
+}) + "\n")), "a request on a finished frame is refused");
+refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_started", label: "document_search", detail: "leaked before the call ran",
+}) + "\n")), "a detail on a started frame is refused");
+refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_started", label: "document_search", request: "a".repeat(181),
+}) + "\n")), "a request past the bound is refused");
+refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_finished", label: "document_search", outcome: "succeeded", detail: "a".repeat(181),
+}) + "\n")), "a detail past the bound is refused");
 const tooManyActions = new QuestionStreamDecoder<unknown>();
 tooManyActions.push(encode(Array.from({ length: 4096 }, (_, index) => action(index + 1)).join("")));
 refuses(() => tooManyActions.push(encode(action(4097))), "unbounded action history is refused");
@@ -91,4 +118,29 @@ async function verifyReader() {
   check(truncated, "truncated network stream never becomes a successful answer");
 }
 
-verifyReader().then(() => console.log("question stream decoder: ok"));
+// R3: aborting the underlying HTTP request (Stop, switching conversations,
+// leaving the conversation — see apiPostQuestionStream/abortActiveQuestion in
+// main.tsx) makes fetch's response body stream error. The reader must
+// propagate that as a rejection rather than hang or resolve as if an answer
+// had arrived, so the composer can never look like it is still waiting on
+// (or worse, silently keep) a request the browser already gave up on.
+async function verifyAbortedStreamNeverBecomesAnAnswer() {
+  const controller = new AbortController();
+  let cancelled = false;
+  const aborted = new ReadableStream<Uint8Array>({
+    start(streamController) {
+      controller.signal.addEventListener("abort", () => {
+        streamController.error(new DOMException("The user aborted a request.", "AbortError"));
+      });
+    },
+    cancel() { cancelled = true; },
+  });
+  const pending = readQuestionStream<{ answer: string }>(aborted, () => {});
+  controller.abort();
+  let rejected: unknown;
+  try { await pending; } catch (error) { rejected = error; }
+  check(rejected instanceof Error && rejected.name === "AbortError", "an aborted stream rejects the pending answer instead of hanging");
+  check(!cancelled, "readQuestionStream reads through reader.read(), not stream.cancel(), so it observes the abort error directly");
+}
+
+Promise.all([verifyReader(), verifyAbortedStreamNeverBecomesAnAnswer()]).then(() => console.log("question stream decoder: ok"));

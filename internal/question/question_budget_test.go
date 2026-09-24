@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,75 @@ func TestQuestionContextErrorPrefersCancellationOverFallback(t *testing.T) {
 	}
 	if questionContextError(context.Background(), errors.New("model response")) != nil {
 		t.Fatal("ordinary model failure was mistaken for context cancellation")
+	}
+}
+
+// TestQuestionContextErrorDoesNotTrustAnUnrelatedDeadlineExceededCause is F2's
+// regression test at questionContextError itself: this is where
+// completeGenerative/completeGenerativeInsufficient feed genErr/verifyErr
+// (from service.generation.Generate, i.e. modelgateway's Client) in as cause.
+// A model gateway call that fails with its OWN bounded HTTP client timeout
+// (gateway.go's Client.http.Timeout, wrapped into cause via
+// modelgateway.Error's Unwrap) must not be mistaken for THIS ctx's own
+// question-budget deadline when ctx itself has not expired: it must fall
+// through to nil, so each call site's normal modelgateway.CodeOf-based
+// retry/degrade handling -- its real classification -- runs instead of a
+// short-circuited context-shaped failure.
+func TestQuestionContextErrorDoesNotTrustAnUnrelatedDeadlineExceededCause(t *testing.T) {
+	unrelatedGatewayTimeout := fmt.Errorf("model gateway unavailable: %w", context.DeadlineExceeded)
+	if err := questionContextError(context.Background(), unrelatedGatewayTimeout); err != nil {
+		t.Fatalf("unrelated DeadlineExceeded cause with a healthy ctx = %v, want nil", err)
+	}
+
+	// An expired ctx is still reported, but unmarked: only executeToolLoop,
+	// which owns the question budget, marks TIME_LIMIT.
+	expired, stop := context.WithDeadline(context.Background(), time.Time{})
+	defer stop()
+	err := questionContextError(expired, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired question-budget ctx = %v, want a DeadlineExceeded", err)
+	}
+	if errors.Is(err, errQuestionTimeBudgetExpired) {
+		t.Fatalf("expired caller ctx = %v, want it unmarked", err)
+	}
+}
+
+func TestMarkQuestionTimeBudgetExpiredRequiresCtxsOwnDeadline(t *testing.T) {
+	expired, stop := context.WithDeadline(context.Background(), time.Time{})
+	defer stop()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// ctx's own deadline expired AND err is DeadlineExceeded-shaped: mark it.
+	marked := markQuestionTimeBudgetExpired(expired, context.DeadlineExceeded)
+	if !errors.Is(marked, errQuestionTimeBudgetExpired) || !errors.Is(marked, context.DeadlineExceeded) {
+		t.Fatalf("expired ctx + DeadlineExceeded err = %v, want it marked and still a DeadlineExceeded", marked)
+	}
+
+	// ctx has NOT expired: an unrelated DeadlineExceeded-shaped err (e.g. the
+	// model gateway's own HTTP client timeout) is never marked (F2).
+	if got := markQuestionTimeBudgetExpired(context.Background(), context.DeadlineExceeded); errors.Is(got, errQuestionTimeBudgetExpired) {
+		t.Fatalf("healthy ctx marked an unrelated DeadlineExceeded err: %v", got)
+	}
+
+	// ctx was cancelled, not deadline-exceeded: never marked, even if err
+	// itself happens to be DeadlineExceeded-shaped.
+	if got := markQuestionTimeBudgetExpired(cancelled, context.DeadlineExceeded); errors.Is(got, errQuestionTimeBudgetExpired) {
+		t.Fatalf("cancelled (not expired) ctx marked a DeadlineExceeded err: %v", got)
+	}
+
+	// err itself is not DeadlineExceeded-shaped: never marked, even though
+	// ctx's own deadline did expire.
+	unrelated := errors.New("storage failure")
+	if got := markQuestionTimeBudgetExpired(expired, unrelated); errors.Is(got, errQuestionTimeBudgetExpired) || got != unrelated {
+		t.Fatalf("non-deadline err = %v, want it returned unchanged and unmarked", got)
+	}
+
+	if markQuestionTimeBudgetExpired(expired, nil) != nil {
+		t.Fatal("nil err must stay nil")
+	}
+	if got := markQuestionTimeBudgetExpired(nil, context.DeadlineExceeded); !errors.Is(got, context.DeadlineExceeded) || errors.Is(got, errQuestionTimeBudgetExpired) {
+		t.Fatalf("nil ctx = %v, want the err returned unchanged and unmarked", got)
 	}
 }
 

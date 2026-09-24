@@ -205,6 +205,66 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	}
 }
 
+// TestToolLoopHistoryMessagesTruncateNewestAnswerInsteadOfDroppingWholeHistory
+// is the regression test for the bug a review found in R1's first cut: a
+// single long previous answer (a realistic ~8KB for a detailed Russian
+// answer -- 5,000 two-byte Cyrillic runes here) made the MOST RECENT turn's
+// whole message exceed the history budget by itself, so the old
+// whole-turn-or-nothing rule dropped it entirely and the follow-up lost ALL
+// context -- failing exactly on the substantive answers a follow-up most
+// needs, not on trivial ones. It fails against the code before this fix
+// (history comes back empty) and must pass after it (the newest turn still
+// contributes its question and sources, plus a truncated prefix of the
+// answer marked as cut).
+func TestToolLoopHistoryMessagesTruncateNewestAnswerInsteadOfDroppingWholeHistory(t *testing.T) {
+	longAnswer := strings.Repeat("я", 5000) // 10,000 bytes: alone exceeds toolLoopHistoryHardByteLimit (8KiB).
+	turn := toolLoopConversationTurn{
+		Question: "Как быстро поддержка должна реагировать на P1?",
+		Answer:   longAnswer,
+		Sources:  []string{"kv1:src_policy/v3#f_sla"},
+	}
+	got := toolLoopHistoryMessages([]toolLoopConversationTurn{turn}, 32*1024)
+	if len(got) != 1 {
+		t.Fatalf("history = %#v; want the newest turn still contributed despite its oversized answer", got)
+	}
+	content := got[0].Content
+	if !strings.Contains(content, turn.Question) {
+		t.Fatalf("truncated newest turn dropped its question: %q", content)
+	}
+	if !strings.Contains(content, turn.Sources[0]) {
+		t.Fatalf("truncated newest turn dropped its cited sources: %q", content)
+	}
+	if !strings.Contains(content, toolLoopHistoryTruncationMarker) {
+		t.Fatalf("truncated newest turn is missing its explicit truncation marker: %q", content)
+	}
+	if strings.Contains(content, longAnswer) {
+		t.Fatalf("full oversized answer was kept instead of being truncated: %q", content)
+	}
+	if !utf8.ValidString(content) {
+		t.Fatalf("truncated newest turn split a UTF-8 rune: %q", content)
+	}
+	if len(content) > toolLoopHistoryHardByteLimit {
+		t.Fatalf("truncated newest turn content = %d bytes, exceeds the %d-byte history budget", len(content), toolLoopHistoryHardByteLimit)
+	}
+}
+
+// TestToolLoopHistoryMessagesOlderTurnsStillDroppedWholeAfterTruncatedNewest
+// checks that the newest-turn truncation guarantee does not quietly relax the
+// existing rule for OLDER turns: once the newest turn has consumed the
+// budget (truncated or not), an older turn that does not fit is still
+// dropped whole, never truncated.
+func TestToolLoopHistoryMessagesOlderTurnsStillDroppedWholeAfterTruncatedNewest(t *testing.T) {
+	older := toolLoopConversationTurn{Question: "older question that will not fit", Answer: strings.Repeat("x", 4000)}
+	newest := toolLoopConversationTurn{Question: "newest question", Answer: strings.Repeat("я", 5000)}
+	got := toolLoopHistoryMessages([]toolLoopConversationTurn{older, newest}, 32*1024)
+	if len(got) != 1 || !strings.Contains(got[0].Content, newest.Question) {
+		t.Fatalf("history = %#v; want only the truncated newest turn, no partial older turn", got)
+	}
+	if strings.Contains(got[0].Content, older.Question) {
+		t.Fatalf("older turn leaked into history once the budget was exhausted: %#v", got)
+	}
+}
+
 func TestSuccessfulLiveReadPlusRefusedDocumentRequestRejectsUncitedClaim(t *testing.T) {
 	projection, dependency, liveRecord := livePersistenceFixture(t)
 	liveRecord.Calls = append(liveRecord.Calls, ToolCallRecord{ID: "doc-call-1", Name: "knowvault_read", Outcome: "REFUSED"})
@@ -289,27 +349,49 @@ func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
 	}
 }
 
+// TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace protects two
+// distinct properties that R1 (multi-turn memory) must not blur together:
+//  1. The outbound model context now legitimately carries the previous turn's
+//     answer and the addresses it cited (R1), so a follow-up question can rely
+//     on them without the user restating them.
+//  2. The PERSISTED trace of the current run must still never contain another
+//     run's content. That is an audit/data-lifecycle property -- a citation's
+//     own retention or access revocation must be able to purge it from every
+//     record that shows it, which is impossible if a later run's stored trace
+//     quietly copied it in as "history". This half of the test must keep
+//     failing if that boundary is ever removed.
+//
+// A prior turn's own calculation/scalar result is never part of
+// toolLoopConversationTurn at all (only Question/Answer/Sources are), so it
+// can appear in neither outbound nor persisted; both halves below assert that.
 func TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace(t *testing.T) {
 	const priorQuestion = "prior private question body"
 	const priorAnswer = "prior private answer body"
 	const priorScalar = "prior scalar result 742"
+	const priorSource = "kv1:src_prior/v1#f_prior"
 	outbound, persisted := initialToolLoopMessages("current question", []toolLoopConversationTurn{{
 		Question: priorQuestion,
+		Answer:   priorAnswer,
+		Sources:  []string{priorSource},
 	}}, 32*1024)
 	if len(outbound) != 3 || !strings.Contains(outbound[1].Content, priorQuestion) {
 		t.Fatalf("outbound messages do not contain prior question context: %#v", outbound)
+	}
+	if !strings.Contains(outbound[1].Content, priorAnswer) || !strings.Contains(outbound[1].Content, priorSource) {
+		t.Fatalf("outbound messages do not carry the previous answer and its sources: %#v", outbound)
 	}
 	if len(persisted) != 2 || persisted[1].Content != "current question" {
 		t.Fatalf("persisted initial messages = %#v; want only system and current question", persisted)
 	}
 	for _, message := range persisted {
-		if strings.Contains(message.Content, priorQuestion) || strings.Contains(message.Content, priorAnswer) || strings.Contains(message.Content, priorScalar) {
+		if strings.Contains(message.Content, priorQuestion) || strings.Contains(message.Content, priorAnswer) ||
+			strings.Contains(message.Content, priorScalar) || strings.Contains(message.Content, priorSource) {
 			t.Fatalf("persisted initial trace contains previous-turn body: %#v", persisted)
 		}
 	}
 	for _, message := range outbound {
-		if strings.Contains(message.Content, priorAnswer) || strings.Contains(message.Content, priorScalar) {
-			t.Fatalf("outbound context contains a prior answer/calculation: %#v", outbound)
+		if strings.Contains(message.Content, priorScalar) {
+			t.Fatalf("outbound context contains a prior calculation never carried by toolLoopConversationTurn: %#v", outbound)
 		}
 	}
 }
@@ -360,7 +442,14 @@ func TestRecentToolLoopConversationTurnsRequireEarlierTerminalDisplayableRuns(t 
 		t.Fatal("cannot find the end of toolLoopConversationTurnsFromBatch")
 	}
 	helper := text[helperStart : helperStart+helperEnd]
-	for _, required := range []string{"run, ok := runs[runIDs[i]]", "if !ok {\n\t\t\tcontinue", "toolLoopConversationTurn{Question: run.Question}"} {
+	for _, required := range []string{
+		"run, ok := runs[runIDs[i]]", "if !ok {\n\t\t\tcontinue",
+		// R1: the projection also carries the prior answer (or its
+		// clarification) and the reauthorized citation addresses it used,
+		// never anything the GetBatch map did not already survive on.
+		"answer = run.Clarification",
+		"toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)}",
+	} {
 		if !strings.Contains(helper, required) {
 			t.Fatalf("surviving-run projection is missing %q", required)
 		}
@@ -388,6 +477,51 @@ func TestRevokedGovernedPriorQuestionIsOmittedFromNextModelPrompt(t *testing.T) 
 	}
 	if !foundReadable || foundRevoked {
 		t.Fatalf("next prompt readable=%v revoked=%v messages=%#v", foundReadable, foundRevoked, outbound)
+	}
+}
+
+// TestToolLoopConversationTurnsFromBatchCarryAnswerAndSources is R1's unit
+// coverage for the GetBatch -> history projection: the previous answer (or,
+// absent one, its clarification) and its already-reauthorized citation
+// addresses must reach the next turn's context, deduplicated and never
+// inventing an address GetBatch did not itself return.
+func TestToolLoopConversationTurnsFromBatchCarryAnswerAndSources(t *testing.T) {
+	runIDs := []string{"run_answered", "run_clarified"}
+	runs := map[string]Run{
+		"run_answered": {
+			Question: "How fast must support respond to a P1?",
+			Answer:   "Support must acknowledge a P1 within 15 minutes.",
+			Citations: []Citation{
+				{Number: 1, Address: "kv1:src_policy/v3#f_sla"},
+				{Number: 2, Address: "kv1:src_policy/v3#f_sla"}, // duplicate address, one source
+				{Number: 3, Address: ""},                        // ungrounded citation carries no address
+			},
+		},
+		"run_clarified": {
+			Question:      "Escalate it?",
+			Clarification: "Escalate which incident: the P1 above or a different one?",
+		},
+	}
+	history := toolLoopConversationTurnsFromBatch(runIDs, runs)
+	if len(history) != 2 {
+		t.Fatalf("history length = %d, want 2 surviving turns", len(history))
+	}
+	// toolLoopConversationTurnsFromBatch reverses runIDs (which arrive newest
+	// first, per recentToolLoopConversationTurns' DESC query) into chronological
+	// order, so history[1] is "run_answered", the newest/last of the two.
+	clarified := history[0]
+	if clarified.Answer != runs["run_clarified"].Clarification {
+		t.Fatalf("clarified turn = %#v, want the run's clarification as its answer text", clarified)
+	}
+	if len(clarified.Sources) != 0 {
+		t.Fatalf("clarified turn sources = %#v, want none", clarified.Sources)
+	}
+	answered := history[1]
+	if answered.Answer != runs["run_answered"].Answer {
+		t.Fatalf("answered turn = %#v, want the run's own answer carried through", answered)
+	}
+	if want := []string{"kv1:src_policy/v3#f_sla"}; !reflect.DeepEqual(answered.Sources, want) {
+		t.Fatalf("answered turn sources = %#v, want deduplicated %#v", answered.Sources, want)
 	}
 }
 

@@ -13,6 +13,25 @@ import (
 	"strings"
 )
 
+// MaxToolLoopTimeoutSeconds is the largest per-question tool-loop/model
+// budget Validate accepts (ToolLoopProfile.TimeoutSeconds). It is a
+// question's whole tool-loop wall-clock ceiling (see
+// internal/question/tool_loop.go, where executeToolLoop binds its context to
+// exactly this many seconds), not a single model call's timeout.
+//
+// R3: it must fit with margin inside internal/platform/composition/runtime.go's
+// http.Server.WriteTimeout, or a question that spends its whole budget can
+// have its connection closed by the Go server before executeToolLoop's own
+// detached persistence writes the terminal frame -- the client sees a bare
+// connection drop instead of a deterministic TIME_LIMIT/INSUFFICIENT_EVIDENCE
+// answer. The margin below WriteTimeout covers that trailing detached
+// persistence (internal/question's modelAttemptPersistenceTimeout /
+// questionFailureCleanupTimeout, currently 5s) plus slack; it must also stay
+// under the deploy/compose/proxy/nginx.conf front proxy_read_timeout, which
+// is comfortably above WriteTimeout already. Changing this number requires
+// re-checking both.
+const MaxToolLoopTimeoutSeconds = 270
+
 type ToolLoopProfile struct {
 	ID                  string              `json:"id"`
 	ThinkingMode        ThinkingMode        `json:"thinking_mode,omitempty"`
@@ -70,7 +89,7 @@ func (profile ToolLoopProfile) Validate() error {
 		profile.MaxInputBytes < 8192 || profile.MaxInputBytes > 512*1024 ||
 		profile.MaxToolResultBytes < 1024 || profile.MaxToolResultBytes > profile.MaxInputBytes/2 ||
 		profile.MaxOutputTokens < 256 || profile.MaxOutputTokens > 16384 ||
-		profile.TimeoutSeconds < 10 || profile.TimeoutSeconds > 300 {
+		profile.TimeoutSeconds < 10 || profile.TimeoutSeconds > MaxToolLoopTimeoutSeconds {
 		return &Error{code: CodeProfile}
 	}
 	if profile.ModelArtifactSHA256 != "" {

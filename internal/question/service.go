@@ -1003,13 +1003,52 @@ func questionRunContext(parent context.Context, mode string) (context.Context, c
 	return context.WithTimeout(parent, generativeQuestionRunBudget)
 }
 
+// errQuestionTimeBudgetExpired marks a DeadlineExceeded that has been
+// verified, at the point it was produced, to come from the question's OWN
+// configured time budget context -- never merely an error that happens to be
+// DeadlineExceeded-shaped for an unrelated reason, such as the model
+// gateway's own bounded HTTP client timeout (modelgateway/gateway.go's
+// Client.http.Timeout, independent of and typically shorter than the
+// question's own budget). Only questionFailureTerminal's TIME_LIMIT
+// classification trusts this marker (or its own direct ctx.Err() check); a
+// bare context.DeadlineExceeded elsewhere is not enough. See
+// markQuestionTimeBudgetExpired.
+var errQuestionTimeBudgetExpired = errors.New("question: time budget expired")
+
+// markQuestionTimeBudgetExpired tags err with errQuestionTimeBudgetExpired
+// only when ctx's OWN deadline is what just expired (ctx.Err() is itself
+// DeadlineExceeded): that is independent corroboration that THIS ctx -- the
+// caller's own question-budget context -- ran out, regardless of which
+// nested call actually produced err's DeadlineExceeded. When ctx has not
+// expired, err is returned unchanged: a DeadlineExceeded-shaped err on its
+// own is never enough (F2).
+func markQuestionTimeBudgetExpired(ctx context.Context, err error) error {
+	if err == nil || ctx == nil {
+		return err
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", errQuestionTimeBudgetExpired, err)
+	}
+	return err
+}
+
 func questionContextError(ctx context.Context, cause error) error {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 	}
-	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+	// F2: cause alone is trusted only for Canceled (client disconnect
+	// propagation, already double-checked again downstream by
+	// questionFailureTerminal's own ctx.Err()-corroborated CANCELLED branch).
+	// A bare DeadlineExceeded in cause is deliberately NOT trusted here: it
+	// previously let an unrelated inner timeout (e.g. the model gateway's own
+	// HTTP client timeout expiring well inside a still-healthy question
+	// budget) masquerade as this ctx's own deadline. Letting it fall through
+	// instead routes it through the normal modelgateway.CodeOf-based
+	// retry/degrade handling at each call site, which is its real
+	// classification.
+	if errors.Is(cause, context.Canceled) {
 		return cause
 	}
 	return nil
@@ -3625,9 +3664,26 @@ func (service *Service) reportFailureCleanup(ctx context.Context, access databas
 	}
 }
 
+// questionFailureTerminal classifies a question run's terminal failure. It
+// requires the caller's OWN context to agree before ever trusting a wrapped
+// context.Canceled in cause: an unrelated failure that merely raced a
+// concurrent cancellation (cause carries no context.Canceled of its own) or an
+// unrelated component's own internal cancellation (ctx itself was never
+// cancelled) must both still report QUESTION_EXECUTION_FAILED, never a false
+// CANCELLED.
+//
+// R2/F2: TIME_LIMIT is reported only when cause carries
+// errQuestionTimeBudgetExpired, which executeToolLoop sets when its own
+// profile.TimeoutSeconds budget context expired (markQuestionTimeBudgetExpired).
+// Any other deadline -- the caller's own deadline on the legacy generative
+// path, or the model gateway's HTTP client timeout -- keeps the existing
+// QUESTION_EXECUTION_FAILED classification and audit code.
 func questionFailureTerminal(ctx context.Context, cause error) (status, code string) {
 	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
 		return "CANCELLED", "QUESTION_CANCELLED"
+	}
+	if errors.Is(cause, errQuestionTimeBudgetExpired) {
+		return "FAILED", "TIME_LIMIT"
 	}
 	return "FAILED", "QUESTION_EXECUTION_FAILED"
 }
@@ -3748,9 +3804,25 @@ func (service *Service) previousTurnQuestionText(ctx context.Context, access dat
 
 // toolLoopConversationTurn is the bounded conversation context made available
 // to the tool loop. Its contents are included only after current-access checks
-// through GetBatch.
+// through GetBatch: Answer and Sources are populated only from a run GetBatch
+// has already fully reauthorized, including every citation's own artifact
+// decrypt (readStoredRunBatch drops the whole run, not just the one source,
+// the instant any of its citations no longer decrypts for this caller). A
+// prior turn that lost that reauthorization is simply absent here, never
+// projected with partial content.
 type toolLoopConversationTurn struct {
 	Question string
+	// Answer is the prior run's markdown answer, or its clarification text
+	// when the prior turn asked one instead of answering. It is model context
+	// only, never evidence: see toolLoopInstructions and the citation binding
+	// in executeToolLoop, which accepts only addresses observed by a tool call
+	// made in the current turn.
+	Answer string
+	// Sources are the prior answer's own cited addresses (deduplicated), so
+	// the model can choose to re-read one this turn rather than re-searching
+	// from scratch. An address alone cannot become a citation: it must still
+	// be read again in this run before it can support a new claim.
+	Sources []string
 }
 
 // recentToolLoopConversationTurns loads the most recent readable turns before
@@ -3835,9 +3907,36 @@ func toolLoopConversationTurnsFromBatch(runIDs []string, runs map[string]Run) []
 		if !ok {
 			continue
 		}
-		turns = append(turns, toolLoopConversationTurn{Question: run.Question})
+		answer := run.Answer
+		if answer == "" {
+			answer = run.Clarification
+		}
+		turns = append(turns, toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)})
 	}
 	return turns
+}
+
+// toolLoopConversationSources returns the deduplicated citation addresses
+// GetBatch already reauthorized for this run, in citation-number order. It is
+// a pointer to where the prior answer's evidence was found, never the
+// excerpt text itself.
+func toolLoopConversationSources(citations []Citation) []string {
+	if len(citations) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(citations))
+	sources := make([]string, 0, len(citations))
+	for _, citation := range citations {
+		if citation.Address == "" {
+			continue
+		}
+		if _, exists := seen[citation.Address]; exists {
+			continue
+		}
+		seen[citation.Address] = struct{}{}
+		sources = append(sources, citation.Address)
+	}
+	return sources
 }
 
 var errPreviousTurnUnreadable = errors.New("question: previous turn not currently readable")
