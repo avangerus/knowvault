@@ -205,6 +205,66 @@ func TestToolLoopHistoryMessagesHaveNoHistory(t *testing.T) {
 	}
 }
 
+// TestToolLoopHistoryMessagesTruncateNewestAnswerInsteadOfDroppingWholeHistory
+// is the regression test for the bug a review found in R1's first cut: a
+// single long previous answer (a realistic ~8KB for a detailed Russian
+// answer -- 5,000 two-byte Cyrillic runes here) made the MOST RECENT turn's
+// whole message exceed the history budget by itself, so the old
+// whole-turn-or-nothing rule dropped it entirely and the follow-up lost ALL
+// context -- failing exactly on the substantive answers a follow-up most
+// needs, not on trivial ones. It fails against the code before this fix
+// (history comes back empty) and must pass after it (the newest turn still
+// contributes its question and sources, plus a truncated prefix of the
+// answer marked as cut).
+func TestToolLoopHistoryMessagesTruncateNewestAnswerInsteadOfDroppingWholeHistory(t *testing.T) {
+	longAnswer := strings.Repeat("я", 5000) // 10,000 bytes: alone exceeds toolLoopHistoryHardByteLimit (8KiB).
+	turn := toolLoopConversationTurn{
+		Question: "Как быстро поддержка должна реагировать на P1?",
+		Answer:   longAnswer,
+		Sources:  []string{"kv1:src_policy/v3#f_sla"},
+	}
+	got := toolLoopHistoryMessages([]toolLoopConversationTurn{turn}, 32*1024)
+	if len(got) != 1 {
+		t.Fatalf("history = %#v; want the newest turn still contributed despite its oversized answer", got)
+	}
+	content := got[0].Content
+	if !strings.Contains(content, turn.Question) {
+		t.Fatalf("truncated newest turn dropped its question: %q", content)
+	}
+	if !strings.Contains(content, turn.Sources[0]) {
+		t.Fatalf("truncated newest turn dropped its cited sources: %q", content)
+	}
+	if !strings.Contains(content, toolLoopHistoryTruncationMarker) {
+		t.Fatalf("truncated newest turn is missing its explicit truncation marker: %q", content)
+	}
+	if strings.Contains(content, longAnswer) {
+		t.Fatalf("full oversized answer was kept instead of being truncated: %q", content)
+	}
+	if !utf8.ValidString(content) {
+		t.Fatalf("truncated newest turn split a UTF-8 rune: %q", content)
+	}
+	if len(content) > toolLoopHistoryHardByteLimit {
+		t.Fatalf("truncated newest turn content = %d bytes, exceeds the %d-byte history budget", len(content), toolLoopHistoryHardByteLimit)
+	}
+}
+
+// TestToolLoopHistoryMessagesOlderTurnsStillDroppedWholeAfterTruncatedNewest
+// checks that the newest-turn truncation guarantee does not quietly relax the
+// existing rule for OLDER turns: once the newest turn has consumed the
+// budget (truncated or not), an older turn that does not fit is still
+// dropped whole, never truncated.
+func TestToolLoopHistoryMessagesOlderTurnsStillDroppedWholeAfterTruncatedNewest(t *testing.T) {
+	older := toolLoopConversationTurn{Question: "older question that will not fit", Answer: strings.Repeat("x", 4000)}
+	newest := toolLoopConversationTurn{Question: "newest question", Answer: strings.Repeat("я", 5000)}
+	got := toolLoopHistoryMessages([]toolLoopConversationTurn{older, newest}, 32*1024)
+	if len(got) != 1 || !strings.Contains(got[0].Content, newest.Question) {
+		t.Fatalf("history = %#v; want only the truncated newest turn, no partial older turn", got)
+	}
+	if strings.Contains(got[0].Content, older.Question) {
+		t.Fatalf("older turn leaked into history once the budget was exhausted: %#v", got)
+	}
+}
+
 func TestSuccessfulLiveReadPlusRefusedDocumentRequestRejectsUncitedClaim(t *testing.T) {
 	projection, dependency, liveRecord := livePersistenceFixture(t)
 	liveRecord.Calls = append(liveRecord.Calls, ToolCallRecord{ID: "doc-call-1", Name: "knowvault_read", Outcome: "REFUSED"})
