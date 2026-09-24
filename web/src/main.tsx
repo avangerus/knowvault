@@ -519,7 +519,7 @@ function metricDefinitionFilters(filters: string[] | undefined): string {
   return filters.join(", ");
 }
 
-type SourceStatus = {
+export type SourceStatus = {
   workspace_source_id: string;
   source_scope_id: string;
   source_scope_revision: number;
@@ -6587,6 +6587,164 @@ function sourceCardVariant(source: SourceStatus): "ready" | "attention" | "updat
   return source.sync_status === "SUCCEEDED" && source.freshness_state === "FRESH" ? "ready" : "attention";
 }
 
+// Card S5.1: a PostgreSQL connection is one card in Sources. The page already
+// loads one row per registered table — the same per-scope projection
+// knowvault_sources serves over MCP — so the card is built from that data:
+// tables are grouped by connection inside the caller's authorized workspace
+// list, and the summary rolls up per-table facts the existing read already
+// carries. No new server field and no second request are introduced.
+export type SourceConnectionGroup = {
+  connection_id: string;
+  connection_name: string;
+  source_type: string;
+  tables: SourceStatus[];
+};
+
+// A table is indexed once one of its runs completed successfully: that run is
+// exactly the moment the server publishes last_successful_sync_at for the
+// scope, so the count is derived from server facts rather than a guess about
+// published fragments (an empty table legitimately publishes none).
+export function sourceTableIndexed(source: SourceStatus): boolean {
+  return source.last_successful_sync_at !== null && source.last_successful_sync_at !== undefined;
+}
+
+export type SourceConnectionState = "disabled" | "awaiting_confirmation" | "failed" | "updating" | "active";
+
+function sourceTableFailed(source: SourceStatus): boolean {
+  return source.sync_status === "FAILED" || source.job_status === "DEAD"
+    || Boolean(source.sync_error_code)
+    || (Boolean(source.job_last_error_code) && source.job_status !== "SUCCEEDED");
+}
+
+function sourceTableUpdating(source: SourceStatus): boolean {
+  return source.job_status === "PENDING" || source.job_status === "RUNNING" || source.sync_status === "RUNNING";
+}
+
+// The connection's state is the most blocking state among its tables: an
+// unconfirmed table keeps the whole connection awaiting confirmation, and a
+// failed table is never hidden behind the healthy ones.
+export function sourceConnectionState(group: SourceConnectionGroup): SourceConnectionState {
+  if (group.tables.length === 0 || group.tables.every((table) => !table.enabled)) return "disabled";
+  if (group.tables.some((table) => table.confirmation_state !== "ACTIVE")) return "awaiting_confirmation";
+  if (group.tables.some(sourceTableFailed)) return "failed";
+  if (group.tables.some(sourceTableUpdating)) return "updating";
+  return "active";
+}
+
+// The freshness a connection shows is the least fresh state among its tables:
+// one stale table means the connection's data is stale, and a table that never
+// completed a successful run leaves the roll-up unknown rather than fresh.
+export function sourceConnectionFreshnessState(group: SourceConnectionGroup): string {
+  if (group.tables.length === 0) return "UNKNOWN";
+  let unknown = false;
+  for (const table of group.tables) {
+    if (table.freshness_state === "STALE") return "STALE";
+    if (table.freshness_state !== "FRESH") unknown = true;
+  }
+  return unknown ? "UNKNOWN" : "FRESH";
+}
+
+export function sourceConnectionLastSuccessfulSyncAt(group: SourceConnectionGroup): string | null {
+  let latest: string | null = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  for (const table of group.tables) {
+    if (!table.last_successful_sync_at) continue;
+    const time = new Date(table.last_successful_sync_at).getTime();
+    if (Number.isNaN(time) || time <= latestTime) continue;
+    latestTime = time;
+    latest = table.last_successful_sync_at;
+  }
+  return latest;
+}
+
+export type SourceConnectionSummary = {
+  connection_id: string;
+  connection_name: string;
+  source_type: string;
+  tables: SourceStatus[];
+  table_count: number;
+  indexed_count: number;
+  last_successful_sync_at: string | null;
+  freshness_state: string;
+  state: SourceConnectionState;
+  state_label: string;
+  variant: "ready" | "attention" | "updating" | "disconnected";
+};
+
+const sourceConnectionStateLabels: Record<SourceConnectionState, string> = {
+  disabled: "Disabled",
+  awaiting_confirmation: "Awaiting confirmation",
+  failed: "Failed",
+  updating: "Updating",
+  active: "Active",
+};
+
+// Draft is the fourth connection state the Sources surface names; it is served
+// by the workspace source-drafts read and rendered by SourceConnectionDraftList
+// exactly as before, so it is deliberately not re-derived here.
+export function sourceConnectionSummary(group: SourceConnectionGroup): SourceConnectionSummary {
+  const state = sourceConnectionState(group);
+  const freshness = sourceConnectionFreshnessState(group);
+  const variant = state === "active" && freshness !== "FRESH" ? "attention"
+    : state === "disabled" ? "disconnected"
+      : state === "updating" ? "updating"
+        : state === "active" ? "ready" : "attention";
+  const stateLabel = state === "active" && freshness !== "FRESH"
+    ? (freshness === "STALE" ? "Data is stale" : "Status unconfirmed")
+    : sourceConnectionStateLabels[state];
+  return {
+    connection_id: group.connection_id,
+    connection_name: group.connection_name,
+    source_type: group.source_type,
+    tables: group.tables,
+    table_count: group.tables.length,
+    indexed_count: group.tables.filter(sourceTableIndexed).length,
+    last_successful_sync_at: sourceConnectionLastSuccessfulSyncAt(group),
+    freshness_state: freshness,
+    state,
+    state_label: stateLabel,
+    variant,
+  };
+}
+
+export type SourceCardEntry =
+  | { kind: "connection"; key: string; group: SourceConnectionGroup }
+  | { kind: "source"; key: string; source: SourceStatus };
+
+// Every PostgreSQL scope of one connection becomes one connection entry; every
+// other source type keeps its own single card. Grouping only ever touches the
+// already-authorized list handed to it, so a workspace can never see another
+// workspace's connection.
+export function sourceCardEntries(sources: readonly SourceStatus[]): SourceCardEntry[] {
+  const entries: SourceCardEntry[] = [];
+  const groups = new Map<string, SourceConnectionGroup>();
+  for (const source of sources) {
+    if (source.source_type !== "POSTGRESQL_QUERY") {
+      entries.push({ kind: "source", key: source.source_scope_id, source });
+      continue;
+    }
+    const existing = groups.get(source.connection_id);
+    if (existing) {
+      existing.tables.push(source);
+      continue;
+    }
+    const group: SourceConnectionGroup = {
+      connection_id: source.connection_id, connection_name: source.connection_name,
+      source_type: source.source_type, tables: [source],
+    };
+    groups.set(source.connection_id, group);
+    entries.push({ kind: "connection", key: `connection:${source.connection_id}`, group });
+  }
+  return entries;
+}
+
+export function sourceTableLabel(source: SourceStatus): string {
+  if (source.postgresql_schema_name && source.postgresql_relation_name) {
+    return `${source.postgresql_schema_name}.${source.postgresql_relation_name}`;
+  }
+  return source.connection_name;
+}
+
 // When a source needs an operator action the viewer cannot themselves take,
 // this is the one sentence that says so — never a silently-missing button.
 function sourceBlockedNote(source: SourceStatus, canManage: boolean, confirmationContext: ConfirmationContext | null): string | null {
@@ -6701,6 +6859,55 @@ function LatestProcessingNote({ source }: { source: SourceStatus }) {
   );
 }
 
+// Card S5.1: the one card a database connection gets in Sources. Its collapsed
+// body carries the connection state, the registered/indexed table counts and
+// the rolled-up freshness; its expansion lists each registered table with its
+// own state, and renderTableExtra keeps the per-table actions reachable, so no
+// operator control is lost by folding the rows into one card.
+export function SourceConnectionCard({ group, renderTableExtra }: {
+  group: SourceConnectionGroup;
+  renderTableExtra?: (source: SourceStatus) => ReactNode;
+}) {
+  const summary = sourceConnectionSummary(group);
+  return (
+    <li className={`source-row source-row-connection source-row-${summary.variant}`}>
+      <span className={`dot dot-${summary.variant}`} aria-hidden="true" />
+      <div className="source-row-main">
+        <div className="source-title-row">
+          <b>{summary.connection_name}</b>
+          <span className={`state-chip ${summary.variant}`}><span aria-hidden="true" />{summary.state_label}</span>
+        </div>
+        <p className="source-type">PostgreSQL · {summary.table_count} table{summary.table_count === 1 ? "" : "s"} · {summary.indexed_count} indexed</p>
+        <p className="source-note source-success-time">
+          Last successful update: {summary.last_successful_sync_at ? formatTime(summary.last_successful_sync_at) : "no information"}
+          {" · "}Freshness: {freshnessStateLabel(summary.freshness_state)}
+        </p>
+        <details className="source-connection-tables">
+          <summary>Tables ({summary.table_count})</summary>
+          <ul className="source-table-rows">
+            {group.tables.map((table) => {
+              const error = sourceProcessingError(table);
+              return (
+                <li className="source-table" key={table.source_scope_id}>
+                  <div className="source-title-row">
+                    <b>{sourceTableLabel(table)}</b>
+                    <span className={`state-chip ${sourceCardVariant(table)}`}><span aria-hidden="true" />{sourceHeadline(table)}</span>
+                  </div>
+                  <p className="source-note source-success-time">
+                    Last successful update: {table.last_successful_sync_at ? formatTime(table.last_successful_sync_at) : "no information"}
+                  </p>
+                  {error && <p className="source-processing-warning" role="status">{error}</p>}
+                  {renderTableExtra?.(table)}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      </div>
+    </li>
+  );
+}
+
 // Card D-1: one unfinished connection the current workspace started. The row
 // shows the server-derived state and offers exactly two actions: continue in
 // the wizard, or delete this workspace's draft pointer.
@@ -6761,7 +6968,7 @@ export function SourceConnectionDraftList({ drafts, busyID, canManage = true, on
   );
 }
 
-function SourcesView({ state, role, onChanged, pushToast }: {
+export function SourcesView({ state, role, onChanged, pushToast }: {
   state: WorkspaceDataState;
   role: string;
   onChanged: () => void;
@@ -7060,16 +7267,65 @@ function SourcesView({ state, role, onChanged, pushToast }: {
     return null;
   }
 
+  // The inline attestation form and the one primary action per row are shared
+  // by the document rows and by each table row inside a connection card, so
+  // folding a connection into one card never removes an operator control.
+  function renderVerifyForm(source: SourceStatus) {
+    if (verifyingSourceID !== source.source_scope_id) return null;
+    return (
+      <div className="verify-trust-form">
+        <label className="field"><span>Connector identity</span><input maxLength={512} onChange={(event) => setVerifyIdentity(event.target.value)} value={verifyIdentity} /></label>
+        <label className="field"><span>Verified by</span><input maxLength={256} onChange={(event) => setVerifyAttestedBy(event.target.value)} value={verifyAttestedBy} /></label>
+        <div className="verify-trust-actions">
+          <button className="secondary-button" disabled={mutatingSourceID !== null} onClick={() => { setVerifyingSourceID(null); setVerifyIdentity(""); setVerifyAttestedBy(""); }} type="button">Cancel</button>
+          <button className="primary-button" disabled={mutatingSourceID !== null || !verifyIdentity.trim() || !verifyAttestedBy.trim()} onClick={() => void verifyTrust(source)} type="button">
+            {mutatingSourceID === source.source_scope_id ? "Checking…" : "Confirm verification"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderRowActions(source: SourceStatus) {
+    return (
+      <div className="source-row-actions">
+        {renderPrimaryAction(source)}
+        {canManage && snapshot && etag && source.workspace_source_id && source.confirmation_state === "ACTIVE" && (
+          <button className="link-button quiet-disable" disabled={mutatingSourceID !== null} onClick={() => void toggleSource(source)} type="button">Disable</button>
+        )}
+      </div>
+    );
+  }
+
+  // The per-table body a connection card expands to: the blocked note, the
+  // attestation form and the row actions each table row carried when every
+  // table was its own card.
+  function renderTableExtra(source: SourceStatus): ReactNode {
+    return (
+      <>
+        {sourceBlockedNote(source, canManage, confirmationContext) && (
+          <p className="source-note">{sourceBlockedNote(source, canManage, confirmationContext)}</p>
+        )}
+        {renderVerifyForm(source)}
+        {renderRowActions(source)}
+      </>
+    );
+  }
+
   const loadedSources = state.phase === "loaded" && state.sources.kind === "ok" ? state.sources.value.sources : null;
   const activeSources = loadedSources?.filter((source) => source.enabled) ?? [];
   const disabledSources = loadedSources?.filter((source) => !source.enabled) ?? [];
-  const attentionCount = activeSources.filter((source) => sourceCardVariant(source) === "attention").length;
+  // Card S5.1: one entry per PostgreSQL connection, one per document source.
+  const cardEntries = sourceCardEntries(activeSources);
+  const attentionCount = cardEntries.filter((entry) => entry.kind === "connection"
+    ? sourceConnectionSummary(entry.group).variant === "attention"
+    : sourceCardVariant(entry.source) === "attention").length;
   return (
     <div className="page sources-page">
       <section className="page-intro split-intro">
         <div>
           {loadedSources && <dl className="sources-summary" aria-label="Source summary">
-            <div><dt>Sources</dt><dd>{loadedSources.length}</dd></div>
+            <div><dt>Sources</dt><dd>{cardEntries.length + disabledSources.length}</dd></div>
             <div className={attentionCount > 0 ? "sources-summary-attention" : undefined}><dt>Need attention</dt><dd>{attentionCount}</dd></div>
             {disabledSources.length > 0 && <div><dt>Disabled</dt><dd>{disabledSources.length}</dd></div>}
           </dl>}
@@ -7104,38 +7360,28 @@ function SourcesView({ state, role, onChanged, pushToast }: {
         ) : (
           <>
             <ul className="source-rows">
-              {activeSources.map((source) => (
-                <li className={`source-row source-row-${sourceCardVariant(source)}`} key={source.source_scope_id}>
-                  <span className={`dot dot-${sourceCardVariant(source)}`} aria-hidden="true" />
+              {cardEntries.map((entry) => entry.kind === "connection" ? (
+                <SourceConnectionCard
+                  group={entry.group}
+                  key={entry.key}
+                  renderTableExtra={(source) => renderTableExtra(source)}
+                />
+              ) : (
+                <li className={`source-row source-row-${sourceCardVariant(entry.source)}`} key={entry.key}>
+                  <span className={`dot dot-${sourceCardVariant(entry.source)}`} aria-hidden="true" />
                   <div className="source-row-main">
                     <div className="source-title-row">
-                      <b>{sourceLabel(source)}</b>
-                      <span className={`state-chip ${sourceCardVariant(source)}`}><span aria-hidden="true" />{sourceHeadline(source)}</span>
+                      <b>{sourceLabel(entry.source)}</b>
+                      <span className={`state-chip ${sourceCardVariant(entry.source)}`}><span aria-hidden="true" />{sourceHeadline(entry.source)}</span>
                     </div>
-                    <p className="source-type">{sourceTypeLabel(source)}</p>
-                    <LatestProcessingNote source={source} />
-                    {sourceBlockedNote(source, canManage, confirmationContext) && (
-                      <p className="source-note">{sourceBlockedNote(source, canManage, confirmationContext)}</p>
+                    <p className="source-type">{sourceTypeLabel(entry.source)}</p>
+                    <LatestProcessingNote source={entry.source} />
+                    {sourceBlockedNote(entry.source, canManage, confirmationContext) && (
+                      <p className="source-note">{sourceBlockedNote(entry.source, canManage, confirmationContext)}</p>
                     )}
-                    {verifyingSourceID === source.source_scope_id && (
-                      <div className="verify-trust-form">
-                        <label className="field"><span>Connector identity</span><input maxLength={512} onChange={(event) => setVerifyIdentity(event.target.value)} value={verifyIdentity} /></label>
-                        <label className="field"><span>Verified by</span><input maxLength={256} onChange={(event) => setVerifyAttestedBy(event.target.value)} value={verifyAttestedBy} /></label>
-                        <div className="verify-trust-actions">
-                          <button className="secondary-button" disabled={mutatingSourceID !== null} onClick={() => { setVerifyingSourceID(null); setVerifyIdentity(""); setVerifyAttestedBy(""); }} type="button">Cancel</button>
-                          <button className="primary-button" disabled={mutatingSourceID !== null || !verifyIdentity.trim() || !verifyAttestedBy.trim()} onClick={() => void verifyTrust(source)} type="button">
-                            {mutatingSourceID === source.source_scope_id ? "Checking…" : "Confirm verification"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    {renderVerifyForm(entry.source)}
                   </div>
-                  <div className="source-row-actions">
-                    {renderPrimaryAction(source)}
-                    {canManage && snapshot && etag && source.workspace_source_id && source.confirmation_state === "ACTIVE" && (
-                      <button className="link-button quiet-disable" disabled={mutatingSourceID !== null} onClick={() => void toggleSource(source)} type="button">Disable</button>
-                    )}
-                  </div>
+                  {renderRowActions(entry.source)}
                 </li>
               ))}
             </ul>
