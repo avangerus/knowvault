@@ -4,7 +4,7 @@ package repository
 // knowvault_source_schema tool. It answers from exactly the data an earlier
 // registration already persisted -- the enabled workspace source bindings, the
 // immutable postgresql_query_projection rows and the display-only
-// postgresql_query_relation_catalog companion from migration 000114 -- so the
+// postgresql_query_relation_catalog companion from migration 000115 -- so the
 // tool never opens the external source database and never re-derives a schema.
 //
 // Authorization, cross-tenant invisibility and the content-free denial are not

@@ -3,7 +3,7 @@ package registration
 // S3 card 1's registration-time half: the catalog JSON persisted next to a
 // discovered projection is built from the projection's own (already narrowed)
 // columns, so an excluded column is never named, and its comments are bounded
-// to migration 000114's per-comment limit rather than allowed to fail an
+// to migration 000115's per-comment limit rather than allowed to fail an
 // otherwise valid registration.
 
 import (

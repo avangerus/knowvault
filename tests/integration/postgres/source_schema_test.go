@@ -5,7 +5,7 @@ package postgres_test
 // the production discovery->registration path with one column excluded, bound
 // to the workspace, and then read back through the real
 // workspacerepository.Store.SourceSchema/ListSourceSchemas boundary against
-// real PostgreSQL (KNOWVAULT_TEST_POSTGRES_URL, migration 000114 included).
+// real PostgreSQL (KNOWVAULT_TEST_POSTGRES_URL, migration 000115 included).
 //
 // It proves the stored projection and its persisted discovery catalog answer
 // the tool with no external database call: the native type names, the primary

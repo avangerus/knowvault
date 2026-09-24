@@ -235,7 +235,7 @@ func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.Ac
 }
 
 // postgresqlCatalogJSON builds the bounded, display-only catalog column array
-// migration 000114 persists next to the projection: exactly the projected
+// migration 000115 persists next to the projection: exactly the projected
 // columns, in projection order, each carrying the discovery-time native type
 // name, comment and primary-key membership when the sealed discovery result
 // reported that column and the projection's own logical type as the fallback
@@ -249,7 +249,7 @@ type catalogColumnJSON struct {
 	PrimaryKey bool   `json:"primary_key"`
 }
 
-// maxCatalogCommentBytes mirrors migration 000114's per-comment bound on
+// maxCatalogCommentBytes mirrors migration 000115's per-comment bound on
 // postgresql_query_relation_catalog. Discovery's own comment bound is the
 // request profile's MaxCommentBytes, which may be larger; a longer catalog
 // comment is truncated on a UTF-8 boundary rather than allowed to fail the

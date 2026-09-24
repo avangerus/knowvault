@@ -143,7 +143,7 @@ func (connector *sourceDiscoveryConnector) DiscoverCatalog(_ context.Context, re
 
 func TestSourceDiscoveryWorkerPersistsEncryptedCatalogResult(t *testing.T) {
 	ctx := context.Background()
-	admin := resetDatabaseThrough(t, "000114_stage4_postgresql_query_relation_catalog.sql")
+	admin := resetDatabaseThrough(t, "000115_stage4_postgresql_query_relation_catalog.sql")
 	seedOrganization(t, ctx, admin, discoveryAlphaOrg, discoveryAlphaOwner, "ws_sdr_alpha")
 	fixture := seedSourceDiscoveryConnection(t, ctx, admin, discoveryAlphaOrg, discoveryAlphaOwner, "alpha")
 

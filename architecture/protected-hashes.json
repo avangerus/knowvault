@@ -167,7 +167,7 @@
     "db/migrations/000111_stage4_source_discovery_relation_limit.sql": "6a4521ace9ff4247892453ec2d1e28aa8f8603bb0450593787309bff2052cf14",
     "db/migrations/000112_stage4_workspace_model_context.sql": "250857a4490588d052374d294e5757dfae99de23fd5f48fcf74ebecdc4531527",
     "db/migrations/000113_stage4_workspace_context_proposals.sql": "93933b38f7d6be1ea6ef19e6a56ba42f0a9bfb2e84df96f2c3c94ce3c5773d04",
-    "db/migrations/000114_stage4_postgresql_query_relation_catalog.sql": "3fdff20643b02d62d0116fbbe50aae02c00c3135987aba57408bd0091a265297",
+    "db/migrations/000115_stage4_postgresql_query_relation_catalog.sql": "3fdff20643b02d62d0116fbbe50aae02c00c3135987aba57408bd0091a265297",
     "db/queries/system_health.sql": "2986ef10d56d2e7bbaa82fb8593379d79d717b828cf853148fe63f54558ec10e",
     "deploy/compose/compose.yaml": "d10a02f2e31dce09aed6c84af0130e4242c535436c86d49ceedefed897def486",
     "deploy/compose/native-ingest.yaml": "3e78c108a72c7bde7ce15174481a050df00357a6f92f85f0b3d16f0556761081",
