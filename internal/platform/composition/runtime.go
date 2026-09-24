@@ -55,6 +55,17 @@ const (
 	CodeRuntimeCleanupFailed ErrorCode = "COMPOSITION_RUNTIME_CLEANUP_FAILED"
 )
 
+// httpWriteTimeout is http.Server.WriteTimeout for the whole application (see
+// its use and GEN-2/ADR-0088 justification below). R3: it must stay above
+// modelgateway.MaxToolLoopTimeoutSeconds with margin for the tool loop's own
+// trailing detached persistence, and below the front proxy's
+// deploy/compose/proxy/nginx.conf proxy_read_timeout/proxy_send_timeout, or a
+// question that spends its whole configured budget can have its connection
+// closed before its terminal frame is written. runtime_timeout_test.go checks
+// the modelgateway side of this margin so the two cannot silently drift apart
+// again the way they did before R3.
+const httpWriteTimeout = 280 * time.Second
+
 type runtimePhase uint8
 
 const (
@@ -600,8 +611,10 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	// closed connection" at the reverse proxy) before this request ever
 	// reached its own deterministic terminal state. Every other route
 	// finishes far under a minute, so this raises the shared ceiling rather
-	// than adding a second per-route HTTP server.
-	serverConfig.WriteTimeout = 280 * time.Second
+	// than adding a second per-route HTTP server. See httpWriteTimeout's own
+	// doc comment for the R3 margin this value must keep against the TOOL_LOOP
+	// question budget and the front proxy.
+	serverConfig.WriteTimeout = httpWriteTimeout
 	server, err := httpserver.New(serverConfig, handler)
 	if err != nil {
 		return fail(StartupStageHTTPServer)

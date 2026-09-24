@@ -4984,7 +4984,7 @@ components:
             max_input_bytes: { type: integer, minimum: 8192, maximum: 524288 }
             max_tool_result_bytes: { type: integer, minimum: 1024, maximum: 262144 }
             max_output_tokens: { type: integer, minimum: 256, maximum: 16384 }
-            timeout_seconds: { type: integer, minimum: 10, maximum: 300 }
+            timeout_seconds: { type: integer, minimum: 10, maximum: 270 }
         model: { type: string }
         stop_reason:
           type: string
