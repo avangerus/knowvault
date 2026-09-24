@@ -12,8 +12,12 @@ export type QuestionActionFrame = {
   sequence: number;
   phase: "action_started" | "action_finished";
   label: QuestionActionLabel;
+  /** Present only on action_started: a short, safe description of the request (e.g. the search query text). */
+  request?: string;
   outcome?: "succeeded" | "failed";
   duration_ms?: number;
+  /** Present only on action_finished: a short, safe outcome summary (e.g. a hit count). */
+  detail?: string;
 };
 
 export type QuestionStreamFrame<Run> =
@@ -54,6 +58,12 @@ const actionLabels = new Set<QuestionActionLabel>([
 const maxLineBytes = 16 * 1024 * 1024;
 const maxChunkBytes = 32 * 1024 * 1024;
 const maxActionFrames = 4096;
+/** Mirrors the server's question.ActionTextMaxRunes: the client re-checks the same bound rather than trusting it. */
+const maxActionTextRunes = 180;
+
+function withinActionTextBound(value: string): boolean {
+  return Array.from(value).length <= maxActionTextRunes;
+}
 
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -115,18 +125,28 @@ export class QuestionStreamDecoder<Run> {
     }
     const frame = object(decoded);
     if (frame.type === "action") {
-      onlyKeys(frame, ["type", "sequence", "phase", "label", "outcome", "duration_ms"]);
+      onlyKeys(frame, ["type", "sequence", "phase", "label", "request", "outcome", "duration_ms", "detail"]);
       if (!Number.isSafeInteger(frame.sequence) || (frame.sequence as number) < 1 ||
           this.seenSequences.has(frame.sequence as number) || this.seenSequences.size >= maxActionFrames ||
           (frame.phase !== "action_started" && frame.phase !== "action_finished") ||
           !actionLabels.has(frame.label as QuestionActionLabel)) {
         throw new Error("Invalid question action frame");
       }
-      if (frame.phase === "action_started" && (frame.outcome !== undefined || frame.duration_ms !== undefined)) {
+      if (frame.request !== undefined && (typeof frame.request !== "string" || !withinActionTextBound(frame.request))) {
+        throw new Error("Invalid question action request text");
+      }
+      if (frame.detail !== undefined && (typeof frame.detail !== "string" || !withinActionTextBound(frame.detail))) {
+        throw new Error("Invalid question action detail text");
+      }
+      // Request describes what was asked (known only once a call starts);
+      // detail describes what came back (known only once it finishes). Each
+      // is valid on exactly one phase, mirroring outcome/duration_ms below.
+      if (frame.phase === "action_started" && (frame.outcome !== undefined || frame.duration_ms !== undefined || frame.detail !== undefined)) {
         throw new Error("Invalid started action frame");
       }
       if (frame.phase === "action_finished" &&
-          ((frame.outcome !== "succeeded" && frame.outcome !== "failed") ||
+          (frame.request !== undefined ||
+           (frame.outcome !== "succeeded" && frame.outcome !== "failed") ||
            (frame.duration_ms !== undefined &&
             (!Number.isSafeInteger(frame.duration_ms) || (frame.duration_ms as number) < 0)))) {
         throw new Error("Invalid finished action frame");
