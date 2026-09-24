@@ -3622,15 +3622,15 @@ components:
         view_count:
           type: integer
           minimum: 0
-          maximum: 64
+          maximum: 1024
         prepared_view_count:
           type: integer
           minimum: 0
-          maximum: 64
+          maximum: 1024
         needs_interpretation_view_count:
           type: integer
           minimum: 0
-          maximum: 64
+          maximum: 1024
         failure_code:
           type: string
           minLength: 1
@@ -3640,7 +3640,7 @@ components:
           format: date-time
         views:
           type: array
-          maxItems: 64
+          maxItems: 1024
           items:
             $ref: "#/components/schemas/SourceDiscoveryView"
     SourceDiscoveryView:

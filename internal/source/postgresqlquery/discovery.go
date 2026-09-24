@@ -78,7 +78,7 @@ func (limits DiscoveryLimits) Validate() error {
 // discovery request. The durable command and this connector must reject the
 // same profile before a worker opens an external connection.
 func (limits DiscoveryLimits) ValidateDurable() error {
-	if limits.Validate() != nil || limits.MaxViews > 64 ||
+	if limits.Validate() != nil || limits.MaxViews > 1024 ||
 		limits.StatementTimeout > 5*time.Minute || limits.TransactionTimeout > 10*time.Minute {
 		return &Error{code: CodeDiscoveryInvalid}
 	}
@@ -89,7 +89,7 @@ func (limits DiscoveryLimits) ValidateDurable() error {
 // owner when a server has not selected a narrower profile.
 func DefaultDiscoveryLimits() DiscoveryLimits {
 	return DiscoveryLimits{
-		MaxViews: 64, MaxColumns: 256, MaxCommentBytes: 4096,
+		MaxViews: 1024, MaxColumns: 256, MaxCommentBytes: 4096,
 		StatementTimeout: 2 * time.Minute, TransactionTimeout: 5 * time.Minute,
 	}
 }

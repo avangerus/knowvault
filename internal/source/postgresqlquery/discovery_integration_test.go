@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -321,6 +322,103 @@ func TestDiscoveryCatalogTablesAgainstRealPostgreSQL(t *testing.T) {
 	// candidate this connector registers: only the partitioned root is.
 	if child, ok := byName["measurements_2026"]; ok {
 		t.Fatalf("partition child relation was independently discovered: %#v", child)
+	}
+}
+
+// TestDiscoveryCatalogManyRelationsAgainstRealPostgreSQL is the S1 fix proof
+// for DISCOVERY_LIMIT_EXCEEDED (the GM customer catalog exposes 645
+// tables/views in schema public) at the connector's own real-SQL layer: it
+// creates 300 real base tables, each with a declared primary key, discovers
+// them through the same unexported catalog transaction the production
+// LiveConnector uses after its trusted TLS opener, and proves every one of
+// the 300 comes back PREPARED under the new 1024-relation durable ceiling
+// (DefaultDiscoveryLimits, widened from the old 64). A profile narrower than
+// the real relation count still fails closed with CodeLimitExceeded, exactly
+// as it always did above the old 64-relation bound.
+func TestDiscoveryCatalogManyRelationsAgainstRealPostgreSQL(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("KNOWVAULT_TEST_POSTGRES_URL"))
+	if dsn == "" {
+		t.Skip("set KNOWVAULT_TEST_POSTGRES_URL for the real PostgreSQL many-relation discovery proof")
+	}
+	const relationCount = 300
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	admin, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("admin PostgreSQL connection: %v", err)
+	}
+	var reader *pgx.Conn
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer closeCancel()
+		if reader != nil {
+			_ = reader.Close(closeCtx)
+		}
+		_, _ = admin.Exec(closeCtx, `DROP SCHEMA IF EXISTS "kv_pgq_discovery_many" CASCADE`)
+		_, _ = admin.Exec(closeCtx, `DROP ROLE IF EXISTS "kv_pgq_discovery_many_reader"`)
+		_ = admin.Close(closeCtx)
+	}()
+
+	var seed strings.Builder
+	seed.WriteString(`
+		DROP SCHEMA IF EXISTS "kv_pgq_discovery_many" CASCADE;
+		DROP ROLE IF EXISTS "kv_pgq_discovery_many_reader";
+		CREATE SCHEMA "kv_pgq_discovery_many";
+	`)
+	for index := 0; index < relationCount; index++ {
+		suffix := strconv.Itoa(index)
+		seed.WriteString(`CREATE TABLE "kv_pgq_discovery_many"."t_` + suffix + `" (` +
+			`id uuid PRIMARY KEY, display_name text NOT NULL, amount numeric(10,2) NOT NULL);` + "\n")
+	}
+	seed.WriteString(`
+		CREATE ROLE "kv_pgq_discovery_many_reader" LOGIN PASSWORD 'kv-pg-discovery-many-reader';
+		ALTER ROLE "kv_pgq_discovery_many_reader" SET temp_file_limit = '256MB';
+		ALTER ROLE "kv_pgq_discovery_many_reader" SET default_transaction_read_only = 'on';
+		GRANT USAGE ON SCHEMA "kv_pgq_discovery_many" TO "kv_pgq_discovery_many_reader";
+		GRANT SELECT ON ALL TABLES IN SCHEMA "kv_pgq_discovery_many" TO "kv_pgq_discovery_many_reader";
+	`)
+	if _, err := admin.Exec(ctx, seed.String()); err != nil {
+		t.Fatalf("seed %d real relations: %v", relationCount, err)
+	}
+
+	readerURL, err := discoveryReaderURLAs(dsn, "kv_pgq_discovery_many_reader", "kv-pg-discovery-many-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err = pgx.Connect(ctx, readerURL)
+	if err != nil {
+		t.Fatalf("read-only many-relation discovery role connection: %v", err)
+	}
+
+	limits := DefaultDiscoveryLimits()
+	if limits.MaxViews != 1024 {
+		t.Fatalf("default discovery limits MaxViews = %d, want 1024", limits.MaxViews)
+	}
+	views, err := discoverViewsForConnection(ctx, reader, "conn_pg_discovery_many", limits)
+	if err != nil {
+		t.Fatalf("discover %d real relations: %v (code=%s)", relationCount, err, CodeOf(err))
+	}
+	if len(views) != relationCount {
+		t.Fatalf("discovered %d relations, want %d", len(views), relationCount)
+	}
+	for _, view := range views {
+		if view.RelationKind != "TABLE" || view.Status != DiscoveryPrepared || view.Projection == nil {
+			t.Fatalf("relation %s.%s discovery=%#v, want PREPARED TABLE", view.SchemaName, view.RelationName, view)
+		}
+	}
+
+	snapshot, err := discoverCatalogSnapshot(ctx, reader, "conn_pg_discovery_many", "", "", limits)
+	if err != nil {
+		t.Fatalf("discover %d-relation catalog snapshot: %v (code=%s)", relationCount, err, CodeOf(err))
+	}
+	if len(snapshot.Views) != relationCount {
+		t.Fatalf("catalog snapshot returned %d relations, want %d", len(snapshot.Views), relationCount)
+	}
+
+	narrow := limits
+	narrow.MaxViews = relationCount - 1
+	if _, err := discoverViewsForConnection(ctx, reader, "conn_pg_discovery_many", narrow); CodeOf(err) != CodeLimitExceeded {
+		t.Fatalf("narrower-than-actual profile code=%s err=%v, want %s", CodeOf(err), err, CodeLimitExceeded)
 	}
 }
 

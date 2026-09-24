@@ -1944,6 +1944,7 @@ var migrationSequence = []string{
 	"000108_stage3_source_freshness_completeness.sql",
 	"000109_stage3_metric_definition_dataset_binding.sql",
 	"000110_stage3_postgresql_query_table_source.sql",
+	"000111_stage4_source_discovery_relation_limit.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert

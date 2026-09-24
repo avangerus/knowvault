@@ -327,7 +327,7 @@ type resultCounts struct {
 }
 
 func buildMetadata(target target, snapshot postgresqlquery.CatalogSnapshot) ([]byte, resultCounts, error) {
-	if target.maxViews < 1 || target.maxViews > 64 || target.maxColumns < 1 || target.maxColumns > 256 ||
+	if target.maxViews < 1 || target.maxViews > 1024 || target.maxColumns < 1 || target.maxColumns > 256 ||
 		target.maxCommentBytes < 1 || target.maxCommentBytes > 65536 ||
 		snapshot.DatabaseOID < 1 || !validCatalogText(snapshot.DatabaseName, 128) || !validSHA256(snapshot.PrivilegeDigest) ||
 		snapshot.Views == nil || len(snapshot.Views) > target.maxViews {

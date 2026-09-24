@@ -221,7 +221,7 @@ func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, ac
 		return &Error{code: CodeMetadataInvalid, cause: errors.Join(err, errMetadataInvalid)}
 	}
 	identityDigest, digestErr := databaseIdentityHash(metadata.DatabaseOID, metadata.DatabaseName)
-	if !metadata.Validate(64) || metadata.ConnectionID != connectionID ||
+	if !metadata.Validate(1024) || metadata.ConnectionID != connectionID ||
 		metadata.ConnectionRevision != connectionRevision || len(metadata.Views) != viewCount ||
 		digestErr != nil || identityDigest != databaseIdentityDigest || metadata.PrivilegeDigest != privilegeDigest {
 		return &Error{code: CodeMetadataInvalid, cause: errors.Join(digestErr, errMetadataInvalid)}

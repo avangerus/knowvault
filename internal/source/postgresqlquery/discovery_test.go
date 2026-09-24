@@ -93,6 +93,33 @@ func TestDiscoveryLimitsRejectOversizedProfile(t *testing.T) {
 	}
 }
 
+// TestDiscoveryLimitsAllowUpTo1024RelationsFailClosedAbove proves the
+// DISCOVERY_LIMIT_EXCEEDED fix end to end at the limits layer: the durable
+// request bound (ValidateDurable, mirrored by migration 000111's CHECK
+// constraints) and the server default both now reach 1024 relations -- the
+// GM catalog's 645 tables/views fit comfortably -- while a profile above
+// 1024 is still rejected fail-closed, exactly as one above the old 64 bound
+// always was.
+func TestDiscoveryLimitsAllowUpTo1024RelationsFailClosedAbove(t *testing.T) {
+	def := DefaultDiscoveryLimits()
+	if def.MaxViews != 1024 {
+		t.Fatalf("default MaxViews = %d, want 1024", def.MaxViews)
+	}
+	if err := def.ValidateDurable(); err != nil {
+		t.Fatalf("default discovery limits rejected as durable: %v", err)
+	}
+	atLimit := def
+	atLimit.MaxViews = 1024
+	if err := atLimit.ValidateDurable(); err != nil {
+		t.Fatalf("1024-relation profile rejected as durable: %v", err)
+	}
+	overLimit := def
+	overLimit.MaxViews = 1025
+	if CodeOf(overLimit.ValidateDurable()) != CodeDiscoveryInvalid {
+		t.Fatalf("1025-relation profile code=%s, want %s", CodeOf(overLimit.ValidateDurable()), CodeDiscoveryInvalid)
+	}
+}
+
 // TestDiscoveryTableWithPrimaryKeyIsPreparedWithIdentityOnKeyColumns is the
 // ADR-0097 S1 counterpart of the view envelope test above: an ordinary base
 // table needs no business-object contract, only a declared primary key. Its

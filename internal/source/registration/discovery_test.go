@@ -27,7 +27,7 @@ func TestNormalizeDiscoveryLimitsUsesBoundedServerProfile(t *testing.T) {
 		t.Fatalf("default discovery limits = %#v, err=%v", limits, err)
 	}
 	if _, err := normalizeDiscoveryLimits(postgresqlquery.DiscoveryLimits{
-		MaxViews: 65, MaxColumns: 1, MaxCommentBytes: 1,
+		MaxViews: 1025, MaxColumns: 1, MaxCommentBytes: 1,
 		StatementTimeout: time.Second, TransactionTimeout: time.Second,
 	}); err == nil {
 		t.Fatal("request accepted more views than the durable result bound")
