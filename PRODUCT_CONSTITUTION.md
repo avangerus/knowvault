@@ -53,8 +53,10 @@ Workspace
 The workspace web UI, versioned HTTP API and authenticated MCP share authorization and evidence services. External agents and built-in questions use the same bounded Question/Planner authority. A model may propose typed operations from a frozen closed catalog; the server alone validates, authorizes, compiles and executes them. The UI contains sections:
 
 ```text
-Search · Sources · Access · Activity log
+Search · Sources · Access · Activity log · Settings
 ```
+
+Settings holds the workspace model context of ADR-0098.
 
 The latest Question Runs are displayed under Search. There is no separate "Answers" section. The Activity Log is intended for security and investigations and does not replace search results.
 
@@ -98,7 +100,9 @@ The broader parser design covers PDF, DOCX, PPTX, XLSX, CSV, TXT, Markdown, HTML
 ## 7. What is forbidden in 1.0
 
 - unbounded message chains, hidden long-term model memory, or treating an earlier
-  answer as evidence; bounded follow-ups governed by ADR-0096 are allowed;
+  answer as evidence; bounded follow-ups governed by ADR-0096 are allowed; the
+  explicit, audited workspace model context of ADR-0098 is configuration, not
+  memory, and never evidence;
 - arbitrary MCP/tool runtime and unauthenticated public API; only versioned HTTP API and authenticated MCP from ADR-0082 via the common Question/Planner authority are allowed, without SQL input, credentials, or write actions;
 - autonomous actions or writes to external source systems; read-only access by authenticated external MCP agents remains part of the product;
 - reports, timelines, decision log, and commitments;
