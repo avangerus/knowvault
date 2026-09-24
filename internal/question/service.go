@@ -44,6 +44,7 @@ import (
 	"knowvault.local/verified-workspace/internal/source/evidence"
 	"knowvault.local/verified-workspace/internal/source/ids"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacecontext"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -628,6 +629,34 @@ type Service struct {
 	analyticScalarExecutor  *analyticsource.ScalarExecutor
 	liveDataAsk             GovernedAsk
 	trustedMetricComparison TrustedMetricComparison
+
+	// workspaceContext is the optional ADR-0098 / S2-MODEL-CONTEXT-DESIGN.md
+	// reader the tool loop pins once per run (tool_loop.go,
+	// resolveToolLoopWorkspaceContext). It stays nil until composition calls
+	// EnableWorkspaceContext with the store-backed reader (card A); a nil
+	// value reproduces today's tool loop verbatim -- no WORKSPACE_CONTEXT
+	// block, no added instruction sentence, no ToolLoopRecord.WorkspaceContext.
+	workspaceContext workspacecontext.Reader
+}
+
+// EnableWorkspaceContext installs the optional workspace model context
+// reader once (ADR-0098, S2-MODEL-CONTEXT-DESIGN.md "Chat"). Composition
+// calls it only after the store-backed workspacecontext.Reader (card A) is
+// mounted; production wiring lives in composition/runtime.go, not here. A
+// nil Service, a nil reader, a typed-nil reader value, or a second call
+// after a reader is already installed is refused and leaves the slot
+// untouched, so resolveToolLoopWorkspaceContext always pins from the same
+// Reader for the lifetime of the Service.
+func (service *Service) EnableWorkspaceContext(reader workspacecontext.Reader) error {
+	if service == nil || reader == nil || service.workspaceContext != nil {
+		return &Error{code: CodeInvalid}
+	}
+	value := reflect.ValueOf(reader)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return &Error{code: CodeInvalid}
+	}
+	service.workspaceContext = reader
+	return nil
 }
 
 // EnableTrustedMetricComparison installs the optional approved comparison
