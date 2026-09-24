@@ -39,13 +39,10 @@ func TestQuestionFailureTerminalRequiresRequestCancellation(t *testing.T) {
 		{"request cancelled", cancelled, errors.Join(errors.New("tool stopped"), context.Canceled), "CANCELLED", "QUESTION_CANCELLED"},
 		{"cancelled request with unrelated failure", cancelled, errors.New("storage failure"), "FAILED", "QUESTION_EXECUTION_FAILED"},
 		{"internal cancellation only", context.Background(), context.Canceled, "FAILED", "QUESTION_EXECUTION_FAILED"},
-		// R2: the question's time budget expiring is its own consistent
-		// terminal outcome, distinct from an unrelated execution failure, so a
-		// caller (e.g. Ask) can tell the two apart instead of seeing the same
-		// generic QUESTION_EXECUTION_FAILED for both. Corroborated directly
-		// here because ctx itself (the one passed to questionFailureTerminal)
-		// is the one that expired.
-		{"deadline expired", expired, context.DeadlineExceeded, "FAILED", "TIME_LIMIT"},
+		// An expired ctx with an unmarked deadline is the caller's own
+		// deadline (e.g. the legacy generative path), not the tool loop's
+		// question budget: it keeps QUESTION_EXECUTION_FAILED and its audit code.
+		{"caller deadline expired without the budget marker", expired, context.DeadlineExceeded, "FAILED", "QUESTION_EXECUTION_FAILED"},
 		// F2: a bare/unmarked DeadlineExceeded cause, with the caller ctx
 		// passed to questionFailureTerminal still healthy, is NOT enough on
 		// its own -- it previously let an unrelated inner timeout (the model
