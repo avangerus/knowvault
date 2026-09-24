@@ -118,7 +118,7 @@ func TestMountedProfilesPreserveLegacySingleLocalAndCloud(t *testing.T) {
 	}
 }
 
-func TestMountedProfilesSingleManifestRequiresLocalDefault(t *testing.T) {
+func TestMountedProfilesAllowWorkspaceScopedCloudDefault(t *testing.T) {
 	root := createProfileTestMount(t)
 	manifest := profileTestManifest()
 	manifest.Profiles = manifest.Profiles[:1]
@@ -128,9 +128,8 @@ func TestMountedProfilesSingleManifestRequiresLocalDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = registry.Close()
-	// Unlike a legacy mount with no manifest, even a one-entry manifest
-	// explicitly promises a local default. Use a fully valid external config
-	// here so rejection cannot be explained by a missing key or trust bundle.
+	// A fully valid, workspace-scoped cloud config may be the default profile:
+	// AllowsWorkspace still hides it from every workspace not on its allowlist.
 	for _, filename := range []string{"config.json", "api-key", "trust.pem"} {
 		raw, err := os.ReadFile(filepath.Join(root, "cloud", filename))
 		if err != nil {
@@ -140,7 +139,17 @@ func TestMountedProfilesSingleManifestRequiresLocalDefault(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	assertInvalidProfileMount(t, root)
+	cloudDefault, err := LoadMountedProfilesAt(root)
+	if err != nil {
+		t.Fatalf("workspace-scoped cloud default rejected: %v", err)
+	}
+	defer cloudDefault.Close()
+	if cloudDefault.Default() == nil || cloudDefault.Default().config.RuntimeScope() != RuntimeScopeExternalWorkspaceScoped {
+		t.Fatal("cloud default not loaded as workspace-scoped external runtime")
+	}
+	if len(cloudDefault.List("law")) != 1 || len(cloudDefault.List("puit")) != 0 {
+		t.Fatal("cloud default visible outside its workspace allowlist")
+	}
 }
 
 func TestMountedProfilesRejectMalformedManifestWithoutLegacyFallback(t *testing.T) {

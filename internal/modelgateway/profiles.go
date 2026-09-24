@@ -63,7 +63,7 @@ func NewProfileRegistry(defaultID string, configs []ProfileConfig) (*ProfileRegi
 			adapter: adapter,
 		})
 	}
-	if registry.Default() == nil || (len(configs) > 1 && registry.Default().RuntimeScope() != RuntimeScopeLocalLab) {
+	if registry.Default() == nil {
 		_ = registry.Close()
 		return nil, &Error{code: CodeProfile}
 	}

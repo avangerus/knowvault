@@ -159,11 +159,29 @@ func TestProfileRegistryRejectsAmbiguousOrUnboundedMetadata(t *testing.T) {
 	for _, configs := range [][]ProfileConfig{
 		{{ID: "local", Label: "One", Config: testNamedProfileConfig("m", false)}, {ID: "local", Label: "Two", Config: testNamedProfileConfig("m", false)}},
 		{{ID: "missing-default", Label: "One", Config: testNamedProfileConfig("m", false)}},
-		{{ID: "local", Label: "Cloud default", Config: testNamedProfileConfig("m", true)}, {ID: "other", Label: "Other", Config: testNamedProfileConfig("m", false)}},
 	} {
 		if registry, err := NewProfileRegistry("local", configs); err == nil {
 			_ = registry.Close()
-			t.Fatal("ambiguous/default-external catalog accepted")
+			t.Fatal("ambiguous catalog accepted")
 		}
+	}
+}
+
+// A workspace-scoped cloud profile may be the default next to local ones; it
+// stays invisible to every workspace outside its allowlist.
+func TestProfileRegistryAllowsWorkspaceScopedCloudDefault(t *testing.T) {
+	registry, err := NewProfileRegistry("cloud", []ProfileConfig{
+		{ID: "cloud", Label: "Cloud default", Config: testNamedProfileConfig("m", true)},
+		{ID: "local", Label: "Local", Config: testNamedProfileConfig("m", false)},
+	})
+	if err != nil {
+		t.Fatalf("workspace-scoped cloud default rejected: %v", err)
+	}
+	defer registry.Close()
+	if registry.Default() == nil || registry.Default().RuntimeScope() != RuntimeScopeExternalWorkspaceScoped {
+		t.Fatal("cloud default not selected")
+	}
+	if len(registry.List("law")) != 2 || len(registry.List("puit")) != 1 {
+		t.Fatal("cloud default visible outside its workspace allowlist")
 	}
 }
