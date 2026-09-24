@@ -84,11 +84,6 @@ func arrayField(fields map[string]any, key string) ([]any, bool) {
 	return value, ok
 }
 
-func numberField(fields map[string]any, key string) (float64, bool) {
-	value, ok := fields[key].(float64)
-	return value, ok
-}
-
 // actionRequestText projects a short, safe description of a tool call's
 // request from a fixed set of already-reviewed argument fields, for a fixed
 // set of known tool names. An unrecognized name (a future or external
@@ -183,6 +178,21 @@ func trustedMetricRequestSummary(fields map[string]any) string {
 // at all: it maps a small closed set of the product's own error codes to a
 // generic phrase and otherwise says "Failed", so a raw error/advice string
 // (which could echo back untrusted content) is never disclosed.
+//
+// F1: liveDataToolName, analyticScalarToolName and trustedMetricToolName are
+// deliberately absent from this switch and fall through to the default
+// "Completed", even on success. Their result carries the value/delta/
+// row-count/unit itself -- the live action stream (beginToolAction in
+// action_observer.go) emits this text immediately after the tool call, from
+// inside the tool loop, before the per-run disclosure reauthorization that
+// the final answer must still pass (service.go's
+// authorizeAnalyticScalarDisclosure / authorizeGovernedQueryDisclosures,
+// checked when the run is later read). If that later check denies the run,
+// the answer is withheld, but a value already streamed live cannot be
+// un-shown. Only the step's own succeeded/failed outcome may be disclosed
+// this early for these three tools; the full result (including any number)
+// still reaches the client through the post-answer trace, which is gated by
+// that same reauthorization because it is part of the same Run.
 func actionResultText(name string, succeeded bool, result workspacetools.Result) string {
 	if !succeeded {
 		return boundedActionText(actionFailureText(result))
@@ -193,12 +203,6 @@ func actionResultText(name string, succeeded bool, result workspacetools.Result)
 		return boundedActionText(searchResultSummary(fields))
 	case "knowvault_read", "knowvault_evidence_read":
 		return boundedActionText(readResultSummary(fields))
-	case liveDataToolName:
-		return boundedActionText(liveDataResultSummary(fields))
-	case analyticScalarToolName:
-		return boundedActionText(analyticScalarResultSummary(fields))
-	case trustedMetricToolName:
-		return boundedActionText(trustedMetricResultSummary(fields))
 	case "knowvault_grep":
 		return boundedActionText(countSummary(fields, "matches", "match", "matches"))
 	case "knowvault_related":
@@ -264,57 +268,6 @@ func readResultSummary(fields map[string]any) string {
 		return fmt.Sprintf("Read %d characters (more available)", count)
 	}
 	return fmt.Sprintf("Read %d characters", count)
-}
-
-func liveDataResultSummary(fields map[string]any) string {
-	rowCount, ok := rowCountFromLiveData(fields)
-	if !ok {
-		return "Completed"
-	}
-	if rowCount == 0 {
-		return "No results"
-	}
-	return fmt.Sprintf("%d %s returned", rowCount, pluralize(rowCount, "row", "rows"))
-}
-
-func rowCountFromLiveData(fields map[string]any) (int, bool) {
-	if window := nestedObject(fields, "read_window"); window != nil {
-		if value, ok := numberField(window, "returned_rows"); ok {
-			return int(value), true
-		}
-	}
-	if value, ok := numberField(fields, "row_count"); ok {
-		return int(value), true
-	}
-	return 0, false
-}
-
-func analyticScalarResultSummary(fields map[string]any) string {
-	if fields != nil {
-		if value, ok := stringField(fields, "value"); ok {
-			if unit, _ := fields["metric_unit"].(string); unit != "" {
-				return "Value: " + value + " " + unit
-			}
-			return "Value: " + value
-		}
-	}
-	return "Completed"
-}
-
-func trustedMetricResultSummary(fields map[string]any) string {
-	delta, hasDelta := stringField(fields, "delta")
-	if !hasDelta {
-		return "Completed"
-	}
-	unit, _ := fields["unit"].(string)
-	text := "Delta: " + delta
-	if unit != "" {
-		text += " " + unit
-	}
-	if percent, ok := stringField(fields, "percent_change"); ok {
-		text += " (" + percent + "%)"
-	}
-	return text
 }
 
 // actionFailureCodes maps a small, closed set of the product's own tool

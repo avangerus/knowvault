@@ -57,10 +57,14 @@ func TestActionResultTextSummarizesKnownToolsWithoutLeakingPayload(t *testing.T)
 			"2 hits: Termination requires 30 days notice.; Renewal is automatic unless notice is given."},
 		{"knowvault_read", true, workspacetools.Result{Structured: json.RawMessage(`{"text":"hello","has_more":false}`)}, "Read 5 characters"},
 		{"knowvault_read", true, workspacetools.Result{Structured: json.RawMessage(`{"text":"hello","has_more":true}`)}, "Read 5 characters (more available)"},
-		{liveDataToolName, true, workspacetools.Result{Structured: json.RawMessage(`{"row_count":0}`)}, "No results"},
+		// F1: a successful live-data/analytic-scalar/trusted-metric call
+		// discloses only that the step succeeded, never a value, delta, row
+		// count or unit -- see TestActionResultTextNeverDisclosesLiveResultValues.
+		{liveDataToolName, true, workspacetools.Result{Structured: json.RawMessage(`{"row_count":0}`)}, "Completed"},
 		{liveDataToolName, true, workspacetools.Result{Structured: json.RawMessage(
-			`{"row_count":3,"database_identity":"` + secret + `","sql_hash":"` + secret + `"}`)}, "3 rows returned"},
-		{trustedMetricToolName, true, workspacetools.Result{Structured: json.RawMessage(`{"delta":"12","unit":"USD","percent_change":"4.5"}`)}, "Delta: 12 USD (4.5%)"},
+			`{"row_count":3,"database_identity":"` + secret + `","sql_hash":"` + secret + `"}`)}, "Completed"},
+		{trustedMetricToolName, true, workspacetools.Result{Structured: json.RawMessage(`{"delta":"12","unit":"USD","percent_change":"4.5"}`)}, "Completed"},
+		{analyticScalarToolName, true, workspacetools.Result{Structured: json.RawMessage(`{"value":"742","metric_unit":"USD"}`)}, "Completed"},
 		{"knowvault_grep", true, workspacetools.Result{Structured: json.RawMessage(`{"matches":[]}`)}, "No results"},
 		{"knowvault_sources", true, workspacetools.Result{Structured: json.RawMessage(`{"sources":[{},{},{}]}`)}, "3 sources"},
 		{"unrecognized_tool", true, workspacetools.Result{Structured: json.RawMessage(`{"anything":"` + secret + `"}`)}, "Completed"},
@@ -74,6 +78,50 @@ func TestActionResultTextSummarizesKnownToolsWithoutLeakingPayload(t *testing.T)
 		}
 		if strings.Contains(got, secret) {
 			t.Fatalf("%s: sensitive payload leaked into detail: %q", testCase.name, got)
+		}
+	}
+}
+
+// TestActionResultTextNeverDisclosesLiveResultValues is F1's regression test.
+// beginToolAction (action_observer.go) streams actionResultText's return
+// value as the live action_finished event's Detail immediately after a tool
+// call succeeds, from inside the tool loop, before service.go's per-run
+// disclosure reauthorization (authorizeAnalyticScalarDisclosure /
+// authorizeGovernedQueryDisclosures) has run against the finished run. If
+// that later check denies disclosure, the final answer is withheld, but a
+// value already streamed live cannot be un-shown. So for liveDataToolName,
+// analyticScalarToolName and trustedMetricToolName specifically, a successful
+// call must disclose at most that the step succeeded -- never a value,
+// delta, row count, percentage or unit derived from the result, and never a
+// zero/nonzero distinction either (that is itself derived from the result).
+//
+// This fails against the code before the fix (it returned "N rows
+// returned"/"Value: ..."/"Delta: ..." text built from exactly these fields).
+func TestActionResultTextNeverDisclosesLiveResultValues(t *testing.T) {
+	forbidden := []string{
+		"742", "3.14", "USD", "RUB", "12", "4.5", "row", "Row", "rows", "Rows",
+		"Value", "Delta", "delta", "returned", "no results", "No results",
+	}
+	for _, testCase := range []struct {
+		name   string
+		result workspacetools.Result
+	}{
+		{liveDataToolName, workspacetools.Result{Structured: json.RawMessage(`{"row_count":0}`)}},
+		{liveDataToolName, workspacetools.Result{Structured: json.RawMessage(`{"row_count":3}`)}},
+		{liveDataToolName, workspacetools.Result{Structured: json.RawMessage(`{"read_window":{"returned_rows":12}}`)}},
+		{analyticScalarToolName, workspacetools.Result{Structured: json.RawMessage(`{"value":"742"}`)}},
+		{analyticScalarToolName, workspacetools.Result{Structured: json.RawMessage(`{"value":"3.14","metric_unit":"USD"}`)}},
+		{trustedMetricToolName, workspacetools.Result{Structured: json.RawMessage(`{"delta":"12","unit":"USD"}`)}},
+		{trustedMetricToolName, workspacetools.Result{Structured: json.RawMessage(`{"delta":"12","unit":"USD","percent_change":"4.5"}`)}},
+	} {
+		got := actionResultText(testCase.name, true, testCase.result)
+		if got != "Completed" {
+			t.Fatalf("%s: detail = %q, want exactly %q (only the step outcome, nothing derived from the result)", testCase.name, got, "Completed")
+		}
+		for _, token := range forbidden {
+			if strings.Contains(got, token) {
+				t.Fatalf("%s: detail %q leaks a value/delta/row-count/unit token %q before the disclosure gate has run", testCase.name, got, token)
+			}
 		}
 	}
 }
