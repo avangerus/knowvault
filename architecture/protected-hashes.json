@@ -1030,6 +1030,7 @@
     "tests/integration/postgres/rls_test.go": "e5800344b96753fd915d0e747ed8a1225d2b1fb5a506ca719204619ccdc4a3d3",
     "tests/integration/postgres/rotation_handler_test.go": "d9ee38d0a62f9b2ca3de226153effce0b82cdce32b16c7865154bb37a2a5ba7d",
     "tests/integration/postgres/s2_workspace_context_e2e_test.go": "aa7f7cfc2a6a5255685dfe6a7c1840bc53884721bd0362e293d9dd6959c67e8d",
+    "tests/integration/postgres/s2_workspace_context_hostile_test.go": "69a26956797d9807928356191f79b079e6ed8ec5335a54c504df9296812f41a4",
     "tests/integration/postgres/s3_hybrid_postgresql_grouped_search_test.go": "b229c42ffca9381fe4da3d5a51b029c85e9e5377968011683db5ca8e62f12982",
     "tests/integration/postgres/s3_hybrid_search_test.go": "6c79dcd0e0c1f2cf444c0aab17fa8b4f7894be5a6ff3cfca6c776186a7065465",
     "tests/integration/postgres/search_all_versions_history_test.go": "8f4b7033c976007446ba9a61ee5e30658a766fa736b6bbb5f92ba491562e751d",
