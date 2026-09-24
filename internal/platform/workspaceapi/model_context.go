@@ -272,38 +272,17 @@ func (handler *Handler) modelContextProposalsList(writer http.ResponseWriter, re
 	writeJSON(writer, http.StatusOK, response)
 }
 
-// --- POST /workspaces/{id}/tools/workspace-context ---
-
-func (handler *Handler) modelContextToolParity(writer http.ResponseWriter, request *http.Request,
-	access database.AccessContext, requestID, workspaceID string) {
-	if handler.modelContext == nil {
-		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
-		return
-	}
-	if _, _, code, fields := mutationHeaders(request, false); code != "" {
-		writeValidationError(writer, request, requestID, code, fields)
-		return
-	}
-	var body modelContextToolBody
-	if code := decodeOptionalJSON(writer, request, &body); code != "" {
-		writeValidationError(writer, request, requestID, code, nil)
-		return
-	}
-	if len(body.Terms) > 10 {
-		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"terms"})
-		return
-	}
-	if !validModelContextToolSection(body.Section) {
-		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"section"})
-		return
-	}
-	record, err := handler.modelContext.CurrentForREST(request.Context(), access, workspaceID)
-	if err != nil {
-		writeModelContextError(writer, err, requestID)
-		return
-	}
-	writeJSON(writer, http.StatusOK, modelContextToolResponse(record, body.Terms, stringValueOrEmpty(body.Section)))
-}
+// POST /workspaces/{id}/tools/workspace-context is deliberately not
+// implemented here. Card A originally added modelContextToolParity as a
+// second implementation of this route, dispatched ahead of the generic
+// tools/{segment} registry; card C's workspaceToolDispatch
+// (tools_rest.go, workspaceContextToolResult/workspaceContextToolProjection)
+// already dispatches the identical route through the same
+// workspacecontext.Reader and workspacecontext.MatchTerms the MCP tool and
+// the chat tool runtime use. S2 integration removed the duplicate so this
+// path has exactly one implementation, the one that is byte-identical with
+// MCP/chat (S2-CONTRACT.md "Tool parity"); see workspaceapi.go's
+// endpointWorkspaceToolWorkspaceContext.
 
 // --- POST /workspaces/{id}/model-context/proposals/{proposal_id}:accept ---
 

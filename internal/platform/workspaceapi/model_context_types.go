@@ -429,90 +429,11 @@ func modelContextVersionSegment(raw string) (int64, bool) {
 	return parseCanonicalPositiveInt64(raw)
 }
 
-// --- Tool parity (POST /workspaces/{id}/tools/workspace-context) ---
-
-type modelContextToolBody struct {
-	Terms   []string `json:"terms"`
-	Section *string  `json:"section"`
-}
-
-func validModelContextToolSection(section *string) bool {
-	if section == nil {
-		return true
-	}
-	switch *section {
-	case "all", "glossary", "rules", "sources":
-		return true
-	default:
-		return false
-	}
-}
-
-// modelContextToolResponse projects record's document exactly like
-// S2-MODEL-CONTEXT-DESIGN.md's shared rendering, filtered by terms/section:
-// terms narrows glossary to entries whose term or any synonym
-// case-insensitively equals one of the requested strings (a direct lookup by
-// name, not MatchTerms' word-boundary search within free text -- the caller
-// already names the terms it wants); section narrows which of
-// glossary/rules/sources are populated at all. sources is never filtered
-// further here: Validate already accepted only enabled-source notes when the
-// document was saved, so every source present is already "enabled sources
-// only" (S2-MODEL-CONTEXT-DESIGN.md).
-func modelContextToolResponse(record workspacecontext.VersionRecord, terms []string, section string) map[string]any {
-	if section == "" {
-		section = "all"
-	}
-	response := map[string]any{
-		"version": record.Number, "content_hash": modelContextHashOrSentinel(record),
-		"description": record.Document.Description, "notice": "context, not evidence",
-	}
-	rules := []map[string]any{}
-	glossary := []map[string]any{}
-	sources := []map[string]any{}
-	if section == "all" || section == "rules" {
-		for _, rule := range record.Document.Rules {
-			rules = append(rules, modelContextRuleResponse(rule))
-		}
-	}
-	if section == "all" || section == "glossary" {
-		wanted := normalizedTermSet(terms)
-		for _, term := range record.Document.Glossary {
-			if len(wanted) != 0 && !termMatchesAny(term, wanted) {
-				continue
-			}
-			glossary = append(glossary, modelContextTermResponse(term))
-		}
-	}
-	if section == "all" || section == "sources" {
-		for _, source := range record.Document.Sources {
-			sources = append(sources, modelContextSourceResponse(source))
-		}
-	}
-	response["rules"] = rules
-	response["glossary"] = glossary
-	response["sources"] = sources
-	return response
-}
-
-func normalizedTermSet(terms []string) map[string]bool {
-	set := make(map[string]bool, len(terms))
-	for _, term := range terms {
-		set[strings.ToLower(strings.TrimSpace(term))] = true
-	}
-	return set
-}
-
-func termMatchesAny(term workspacecontext.Term, wanted map[string]bool) bool {
-	if wanted[strings.ToLower(term.Term)] {
-		return true
-	}
-	for _, synonym := range term.Synonyms {
-		if wanted[strings.ToLower(synonym)] {
-			return true
-		}
-	}
-	return false
-}
+// Tool parity (POST /workspaces/{id}/tools/workspace-context) has no wire
+// types here: that route is card C's workspaceToolDispatch
+// (tools_rest.go), the one kept implementation sharing the
+// workspacecontext.Reader/MatchTerms projection with MCP and chat. See
+// model_context.go's file-level note.
 
 // --- Error mapping ---
 

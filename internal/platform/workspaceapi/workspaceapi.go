@@ -380,6 +380,19 @@ type Handler struct {
 	// (see model_context.go's file-level deviation note 3). A nil value keeps
 	// every listed proposal's examples empty and hidden_examples at 0.
 	modelContextProposalExamples ProposalExampleResolver
+	// workspaceContext is ADR-0098's optional Reader capability for the
+	// knowvault_workspace_context / tools/workspace-context knowledge tool
+	// and the MCP initialize instructions' single-workspace rendered
+	// context, wired by composition only when a workspacecontext store
+	// (card A) is mounted. A nil value keeps every workspace-context surface
+	// content-free SERVICE_UNAVAILABLE, exactly like the other optional
+	// capabilities; EnableWorkspaceContext (mcp_adapter.go) sets it. It backs
+	// both the MCP tool and the REST tool-parity route
+	// (endpointWorkspaceToolWorkspaceContext, via workspaceToolDispatch) --
+	// the one kept implementation of that path; card A's
+	// endpointModelContextTool duplicate was removed during S2 integration
+	// (see model_context.go's file-level deviation note 4).
+	workspaceContext workspacecontext.Reader
 }
 
 // GovernedQueryService is the ADR-0089 orchestration boundary
@@ -707,10 +720,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.modelContextProposalAccept(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
 	case endpointModelContextProposalReject:
 		handler.modelContextProposalReject(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
-	case endpointModelContextTool:
-		handler.modelContextToolParity(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep,
-		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh,
+		endpointWorkspaceToolWorkspaceContext:
 		handler.workspaceToolDispatch(writer, request, access, requestID, endpoint)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
@@ -879,11 +891,23 @@ const (
 	// (POST .../model-context/proposals/{proposal_id}:accept|:reject).
 	endpointModelContextProposalAccept
 	endpointModelContextProposalReject
-	// endpointModelContextTool is the REST parity path of the
-	// knowvault_workspace_context MCP tool
-	// (POST .../tools/workspace-context): the same closed, content-free
-	// rendering, filtered by the optional terms/section body.
-	endpointModelContextTool
+	// endpointWorkspaceToolWorkspaceContext is ADR-0098's REST tool-parity
+	// route for the knowvault_workspace_context knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/workspace-context, the
+	// only workspace tool-parity route that is POST-only: its optional
+	// terms/section filter travels in a JSON body, not a query string). It
+	// dispatches through the identical injected workspacecontext.Reader the
+	// MCP tool and the chat tool runtime compose, so the projection and the
+	// content-free denial are the same implementation, not a re-derivation.
+	//
+	// S2 integration note: card A also implemented this same REST path as a
+	// dedicated endpointModelContextTool kind backed by ModelContextService,
+	// which duplicated this projection outside the shared
+	// workspacecontext.Reader/MatchTerms path the MCP tool and the chat tool
+	// runtime use. That duplicate was removed during merge so
+	// tools/workspace-context has exactly one implementation, the one that
+	// is byte-identical with MCP and chat (S2-CONTRACT.md "Tool parity").
+	endpointWorkspaceToolWorkspaceContext
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -916,6 +940,8 @@ func workspaceToolEndpointKind(kind workspacetools.Kind) (endpointKind, bool) {
 		return endpointWorkspaceToolSources, true
 	case workspacetools.KindRefresh:
 		return endpointWorkspaceToolRefresh, true
+	case workspacetools.KindWorkspaceContext:
+		return endpointWorkspaceToolWorkspaceContext, true
 	default:
 		return 0, false
 	}
@@ -2071,16 +2097,6 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	if len(parts) == 3 && parts[1] == "evidence" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		return endpoint{kind: endpointEvidenceGet, workspaceID: parts[0], fragmentID: parts[2]}, ""
 	}
-	// S2 card A (ADR-0098): the workspace-context tool's REST parity path,
-	// resolved ahead of the generic tools/{segment} registry lookup below
-	// (card C's workspacetools.KnowledgeTools() does not need a
-	// KindWorkspaceContext entry for this specific REST path to work; it may
-	// still register one for the MCP tool and any REST re-routing it prefers,
-	// since this early, exact match takes the segment before the generic
-	// lookup ever sees it).
-	if len(parts) == 3 && parts[1] == "tools" && parts[2] == "workspace-context" && validOpaqueID(parts[0]) {
-		return endpoint{kind: endpointModelContextTool, workspaceID: parts[0]}, ""
-	}
 	// R3a-1: the workspace-scoped REST parity surface of the workspace
 	// knowledge tools. Every tools/{segment} subpath is resolved through the
 	// one workspacetools registry, and the resolved kind (not the segment) is
@@ -2190,6 +2206,11 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		return method == http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return method == http.MethodGet || method == http.MethodPost
+	case endpointWorkspaceToolWorkspaceContext:
+		// ADR-0098's tool-parity route is POST-only (S2-CONTRACT.md "Tool
+		// parity"): its optional filter travels in a JSON body, unlike the
+		// other six GET/POST workspace tool-parity routes.
+		return method == http.MethodPost
 	case endpointWorkspaceSourceRemove:
 		return method == http.MethodDelete
 	case endpointMCP:
@@ -2198,7 +2219,7 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
 		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
-		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject, endpointModelContextTool:
+		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject:
 		return method == http.MethodPost
 	case endpointWorkspaceUpdate, endpointMemberChange, endpointModelContextSave:
 		return method == http.MethodPut
@@ -2216,6 +2237,8 @@ func allowedMethods(endpoint endpoint) string {
 		return http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return http.MethodGet + ", " + http.MethodPost
+	case endpointWorkspaceToolWorkspaceContext:
+		return http.MethodPost
 	case endpointWorkspaceSourceRemove:
 		return http.MethodDelete
 	case endpointMCP:
@@ -2224,7 +2247,7 @@ func allowedMethods(endpoint endpoint) string {
 		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
 		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
-		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject, endpointModelContextTool:
+		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject:
 		return http.MethodPost
 	case endpointWorkspaceUpdate, endpointMemberChange, endpointModelContextSave:
 		return http.MethodPut

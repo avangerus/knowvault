@@ -26,7 +26,6 @@ const (
 	modelContextProposalsPath  = "/api/v1/workspaces/ws_alpha/model-context/proposals"
 	modelContextAcceptPath     = "/api/v1/workspaces/ws_alpha/model-context/proposals/ctxprop_01ARZ3NDEKTSV4RRFFQ69G5FAV:accept"
 	modelContextRejectPath     = "/api/v1/workspaces/ws_alpha/model-context/proposals/ctxprop_01ARZ3NDEKTSV4RRFFQ69G5FAV:reject"
-	modelContextToolPath       = "/api/v1/workspaces/ws_alpha/tools/workspace-context"
 )
 
 type fakeModelContextService struct {
@@ -417,36 +416,6 @@ func TestModelContextProposalRejectReturnsStatus(t *testing.T) {
 	}
 }
 
-func TestModelContextToolParityFiltersBySectionAndTerms(t *testing.T) {
-	harness := newTestHarness(t)
-	fake := &fakeModelContextService{restResult: workspacecontext.VersionRecord{Version: workspacecontext.Version{
-		Number: 2, ContentHash: "sha256:" + strings.Repeat("1", 64),
-		Document: workspacecontext.Document{
-			Description: "d",
-			Rules:       []workspacecontext.Rule{{ID: "rule_x", Text: "r"}},
-			Glossary: []workspacecontext.Term{
-				{ID: "term_a", Term: "МНО"},
-				{ID: "term_b", Term: "Другое"},
-			},
-		},
-	}}}
-	harness.handler.EnableModelContext(fake)
-
-	response := httptest.NewRecorder()
-	request := harness.request(http.MethodPost, modelContextToolPath, `{"terms":["мно"],"section":"glossary"}`)
-	request.Header.Set("Idempotency-Key", harness.idempotencyKey)
-	harness.handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	if !strings.Contains(body, `"notice":"context, not evidence"`) {
-		t.Fatalf("body=%s missing notice", body)
-	}
-	if !strings.Contains(body, `"МНО"`) || strings.Contains(body, `"Другое"`) {
-		t.Fatalf("terms filter did not narrow glossary: %s", body)
-	}
-	if !strings.Contains(body, `"rules":[]`) {
-		t.Fatalf("section=glossary must empty rules: %s", body)
-	}
-}
+// POST /workspaces/{id}/tools/workspace-context has no test here: that route
+// is card C's workspaceToolDispatch (tools_rest_workspace_context_test.go),
+// the one kept implementation. See model_context.go's file-level note.

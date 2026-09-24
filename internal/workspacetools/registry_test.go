@@ -18,6 +18,7 @@ func TestKnowledgeToolSetRegistersCanonicalNames(t *testing.T) {
 		{name: "knowvault_grep", restPath: "grep", kind: KindGrep, capability: CapabilityGrep},
 		{name: "knowvault_sources", restPath: "sources", kind: KindSources, aliases: []string{"knowvault_sources_list"}},
 		{name: "knowvault_refresh", restPath: "refresh", kind: KindRefresh},
+		{name: "knowvault_workspace_context", restPath: "workspace-context", kind: KindWorkspaceContext},
 	}
 	if registry.Len() != len(want) {
 		t.Fatalf("registry has %d tools, want %d", registry.Len(), len(want))
