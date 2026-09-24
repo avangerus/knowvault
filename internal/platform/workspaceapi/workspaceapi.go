@@ -197,9 +197,12 @@ type SourceDiscovery interface {
 }
 
 // SourceDiscoveryRegistration resolves and registers one server-issued view
-// selector. No projection metadata is accepted from the HTTP request.
+// selector. No projection metadata is accepted from the HTTP request; the
+// only caller-supplied content is the optional excluded-column-ordinal list
+// (ADR-0097), narrowing a base/partitioned-table projection the server
+// already discovered.
 type SourceDiscoveryRegistration interface {
-	RegisterDiscoveredView(context.Context, database.AccessContext, string, string) (registration.RegisterResult, error)
+	RegisterDiscoveredView(context.Context, database.AccessContext, string, string, []int) (registration.RegisterResult, error)
 }
 
 // EvidenceService is the read boundary for the Evidence viewer route. The
@@ -2551,13 +2554,13 @@ func (handler *Handler) getSourceDiscovery(writer http.ResponseWriter, request *
 				Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
 				LogicalType: column.LogicalType, Nullable: column.Nullable,
 				Precision: column.Precision, Scale: column.Scale, MaxBytes: column.MaxBytes,
-				Comment: column.Comment, Roles: roles,
+				Comment: column.Comment, Roles: roles, PrimaryKey: column.PrimaryKey,
 			}
 		}
 		views[index] = sourceDiscoveryViewResponse{
 			Selector: view.Selector, SchemaName: view.SchemaName,
 			RelationName: view.RelationName, RelationKind: view.RelationKind,
-			Comment: view.Comment, Status: view.Status,
+			Comment: view.Comment, ApproxRowCount: view.ApproxRowCount, Status: view.Status,
 			Interpretation: view.Interpretation, Columns: columns,
 		}
 	}
@@ -2583,8 +2586,9 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		writeValidationError(writer, request, requestID, "REQUEST_INVALID", fields)
 		return
 	}
-	if code, fields := emptyBody(writer, request); code != "" {
-		writeValidationError(writer, request, requestID, code, fields)
+	var body sourceDiscoveryRegisterBody
+	if code := decodeOptionalJSON(writer, request, &body); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
 		return
 	}
 	provider, ok := handler.sources.(SourceDiscoveryRegistration)
@@ -2592,7 +2596,7 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return
 	}
-	result, err := provider.RegisterDiscoveredView(request.Context(), access, discoveryRequestID, viewID)
+	result, err := provider.RegisterDiscoveredView(request.Context(), access, discoveryRequestID, viewID, body.ExcludedColumns)
 	if err != nil {
 		switch sourcediscovery.CodeOf(err) {
 		case sourcediscovery.CodeInvalid:
@@ -3973,6 +3977,14 @@ type conversationTurnResponse struct {
 	QuestionRun   *question.Run `json:"question_run,omitempty"`
 }
 
+// sourceDiscoveryRegisterBody is the only caller-supplied content the
+// discovered-view register route accepts. excluded_columns are ordinals from
+// the sealed discovery result (ADR-0097); every other projection field stays
+// server-owned. An empty or absent body registers the table unnarrowed.
+type sourceDiscoveryRegisterBody struct {
+	ExcludedColumns []int `json:"excluded_columns"`
+}
+
 type sourceRegisterBody struct {
 	SourceType          *string                 `json:"source_type"`
 	Name                *string                 `json:"name"`
@@ -4253,11 +4265,15 @@ type sourceDiscoveryResponse struct {
 }
 
 type sourceDiscoveryViewResponse struct {
-	Selector       string                               `json:"view_id"`
-	SchemaName     string                               `json:"schema_name"`
-	RelationName   string                               `json:"relation_name"`
-	RelationKind   string                               `json:"relation_kind"`
-	Comment        string                               `json:"comment,omitempty"`
+	Selector     string `json:"view_id"`
+	SchemaName   string `json:"schema_name"`
+	RelationName string `json:"relation_name"`
+	RelationKind string `json:"relation_kind"`
+	Comment      string `json:"comment,omitempty"`
+	// ApproxRowCount is pg_class.reltuples, rounded; -1 means PostgreSQL has
+	// not analyzed the relation yet. It is display metadata, never a security
+	// or capacity decision (ADR-0097).
+	ApproxRowCount int64                                `json:"approx_row_count"`
 	Status         postgresqlquery.DiscoveryStatus      `json:"status"`
 	Interpretation postgresqlquery.InterpretationReason `json:"interpretation,omitempty"`
 	Columns        []sourceDiscoveryColumnResponse      `json:"columns"`
@@ -4274,6 +4290,9 @@ type sourceDiscoveryColumnResponse struct {
 	MaxBytes    int                         `json:"max_bytes,omitempty"`
 	Comment     string                      `json:"comment,omitempty"`
 	Roles       []postgresqlquery.Role      `json:"roles"`
+	// PrimaryKey is native primary-key membership (ADR-0097). It is always
+	// false for a VIEW/MATERIALIZED_VIEW column.
+	PrimaryKey bool `json:"primary_key"`
 }
 
 type sourceStatusResponse struct {
@@ -4522,6 +4541,53 @@ func decodeJSON(writer http.ResponseWriter, request *http.Request, destination a
 	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return "REQUEST_INVALID"
+	}
+	if err := jsonv2.Unmarshal(trimmed, destination,
+		jsonv2.RejectUnknownMembers(true),
+		jsonv2.MatchCaseInsensitiveNames(false),
+		jsontext.AllowDuplicateNames(false),
+		jsontext.AllowInvalidUTF8(false),
+	); err != nil {
+		return "REQUEST_INVALID"
+	}
+	return ""
+}
+
+// decodeOptionalJSON is decodeJSON for a route whose body is optional: no
+// body (or a body that trims to zero bytes) leaves destination at its zero
+// value and returns no error, matching how an omitted excluded_columns list
+// means "register unnarrowed." A present body must still be valid
+// application/json, decoded under the same strict rules as decodeJSON.
+func decodeOptionalJSON(writer http.ResponseWriter, request *http.Request, destination any) string {
+	if headerPresent(request.Header, "Content-Encoding") {
+		return "REQUEST_INVALID"
+	}
+	if request.ContentLength > maxBodyBytes {
+		return "PAYLOAD_TOO_LARGE"
+	}
+	if request.Body == nil || request.Body == http.NoBody {
+		return ""
+	}
+	body := http.MaxBytesReader(writer, request.Body, maxBodyBytes)
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			return "PAYLOAD_TOO_LARGE"
+		}
+		return "REQUEST_INVALID"
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	contentType, ok := exactHeader(request.Header, "Content-Type")
+	mediaType, _, mimeErr := mime.ParseMediaType(contentType)
+	if !ok || mimeErr != nil || mediaType != jsonContentType {
+		return "UNSUPPORTED_MEDIA_TYPE"
+	}
+	if trimmed[0] != '{' {
 		return "REQUEST_INVALID"
 	}
 	if err := jsonv2.Unmarshal(trimmed, destination,

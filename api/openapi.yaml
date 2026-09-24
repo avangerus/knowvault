@@ -750,16 +750,26 @@ paths:
       tags: [Sources]
       summary: "Register the selected prepared view as a DRAFT scope"
       description: >-
-        The body is empty. The server resolves the opaque view_id within the valid encrypted
-        discovery result, rechecks OWNER, security epoch, trust, and connection revision, and
-        creates the projection without browser-supplied schema, columns, roles, SQL, or hashes. An
-        exact retry converges on request_id and view_id; mutation headers are prohibited.
+        The body is empty, or names columns to exclude from a base/partitioned-table discovery
+        (ADR-0097). The server resolves the opaque view_id within the valid encrypted discovery
+        result, rechecks OWNER, security epoch, trust, and connection revision, and creates the
+        projection without browser-supplied schema, columns, roles, SQL, or hashes; excluded_columns
+        is the one exception, and it may only narrow -- an ordinal outside the sealed discovery
+        result, or one naming a primary-key column, is refused. Excluding a column changes the
+        registered ContractHash. An exact retry converges on request_id, view_id and the same
+        excluded_columns; mutation headers are prohibited.
       x-implementation-status: LIVE
       security:
         - SessionCookie: []
       parameters:
         - $ref: "#/components/parameters/CSRFHeader"
         - $ref: "#/components/parameters/OriginHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceDiscoveryRegisterInput"
       responses:
         "200":
           $ref: "#/components/responses/SourceRegisterResponse"
@@ -3636,7 +3646,7 @@ components:
     SourceDiscoveryView:
       type: object
       additionalProperties: false
-      required: [view_id, schema_name, relation_name, relation_kind, status, columns]
+      required: [view_id, schema_name, relation_name, relation_kind, approx_row_count, status, columns]
       properties:
         view_id:
           type: string
@@ -3651,10 +3661,20 @@ components:
           maxLength: 63
         relation_kind:
           type: string
-          enum: [VIEW, MATERIALIZED_VIEW]
+          description: >-
+            VIEW and MATERIALIZED_VIEW are the original DBA-reviewed five-column business-object
+            contract. TABLE and PARTITIONED_TABLE (ADR-0097) are an ordinary or partitioned base
+            table, prepared only when it has a declared primary key.
+          enum: [VIEW, MATERIALIZED_VIEW, TABLE, PARTITIONED_TABLE]
         comment:
           type: string
           maxLength: 4096
+        approx_row_count:
+          type: integer
+          description: >-
+            pg_class.reltuples, rounded. -1 means PostgreSQL has not analyzed the relation yet.
+            Planner statistics, not a live count; never used for a security or capacity decision.
+          minimum: -1
         status:
           type: string
           enum: [PREPARED, NEEDS_INTERPRETATION]
@@ -3666,6 +3686,7 @@ components:
             - MALFORMED_BUSINESS_OBJECT_CONTRACT
             - UNSUPPORTED_TYPE
             - INVALID_IDENTIFIER
+            - NO_PRIMARY_KEY
         columns:
           type: array
           maxItems: 256
@@ -3674,7 +3695,7 @@ components:
     SourceDiscoveryColumn:
       type: object
       additionalProperties: false
-      required: [ordinal, name, type_name, logical_type, nullable, roles]
+      required: [ordinal, name, type_name, logical_type, nullable, roles, primary_key]
       properties:
         ordinal:
           type: integer
@@ -3712,6 +3733,25 @@ components:
           items:
             type: string
             enum: [IDENTITY, TITLE, VERSION_HINT, EVIDENCE, PERIOD, STATUS]
+        primary_key:
+          type: boolean
+          description: >-
+            Native primary-key membership (ADR-0097). Always false for a VIEW/MATERIALIZED_VIEW
+            column.
+    SourceDiscoveryRegisterInput:
+      type: object
+      additionalProperties: false
+      properties:
+        excluded_columns:
+          type: array
+          description: >-
+            Ordinals from the sealed discovery result's SourceDiscoveryColumn.ordinal, accepted
+            only for a TABLE/PARTITIONED_TABLE selection. May not name a primary_key column.
+          maxItems: 255
+          items:
+            type: integer
+            minimum: 1
+            maximum: 256
     WorkspaceRole:
       type: string
       enum: [OWNER, MANAGER, MEMBER, VIEWER, AUDITOR]

@@ -42,6 +42,7 @@ type fakeSourceService struct {
 	discoveryReadErr           error
 	discoveryRegisterRequestID string
 	discoveryRegisterViewID    string
+	discoveryRegisterExcluded  []int
 	discoveryRegisterResult    registration.RegisterResult
 	discoveryRegisterErr       error
 	activateRequest            registration.ActivateRequest
@@ -91,9 +92,10 @@ func (service *fakeSourceService) GetDiscovery(_ context.Context, access databas
 	return service.discoveryRead, service.save("get_discovery", access)
 }
 
-func (service *fakeSourceService) RegisterDiscoveredView(_ context.Context, access database.AccessContext, requestID, viewID string) (registration.RegisterResult, error) {
+func (service *fakeSourceService) RegisterDiscoveredView(_ context.Context, access database.AccessContext, requestID, viewID string, excludedColumns []int) (registration.RegisterResult, error) {
 	service.discoveryRegisterRequestID = requestID
 	service.discoveryRegisterViewID = viewID
+	service.discoveryRegisterExcluded = excludedColumns
 	if service.discoveryRegisterErr != nil {
 		return registration.RegisterResult{}, service.discoveryRegisterErr
 	}
@@ -290,9 +292,42 @@ func TestSourceDiscoveryRegisterAcceptsOnlyServerIssuedCoordinates(t *testing.T)
 	}
 }
 
-func TestSourceDiscoveryRegisterRejectsBodyAndMutationHeaders(t *testing.T) {
+// TestSourceDiscoveryRegisterAcceptsExcludedColumns proves the one caller-
+// supplied field this route now accepts (ADR-0097): a well-formed
+// excluded_columns list is decoded and handed to the registration service
+// unchanged, while every other projection field stays exclusively
+// server-derived (TestSourceDiscoveryRegisterAcceptsOnlyServerIssuedCoordinates
+// above still proves that half).
+func TestSourceDiscoveryRegisterAcceptsExcludedColumns(t *testing.T) {
+	harness := newTestHarness(t)
+	harness.sources.discoveryRegisterResult = registration.RegisterResult{
+		ConnectionID: "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", SourceScopeID: "scope_01H9ABCDEFGHJKMNPQRSTVWXYZ",
+		DiscoveredScopeID: "discovered_01H9ABCDEFGHJKMNPQRSTVWXYZ", Revision: 1,
+		ScopeConfigHash: testHash, AccessMode: "WORKSPACE_MANAGED", Created: true,
+	}
 	viewID := "sdv_" + strings.Repeat("a", 64)
-	for name, body := range map[string]string{"body": `{\"columns\":[]}`, "empty": ""} {
+	request := harness.request(http.MethodPost,
+		sourcesPath+"/discovery/sdrq_01H9ABCDEFGHJKMNPQRSTVWXYZ/views/"+viewID+":register", `{"excluded_columns":[3,4]}`)
+	response := httptest.NewRecorder()
+	harness.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || harness.sources.call != "register_discovered_view" {
+		t.Fatalf("status=%d call=%q body=%s", response.Code, harness.sources.call, response.Body.String())
+	}
+	if len(harness.sources.discoveryRegisterExcluded) != 2 ||
+		harness.sources.discoveryRegisterExcluded[0] != 3 || harness.sources.discoveryRegisterExcluded[1] != 4 {
+		t.Fatalf("excluded_columns not projected: %#v", harness.sources.discoveryRegisterExcluded)
+	}
+}
+
+// TestSourceDiscoveryRegisterRejectsMalformedBodyAndMutationHeaders proves the
+// two things this route still refuses even though a well-formed
+// excluded_columns body is now accepted (see the excluded-columns test
+// above): a body that is not valid JSON (never browser-authored projection
+// fields -- there is no such field to smuggle), and the mutation headers this
+// idempotent-by-content route has never accepted.
+func TestSourceDiscoveryRegisterRejectsMalformedBodyAndMutationHeaders(t *testing.T) {
+	viewID := "sdv_" + strings.Repeat("a", 64)
+	for name, body := range map[string]string{"malformed_body": `{\"columns\":[]}`, "empty": ""} {
 		t.Run(name, func(t *testing.T) {
 			harness := newTestHarness(t)
 			request := harness.request(http.MethodPost,

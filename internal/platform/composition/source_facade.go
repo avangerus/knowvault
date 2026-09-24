@@ -145,12 +145,12 @@ func (facade sourceServiceFacade) GetDiscovery(ctx context.Context, access datab
 	return facade.discovery.Get(ctx, access, requestID)
 }
 
-func (facade sourceServiceFacade) RegisterDiscoveredView(ctx context.Context, access database.AccessContext, requestID, viewID string) (registration.RegisterResult, error) {
+func (facade sourceServiceFacade) RegisterDiscoveredView(ctx context.Context, access database.AccessContext, requestID, viewID string, excludedColumnOrdinals []int) (registration.RegisterResult, error) {
 	selected, err := facade.discovery.Select(ctx, access, requestID, viewID)
 	if err != nil {
 		return registration.RegisterResult{}, err
 	}
-	return facade.registration.RegisterDiscoveredView(ctx, access, selected)
+	return facade.registration.RegisterDiscoveredView(ctx, access, selected, excludedColumnOrdinals)
 }
 
 func (facade sourceServiceFacade) Register(ctx context.Context, access database.AccessContext, request registration.RegisterRequest) (registration.RegisterResult, error) {
