@@ -189,6 +189,20 @@ type SourceConnectionBootstrap interface {
 	BootstrapPostgreSQLConnection(context.Context, database.AccessContext, registration.PostgreSQLConnectionBootstrapRequest) (registration.PostgreSQLConnectionBootstrapResult, error)
 }
 
+// SourceConnectionDrafts is card D-1's workspace-scoped view of unfinished
+// PostgreSQL connections plus the pointer-only discard. It is deliberately a
+// separate optional capability (exactly like SourceConnectorCatalog and
+// SourceDiscovery) so every existing SourceService implementation and test
+// fake stays source-compatible: the production facade implements it by pure
+// delegation to the workspace repository, and a service that does not means
+// the runtime was not composed for this route. Reads audit through the same
+// source-metadata boundary as ListSources; both methods return the identical
+// content-free CodeNotFound for an unauthorized, unknown or foreign workspace.
+type SourceConnectionDrafts interface {
+	ListSourceConnectionDrafts(context.Context, database.AccessContext, string) ([]workspacerepository.SourceConnectionDraft, error)
+	DiscardSourceConnectionDraft(context.Context, database.AccessContext, string, string) error
+}
+
 // SourceDiscovery is the asynchronous connection inventory capability. The
 // POST command accepts only a connection reference and idempotency key; the
 // GET command returns a bounded server-derived catalog projection.
@@ -644,6 +658,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		}
 	case endpointWorkspaceSourceRemove:
 		handler.removeSource(writer, request, access, requestID, endpoint.workspaceID, endpoint.sourceScopeID)
+	case endpointWorkspaceSourceDrafts:
+		handler.listSourceConnectionDrafts(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointWorkspaceSourceDraftDiscard:
+		handler.discardSourceConnectionDraft(writer, request, access, requestID, endpoint.workspaceID, endpoint.connectionID)
 	case endpointEvidenceGet:
 		handler.evidenceGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.fragmentID)
 	case endpointWorkspaceAuditEvents:
@@ -751,6 +769,15 @@ const (
 	endpointSourceSync
 	endpointWorkspaceSources
 	endpointWorkspaceSourceRemove
+	// endpointWorkspaceSourceDrafts is card D-1's workspace-scoped read of the
+	// unfinished PostgreSQL connections the workspace started
+	// (GET /api/v1/workspaces/{workspace_id}/source-drafts). It is a separate
+	// route rather than a field of the sources envelope so the MCP
+	// sources/list projection stays byte-identical to its own contract.
+	endpointWorkspaceSourceDrafts
+	// endpointWorkspaceSourceDraftDiscard removes one workspace-scoped draft
+	// pointer (DELETE /api/v1/workspaces/{workspace_id}/source-drafts/{connection_id}).
+	endpointWorkspaceSourceDraftDiscard
 	endpointEvidenceGet
 	endpointWorkspaceAuditEvents
 	endpointQuestionCreate
@@ -1984,6 +2011,15 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	if len(parts) == 2 && parts[1] == "sources" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointWorkspaceSources, workspaceID: parts[0]}, ""
 	}
+	if len(parts) == 2 && parts[1] == "source-drafts" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointWorkspaceSourceDrafts, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 3 && parts[1] == "source-drafts" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
+		if request.Method == http.MethodDelete {
+			return endpoint{kind: endpointWorkspaceSourceDraftDiscard, workspaceID: parts[0], connectionID: parts[2]}, ""
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
 	if len(parts) == 3 && parts[1] == "sources" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		if request.Method == http.MethodDelete {
 			return endpoint{kind: endpointWorkspaceSourceRemove, workspaceID: parts[0], sourceScopeID: parts[2]}, ""
@@ -2202,7 +2238,7 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 func methodAllowed(endpoint endpoint, method string) bool {
 	switch endpoint.kind {
 	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
-		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals:
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals, endpointWorkspaceSourceDrafts:
 		return method == http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return method == http.MethodGet || method == http.MethodPost
@@ -2212,6 +2248,8 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		// other six GET/POST workspace tool-parity routes.
 		return method == http.MethodPost
 	case endpointWorkspaceSourceRemove:
+		return method == http.MethodDelete
+	case endpointWorkspaceSourceDraftDiscard:
 		return method == http.MethodDelete
 	case endpointMCP:
 		return method == http.MethodPost
@@ -2239,6 +2277,10 @@ func allowedMethods(endpoint endpoint) string {
 		return http.MethodGet + ", " + http.MethodPost
 	case endpointWorkspaceToolWorkspaceContext:
 		return http.MethodPost
+	case endpointWorkspaceSourceDrafts:
+		return http.MethodGet
+	case endpointWorkspaceSourceDraftDiscard:
+		return http.MethodDelete
 	case endpointWorkspaceSourceRemove:
 		return http.MethodDelete
 	case endpointMCP:
@@ -2640,6 +2682,7 @@ func (handler *Handler) bootstrapPostgreSQLConnection(writer http.ResponseWriter
 		registration.PostgreSQLConnectionBootstrapRequest{
 			Name: *body.Name, DatabaseIdentity: *body.DatabaseIdentity,
 			LineageID: *body.LineageID, CredentialReference: valueOrEmpty(body.CredentialReference),
+			WorkspaceID: valueOrEmpty(body.WorkspaceID),
 		})
 	if err != nil {
 		handleSourceServiceError(writer, err, requestID, true)
@@ -2714,6 +2757,7 @@ func (handler *Handler) getSourceDiscovery(writer http.ResponseWriter, request *
 			RelationName: view.RelationName, RelationKind: view.RelationKind,
 			Comment: view.Comment, ApproxRowCount: view.ApproxRowCount, Status: view.Status,
 			Interpretation: view.Interpretation, Columns: columns,
+			ExcludedColumns: sourceDiscoveryExcludedColumnResponses(view.ExcludedColumns),
 		}
 	}
 	writeJSON(writer, http.StatusOK, sourceDiscoveryResponse{
@@ -3575,6 +3619,79 @@ func (handler *Handler) listSources(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusOK, response)
 }
 
+// sourceConnectionDraftResponse is card D-1's content-free draft row: the
+// identifiers the wizard resumes with, the connection's display name, and the
+// server-derived state. It carries no credential, address, trust hash or
+// source content.
+type sourceConnectionDraftResponse struct {
+	ConnectionID       string    `json:"connection_id"`
+	ConnectionRevision int64     `json:"connection_revision"`
+	ConnectionName     string    `json:"connection_name"`
+	SourceType         string    `json:"source_type"`
+	TrustStatus        string    `json:"trust_status"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type sourceConnectionDraftListResponse struct {
+	Drafts []sourceConnectionDraftResponse `json:"drafts"`
+}
+
+// listSourceConnectionDrafts serves GET
+// /api/v1/workspaces/{workspace_id}/source-drafts (card D-1). It composes the
+// same optional SourceConnectionDrafts capability the discard route does and
+// fails closed as SERVICE_UNAVAILABLE when composition did not mount it. A
+// non-member, unknown or foreign workspace is the repository's single
+// content-free NOT_FOUND.
+func (handler *Handler) listSourceConnectionDrafts(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	provider, ok := handler.sources.(SourceConnectionDrafts)
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	drafts, err := provider.ListSourceConnectionDrafts(request.Context(), access, workspaceID)
+	if err != nil {
+		handleSourceServiceError(writer, err, requestID, false)
+		return
+	}
+	items := make([]sourceConnectionDraftResponse, len(drafts))
+	for index, draft := range drafts {
+		items[index] = sourceConnectionDraftResponse{
+			ConnectionID: draft.ConnectionID, ConnectionRevision: draft.ConnectionRevision,
+			ConnectionName: draft.ConnectionName, SourceType: draft.SourceType,
+			TrustStatus: draft.TrustStatus, State: draft.State, CreatedAt: draft.CreatedAt,
+		}
+	}
+	writeJSON(writer, http.StatusOK, sourceConnectionDraftListResponse{Drafts: items})
+}
+
+// discardSourceConnectionDraft serves DELETE
+// /api/v1/workspaces/{workspace_id}/source-drafts/{connection_id} (card D-1).
+// It deletes only the workspace's pointer to an unfinished connection: the
+// immutable connection lineage, trust material and any registered scope stay
+// untouched. The request shape is the same idempotency-key-only envelope the
+// other body-less source actions use.
+func (handler *Handler) discardSourceConnectionDraft(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, connectionID string) {
+	if _, _, code, fields := mutationHeaders(request, false); code != "" {
+		writeValidationError(writer, request, requestID, code, fields)
+		return
+	}
+	if code, fields := emptyBody(writer, request); code != "" {
+		writeValidationError(writer, request, requestID, code, fields)
+		return
+	}
+	provider, ok := handler.sources.(SourceConnectionDrafts)
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	if err := provider.DiscardSourceConnectionDraft(request.Context(), access, workspaceID, connectionID); err != nil {
+		handleSourceServiceError(writer, err, requestID, false)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"connection_id": connectionID, "discarded": true})
+}
+
 func confirmationContextResponseFrom(context workspacerepository.ConfirmationContext) confirmationContextResponse {
 	response := confirmationContextResponse{
 		ExpectedPolicyRevision: context.ExpectedPolicyRevision,
@@ -4193,6 +4310,10 @@ type postgreSQLConnectionBootstrapBody struct {
 	DatabaseIdentity    *string `json:"database_identity"`
 	LineageID           *string `json:"lineage_id"`
 	CredentialReference *string `json:"credential_reference"`
+	// WorkspaceID is optional card D-1 context: when present the unfinished
+	// connection is registered as that workspace's draft and appears in its
+	// Sources surface. The connection lineage itself stays organization-scoped.
+	WorkspaceID *string `json:"workspace_id"`
 }
 
 func (body postgreSQLConnectionBootstrapBody) complete() bool {
@@ -4429,6 +4550,37 @@ type sourceDiscoveryViewResponse struct {
 	Status         postgresqlquery.DiscoveryStatus      `json:"status"`
 	Interpretation postgresqlquery.InterpretationReason `json:"interpretation,omitempty"`
 	Columns        []sourceDiscoveryColumnResponse      `json:"columns"`
+	// ExcludedColumns are observed base-table columns the server could not
+	// project (D-1). They are display-only metadata with a reason; they are
+	// never part of the registration projection and never appear in reads,
+	// search, the schema tool or SQL results.
+	ExcludedColumns []sourceDiscoveryExcludedColumnResponse `json:"excluded_columns,omitempty"`
+}
+
+// sourceDiscoveryExcludedColumnResponse is the browser-safe projection of one
+// auto-excluded column: identity and the bounded reason, never a type
+// fingerprint, value or comment.
+type sourceDiscoveryExcludedColumnResponse struct {
+	Ordinal     int                                 `json:"ordinal"`
+	Name        string                              `json:"name"`
+	TypeName    string                              `json:"type_name"`
+	LogicalType postgresqlquery.LogicalType         `json:"logical_type,omitempty"`
+	PrimaryKey  bool                                `json:"primary_key,omitempty"`
+	Reason      postgresqlquery.InterpretationReason `json:"reason"`
+}
+
+func sourceDiscoveryExcludedColumnResponses(columns []postgresqlquery.ExcludedColumn) []sourceDiscoveryExcludedColumnResponse {
+	if len(columns) == 0 {
+		return nil
+	}
+	result := make([]sourceDiscoveryExcludedColumnResponse, len(columns))
+	for index, column := range columns {
+		result[index] = sourceDiscoveryExcludedColumnResponse{
+			Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
+			LogicalType: column.LogicalType, PrimaryKey: column.PrimaryKey, Reason: column.Reason,
+		}
+	}
+	return result
 }
 
 type sourceDiscoveryColumnResponse struct {

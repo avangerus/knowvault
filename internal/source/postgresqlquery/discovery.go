@@ -128,6 +128,23 @@ type DiscoveredColumn struct {
 	PrimaryKey bool `json:"primary_key"`
 }
 
+// ExcludedColumn is one observed column a base or partitioned table cannot
+// project because its type has no place in the immutable value contract. The
+// column stays visible catalog metadata -- so the operator sees exactly what
+// the server saw and why it is missing -- but it never enters the sealed
+// Projection, exactly like an administrator-chosen excluded_columns ordinal
+// (ADR-0097). Ordinal is the column's observed position in the external
+// relation, which may differ from the renumbered ordinals of the surviving
+// projection columns.
+type ExcludedColumn struct {
+	Ordinal     int                  `json:"ordinal"`
+	Name        string               `json:"name"`
+	TypeName    string               `json:"type_name"`
+	LogicalType LogicalType          `json:"logical_type,omitempty"`
+	PrimaryKey  bool                 `json:"primary_key,omitempty"`
+	Reason      InterpretationReason `json:"reason"`
+}
+
 // ViewDiscovery is one visible VIEW or MATERIALIZED_VIEW and its bounded
 // catalog metadata. Projection is present only for the exact prepared
 // BusinessObjectContract envelope; no source rows or view definition are
@@ -151,7 +168,13 @@ type ViewDiscovery struct {
 	Columns        []DiscoveredColumn   `json:"columns"`
 	Status         DiscoveryStatus      `json:"status"`
 	Interpretation InterpretationReason `json:"interpretation,omitempty"`
-	Projection     *Projection          `json:"projection,omitempty"`
+	// ExcludedColumns lists columns the server observed but cannot project
+	// (D-1). It is set only for TABLE/PARTITIONED_TABLE: a column with an
+	// unsupported type is dropped from Columns/Projection with a reason here,
+	// while an unsupported primary key or a table with no projectable column
+	// at all keeps every observed column in Columns and stays blocked.
+	ExcludedColumns []ExcludedColumn `json:"excluded_columns,omitempty"`
+	Projection      *Projection      `json:"projection,omitempty"`
 }
 
 // CatalogSnapshot is one bounded, read-only catalog observation. Database
@@ -623,9 +646,74 @@ func newViewDiscovery(connectionID string, databaseOID uint32, databaseName stri
 		}
 		view.Columns = append(view.Columns, discovered)
 	}
+	// D-1: an ordinary or partitioned base table whose only obstacle is one
+	// unprojectable column must still become registerable; the unprojectable
+	// column is dropped from the sealed projection with a visible reason,
+	// exactly like an administrator-chosen exclusion. A view's five-column
+	// business-object contract is unchanged: there an unsupported type still
+	// leaves the whole relation NEEDS_INTERPRETATION.
+	if view.RelationKind == "TABLE" || view.RelationKind == "PARTITIONED_TABLE" {
+		excludeUnsupportedTableColumns(&view)
+	}
 	status, reason, projection := classifyDiscoveredView(view)
 	view.Status, view.Interpretation, view.Projection = status, reason, projection
 	return view, nil
+}
+
+// excludeUnsupportedTableColumns partitions an observed base/partitioned
+// table's columns into the projectable set (renumbered contiguously 1..N, so
+// the browser's column ordinals and the registration-time excluded_columns
+// ordinals always name the same projection column) and the unprojectable set
+// recorded with a reason in ExcludedColumns.
+//
+// Two cases deliberately keep every observed column in Columns and stay
+// blocked (classifyDiscoveredTable then reports UNSUPPORTED_TYPE): an
+// unsupported primary key, whose IDENTITY no exclusion may remove, and a
+// table with no projectable column left at all. In both cases the operator
+// still sees the exact observed columns and their exclusion reason.
+func excludeUnsupportedTableColumns(view *ViewDiscovery) {
+	supported := make([]DiscoveredColumn, 0, len(view.Columns))
+	excluded := make([]ExcludedColumn, 0)
+	unsupportedPrimaryKey := false
+	for _, column := range view.Columns {
+		reason := unsupportedColumnReason(column)
+		if reason == "" {
+			supported = append(supported, column)
+			continue
+		}
+		excluded = append(excluded, ExcludedColumn{
+			Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
+			LogicalType: column.LogicalType, PrimaryKey: column.PrimaryKey, Reason: reason,
+		})
+		if column.PrimaryKey {
+			unsupportedPrimaryKey = true
+		}
+	}
+	if len(excluded) == 0 {
+		return
+	}
+	view.ExcludedColumns = excluded
+	if unsupportedPrimaryKey || len(supported) == 0 {
+		return
+	}
+	for index := range supported {
+		supported[index].Ordinal = index + 1
+	}
+	view.Columns = supported
+}
+
+// unsupportedColumnReason returns the empty reason when the type connector can
+// canonicalize this column's values, and InterpretationUnsupportedType when it
+// cannot. It is the single definition both columnTypesSupported and the
+// base-table exclusion pass use, so the two can never disagree about which
+// column is projectable.
+func unsupportedColumnReason(column DiscoveredColumn) InterpretationReason {
+	if column.LogicalType == "" ||
+		(column.LogicalType == TypeNumeric && (column.Precision < 1 || column.Scale < 0 || column.Scale > column.Precision)) ||
+		column.MaxBytes < 1 {
+		return InterpretationUnsupportedType
+	}
+	return ""
 }
 
 func newDiscoveredColumn(column catalogColumn) (DiscoveredColumn, error) {
@@ -646,10 +734,12 @@ func newDiscoveredColumn(column catalogColumn) (DiscoveredColumn, error) {
 // shared by the view's five-column envelope classification and the table/
 // primary-key classification below; a column this package cannot canonicalize
 // leaves the whole relation NEEDS_INTERPRETATION rather than silently
-// dropping just that column's evidence.
+// dropping just that column's evidence -- except for an ordinary or
+// partitioned base table, where excludeUnsupportedTableColumns has already
+// removed such a column (with a visible reason) before this runs.
 func columnTypesSupported(columns []DiscoveredColumn) bool {
 	for _, column := range columns {
-		if column.LogicalType == "" || (column.LogicalType == TypeNumeric && (column.Precision < 1 || column.Scale < 0 || column.Scale > column.Precision)) || column.MaxBytes < 1 {
+		if unsupportedColumnReason(column) != "" {
 			return false
 		}
 	}

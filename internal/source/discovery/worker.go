@@ -349,12 +349,48 @@ func buildMetadata(target target, snapshot postgresqlquery.CatalogSnapshot) ([]b
 				return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
 			}
 		}
+		// D-1: an auto-excluded column is catalog metadata only -- it never
+		// carries a type this package could project, it is reported with the
+		// one closed reason, and it is never claimed by a view (whose contract
+		// is unchanged). Its observed ordinal may repeat a surviving
+		// projection ordinal, because the surviving columns are renumbered;
+		// it must still be distinct within the excluded set itself.
+		if len(view.ExcludedColumns) > target.maxColumns {
+			return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+		}
+		if len(view.ExcludedColumns) > 0 && view.RelationKind != "TABLE" && view.RelationKind != "PARTITIONED_TABLE" {
+			return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+		}
+		excludedOrdinals := make(map[int]struct{}, len(view.ExcludedColumns))
+		for _, column := range view.ExcludedColumns {
+			if column.Ordinal < 1 || !validCatalogText(column.Name, 128) || !validCatalogText(column.TypeName, 128) ||
+				column.Reason != postgresqlquery.InterpretationUnsupportedType {
+				return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+			}
+			if _, duplicate := excludedOrdinals[column.Ordinal]; duplicate {
+				return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+			}
+			excludedOrdinals[column.Ordinal] = struct{}{}
+		}
 		switch view.Status {
 		case postgresqlquery.DiscoveryPrepared:
 			if view.Interpretation != "" || view.Projection == nil || view.Projection.Validate() != nil ||
 				view.Projection.ConnectionID != view.ConnectionID || view.Projection.SchemaName != view.SchemaName ||
 				view.Projection.RelationName != view.RelationName || view.Projection.RelationKind != view.RelationKind {
 				return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+			}
+			// The browser derives excluded_columns ordinals from exactly this
+			// view.Columns list; the projection it later narrows must therefore
+			// name the same columns at the same ordinals. A prepared projection
+			// that silently reorders or drops a column would make a legitimate
+			// registration exclusion name the wrong column.
+			if len(view.Projection.Columns) != len(view.Columns) {
+				return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+			}
+			for index, column := range view.Columns {
+				if view.Projection.Columns[index].Ordinal != column.Ordinal || view.Projection.Columns[index].Name != column.Name {
+					return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
+				}
 			}
 			counts.preparedCount++
 		case postgresqlquery.DiscoveryNeedsInterpretation:

@@ -422,6 +422,122 @@ func TestDiscoveryCatalogManyRelationsAgainstRealPostgreSQL(t *testing.T) {
 	}
 }
 
+// TestDiscoveryCatalogUnsupportedColumnExclusionAgainstRealPostgreSQL is
+// card D-1's real-server proof: a base table whose only obstacle is one column
+// type the query connector cannot project (a PostGIS-style `point` here, any
+// unlisted type in production) is PREPARED with that column dropped from the
+// sealed projection -- so it can never appear in a read, a search document,
+// the schema tool or generated SQL -- and reported back with its own reason.
+// A table whose primary key is unsupported, and a table with nothing
+// projectable left, stay blocked with UNSUPPORTED_TYPE.
+func TestDiscoveryCatalogUnsupportedColumnExclusionAgainstRealPostgreSQL(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("KNOWVAULT_TEST_POSTGRES_URL"))
+	if dsn == "" {
+		t.Skip("set KNOWVAULT_TEST_POSTGRES_URL for the real PostgreSQL unsupported-column discovery proof")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	admin, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("admin PostgreSQL connection: %v", err)
+	}
+	var reader *pgx.Conn
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer closeCancel()
+		if reader != nil {
+			_ = reader.Close(closeCtx)
+		}
+		_, _ = admin.Exec(closeCtx, `DROP SCHEMA IF EXISTS "kv_pgq_discovery_excl" CASCADE`)
+		_, _ = admin.Exec(closeCtx, `DROP ROLE IF EXISTS "kv_pgq_discovery_excl_reader"`)
+		_ = admin.Close(closeCtx)
+	}()
+
+	_, err = admin.Exec(ctx, `
+		DROP SCHEMA IF EXISTS "kv_pgq_discovery_excl" CASCADE;
+		DROP ROLE IF EXISTS "kv_pgq_discovery_excl_reader";
+		CREATE SCHEMA "kv_pgq_discovery_excl";
+		CREATE TABLE "kv_pgq_discovery_excl"."sites" (
+			site_id uuid PRIMARY KEY,
+			site_name text NOT NULL,
+			location inet NOT NULL
+		);
+		CREATE TABLE "kv_pgq_discovery_excl"."shapes" (
+			shape_id inet PRIMARY KEY,
+			label text NOT NULL
+		);
+		CREATE TABLE "kv_pgq_discovery_excl"."tiles" (
+			tile_id inet PRIMARY KEY,
+			raster macaddr NOT NULL
+		);
+		CREATE ROLE "kv_pgq_discovery_excl_reader" LOGIN PASSWORD 'kv-pg-discovery-excl-reader';
+		ALTER ROLE "kv_pgq_discovery_excl_reader" SET temp_file_limit = '256MB';
+		ALTER ROLE "kv_pgq_discovery_excl_reader" SET default_transaction_read_only = 'on';
+		GRANT USAGE ON SCHEMA "kv_pgq_discovery_excl" TO "kv_pgq_discovery_excl_reader";
+		GRANT SELECT ON ALL TABLES IN SCHEMA "kv_pgq_discovery_excl" TO "kv_pgq_discovery_excl_reader";
+	`)
+	if err != nil {
+		t.Fatalf("seed unsupported-column catalog: %v", err)
+	}
+	readerURL, err := discoveryReaderURLAs(dsn, "kv_pgq_discovery_excl_reader", "kv-pg-discovery-excl-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err = pgx.Connect(ctx, readerURL)
+	if err != nil {
+		t.Fatalf("read-only unsupported-column discovery role connection: %v", err)
+	}
+
+	views, err := discoverViewsForConnection(ctx, reader, "conn_pg_discovery_excl", DefaultDiscoveryLimits())
+	if err != nil {
+		t.Fatalf("discover unsupported-column catalog: %v (code=%s)", err, CodeOf(err))
+	}
+	byName := make(map[string]ViewDiscovery, len(views))
+	for _, view := range views {
+		byName[view.RelationName] = view
+	}
+
+	sites, ok := byName["sites"]
+	if !ok {
+		t.Fatalf("sites table was not visible: %#v", byName)
+	}
+	if sites.Status != DiscoveryPrepared || sites.Interpretation != "" || sites.Projection == nil {
+		t.Fatalf("sites table with one unsupported column was not prepared: %#v", sites)
+	}
+	if len(sites.Columns) != 2 || sites.Columns[0].Name != "site_id" || sites.Columns[1].Name != "site_name" {
+		t.Fatalf("sites surviving columns=%#v", sites.Columns)
+	}
+	if len(sites.ExcludedColumns) != 1 || sites.ExcludedColumns[0].Name != "location" ||
+		sites.ExcludedColumns[0].Reason != InterpretationUnsupportedType {
+		t.Fatalf("sites excluded column metadata=%#v", sites.ExcludedColumns)
+	}
+	statement, err := sites.Projection.SelectSQL()
+	if err != nil {
+		t.Fatalf("sites projection SQL: %v", err)
+	}
+	if strings.Contains(statement, "location") {
+		t.Fatalf("unsupported column leaked into generated SQL: %q", statement)
+	}
+	for _, column := range sites.Projection.Columns {
+		if column.Name == "location" {
+			t.Fatalf("unsupported column leaked into the projection: %#v", sites.Projection.Columns)
+		}
+	}
+
+	shapes, ok := byName["shapes"]
+	if !ok || shapes.Status != DiscoveryNeedsInterpretation || shapes.Interpretation != InterpretationUnsupportedType || shapes.Projection != nil {
+		t.Fatalf("unsupported-primary-key table discovery=%#v", shapes)
+	}
+	if len(shapes.ExcludedColumns) != 1 || shapes.ExcludedColumns[0].Name != "shape_id" || !shapes.ExcludedColumns[0].PrimaryKey {
+		t.Fatalf("unsupported primary key was not reported: %#v", shapes.ExcludedColumns)
+	}
+
+	tiles, ok := byName["tiles"]
+	if !ok || tiles.Status != DiscoveryNeedsInterpretation || tiles.Interpretation != InterpretationUnsupportedType || tiles.Projection != nil {
+		t.Fatalf("all-unsupported table discovery=%#v", tiles)
+	}
+}
+
 func discoveryReaderURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed == nil || parsed.Scheme != "postgres" {

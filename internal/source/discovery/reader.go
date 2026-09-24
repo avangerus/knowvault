@@ -47,7 +47,11 @@ type View struct {
 	Status         postgresqlquery.DiscoveryStatus
 	Interpretation postgresqlquery.InterpretationReason
 	Columns        []Column
-	projection     *postgresqlquery.Projection
+	// ExcludedColumns are observed columns the server cannot project (D-1):
+	// visible catalog metadata with a reason, never part of the projection a
+	// registration can select.
+	ExcludedColumns []postgresqlquery.ExcludedColumn
+	projection      *postgresqlquery.Projection
 }
 
 // SelectedView is the trusted registration input recovered from one live
@@ -252,7 +256,8 @@ func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, ac
 			RelationName: discovered.RelationName, RelationKind: discovered.RelationKind,
 			Comment: discovered.Comment, ApproxRowCount: discovered.ApproxRowCount, Status: discovered.Status,
 			Interpretation: discovered.Interpretation, Columns: columns,
-			projection: discovered.Projection,
+			ExcludedColumns: append([]postgresqlquery.ExcludedColumn(nil), discovered.ExcludedColumns...),
+			projection:      discovered.Projection,
 		}
 	}
 	result.Views = views

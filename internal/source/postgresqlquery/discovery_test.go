@@ -214,6 +214,123 @@ func TestNumericTypmodDecodesSignedElevenBitScale(t *testing.T) {
 	}
 }
 
+// TestDiscoveryTableWithOneUnsupportedColumnIsPreparedAndExcludesIt is D-1's
+// central discovery result: a base table whose only obstacle is one column the
+// query connector cannot project (a PostGIS geometry, an enum, ...) becomes
+// ready to register, that column is dropped from the sealed projection exactly
+// like an administrator-chosen excluded_columns ordinal, and it is reported
+// back with its own reason. The surviving columns are renumbered contiguously,
+// so the browser's column ordinals and the registration-time exclusion
+// ordinals always name the same projection column.
+func TestDiscoveryTableWithOneUnsupportedColumnIsPreparedAndExcludesIt(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30010, schemaName: "public", relationName: "waste_site", relationKind: "TABLE",
+	}, []catalogColumn{
+		{ordinal: 1, name: "site_id", typeOID: 2950, typeName: "uuid", nullable: false, primaryKey: true},
+		{ordinal: 2, name: "geom", typeOID: 90001, typeName: "geometry", nullable: true},
+		{ordinal: 3, name: "site_name", typeOID: 25, typeName: "text", nullable: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryPrepared || view.Interpretation != "" || view.Projection == nil {
+		t.Fatalf("table with one unsupported column was not prepared: %#v", view)
+	}
+	if len(view.Columns) != 2 || view.Columns[0].Name != "site_id" || view.Columns[1].Name != "site_name" {
+		t.Fatalf("surviving columns=%#v", view.Columns)
+	}
+	if view.Columns[0].Ordinal != 1 || view.Columns[1].Ordinal != 2 {
+		t.Fatalf("surviving columns were not renumbered contiguously: %#v", view.Columns)
+	}
+	if len(view.ExcludedColumns) != 1 || view.ExcludedColumns[0].Name != "geom" ||
+		view.ExcludedColumns[0].Ordinal != 2 || view.ExcludedColumns[0].Reason != InterpretationUnsupportedType {
+		t.Fatalf("excluded column metadata=%#v", view.ExcludedColumns)
+	}
+	if len(view.Projection.Columns) != 2 {
+		t.Fatalf("projection columns=%#v", view.Projection.Columns)
+	}
+	for _, column := range view.Projection.Columns {
+		if column.Name == "geom" {
+			t.Fatalf("unsupported column leaked into the projection: %#v", view.Projection.Columns)
+		}
+	}
+	statement, err := view.Projection.SelectSQL()
+	if err != nil {
+		t.Fatalf("generated projection SQL: %v", err)
+	}
+	if strings.Contains(statement, "geom") {
+		t.Fatalf("unsupported column leaked into the generated SQL: %q", statement)
+	}
+}
+
+// TestDiscoveryTableWithUnsupportedPrimaryKeyStaysBlocked and
+// TestDiscoveryTableWithOnlyUnsupportedColumnsStaysBlocked pin the two
+// fail-closed halves of the same rule: auto-exclusion may narrow a table's
+// EVIDENCE set, never remove the identity it is keyed by, and a table with
+// nothing projectable left is not a source at all.
+func TestDiscoveryTableWithUnsupportedPrimaryKeyStaysBlocked(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30011, schemaName: "public", relationName: "shape_index", relationKind: "TABLE",
+	}, []catalogColumn{
+		{ordinal: 1, name: "geom", typeOID: 90001, typeName: "geometry", nullable: false, primaryKey: true},
+		{ordinal: 2, name: "label", typeOID: 25, typeName: "text", nullable: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryNeedsInterpretation || view.Interpretation != InterpretationUnsupportedType || view.Projection != nil {
+		t.Fatalf("unsupported-primary-key table discovery=%#v", view)
+	}
+	if len(view.ExcludedColumns) != 1 || view.ExcludedColumns[0].Name != "geom" || !view.ExcludedColumns[0].PrimaryKey {
+		t.Fatalf("excluded primary key was not reported: %#v", view.ExcludedColumns)
+	}
+}
+
+func TestDiscoveryTableWithOnlyUnsupportedColumnsStaysBlocked(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30012, schemaName: "public", relationName: "tiles", relationKind: "TABLE",
+	}, []catalogColumn{
+		{ordinal: 1, name: "geom", typeOID: 90001, typeName: "geometry", nullable: false, primaryKey: true},
+		{ordinal: 2, name: "rast", typeOID: 90002, typeName: "raster", nullable: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryNeedsInterpretation || view.Interpretation != InterpretationUnsupportedType || view.Projection != nil {
+		t.Fatalf("all-unsupported table discovery=%#v", view)
+	}
+	if len(view.ExcludedColumns) != 2 {
+		t.Fatalf("all-unsupported table excluded columns=%#v", view.ExcludedColumns)
+	}
+}
+
+// TestDiscoveryViewWithUnsupportedColumnStillNeedsInterpretation proves the
+// auto-exclusion is a base/partitioned-table rule only: the five-column
+// business-object view contract is DBA-reviewed and unchanged, so a view with
+// one unsupported column is still surfaced as NEEDS_INTERPRETATION rather
+// than silently narrowed.
+func TestDiscoveryViewWithUnsupportedColumnStillNeedsInterpretation(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30013, schemaName: "public", relationName: "v_objects", relationKind: "VIEW",
+	}, []catalogColumn{
+		{ordinal: 1, name: "entity_id", typeOID: 2950, typeName: "uuid", nullable: false},
+		{ordinal: 2, name: "entity_version", typeOID: 25, typeName: "text", nullable: false},
+		{ordinal: 3, name: "last_updated_at", typeOID: 1184, typeName: "timestamptz", nullable: false},
+		{ordinal: 4, name: "payload", typeOID: 3802, typeName: "jsonb", nullable: false},
+		{ordinal: 5, name: "payload_format", typeOID: 25, typeName: "text", nullable: false},
+		{ordinal: 6, name: "geom", typeOID: 90001, typeName: "geometry", nullable: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryNeedsInterpretation || view.Interpretation != InterpretationUnsupportedType || view.Projection != nil {
+		t.Fatalf("view with unsupported column discovery=%#v", view)
+	}
+	if len(view.ExcludedColumns) != 0 {
+		t.Fatalf("view auto-excluded a column: %#v", view.ExcludedColumns)
+	}
+}
+
 func hasRole(roles []Role, wanted Role) bool {
 	for _, role := range roles {
 		if role == wanted {

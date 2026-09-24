@@ -606,6 +606,14 @@ paths:
                 credential_reference:
                   type: string
                   pattern: '^cred_[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+                workspace_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  description: >-
+                    Card D-1: when present, the unfinished connection is registered as this
+                    workspace's draft and appears in its Sources surface. The connection lineage
+                    itself stays organization-scoped.
       responses:
         "200":
           description: Immutable DRAFT connection revision
@@ -933,6 +941,86 @@ paths:
           $ref: "#/components/responses/PayloadTooLarge"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/source-drafts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceSourceConnectionDrafts
+      tags: [Sources]
+      summary: "Unfinished PostgreSQL connections started from this workspace"
+      description: >-
+        Card D-1: the workspace-scoped draft registry. Only the current workspace's own drafts are
+        returned; a non-member, an unknown workspace and a foreign workspace all resolve to one
+        content-free 404. Each row carries the identifiers and derived state the wizard resumes
+        from and contains no credential, address, trust hash or source content.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SourceConnectionDraftListResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/source-drafts/{connection_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    delete:
+      operationId: discardWorkspaceSourceConnectionDraft
+      tags: [Sources]
+      summary: "Discard this workspace's pointer to an unfinished connection"
+      description: >-
+        Card D-1: removes only the workspace-scoped draft pointer. The immutable connection
+        lineage, its trust material and any registered scope stay untouched, so another workspace
+        that started the same connection is unaffected. An unauthorized, unknown or foreign
+        workspace, and a draft that does not exist, all resolve to one content-free 404.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: The draft pointer was removed (or was already absent for this workspace).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [connection_id, discarded]
+                properties:
+                  connection_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  discarded:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -4136,6 +4224,43 @@ components:
           maxItems: 256
           items:
             $ref: "#/components/schemas/SourceDiscoveryColumn"
+        excluded_columns:
+          type: array
+          description: >-
+            Base or partitioned-table columns the server observed but cannot project into the
+            immutable value contract (for example a PostGIS geometry). They are display-only
+            metadata carrying a reason, are never part of the registration projection and never
+            appear in reads, search, the schema tool or SQL results. A table whose primary key or
+            every column is unsupported stays NEEDS_INTERPRETATION with UNSUPPORTED_TYPE.
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/SourceDiscoveryExcludedColumn"
+    SourceDiscoveryExcludedColumn:
+      type: object
+      additionalProperties: false
+      required: [ordinal, name, type_name, reason]
+      properties:
+        ordinal:
+          type: integer
+          minimum: 1
+          maximum: 256
+          description: The column's observed position in the external relation.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+        type_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        logical_type:
+          type: string
+          description: Present only when the server recognized a logical type but the column is still unprojectable.
+        primary_key:
+          type: boolean
+        reason:
+          type: string
+          enum: [UNSUPPORTED_TYPE]
     SourceDiscoveryColumn:
       type: object
       additionalProperties: false
@@ -4196,6 +4321,45 @@ components:
             type: integer
             minimum: 1
             maximum: 256
+    SourceConnectionDraftList:
+      type: object
+      additionalProperties: false
+      required: [drafts]
+      properties:
+        drafts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceConnectionDraft"
+    SourceConnectionDraft:
+      type: object
+      additionalProperties: false
+      required: [connection_id, connection_revision, connection_name, source_type, trust_status, state, created_at]
+      properties:
+        connection_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        connection_revision:
+          type: integer
+          minimum: 1
+        connection_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        source_type:
+          type: string
+        trust_status:
+          type: string
+          enum: [DRAFT, VERIFIED]
+        state:
+          type: string
+          description: >-
+            AWAITING_TRUST_VERIFICATION resumes the wizard at trust verification;
+            READY_FOR_DISCOVERY resumes it at catalog discovery.
+          enum: [AWAITING_TRUST_VERIFICATION, READY_FOR_DISCOVERY]
+        created_at:
+          type: string
+          format: date-time
     WorkspaceRole:
       type: string
       enum: [OWNER, MANAGER, MEMBER, VIEWER, AUDITOR]
@@ -6236,6 +6400,19 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/SourceList"
+    SourceConnectionDraftListResponse:
+      description: The unfinished PostgreSQL connections this workspace started, with their derived state.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/NoSniff"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SourceConnectionDraftList"
     QuestionRunResponse:
       description: Immutable extractive Question Run projection with current-access-checked citations.
       headers:

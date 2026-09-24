@@ -13,12 +13,16 @@ import (
 // PostgreSQLConnectionBootstrapRequest contains only the non-secret identity
 // needed to configure a DRAFT connection revision before any scope exists.
 // CredentialReference names a worker-mounted secret; it never contains a DSN
-// or credential bytes.
+// or credential bytes. WorkspaceID is the workspace whose Sources surface
+// should show the unfinished connection (D-1); it is optional so the existing
+// connection-only callers keep working, and when present the connection is
+// registered as that workspace's draft.
 type PostgreSQLConnectionBootstrapRequest struct {
 	Name                string
 	DatabaseIdentity    string
 	LineageID           string
 	CredentialReference string
+	WorkspaceID         string
 }
 
 // PostgreSQLConnectionBootstrapResult identifies the immutable DRAFT revision
@@ -38,6 +42,7 @@ func (s *Service) BootstrapPostgreSQLConnection(ctx context.Context, access data
 	request PostgreSQLConnectionBootstrapRequest) (PostgreSQLConnectionBootstrapResult, error) {
 	if s == nil || s.database == nil || s.audit == nil || s.codec == nil || access.Validate() != nil ||
 		!validName(request.Name) || !validSchemaID(request.DatabaseIdentity) || !validSchemaID(request.LineageID) ||
+		(request.WorkspaceID != "" && !validSchemaID(request.WorkspaceID)) ||
 		(request.CredentialReference != "" && !validGeneratedID(request.CredentialReference, "cred_")) {
 		return PostgreSQLConnectionBootstrapResult{}, &Error{code: CodeRequestInvalid}
 	}
@@ -104,6 +109,16 @@ func (s *Service) BootstrapPostgreSQLConnection(ctx context.Context, access data
 			int64(maximumScopeBytes), int64(maximumObjectBytes)).Scan(
 			&result.ConnectionID, &result.ConnectionRevision, &result.Created); err != nil {
 			return err
+		}
+		// D-1: make the unfinished connection visible to the workspace that
+		// started it. A replay re-links the same connection without a second
+		// row, and a draft the operator discarded before is linked again, so
+		// the pointer always reflects the current intent.
+		if request.WorkspaceID != "" {
+			if _, err := tx.Exec(ctx, `SELECT app.source_connection_draft_register($1, $2, $3)`,
+				request.WorkspaceID, result.ConnectionID, result.ConnectionRevision); err != nil {
+				return err
+			}
 		}
 		if !result.Created {
 			return nil
