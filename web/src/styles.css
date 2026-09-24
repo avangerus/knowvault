@@ -809,6 +809,16 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .disabled-sources summary::-webkit-details-marker { display: none; }
 .disabled-sources[open] summary { margin-bottom: 4px; }
 
+/* Card S5.1: one card per PostgreSQL connection. The collapsed body keeps the
+   row idiom; the expansion lists the registered tables with their own state
+   and actions. */
+.source-connection-tables { margin-top: 10px; font-size: var(--fs-caption); }
+.source-connection-tables > summary { cursor: pointer; font-weight: 700; color: var(--ink-secondary); padding: 4px 0; }
+.source-table-rows { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.source-table { border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 10px 12px; background: var(--surface-2); }
+.source-table .source-success-time { margin: 4px 0 0; }
+.source-table .source-row-actions { margin-top: 8px; justify-content: flex-start; }
+
 /* ---------------------------------------------------------------------------
    UI-4.3: Access -- a single-screen code issue window (create -> show once
    -> hide), replacing the always-visible inline create/reveal form.
