@@ -7,10 +7,11 @@ package postgres_test
 // The surface under test is the real, unmodified /api/v1/mcp tools/list and
 // tools/call dispatch the deployment serves:
 //
-//  1. tools/list for a workspace member advertises exactly the seven canonical
-//     KnowVault knowledge tools (knowvault_search, knowvault_read,
+//  1. tools/list for a workspace member advertises exactly the eight
+//     canonical KnowVault knowledge tools (knowvault_search, knowvault_read,
 //     knowvault_list_objects, knowvault_related, knowvault_grep,
-//     knowvault_sources, knowvault_refresh) and no other knowledge name.
+//     knowvault_sources, knowvault_refresh, knowvault_workspace_context) and
+//     no other knowledge name.
 //  2. the three compatibility aliases (knowvault_evidence_read,
 //     knowvault_workspace_list, knowvault_sources_list) are dispatch-only: they
 //     never appear on tools/list, yet a tools/call naming one is still resolved
@@ -59,8 +60,13 @@ import (
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
-// kvA03CanonicalTools is the one canonical R3a-1 knowledge name set the
-// workspace MCP surface must advertise, in registry order.
+// kvA03CanonicalTools is the one canonical knowledge name set the workspace
+// MCP surface must advertise, in registry order. R3a-1 fixed the first
+// seven; knowvault_workspace_context is S2's own addition (ADR-0098,
+// S2-CONTRACT.md "MCP") -- a member-readable knowledge tool exactly like the
+// other seven (Reader.Current's RLS admits OWNER, MANAGER, MEMBER and a
+// scoped SERVICE), so it belongs in this same closed advertised set, not a
+// separate administrative one.
 var kvA03CanonicalTools = []string{
 	"knowvault_search",
 	"knowvault_read",
@@ -69,6 +75,7 @@ var kvA03CanonicalTools = []string{
 	"knowvault_grep",
 	"knowvault_sources",
 	"knowvault_refresh",
+	"knowvault_workspace_context",
 }
 
 // kvA03AliasTools are the dispatch-only former names: callable for pinned
@@ -233,7 +240,7 @@ func TestKVA03WorkspaceMCPToolSetContract(t *testing.T) {
 	}
 	token, csrf := kvA03Session(t)
 
-	t.Run("member tools/list advertises exactly the seven canonical knowledge tools", func(t *testing.T) {
+	t.Run("member tools/list advertises exactly the eight canonical knowledge tools", func(t *testing.T) {
 		names := kvA03ToolsList(t, handler, token, csrf)
 		present := make(map[string]bool, len(names))
 		for _, name := range names {

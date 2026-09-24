@@ -15,21 +15,34 @@ package workspaceapi
 //
 //  1. "400 REQUEST_INVALID with field paths when validation fails": A0's
 //     Validate returns only a flat, content-free ErrorCode
-//     (WORKSPACE_CONTEXT_DOCUMENT_INVALID / WORKSPACE_CONTEXT_LOCATION_UNKNOWN),
-//     never a field path. This transport returns REQUEST_INVALID with an
-//     empty fields list rather than fabricate a path Validate never computed.
-//  2. The proposal accept body's three independent overrides ({"term",
-//     "synonyms", "definition"}) are decoded here in full (so the wire shape
-//     matches the contract), but workspacecontext.ProposalEdits (A0, frozen)
-//     carries only one SuggestedText field. definition, if present, maps to
-//     SuggestedText; otherwise term does; synonyms has no destination and is
-//     accepted but not forwarded. See modelContextProposalEdits below.
+//     (WORKSPACE_CONTEXT_DOCUMENT_INVALID / WORKSPACE_CONTEXT_LOCATION_UNKNOWN)
+//     with no indication of which glossary/rule/source/table/column entry
+//     failed, so it carries nothing a field path could honestly be built
+//     from. S2 integration evaluated adding paths here anyway and rejected
+//     it: fabricating a plausible-looking path (e.g. always pointing at
+//     "document.glossary") would be worse than none, and restructuring A0's
+//     Validate to return one would touch a shape card A's own store.go and
+//     tests are already written against. This transport still returns
+//     REQUEST_INVALID (never a bare 500) with an empty fields list rather
+//     than a fabricated one; every REQUEST_INVALID this file DOES know a
+//     concrete field for (the standalone body-shape checks below Validate's
+//     own call, e.g. an over-count terms/section filter or a malformed
+//     accept-body field) already carries one.
+//  2. (Resolved by S2 integration.) The proposal accept body's three
+//     independent overrides ({"term", "synonyms", "definition"}) now map
+//     onto the identical three fields on workspacecontext.ProposalEdits
+//     (extended from A0's original single SuggestedText field during S2
+//     integration, since accept-with-edits must apply all three together,
+//     not just one). See toEdits (model_context_types.go) and
+//     proposer.applyProposal.
 //  3. "examples"/"hidden_examples" on a listed proposal need conversation
 //     content resolved through internal/question.Service.GetBatch
 //     (S2-MODEL-CONTEXT-DESIGN.md), which is outside this card's owned
-//     packages. Until composition wires a ProposalExampleResolver, every
-//     listed proposal reports examples: [] and hidden_examples: 0 -- a safe
-//     under-approximation (never over-exposure), not a fabricated answer.
+//     packages. S2 integration wires a ProposalExampleResolver in
+//     composition/runtime.go (proposalExampleResolver, backed by card E's
+//     proposer.Store.GetWithExamples); a deployment that never mounts one
+//     keeps this file's original safe under-approximation, examples: []
+//     and hidden_examples: 0, never a fabricated answer.
 
 import (
 	"context"

@@ -12,16 +12,21 @@ import (
 const termIDPrefix = "term"
 
 // applyProposal computes the edited Document Accept mints a new version
-// from: current, with proposal's change applied, preferring edits.
-// SuggestedText over proposal.SuggestedText when the caller supplied one
-// (POST .../proposals/{id}:accept's optional body, S2-CONTRACT.md
-// "Изменить и принять"). It is a pure function — no id it mints depends on
-// anything but internal/source/ids's own CSPRNG — so it is fully unit-
-// testable without a database; Store.Accept is the only caller.
+// from: current, with proposal's change applied, preferring edits.Term,
+// edits.Synonyms and edits.Definition over the proposal's own
+// CandidateTerm/SuggestedText wherever the caller supplied them (POST
+// .../proposals/{id}:accept's optional body, S2-CONTRACT.md "Изменить и
+// принять"). It is a pure function — no id it mints depends on anything but
+// internal/source/ids's own CSPRNG — so it is fully unit-testable without a
+// database; Store.Accept is the only caller.
 func applyProposal(current workspacecontext.Document, proposal workspacecontext.Proposal, edits workspacecontext.ProposalEdits) (workspacecontext.Document, error) {
-	text := proposal.SuggestedText
-	if edits.SuggestedText != "" {
-		text = edits.SuggestedText
+	term := proposal.CandidateTerm
+	if edits.Term != "" {
+		term = edits.Term
+	}
+	definition := proposal.SuggestedText
+	if edits.Definition != "" {
+		definition = edits.Definition
 	}
 
 	edited := current
@@ -34,7 +39,7 @@ func applyProposal(current workspacecontext.Document, proposal workspacecontext.
 			return workspacecontext.Document{}, newError(CodeInternal, err)
 		}
 		edited.Glossary = append(edited.Glossary, workspacecontext.Term{
-			ID: newTermID, Term: proposal.CandidateTerm, Definition: text,
+			ID: newTermID, Term: term, Definition: definition, Synonyms: mergedSynonyms(nil, edits.Synonyms),
 		})
 		return edited, nil
 
@@ -43,11 +48,9 @@ func applyProposal(current workspacecontext.Document, proposal workspacecontext.
 		if index < 0 {
 			return workspacecontext.Document{}, newError(CodeTargetTermMissing, nil)
 		}
-		term := edited.Glossary[index]
-		if !containsFold(term.Synonyms, proposal.CandidateTerm) {
-			term.Synonyms = append(append([]string{}, term.Synonyms...), proposal.CandidateTerm)
-		}
-		edited.Glossary[index] = term
+		targetTerm := edited.Glossary[index]
+		targetTerm.Synonyms = mergedSynonyms(targetTerm.Synonyms, append([]string{term}, edits.Synonyms...))
+		edited.Glossary[index] = targetTerm
 		return edited, nil
 
 	case workspacecontext.ProposalKindDefinitionCorrection:
@@ -55,14 +58,31 @@ func applyProposal(current workspacecontext.Document, proposal workspacecontext.
 		if index < 0 {
 			return workspacecontext.Document{}, newError(CodeTargetTermMissing, nil)
 		}
-		term := edited.Glossary[index]
-		term.Definition = text
-		edited.Glossary[index] = term
+		targetTerm := edited.Glossary[index]
+		targetTerm.Definition = definition
+		targetTerm.Synonyms = mergedSynonyms(targetTerm.Synonyms, edits.Synonyms)
+		edited.Glossary[index] = targetTerm
 		return edited, nil
 
 	default:
 		return workspacecontext.Document{}, newError(CodeInternal, nil)
 	}
+}
+
+// mergedSynonyms appends each of additions to a fresh copy of existing
+// (never aliasing existing's backing array, exactly like the single-synonym
+// append this replaces), case/ё-fold-deduplicated against existing and
+// against any addition already appended in this same call, and dropping
+// empty strings (an edits.Term the caller left blank surfaces here as "",
+// never a literal synonym).
+func mergedSynonyms(existing []string, additions []string) []string {
+	merged := append([]string{}, existing...)
+	for _, addition := range additions {
+		if addition != "" && !containsFold(merged, addition) {
+			merged = append(merged, addition)
+		}
+	}
+	return merged
 }
 
 func indexOfTermID(glossary []workspacecontext.Term, termID string) int {

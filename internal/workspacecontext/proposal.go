@@ -98,10 +98,31 @@ func (proposal Proposal) Valid() bool {
 	return validText(proposal.SuggestedText, 0, maxSuggestedTextChars)
 }
 
-// ProposalEdits carries the optional override POST
+// ProposalEdits carries the optional overrides POST
 // .../proposals/{pid}:accept may apply before minting the new version, per
 // S2-MODEL-CONTEXT-DESIGN.md's "Изменить и принять" ("edit and accept") UI
-// action. An empty SuggestedText keeps the proposal's own suggested text.
+// action and S2-CONTRACT.md's accept body
+// {"term", "synonyms", "definition"}. Each field is independent and empty
+// (Term == "", len(Synonyms) == 0, Definition == "") keeps the proposal's own
+// value for that part of the merge proposer.applyProposal performs; the
+// three may be combined freely in one accept call. See
+// internal/workspacecontext/proposer/apply.go for exactly how each
+// ProposalKind consumes them.
 type ProposalEdits struct {
-	SuggestedText string
+	// Term overrides the proposal's own CandidateTerm: the new glossary
+	// term's name for NEW_TERM, or the synonym text added to the target term
+	// for SYNONYM.
+	Term string
+	// Synonyms adds to (never replaces) the created or target term's
+	// synonym list, deduplicated case/ё-fold-insensitively against whatever
+	// CandidateTerm/Term itself already adds. Meaningful for every kind: the
+	// new term's initial synonyms (NEW_TERM), extra synonyms alongside the
+	// one CandidateTerm/Term already adds (SYNONYM), or extra synonyms on
+	// the term whose definition is being corrected (DEFINITION_CORRECTION).
+	Synonyms []string
+	// Definition overrides the proposal's own SuggestedText: the new term's
+	// definition (NEW_TERM) or the corrected term's definition
+	// (DEFINITION_CORRECTION). Not applicable to SYNONYM, which adds a
+	// synonym and never touches a definition.
+	Definition string
 }

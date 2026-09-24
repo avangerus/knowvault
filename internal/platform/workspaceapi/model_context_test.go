@@ -379,7 +379,7 @@ func TestModelContextProposalsServiceUnavailableWhenNotWired(t *testing.T) {
 	}
 }
 
-func TestModelContextProposalAcceptMapsDefinitionOverrideToSuggestedText(t *testing.T) {
+func TestModelContextProposalAcceptMapsDefinitionOverride(t *testing.T) {
 	harness := newTestHarness(t)
 	fake := &fakeProposalService{acceptResult: workspacecontext.Version{Number: 5, ContentHash: "sha256:" + strings.Repeat("9", 64)}}
 	harness.handler.EnableModelContextProposals(fake)
@@ -391,11 +391,34 @@ func TestModelContextProposalAcceptMapsDefinitionOverrideToSuggestedText(t *test
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	if fake.acceptEdits.SuggestedText != "Новое определение" {
+	if fake.acceptEdits.Definition != "Новое определение" {
 		t.Fatalf("accept edits=%+v", fake.acceptEdits)
 	}
 	if fake.acceptProposalID != "ctxprop_01ARZ3NDEKTSV4RRFFQ69G5FAV" {
 		t.Fatalf("accept proposal id=%q", fake.acceptProposalID)
+	}
+}
+
+// TestModelContextProposalAcceptMapsTermAndSynonymsOverride proves the
+// accept body's term and synonyms overrides both reach ProposalEdits
+// alongside definition (S2 integration gap fix: A0's original ProposalEdits
+// carried only SuggestedText, dropping term and synonyms silently).
+func TestModelContextProposalAcceptMapsTermAndSynonymsOverride(t *testing.T) {
+	harness := newTestHarness(t)
+	fake := &fakeProposalService{acceptResult: workspacecontext.Version{Number: 5, ContentHash: "sha256:" + strings.Repeat("9", 64)}}
+	harness.handler.EnableModelContextProposals(fake)
+
+	response := httptest.NewRecorder()
+	request := harness.request(http.MethodPost, modelContextAcceptPath, `{"term":"КП","synonyms":["коммерческое предложение"],"definition":"Новое определение"}`)
+	setModelContextMutationHeaders(request, harness.idempotencyKey, "sha256:"+strings.Repeat("a", 64))
+	harness.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	want := workspacecontext.ProposalEdits{Term: "КП", Synonyms: []string{"коммерческое предложение"}, Definition: "Новое определение"}
+	if fake.acceptEdits.Term != want.Term || fake.acceptEdits.Definition != want.Definition ||
+		len(fake.acceptEdits.Synonyms) != 1 || fake.acceptEdits.Synonyms[0] != want.Synonyms[0] {
+		t.Fatalf("accept edits=%+v, want %+v", fake.acceptEdits, want)
 	}
 }
 

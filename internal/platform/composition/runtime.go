@@ -519,6 +519,13 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	}
 	questions.EnableToolLoop(workspaceHandler)
 	workspaceHandler.EnableGovernedQuery(governedAskService)
+	// ADR-0098 (S2): the workspace model context store, its deterministic
+	// proposer and every seam between them (see workspacecontext.go's own
+	// doc comment) -- mandatory once workspaceHandler and questions both
+	// exist, not another optional LoadMounted-gated capability.
+	if err := installWorkspaceContext(databaseStore, workspaceStore, auditStore, questions, workspaceHandler); err != nil {
+		return fail(StartupStageWorkspaceContext)
+	}
 	// EMB-1: the operator command that moves this tenant onto the mounted
 	// embedding profile. It is composed on every start — a deployment with no
 	// embedding mount still answers the status route, reporting an unavailable

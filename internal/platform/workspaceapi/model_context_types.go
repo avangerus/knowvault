@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
@@ -72,18 +71,19 @@ type modelContextProposalAcceptBody struct {
 	Definition *string  `json:"definition"`
 }
 
-// toEdits maps the accept body onto A0's frozen, single-field ProposalEdits
-// (file-level deviation note 2): definition wins when present, otherwise
-// term; an absent body (nil pointers throughout) keeps the proposal's own
-// suggested text (empty SuggestedText).
+// toEdits maps the accept body's three independent overrides onto
+// ProposalEdits verbatim (S2-CONTRACT.md "term"/"synonyms"/"definition" all
+// apply together, S2 integration gap fix: ProposalEdits is no longer the
+// single-field SuggestedText A0 originally froze it as). An absent field
+// (nil Term/Definition, empty Synonyms) leaves that part of the merge to the
+// proposal's own CandidateTerm/SuggestedText, exactly as proposer.applyProposal
+// documents.
 func (body modelContextProposalAcceptBody) toEdits() workspacecontext.ProposalEdits {
-	if body.Definition != nil {
-		return workspacecontext.ProposalEdits{SuggestedText: *body.Definition}
+	return workspacecontext.ProposalEdits{
+		Term:       stringValueOrEmpty(body.Term),
+		Synonyms:   body.Synonyms,
+		Definition: stringValueOrEmpty(body.Definition),
 	}
-	if body.Term != nil {
-		return workspacecontext.ProposalEdits{SuggestedText: *body.Term}
-	}
-	return workspacecontext.ProposalEdits{}
 }
 
 func stringValueOrEmpty(value *string) string {

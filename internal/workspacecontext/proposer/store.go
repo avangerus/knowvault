@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"knowvault.local/verified-workspace/internal/audit"
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/source/ids"
 	"knowvault.local/verified-workspace/internal/workspacecontext"
@@ -58,6 +59,29 @@ type Store struct {
 	reader   workspacecontext.Reader
 	minter   VersionMinter
 	excerpts RunExcerptReader
+	// audit is the optional internal/audit sink EnableAudit installs. It
+	// backs workspace.context_proposal_created (ObserveRun -> recordCandidate,
+	// actor SYSTEM, exactly once per newly INSERTed proposal row -- never on
+	// a dedup occurrence bump) and workspace.context_proposal_decided on
+	// Reject, each appended inside the same transaction as the row it
+	// describes so an audit event is never recorded for a write that did not
+	// actually commit, nor lost for one that did. Accept's own decided event
+	// is appended by the lead's VersionMinter adapter instead (inside the
+	// version-minting transaction it already owns, per seams.go), not here;
+	// see proposer.go's package doc for why this package otherwise leaves
+	// auditing "calls into this package" to the lead. A nil audit leaves the
+	// Store audit-silent, exactly like a nil reader/minter/excerpts.
+	audit *audit.Store
+}
+
+// EnableAudit installs the optional internal/audit sink (see the audit
+// field's doc comment for exactly which two events it backs). A nil Store or
+// a nil auditStore is a safe no-op.
+func (store *Store) EnableAudit(auditStore *audit.Store) {
+	if store == nil || auditStore == nil {
+		return
+	}
+	store.audit = auditStore
 }
 
 // NewStore builds a Store. db is required for every method. reader and
@@ -208,7 +232,41 @@ func (store *Store) recordCandidate(ctx context.Context, tx database.Transaction
 	if evErr := store.addEvidence(ctx, tx, event, *recordedID, candidate.Kind); evErr != nil {
 		return "", evErr
 	}
+	// *recordedID == newID exactly when app.workspace_context_proposal_record
+	// INSERTed a fresh row rather than dedup-bumping an existing PROPOSED
+	// one's occurrences (that branch RETURNs the EXISTING row's own,
+	// necessarily different, id): the one reliable "created, not bumped"
+	// signal this SECURITY DEFINER function's return value gives the caller.
+	if store.audit != nil && *recordedID == newID {
+		if auditErr := store.appendProposalCreatedEvent(ctx, tx, event, *recordedID); auditErr != nil {
+			return "", auditErr
+		}
+	}
 	return *recordedID, nil
+}
+
+// appendProposalCreatedEvent appends exactly one
+// audit.workspace.context_proposal_created event (S2-MODEL-CONTEXT-DESIGN.md
+// "Audit (content-free)", actor SYSTEM), in the same transaction as the
+// workspace_context_proposal row it describes, for the ONE known caller
+// (recordCandidate, only when it just inserted proposalID rather than
+// dedup-bumping an existing row).
+func (store *Store) appendProposalCreatedEvent(ctx context.Context, tx database.Transaction, event workspacecontext.RunEvent, proposalID string) error {
+	eventID, err := ids.New("aev")
+	if err != nil {
+		return newError(CodeInternal, err)
+	}
+	access := database.AccessContext{OrganizationID: event.OrganizationID, PrincipalID: systemPrincipalID, RequestID: event.QuestionRunID}
+	workspaceID := event.WorkspaceID
+	if _, appendErr := store.audit.AppendInTransaction(ctx, access, tx, audit.EventInput{
+		EventID: eventID, ActorType: audit.ActorSystem,
+		Action: audit.ActionWorkspaceContextProposalCreated, ResourceType: audit.ResourceWorkspaceContextProposal,
+		ResourceID: proposalID, RequestID: event.QuestionRunID, WorkspaceID: &workspaceID,
+		Outcome: audit.OutcomeSuccess, OccurredAt: time.Now().UTC(),
+	}); appendErr != nil {
+		return newError(CodeInternal, appendErr)
+	}
+	return nil
 }
 
 // addEvidence records one evidence row for proposalID, subject to
@@ -389,12 +447,48 @@ func (store *Store) Reject(ctx context.Context, access workspacecontext.Access, 
 		}
 		var scanErr error
 		proposal, scanErr = store.getLocked(ctx, tx, access.OrganizationID, workspaceID, proposalID)
-		return scanErr
+		if scanErr != nil {
+			return scanErr
+		}
+		if store.audit != nil {
+			return store.appendProposalDecidedEvent(ctx, tx, access, workspaceID, proposalID)
+		}
+		return nil
 	})
 	if err != nil {
 		return workspacecontext.Proposal{}, err
 	}
 	return proposal, nil
+}
+
+// appendProposalDecidedEvent appends exactly one
+// audit.workspace.context_proposal_decided event, in the same transaction as
+// the decision it describes. Reject is its only caller in this package;
+// Accept's own decided event is appended by the lead's VersionMinter adapter
+// instead (composition/runtime.go), inside the transaction that mints the
+// accepted version, for the same atomicity this method gives Reject. Only a
+// human REST session reaches POST .../proposals/{id}:accept|:reject (CSRF
+// and session-cookie gated, unlike the two MCP-reachable question tools a
+// SERVICE access code is scoped to per ADR-0079 §3), so ActorHuman is always
+// correct here -- workspacecontext.Access carries no ActorKind to derive it
+// from (A0 kept the package free of internal/platform/database).
+func (store *Store) appendProposalDecidedEvent(ctx context.Context, tx database.Transaction, access workspacecontext.Access, workspaceID, proposalID string) error {
+	eventID, err := ids.New("aev")
+	if err != nil {
+		return newError(CodeInternal, err)
+	}
+	dbAccess := toDBAccess(access)
+	actorID := access.PrincipalID
+	workspaceValue := workspaceID
+	if _, appendErr := store.audit.AppendInTransaction(ctx, dbAccess, tx, audit.EventInput{
+		EventID: eventID, ActorType: audit.ActorHuman, ActorPrincipalID: &actorID,
+		Action: audit.ActionWorkspaceContextProposalDecided, ResourceType: audit.ResourceWorkspaceContextProposal,
+		ResourceID: proposalID, RequestID: access.RequestID, WorkspaceID: &workspaceValue,
+		Outcome: audit.OutcomeSuccess, OccurredAt: time.Now().UTC(),
+	}); appendErr != nil {
+		return newError(CodeInternal, appendErr)
+	}
+	return nil
 }
 
 // notProposedOrNotFound distinguishes "no such row visible to this caller"
@@ -505,7 +599,7 @@ func (store *Store) resolveExamples(ctx context.Context, access workspacecontext
 		return nil, 0, nil
 	}
 
-	excerpts, err := store.excerpts.GetBatch(ctx, access, runIDs)
+	excerpts, err := store.excerpts.GetBatch(ctx, access, workspaceID, runIDs)
 	if err != nil {
 		return nil, 0, newError(CodeInternal, err)
 	}

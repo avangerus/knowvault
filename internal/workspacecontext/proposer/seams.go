@@ -50,14 +50,24 @@ type VersionMinter interface {
 // package must not import card B's package (S2-MODEL-CONTEXT-DESIGN.md
 // "Cards" lists internal/question as card B's alone). The lead supplies an
 // adapter over question.Service.GetBatch in composition/runtime.go.
+//
+// S2 integration note: workspaceID was added to this method during
+// composition wiring. question.Service.GetBatch's underlying query is
+// workspace-scoped (WHERE workspace_id = $2, on top of
+// app.question_run_readable) -- every workspace_context_proposal row this
+// package ever resolves examples for already carries its own workspaceID
+// (Store.resolveExamples's caller always knows it), so threading it through
+// costs nothing and is the only way the lead's adapter can call GetBatch at
+// all.
 type RunExcerptReader interface {
 	// GetBatch returns one RunExcerpt per id in runIDs that access is
-	// currently authorized to read; an id access cannot read (or that no
-	// longer exists) is simply omitted, never an error, so the caller
+	// currently authorized to read within workspaceID; an id access cannot
+	// read (or that no longer exists, or that belongs to a different
+	// workspace) is simply omitted, never an error, so the caller
 	// (Store.ListPage/GetWithExamples) computes HiddenExamples as the
 	// remainder. QuestionExcerpt may be longer than 300 characters — the
 	// caller clips it; a single layer's bound is never trusted alone.
-	GetBatch(ctx context.Context, access workspacecontext.Access, runIDs []string) ([]RunExcerpt, error)
+	GetBatch(ctx context.Context, access workspacecontext.Access, workspaceID string, runIDs []string) ([]RunExcerpt, error)
 }
 
 // RunExcerpt is one question run's viewer-authorized excerpt, as

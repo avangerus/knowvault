@@ -66,7 +66,15 @@ const (
 	// keeps the document-only capability (no dataset profile catalog).
 	StartupStageDatasetProfileMount StartupStage = "DATASET_PROFILE_MOUNT"
 	StartupStageWorkspaceHandler    StartupStage = "WORKSPACE_HANDLER"
-	StartupStageWebUI               StartupStage = "WEB_UI"
+	// StartupStageWorkspaceContext is ADR-0098 (S2): a failure mounting the
+	// workspace model context store, its deterministic proposer, or any of
+	// the seams between them (installWorkspaceContext, workspacecontext.go)
+	// is a startup failure, not a silently degraded deployment -- this
+	// capability is mandatory once the database and workspace store it
+	// depends on are already mounted, unlike the optional LoadMounted-gated
+	// capabilities above it.
+	StartupStageWorkspaceContext StartupStage = "WORKSPACE_CONTEXT"
+	StartupStageWebUI            StartupStage = "WEB_UI"
 	StartupStageHTTPDispatcher      StartupStage = "HTTP_DISPATCHER"
 	StartupStageHTTPServer          StartupStage = "HTTP_SERVER"
 )
@@ -122,6 +130,7 @@ func knownStartupStage(stage StartupStage) bool {
 		StartupStageMetricCompareMount,
 		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
+		StartupStageWorkspaceContext,
 		StartupStageWebUI,
 		StartupStageHTTPDispatcher,
 		StartupStageHTTPServer:

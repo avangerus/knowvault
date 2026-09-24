@@ -39,12 +39,94 @@ func TestApplyProposalNewTermEditOverridesSuggestedText(t *testing.T) {
 	current := workspacecontext.Document{}
 	proposal := workspacecontext.Proposal{Kind: workspacecontext.ProposalKindNewTerm, CandidateTerm: "виджет", SuggestedText: "старый текст"}
 
-	edited, err := applyProposal(current, proposal, workspacecontext.ProposalEdits{SuggestedText: "новое определение"})
+	edited, err := applyProposal(current, proposal, workspacecontext.ProposalEdits{Definition: "новое определение"})
 	if err != nil {
 		t.Fatalf("applyProposal: %v", err)
 	}
 	if edited.Glossary[0].Definition != "новое определение" {
 		t.Fatalf("Definition = %q, want the edit override", edited.Glossary[0].Definition)
+	}
+}
+
+// TestApplyProposalNewTermEditOverridesTermAndAddsSynonyms proves accept-
+// with-edits applies all three overrides together (S2-CONTRACT.md accept
+// body {"term", "synonyms", "definition"}): edits.Term replaces the proposed
+// CandidateTerm as the new glossary term's own name, edits.Synonyms seeds
+// its initial synonym list, and edits.Definition replaces the proposal's own
+// SuggestedText -- not just Definition alone.
+func TestApplyProposalNewTermEditOverridesTermAndAddsSynonyms(t *testing.T) {
+	current := workspacecontext.Document{}
+	proposal := workspacecontext.Proposal{Kind: workspacecontext.ProposalKindNewTerm, CandidateTerm: "виджет", SuggestedText: "старый текст"}
+
+	edited, err := applyProposal(current, proposal, workspacecontext.ProposalEdits{
+		Term: "гаджет", Synonyms: []string{"устройство", "девайс"}, Definition: "новое определение",
+	})
+	if err != nil {
+		t.Fatalf("applyProposal: %v", err)
+	}
+	added := edited.Glossary[0]
+	if added.Term != "гаджет" {
+		t.Fatalf("Term = %q, want the edit override", added.Term)
+	}
+	if added.Definition != "новое определение" {
+		t.Fatalf("Definition = %q, want the edit override", added.Definition)
+	}
+	if got := added.Synonyms; len(got) != 2 || got[0] != "устройство" || got[1] != "девайс" {
+		t.Fatalf("Synonyms = %#v, want [устройство девайс]", got)
+	}
+}
+
+// TestApplyProposalSynonymEditOverridesTermAndAddsMore proves a SYNONYM
+// accept's edits.Term replaces which text is added as the synonym (not the
+// proposal's own CandidateTerm), and edits.Synonyms adds further synonyms in
+// the same call, both deduplicated against the target term's existing ones.
+func TestApplyProposalSynonymEditOverridesTermAndAddsMore(t *testing.T) {
+	current := workspacecontext.Document{Glossary: []workspacecontext.Term{
+		{ID: "term_mno", Term: "МНО", Synonyms: []string{"мно-отчёт"}},
+	}}
+
+	edited, err := applyProposal(current, workspacecontext.Proposal{
+		Kind: workspacecontext.ProposalKindSynonym, TargetTermID: "term_mno", CandidateTerm: "кп",
+	}, workspacecontext.ProposalEdits{Term: "КП", Synonyms: []string{"коммерческое предложение", "мно-отчёт"}})
+	if err != nil {
+		t.Fatalf("applyProposal: %v", err)
+	}
+	got := edited.Glossary[0].Synonyms
+	want := []string{"мно-отчёт", "КП", "коммерческое предложение"}
+	if len(got) != len(want) {
+		t.Fatalf("Synonyms = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Synonyms = %#v, want %#v", got, want)
+		}
+	}
+	// The original Document's own slice must not be mutated (aliasing check).
+	if len(current.Glossary[0].Synonyms) != 1 {
+		t.Fatalf("current.Glossary[0].Synonyms mutated: %#v", current.Glossary[0].Synonyms)
+	}
+}
+
+// TestApplyProposalDefinitionCorrectionEditAddsSynonyms proves a
+// DEFINITION_CORRECTION accept's edits.Synonyms extends the target term's
+// synonyms alongside the corrected definition.
+func TestApplyProposalDefinitionCorrectionEditAddsSynonyms(t *testing.T) {
+	current := workspacecontext.Document{Glossary: []workspacecontext.Term{
+		{ID: "term_kp", Term: "КП", Definition: "старое определение"},
+	}}
+
+	edited, err := applyProposal(current, workspacecontext.Proposal{
+		Kind: workspacecontext.ProposalKindDefinitionCorrection, TargetTermID: "term_kp",
+		CandidateTerm: "КП", SuggestedText: "коммерческое предложение",
+	}, workspacecontext.ProposalEdits{Synonyms: []string{"предложение"}})
+	if err != nil {
+		t.Fatalf("applyProposal: %v", err)
+	}
+	if edited.Glossary[0].Definition != "коммерческое предложение" {
+		t.Fatalf("Definition = %q", edited.Glossary[0].Definition)
+	}
+	if got := edited.Glossary[0].Synonyms; len(got) != 1 || got[0] != "предложение" {
+		t.Fatalf("Synonyms = %#v, want [предложение]", got)
 	}
 }
 

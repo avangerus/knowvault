@@ -637,6 +637,14 @@ type Service struct {
 	// value reproduces today's tool loop verbatim -- no WORKSPACE_CONTEXT
 	// block, no added instruction sentence, no ToolLoopRecord.WorkspaceContext.
 	workspaceContext workspacecontext.Reader
+
+	// workspaceContextObserver is the optional S2 card E deterministic
+	// proposer, notified once per completed tool-loop run that pinned a
+	// workspace context (observeWorkspaceContextRun, tool_loop.go). It stays
+	// nil until composition calls EnableWorkspaceContextObserver with the
+	// proposer-backed workspacecontext.RunObserver; a nil value reproduces
+	// today's tool loop verbatim -- no proposal is ever derived.
+	workspaceContextObserver workspacecontext.RunObserver
 }
 
 // EnableWorkspaceContext installs the optional workspace model context
@@ -656,6 +664,28 @@ func (service *Service) EnableWorkspaceContext(reader workspacecontext.Reader) e
 		return &Error{code: CodeInvalid}
 	}
 	service.workspaceContext = reader
+	return nil
+}
+
+// EnableWorkspaceContextObserver installs the optional deterministic
+// proposer (S2 card E, S2-MODEL-CONTEXT-DESIGN.md "Proposer") once.
+// Composition calls it only after the proposer-backed
+// workspacecontext.RunObserver is mounted; production wiring lives in
+// composition/runtime.go, not here. A nil Service, a nil observer, a
+// typed-nil observer value, or a second call after an observer is already
+// installed is refused and leaves the slot untouched. Per the design, "the
+// proposer runs after a completed run has been persisted" and "errors only
+// reach a metric": observeWorkspaceContextRun (tool_loop.go) never blocks or
+// fails the run it reports on.
+func (service *Service) EnableWorkspaceContextObserver(observer workspacecontext.RunObserver) error {
+	if service == nil || observer == nil || service.workspaceContextObserver != nil {
+		return &Error{code: CodeInvalid}
+	}
+	value := reflect.ValueOf(observer)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return &Error{code: CodeInvalid}
+	}
+	service.workspaceContextObserver = observer
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -585,6 +586,77 @@ func toolLoopWorkspaceContextLocations(doc workspacecontext.Document, termID str
 		return locations
 	}
 	return nil
+}
+
+// toolLoopSearchArgumentText concatenates the raw JSON arguments of every
+// workspace knowledge tool call this run actually made -- the "model's
+// search arguments" S2-MODEL-CONTEXT-DESIGN.md's SYNONYM signal reads
+// (detector.go's Detect). System calls and the four synthetic
+// non-catalog tool names (the final answer submission and the three
+// server-composed analytic/live-data/metric tools, none of which carry a
+// free-text query a term could appear in) are excluded; every other call --
+// search, grep, related, read, sources, refresh, workspace_context and any
+// future catalog entry -- is included verbatim, one call's arguments per
+// line, so a term the model typed into any lookup is visible to the
+// detector regardless of which specific tool carried it.
+func toolLoopSearchArgumentText(calls []ToolCallRecord) string {
+	var builder strings.Builder
+	for _, call := range calls {
+		if call.System || len(call.Arguments) == 0 {
+			continue
+		}
+		switch call.Name {
+		case submitAnswerToolName, analyticScalarToolName, liveDataToolName, trustedMetricToolName:
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		builder.Write(call.Arguments)
+	}
+	return builder.String()
+}
+
+// observeWorkspaceContextRun reports one completed, already-persisted tool-
+// loop run to the configured workspacecontext.RunObserver (S2 card E's
+// deterministic proposer, wired by composition/runtime.go). Per
+// S2-MODEL-CONTEXT-DESIGN.md "Proposer": it runs only after persistErr is
+// nil (the run this event describes was actually persisted), and any error
+// it returns "only reach[es] a metric" -- logged and otherwise ignored, never
+// propagated to the caller that already has its answer. It re-reads the
+// current context rather than threading resolveToolLoopWorkspaceContext's
+// pinned Document through: a concurrent edit mid-run could in principle
+// change the version between the two reads, a narrow race that only ever
+// widens or narrows this best-effort signal, never the answer or the
+// disclosed WORKSPACE_CONTEXT_JSON trace, which resolveToolLoopWorkspaceContext
+// pinned once already. No observation is made when this run never pinned a
+// context in the first place (record.WorkspaceContext == nil): the proposer
+// has nothing to compare a search argument's terms against.
+func (service *Service) observeWorkspaceContextRun(ctx context.Context, access database.AccessContext, run Run, questionText string, record *ToolLoopRecord, persistErr error) {
+	if service == nil || service.workspaceContextObserver == nil || service.workspaceContext == nil ||
+		persistErr != nil || record == nil || record.WorkspaceContext == nil {
+		return
+	}
+	contextAccess := workspacecontext.Access{OrganizationID: access.OrganizationID, PrincipalID: access.PrincipalID, RequestID: access.RequestID}
+	version, err := service.workspaceContext.Current(ctx, contextAccess, run.WorkspaceID)
+	if err != nil || version.Number == 0 {
+		return
+	}
+	searchArgumentText := toolLoopSearchArgumentText(record.Calls)
+	event := workspacecontext.RunEvent{
+		OrganizationID:     access.OrganizationID,
+		WorkspaceID:        run.WorkspaceID,
+		ConversationID:     run.ConversationID,
+		TurnID:             run.ConversationTurnID,
+		QuestionRunID:      run.ID,
+		ContextVersion:     record.WorkspaceContext.Version,
+		QuestionText:       questionText,
+		MatchedTerms:       workspacecontext.MatchTerms(version.Document, searchArgumentText),
+		SearchArgumentText: searchArgumentText,
+	}
+	if observeErr := service.workspaceContextObserver.ObserveRun(ctx, event); observeErr != nil {
+		slog.Warn("workspace context run observer failed", "error_code", CodeOf(observeErr))
+	}
 }
 
 type toolAnswer struct {
@@ -1273,7 +1345,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		finishCtx, finishCancel := modelAttemptPersistenceContext(parent)
 		defer finishCancel()
 		finishCtx = context.WithValue(finishCtx, toolLoopContextKey{}, record)
-		return service.persistTerminalRun(finishCtx, access, run.ID, run.WorkspaceID, toolScopeChangedAnswer, []Citation{}, []candidate{}, "INSUFFICIENT_EVIDENCE", run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, nil)
+		persistErr := service.persistTerminalRun(finishCtx, access, run.ID, run.WorkspaceID, toolScopeChangedAnswer, []Citation{}, []candidate{}, "INSUFFICIENT_EVIDENCE", run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, nil)
+		service.observeWorkspaceContextRun(finishCtx, access, run, questionText, record, persistErr)
+		return persistErr
 	}
 	catalog, err := service.tools.Catalog(ctx, scope)
 	if err != nil {
@@ -1857,7 +1931,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	if retainedAnalyticScalarPair != nil && !scopeChanged {
 		scalarPair = retainedAnalyticScalarPair
 	}
-	return service.persistTerminalRunWithStructuredDependencyList(finishCtx, access, run.ID, run.WorkspaceID, answer, citations, selected, status, run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, answerResult, scalarPair, governedDependencies)
+	persistErr := service.persistTerminalRunWithStructuredDependencyList(finishCtx, access, run.ID, run.WorkspaceID, answer, citations, selected, status, run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, answerResult, scalarPair, governedDependencies)
+	service.observeWorkspaceContextRun(finishCtx, access, run, questionText, record, persistErr)
+	return persistErr
 }
 
 // completedTypedMetricAnswer selects server-owned numerical wording only when
