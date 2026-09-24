@@ -125,7 +125,7 @@ func readBoundedProjection(ctx context.Context, connection *pgx.Conn, statement 
 	if _, err := tx.Exec(ctx, "SELECT set_config('lock_timeout', $1, true)", strconv.FormatInt(limits.StatementTimeout.Milliseconds(), 10)+"ms"); err != nil {
 		return Snapshot{}, &Error{code: CodeExternalFailure, cause: err}
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('transaction_timeout', $1, true)", strconv.FormatInt(limits.TransactionTimeout.Milliseconds(), 10)+"ms"); err != nil {
+	if err := setTransactionTimeoutIfSupported(ctx, tx, limits.TransactionTimeout); err != nil {
 		return Snapshot{}, &Error{code: CodeExternalFailure, cause: err}
 	}
 	var readOnly string
@@ -299,4 +299,23 @@ func boundedValueSize(value any, limit int) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// transactionTimeoutMinimumServerVersion is the first PostgreSQL release with
+// the transaction_timeout setting. Older servers reject the parameter name;
+// statement_timeout and idle_in_transaction_session_timeout still bound them.
+const transactionTimeoutMinimumServerVersion = 170000
+
+// setTransactionTimeoutIfSupported applies transaction_timeout only on servers
+// that know the parameter, so PostgreSQL 13-16 sources remain readable.
+func setTransactionTimeoutIfSupported(ctx context.Context, tx pgx.Tx, timeout time.Duration) error {
+	var version int
+	if err := tx.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+		return err
+	}
+	if version < transactionTimeoutMinimumServerVersion {
+		return nil
+	}
+	_, err := tx.Exec(ctx, "SELECT set_config('transaction_timeout', $1, true)", strconv.FormatInt(timeout.Milliseconds(), 10)+"ms")
+	return err
 }

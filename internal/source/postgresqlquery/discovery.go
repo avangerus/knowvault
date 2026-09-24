@@ -370,11 +370,13 @@ func prepareDiscoveryTransaction(ctx context.Context, tx pgx.Tx, limits Discover
 		"statement_timeout":                   limits.StatementTimeout,
 		"idle_in_transaction_session_timeout": limits.TransactionTimeout,
 		"lock_timeout":                        limits.StatementTimeout,
-		"transaction_timeout":                 limits.TransactionTimeout,
 	} {
 		if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", name, strconv.FormatInt(duration.Milliseconds(), 10)+"ms"); err != nil {
 			return &Error{code: CodeExternalFailure, cause: err}
 		}
+	}
+	if err := setTransactionTimeoutIfSupported(ctx, tx, limits.TransactionTimeout); err != nil {
+		return &Error{code: CodeExternalFailure, cause: err}
 	}
 	var readOnly string
 	if err := tx.QueryRow(ctx, "SHOW transaction_read_only").Scan(&readOnly); err != nil || readOnly != "on" {
