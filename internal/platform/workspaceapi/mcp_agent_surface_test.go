@@ -40,7 +40,7 @@ func TestToolsListShowsAServicePrincipalOnlyWhatItMayCall(t *testing.T) {
 	wanted := map[string]bool{
 		mcpToolQuestion: false, mcpToolEvidenceGet: false,
 		mcpToolEvidenceRead: false, mcpToolWorkspaceList: false, mcpToolSourcesList: false,
-		mcpToolGovernedQueryAsk: false,
+		mcpToolGovernedQueryAsk: false, mcpToolWorkspaceContext: false,
 	}
 	for _, name := range names {
 		if !mcpServiceKnowledgeTool(name) {

@@ -40,6 +40,7 @@ import (
 	sourceupload "knowvault.local/verified-workspace/internal/source/upload"
 	"knowvault.local/verified-workspace/internal/workspace"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacecontext"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -366,6 +367,14 @@ type Handler struct {
 	// means a presented profile header is ignored, because granting it without
 	// an authority to journal the decision would be an unrecorded ablation.
 	searchProfiles SearchProfileChannel
+	// workspaceContext is ADR-0098's optional Reader capability for the
+	// knowvault_workspace_context / tools/workspace-context knowledge tool
+	// and the MCP initialize instructions' single-workspace rendered
+	// context, wired by composition only when a workspacecontext store
+	// (card A) is mounted. A nil value keeps every workspace-context surface
+	// content-free SERVICE_UNAVAILABLE, exactly like the other optional
+	// capabilities; EnableWorkspaceContext (mcp_adapter.go) sets it.
+	workspaceContext workspacecontext.Reader
 }
 
 // GovernedQueryService is the ADR-0089 orchestration boundary
@@ -678,7 +687,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.metricDefinitionApprove(writer, request, access, requestID, endpoint.workspaceID,
 			endpoint.metricDefinitionID)
 	case endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep,
-		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh,
+		endpointWorkspaceToolWorkspaceContext:
 		handler.workspaceToolDispatch(writer, request, access, requestID, endpoint)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
@@ -823,6 +833,15 @@ const (
 	// denial and the projection are the same implementation, not a
 	// re-derivation.
 	endpointWorkspaceToolRefresh
+	// endpointWorkspaceToolWorkspaceContext is ADR-0098's REST tool-parity
+	// route for the knowvault_workspace_context knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/workspace-context, the
+	// only workspace tool-parity route that is POST-only: its optional
+	// terms/section filter travels in a JSON body, not a query string). It
+	// dispatches through the identical injected workspacecontext.Reader the
+	// MCP tool and the chat tool runtime compose, so the projection and the
+	// content-free denial are the same implementation, not a re-derivation.
+	endpointWorkspaceToolWorkspaceContext
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -855,6 +874,8 @@ func workspaceToolEndpointKind(kind workspacetools.Kind) (endpointKind, bool) {
 		return endpointWorkspaceToolSources, true
 	case workspacetools.KindRefresh:
 		return endpointWorkspaceToolRefresh, true
+	case workspacetools.KindWorkspaceContext:
+		return endpointWorkspaceToolWorkspaceContext, true
 	default:
 		return 0, false
 	}
@@ -2064,6 +2085,11 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		return method == http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return method == http.MethodGet || method == http.MethodPost
+	case endpointWorkspaceToolWorkspaceContext:
+		// ADR-0098's tool-parity route is POST-only (S2-CONTRACT.md "Tool
+		// parity"): its optional filter travels in a JSON body, unlike the
+		// other six GET/POST workspace tool-parity routes.
+		return method == http.MethodPost
 	case endpointWorkspaceSourceRemove:
 		return method == http.MethodDelete
 	case endpointMCP:
@@ -2088,6 +2114,8 @@ func allowedMethods(endpoint endpoint) string {
 		return http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return http.MethodGet + ", " + http.MethodPost
+	case endpointWorkspaceToolWorkspaceContext:
+		return http.MethodPost
 	case endpointWorkspaceSourceRemove:
 		return http.MethodDelete
 	case endpointMCP:

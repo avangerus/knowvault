@@ -1,8 +1,9 @@
 // Package workspacetools is the single registry of the workspace knowledge tool
-// set of R3a-1. It is the product's canonical contract for the tool names,
-// compatibility aliases, service-principal exposure and tools/list mount gating
-// of knowvault_search, knowvault_read, knowvault_list_objects,
-// knowvault_related, knowvault_grep, knowvault_sources and knowvault_refresh.
+// set of R3a-1, plus ADR-0098's workspace model context tool. It is the
+// product's canonical contract for the tool names, compatibility aliases,
+// service-principal exposure and tools/list mount gating of knowvault_search,
+// knowvault_read, knowvault_list_objects, knowvault_related, knowvault_grep,
+// knowvault_sources, knowvault_refresh and knowvault_workspace_context.
 //
 // The registry is deliberately transport-free: it carries identifiers and
 // dispatch kinds, never an HTTP handler, so the MCP adapter and the REST parity
@@ -27,6 +28,12 @@ const (
 	KindGrep        Kind = "grep"
 	KindSources     Kind = "sources"
 	KindRefresh     Kind = "refresh"
+	// KindWorkspaceContext is ADR-0098's workspace model context tool
+	// (knowvault_workspace_context): the workspace's explicit description,
+	// answer rules, glossary and enabled-source notes, rendered as context
+	// only -- never evidence, and never a change to the tool catalog, a
+	// grant of another tool, a write or access.
+	KindWorkspaceContext Kind = "workspace_context"
 )
 
 // Capability names the optional mounted evidence capability a dynamic tool needs
@@ -178,6 +185,7 @@ var knowledgeTools = New([]Tool{
 	{Kind: KindGrep, Name: "knowvault_grep", RESTPath: "grep", Service: true, Capability: CapabilityGrep},
 	{Kind: KindSources, Name: "knowvault_sources", RESTPath: "sources", Aliases: []string{"knowvault_sources_list"}, Service: true},
 	{Kind: KindRefresh, Name: "knowvault_refresh", RESTPath: "refresh", Service: true},
+	{Kind: KindWorkspaceContext, Name: "knowvault_workspace_context", RESTPath: "workspace-context", Service: true},
 })
 
 // KnowledgeTools returns the canonical R3a-1 workspace knowledge tool registry.
