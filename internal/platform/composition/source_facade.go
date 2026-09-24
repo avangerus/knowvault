@@ -73,6 +73,7 @@ var _ workspaceapi.SourceConnectorCatalog = sourceServiceFacade{}
 var _ workspaceapi.SourceConnectionBootstrap = sourceServiceFacade{}
 var _ workspaceapi.SourceDiscovery = sourceServiceFacade{}
 var _ workspaceapi.SourceDiscoveryRegistration = sourceServiceFacade{}
+var _ workspaceapi.SourceConnectionDrafts = sourceServiceFacade{}
 
 // newAppArtifactCodec mounts the application-side artifact codec on the same
 // wrap key the worker uses, so source artifacts sealed by the web process open
@@ -175,6 +176,19 @@ func (facade sourceServiceFacade) ListSources(ctx context.Context, access databa
 
 func (facade sourceServiceFacade) ConfirmationContext(ctx context.Context, access database.AccessContext, workspaceID string) (workspacerepository.ConfirmationContext, error) {
 	return facade.workspaces.ConfirmationContext(ctx, access, workspaceID)
+}
+
+// ListSourceConnectionDrafts and DiscardSourceConnectionDraft expose card
+// D-1's workspace-scoped draft registry on the production facade. Both are
+// pure delegations: the workspace-membership policy gate, the content-free
+// denial and the audit receipt stay in the workspace repository, exactly like
+// ListSources and ConfirmationContext above.
+func (facade sourceServiceFacade) ListSourceConnectionDrafts(ctx context.Context, access database.AccessContext, workspaceID string) ([]workspacerepository.SourceConnectionDraft, error) {
+	return facade.workspaces.ListSourceConnectionDrafts(ctx, access, workspaceID)
+}
+
+func (facade sourceServiceFacade) DiscardSourceConnectionDraft(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	return facade.workspaces.DiscardSourceConnectionDraft(ctx, access, workspaceID, connectionID)
 }
 
 // UploadDocuments is UPL-1: a pure delegation like every other method here,

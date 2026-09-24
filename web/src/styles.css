@@ -1176,3 +1176,14 @@ ul.answer-keys li:last-child { border-bottom: none; }
   .model-context-proposal-fields dt { flex-basis: 100%; }
 }
 
+
+/* Card D-1: unfinished connection drafts on the Sources page and the
+   auto-excluded base-table columns in the PostgreSQL discovery catalog. */
+.source-drafts { margin: 0 0 18px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: var(--r-sm); background: var(--surface); }
+.source-drafts h3 { margin: 0 0 4px; font-size: var(--fs-body); }
+.source-drafts-hint { margin: 0 0 10px; color: var(--muted); font-size: var(--fs-meta); }
+.source-row-draft .dot-draft { background: var(--muted); }
+.state-chip.draft span { background: var(--muted); }
+.postgres-column-auto-excluded { opacity: 0.72; }
+.postgres-column-exclusion-reason { color: var(--muted); }
+.postgres-excluded-note { margin: 8px 0 0; color: var(--muted); font-size: var(--fs-meta); }

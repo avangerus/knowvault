@@ -55,6 +55,8 @@ var openAPIRoutes = map[endpointKind]describedRoute{
 	endpointSourceSync:                    {"/sources/{source_scope_id}:sync", "endpointSourceSync"},
 	endpointWorkspaceSources:              {"/workspaces/{workspace_id}/sources", "endpointWorkspaceSources"},
 	endpointWorkspaceSourceRemove:         {"/workspaces/{workspace_id}/sources/{source_scope_id}", "endpointWorkspaceSourceRemove"},
+	endpointWorkspaceSourceDrafts:         {"/workspaces/{workspace_id}/source-drafts", "endpointWorkspaceSourceDrafts"},
+	endpointWorkspaceSourceDraftDiscard:   {"/workspaces/{workspace_id}/source-drafts/{connection_id}", "endpointWorkspaceSourceDraftDiscard"},
 	endpointEvidenceGet:                   {"/workspaces/{workspace_id}/evidence/{fragment_id}", "endpointEvidenceGet"},
 	endpointWorkspaceAuditEvents:          {"/workspaces/{workspace_id}/audit-events", "endpointWorkspaceAuditEvents"},
 	endpointQuestionCreate:                {"/workspaces/{workspace_id}/questions", "endpointQuestionCreate"},

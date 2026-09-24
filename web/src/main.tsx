@@ -623,6 +623,21 @@ type JournalResponse = {
 type ListEnvelope = { workspaces: WorkspaceSummary[] };
 type SourcesEnvelope = { sources: SourceStatus[]; confirmation_context: ConfirmationContext };
 
+// Card D-1: one unfinished PostgreSQL connection the current workspace
+// started. state says where the wizard resumes: trust verification or catalog
+// discovery. It carries no address, credential or trust hash.
+export type SourceConnectionDraft = {
+  connection_id: string;
+  connection_revision: number;
+  connection_name: string;
+  source_type: string;
+  trust_status: "DRAFT" | "VERIFIED" | string;
+  state: "AWAITING_TRUST_VERIFICATION" | "READY_FOR_DISCOVERY" | string;
+  created_at: string;
+};
+
+export type SourceConnectionDraftEnvelope = { drafts: SourceConnectionDraft[] };
+
 type SourceRegisterResponse = {
   connection_id: string;
   credential_reference?: string;
@@ -1072,6 +1087,33 @@ async function apiAction<T>(path: string, idempotencyKey: string): Promise<ApiRe
     if (csrf.kind !== "ok") return csrf;
     const response = await fetch(path, {
       method: "POST",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Idempotency-Key": idempotencyKey,
+        "X-KnowVault-CSRF": csrf.value.csrf_token,
+      },
+    });
+    notifySessionExpired(response);
+    if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; fields?: string[] } } | null;
+    const code = responseBody?.error?.code;
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", fields: responseBody?.error?.fields };
+    return { kind: "broken", status: response.status };
+  } catch {
+    return { kind: "broken", status: 0 };
+  }
+}
+
+// Card D-1: a body-less DELETE that still carries an idempotency key (the same
+// envelope the other source actions use). The discard removes only this
+// workspace's draft pointer; it never deletes the immutable connection.
+async function apiDeleteAction<T>(path: string, idempotencyKey: string): Promise<ApiResult<T>> {
+  try {
+    const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
+    if (csrf.kind !== "ok") return csrf;
+    const response = await fetch(path, {
+      method: "DELETE",
       cache: "no-store",
       headers: {
         Accept: "application/json",
@@ -6659,6 +6701,66 @@ function LatestProcessingNote({ source }: { source: SourceStatus }) {
   );
 }
 
+// Card D-1: one unfinished connection the current workspace started. The row
+// shows the server-derived state and offers exactly two actions: continue in
+// the wizard, or delete this workspace's draft pointer.
+const SourceConnectionDraftLocale = {
+  heading: "Unfinished connections",
+  hint: "A connection you started but have not added to this workspace yet.",
+  state: {
+    AWAITING_TRUST_VERIFICATION: "Needs trust verification",
+    READY_FOR_DISCOVERY: "Ready to find tables",
+  } as Record<string, string>,
+  continueLabel: "Continue",
+  discardLabel: "Delete",
+  discardingLabel: "Deleting…",
+  discardConfirm: (name: string): string => `Delete the draft connection “${name}”? It disappears from this workspace; the connection record itself is kept.`,
+};
+
+export function sourceConnectionDraftStateLabel(draft: SourceConnectionDraft): string {
+  return SourceConnectionDraftLocale.state[draft.state] ?? draft.state;
+}
+
+export function SourceConnectionDraftList({ drafts, busyID, canManage = true, onContinue, onDiscard }: {
+  drafts: readonly SourceConnectionDraft[];
+  busyID: string | null;
+  canManage?: boolean;
+  onContinue: (draft: SourceConnectionDraft) => void;
+  onDiscard: (draft: SourceConnectionDraft) => void;
+}) {
+  if (drafts.length === 0) return null;
+  return (
+    <section className="source-drafts" aria-label={SourceConnectionDraftLocale.heading}>
+      <h3>{SourceConnectionDraftLocale.heading}</h3>
+      <p className="source-drafts-hint">{SourceConnectionDraftLocale.hint}</p>
+      <ul className="source-rows">
+        {drafts.map((draft) => (
+          <li className="source-row source-row-draft" key={draft.connection_id}>
+            <span className="dot dot-draft" aria-hidden="true" />
+            <div className="source-row-main">
+              <div className="source-title-row">
+                <b>{draft.connection_name}</b>
+                <span className="state-chip draft"><span aria-hidden="true" />{sourceConnectionDraftStateLabel(draft)}</span>
+              </div>
+              <p className="source-type">PostgreSQL · draft connection</p>
+            </div>
+            {canManage && (
+              <div className="source-row-actions">
+                <button className="primary-button source-draft-continue" disabled={busyID !== null} onClick={() => onContinue(draft)} type="button">
+                  {SourceConnectionDraftLocale.continueLabel}
+                </button>
+                <button className="link-button quiet-disable source-draft-discard" disabled={busyID !== null} onClick={() => onDiscard(draft)} type="button">
+                  {busyID === draft.connection_id ? SourceConnectionDraftLocale.discardingLabel : SourceConnectionDraftLocale.discardLabel}
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function SourcesView({ state, role, onChanged, pushToast }: {
   state: WorkspaceDataState;
   role: string;
@@ -6675,10 +6777,53 @@ function SourcesView({ state, role, onChanged, pushToast }: {
   const [verifyingSourceID, setVerifyingSourceID] = useState<string | null>(null);
   const [verifyIdentity, setVerifyIdentity] = useState("");
   const [verifyAttestedBy, setVerifyAttestedBy] = useState("");
+  // Card D-1: this workspace's unfinished connections, loaded by their own
+  // read route so the sources envelope and the MCP sources projection keep
+  // their existing shape. draftsVersion forces a re-read after a discard.
+  const [draftsResult, setDraftsResult] = useState<ApiResult<SourceConnectionDraftEnvelope> | null>(null);
+  const [draftsVersion, setDraftsVersion] = useState(0);
+  const [draftBusyID, setDraftBusyID] = useState<string | null>(null);
+  const [continuedDraft, setContinuedDraft] = useState<SourceConnectionDraft | null>(null);
   const snapshot = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value : null;
   const etag = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.etag : undefined;
   const confirmationContext = state.phase === "loaded" && state.sources.kind === "ok" ? state.sources.value.confirmation_context : null;
   const canManage = role === "OWNER" || role === "MANAGER";
+  const workspaceID = snapshot?.id ?? null;
+
+  useEffect(() => {
+    if (workspaceID === null) {
+      setDraftsResult(null);
+      return;
+    }
+    let alive = true;
+    void apiGet<SourceConnectionDraftEnvelope>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}/source-drafts`).then((result) => {
+      if (alive) setDraftsResult(result);
+    });
+    return () => { alive = false; };
+  }, [workspaceID, draftsVersion]);
+  const drafts = draftsResult?.kind === "ok" ? draftsResult.value.drafts : [];
+
+  // Card D-1: discarding deletes only this workspace's draft pointer. The
+  // server keeps the immutable connection lineage, so the action is safe to
+  // retry and never targets another workspace.
+  async function discardDraft(draft: SourceConnectionDraft) {
+    if (snapshot === null || draftBusyID !== null) return;
+    if (!window.confirm(SourceConnectionDraftLocale.discardConfirm(draft.connection_name))) return;
+    setDraftBusyID(draft.connection_id);
+    setMutationResult(null);
+    const result = await apiDeleteAction<{ connection_id: string; discarded: boolean }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/source-drafts/${encodeURIComponent(draft.connection_id)}`,
+      newIdempotencyKey(),
+    );
+    setDraftBusyID(null);
+    if (result.kind === "ok") {
+      pushToast("success", `Draft connection “${draft.connection_name}” deleted.`);
+      setDraftsVersion((current) => current + 1);
+    } else {
+      setMutationResult(result);
+      pushToast("error", closedText(result));
+    }
+  }
 
   // ADR-0087 §1: confirm a pending WORKSPACE_MANAGED binding. If the caller
   // already holds a live workspace.source.confirm grant (confirmationContext.
@@ -6935,6 +7080,16 @@ function SourcesView({ state, role, onChanged, pushToast }: {
         )}
       </section>
 
+      {drafts.length > 0 && (
+        <SourceConnectionDraftList
+          busyID={draftBusyID}
+          canManage={canManage}
+          drafts={drafts}
+          onContinue={(draft) => setContinuedDraft(draft)}
+          onDiscard={(draft) => void discardDraft(draft)}
+        />
+      )}
+
       {state.phase === "idle" && <p className="evidence-state">Select a workspace.</p>}
       {state.phase === "loading" && <p className="evidence-state">Loading sources…</p>}
       {state.phase === "loaded" && state.sources.kind === "ok" && (
@@ -7030,6 +7185,16 @@ function SourcesView({ state, role, onChanged, pushToast }: {
           onBack={() => setConnectType(null)}
           onClose={() => { setCatalogOpen(false); setConnectType(null); }}
           onCompleted={(message) => { setCatalogOpen(false); setConnectType(null); onChanged(); if (message) pushToast("success", message); }}
+          snapshot={snapshot}
+        />
+      )}
+      {continuedDraft && snapshot && etag && (
+        <PostgreSQLOnboardingDialog
+          etag={etag}
+          initialDraft={continuedDraft}
+          onBack={() => setContinuedDraft(null)}
+          onClose={() => setContinuedDraft(null)}
+          onCompleted={(message) => { setContinuedDraft(null); setDraftsVersion((current) => current + 1); onChanged(); if (message) pushToast("success", message); }}
           snapshot={snapshot}
         />
       )}
@@ -7525,6 +7690,18 @@ export type SourceDiscoveryColumn = {
   primary_key: boolean;
 };
 
+// Card D-1: a column the server observed but cannot project into the query
+// connector's value contract (for example a PostGIS geometry). It is shown
+// with a reason and is never part of the registration projection.
+export type SourceDiscoveryExcludedColumn = {
+  ordinal: number;
+  name: string;
+  type_name: string;
+  logical_type?: string;
+  primary_key?: boolean;
+  reason: string;
+};
+
 export type SourceDiscoveryView = {
   view_id: string;
   schema_name: string;
@@ -7535,6 +7712,7 @@ export type SourceDiscoveryView = {
   status: string;
   interpretation?: string;
   columns: SourceDiscoveryColumn[];
+  excluded_columns?: SourceDiscoveryExcludedColumn[];
 };
 
 type SourceDiscoveryResponse = {
@@ -7646,6 +7824,14 @@ const postgresOnboardingLocale = {
       INVALID_IDENTIFIER: "view identifier is invalid",
       NO_PRIMARY_KEY: "table has no primary key",
     },
+    // Card D-1: a base table column the server cannot project is listed with
+    // its own reason instead of blocking the whole table. The copy is a closed
+    // vocabulary, never server-supplied text.
+    excludedHeading: "Not included",
+    excludedNote: "These columns are not read from the table.",
+    excludedReasons: {
+      UNSUPPORTED_TYPE: "column type cannot be read by the query connector",
+    } as Record<string, string>,
     rowCountUnknown: "Row count unknown",
     rowCountLabel: (count: number): string => `~${count.toLocaleString("en-US")} rows`,
     filterLabel: "Filter tables",
@@ -7863,6 +8049,34 @@ function postgresInterpretationLabel(reason: string | undefined): string {
   return postgresOnboardingLocale.discovery.interpretations[reason as keyof typeof postgresOnboardingLocale.discovery.interpretations] ?? postgresOnboardingLocale.discovery.needsInterpretation;
 }
 
+// Card D-1: the operator-facing reason an observed column was excluded from
+// the projection. Unknown reasons fail closed to the generic unsupported-type
+// copy rather than rendering server text.
+export function postgresExcludedReasonLabel(reason: string): string {
+  return postgresOnboardingLocale.discovery.excludedReasons[reason] ?? postgresOnboardingLocale.discovery.interpretations.UNSUPPORTED_TYPE;
+}
+
+// Card D-1: one observed base-table column the server cannot project. It is
+// display-only metadata with a reason -- no checkbox, no role, no comment --
+// so the operator sees exactly why a column is missing from the connection.
+export function PostgreSQLExcludedColumn({ column }: { column: SourceDiscoveryExcludedColumn }) {
+  return (
+    <li className="postgres-column-card postgres-column-auto-excluded">
+      <div className="postgres-column-name">
+        <span className="postgres-column-ordinal">{column.ordinal}</span>
+        <code>{column.name}</code>
+        {column.primary_key && <span className="postgres-column-key-badge">{postgresOnboardingLocale.discovery.keyColumn}</span>}
+      </div>
+      <div className="postgres-column-details">
+        <span>{column.type_name}</span>
+        <span className="postgres-column-exclusion-reason">
+          {postgresOnboardingLocale.discovery.excludedHeading}: {postgresExcludedReasonLabel(column.reason)}
+        </span>
+      </div>
+    </li>
+  );
+}
+
 export function PostgreSQLDiscoveredColumn({ view, column, excluded, onToggleExcluded, disabled }: {
   view: SourceDiscoveryView;
   column: SourceDiscoveryColumn;
@@ -7967,28 +8181,43 @@ export function PostgreSQLDiscoveredViewCard({ view, selected, disabled, onToggl
             </ul>
           )
           : <p className="postgres-no-columns">{postgresOnboardingLocale.discovery.noColumns}</p>}
+        {(view.excluded_columns?.length ?? 0) > 0 && (
+          <div className="postgres-excluded-columns">
+            <p className="postgres-excluded-note">{postgresOnboardingLocale.discovery.excludedNote}</p>
+            <ul className="postgres-column-list">
+              {view.excluded_columns?.map((column) => (
+                <PostgreSQLExcludedColumn column={column} key={`${view.view_id}-excluded-${column.ordinal}-${column.name}`} />
+              ))}
+            </ul>
+          </div>
+        )}
       </details>
     </article>
   );
 }
 
-function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onCompleted }: {
+export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBack, onClose, onCompleted }: {
   snapshot: WorkspaceSnapshot;
   etag: string;
+  // Card D-1: reopening the wizard from a draft resumes at the state the
+  // server reports instead of starting over. A draft whose trust material was
+  // already verified continues at catalog discovery; one still awaiting
+  // verification continues at the trust step.
+  initialDraft?: SourceConnectionDraft | null;
   onBack: () => void;
   onClose: () => void;
   onCompleted: (message?: string) => void;
 }) {
-  const [phase, setPhase] = useState<PostgreSQLOnboardingPhase>("connection");
-  const [name, setName] = useState("");
+  const [phase, setPhase] = useState<PostgreSQLOnboardingPhase>(initialDraft ? "verifying" : "connection");
+  const [name, setName] = useState(initialDraft?.connection_name ?? "");
   const [databaseIdentity, setDatabaseIdentity] = useState("");
   const [lineageID, setLineageID] = useState("");
   const [credentialReference, setCredentialReference] = useState("");
-  const [connectionID, setConnectionID] = useState<string | null>(null);
+  const [connectionID, setConnectionID] = useState<string | null>(initialDraft?.connection_id ?? null);
   const [connectionCopy, setConnectionCopy] = useState<{ id: string; copied: boolean } | null>(null);
   const [attestedConnectorIdentity, setAttestedConnectorIdentity] = useState("");
   const [attestedBy, setAttestedBy] = useState("");
-  const [trustVerified, setTrustVerified] = useState(false);
+  const [trustVerified, setTrustVerified] = useState(initialDraft?.state === "READY_FOR_DISCOVERY");
   const [discoveryRequestID, setDiscoveryRequestID] = useState<string | null>(null);
   const [discovery, setDiscovery] = useState<SourceDiscoveryResponse | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
@@ -8097,6 +8326,7 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
       name: name.trim(),
       database_identity: databaseIdentity.trim(),
       lineage_id: lineageID.trim(),
+      workspace_id: snapshot.id,
     };
     if (credentialReference.trim()) body.credential_reference = credentialReference.trim();
 
@@ -8357,7 +8587,7 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
             {result && result.kind !== "ok" && !(result.kind === "failure" && result.status === 403) && <ClosedOrError result={result} />}
             <footer className="sheet-footer postgres-footer">
               <button className="secondary-button" disabled={busy} onClick={() => { setFormError(null); setResult(null); setPhase("connection"); }} type="button">{postgresOnboardingLocale.trust.back}</button>
-              <button className="primary-button" disabled={busy || !attestedConnectorIdentity.trim() || !attestedBy.trim()} type="submit">
+              <button className="primary-button" disabled={busy || (!trustVerified && (!attestedConnectorIdentity.trim() || !attestedBy.trim()))} type="submit">
                 {phase === "verifying-submit" ? postgresOnboardingLocale.trust.submitting : trustVerified ? postgresOnboardingLocale.trust.retryDiscovery : postgresOnboardingLocale.trust.submit}
               </button>
             </footer>

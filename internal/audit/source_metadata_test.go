@@ -23,6 +23,7 @@ func TestSourceMetadataReadProjectionIsClosed(t *testing.T) {
 		{"admitted", func(*EventInput) {}, true},
 		{"completed", func(in *EventInput) { in.Action = ActionSourceMetadataReadCompleted }, true},
 		{"confirmation", func(in *EventInput) { in.Metadata.ReasonCodes = []string{"SOURCE_CONFIRMATION_CONTEXT"} }, true},
+		{"connection_draft_list", func(in *EventInput) { in.Metadata.ReasonCodes = []string{"SOURCE_CONNECTION_DRAFT_LIST"} }, true},
 		{"denied_admission_unknown_workspace", func(in *EventInput) { in.WorkspaceID = nil; in.Outcome = OutcomeDenied; in.ErrorCode = &code }, true},
 		{"denied_outcome", func(in *EventInput) {
 			in.Action = ActionSourceMetadataReadFailed

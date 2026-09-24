@@ -1947,6 +1947,7 @@ var migrationSequence = []string{
 	"000111_stage4_source_discovery_relation_limit.sql",
 	"000112_stage4_workspace_model_context.sql",
 	"000113_stage4_workspace_context_proposals.sql",
+	"000114_stage4_source_connection_drafts.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert
