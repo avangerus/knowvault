@@ -1945,6 +1945,9 @@ var migrationSequence = []string{
 	"000109_stage3_metric_definition_dataset_binding.sql",
 	"000110_stage3_postgresql_query_table_source.sql",
 	"000111_stage4_source_discovery_relation_limit.sql",
+	// 000112 (card A, workspace_model_context) is registered by the lead
+	// when it lands; card E's 000113 has no dependency on it.
+	"000113_stage4_workspace_context_proposals.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert
