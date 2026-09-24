@@ -6688,7 +6688,7 @@ type PostgreSQLConnectionBootstrapResponse = {
 
 type SourceDiscoveryRequestResponse = { request_id: string; created: boolean };
 
-type SourceDiscoveryColumn = {
+export type SourceDiscoveryColumn = {
   ordinal: number;
   name: string;
   type_name: string;
@@ -6699,14 +6699,16 @@ type SourceDiscoveryColumn = {
   max_bytes?: number;
   comment?: string;
   roles: string[];
+  primary_key: boolean;
 };
 
-type SourceDiscoveryView = {
+export type SourceDiscoveryView = {
   view_id: string;
   schema_name: string;
   relation_name: string;
   relation_kind: string;
   comment?: string;
+  approx_row_count: number;
   status: string;
   interpretation?: string;
   columns: SourceDiscoveryColumn[];
@@ -6725,6 +6727,12 @@ type SourceDiscoveryResponse = {
   views: SourceDiscoveryView[];
 };
 
+// ADR-0097: the register route accepts an optional narrowing body naming
+// EVIDENCE-role ordinals to exclude, valid only for a TABLE/PARTITIONED_TABLE
+// selection. Sending no exclusions (undefined body) registers the table
+// unnarrowed, exactly like the original view flow.
+export type SourceDiscoveryRegisterInput = { excluded_columns?: number[] };
+
 type PostgreSQLOnboardingPhase =
   | "connection"
   | "bootstrapping"
@@ -6733,7 +6741,6 @@ type PostgreSQLOnboardingPhase =
   | "discovering"
   | "catalog"
   | "registering"
-  | "binding"
   | "done";
 
 // PostgreSQL onboarding is intentionally server-led: the browser submits only
@@ -6804,7 +6811,7 @@ const postgresOnboardingLocale = {
     emptyHint: "Check the connection permissions or ask an administrator to prepare a view.",
     summary: (prepared: number, total: number): string => `${prepared} of ${total} ready`,
     expires: "Catalog expires",
-    viewKind: { VIEW: "View", MATERIALIZED_VIEW: "Materialized view" },
+    viewKind: { VIEW: "View", MATERIALIZED_VIEW: "Materialized view", TABLE: "Table", PARTITIONED_TABLE: "Partitioned table" },
     prepared: "Ready to connect",
     needsInterpretation: "Needs clarification",
     interpretationPrefix: "Reason",
@@ -6814,7 +6821,21 @@ const postgresOnboardingLocale = {
       MALFORMED_BUSINESS_OBJECT_CONTRACT: "business object contract is malformed",
       UNSUPPORTED_TYPE: "column type is not supported",
       INVALID_IDENTIFIER: "view identifier is invalid",
+      NO_PRIMARY_KEY: "table has no primary key",
     },
+    rowCountUnknown: "Row count unknown",
+    rowCountLabel: (count: number): string => `~${count.toLocaleString("en-US")} rows`,
+    filterLabel: "Filter tables",
+    filterPlaceholder: "Schema or table name",
+    sortLabel: "Sort by",
+    sortName: "Name",
+    sortRows: "Row count",
+    selectAll: "Select all ready",
+    clearSelection: "Clear selection",
+    selectedCount: (count: number): string => count === 0 ? "No tables selected" : count === 1 ? "1 table selected" : `${count} tables selected`,
+    noSelection: "Select at least one table before adding.",
+    keyColumn: "Key",
+    registerSelected: "Add selected tables",
     columns: "Columns and metadata",
     noColumns: "Column metadata was not provided.",
     logicalTypes: {
@@ -6846,16 +6867,16 @@ const postgresOnboardingLocale = {
     maxBytes: "Byte limit",
     bytes: "bytes",
     noComment: "No comment.",
-    register: "Add view",
-    registering: "Adding…",
-    noActionHint: "This view cannot be connected automatically.",
+    noActionHint: "This table or view cannot be connected automatically.",
     back: "Edit connection",
   },
   completion: {
-    registering: "Registering the selected view…",
-    binding: "Binding the source to the workspace…",
-    doneHeading: "View added",
-    doneText: "The view was added to the workspace as a draft. Confirm access and enable it in the source list.",
+    resultsEyebrow: "Registration",
+    registering: "Adding the selected tables…",
+    doneHeading: "Registration complete",
+    resultsSummary: (success: number, total: number): string => `${success} of ${total} table${total === 1 ? "" : "s"} added.`,
+    resultSuccessDetail: "Added to the workspace as a draft. Confirm access and enable it in the source list.",
+    retryFailed: "Retry failed tables",
     done: "Done",
   },
   errors: {
@@ -6872,7 +6893,138 @@ function postgresDiscoveryStatusLabel(status: string): string {
 }
 
 function postgresRelationKindLabel(kind: string): string {
-  return postgresOnboardingLocale.discovery.viewKind[kind as keyof typeof postgresOnboardingLocale.discovery.viewKind] ?? postgresOnboardingLocale.discovery.viewKind.VIEW;
+  return postgresOnboardingLocale.discovery.viewKind[kind as keyof typeof postgresOnboardingLocale.discovery.viewKind] ?? kind;
+}
+
+function postgresApproxRowCountLabel(approxRowCount: number): string {
+  if (approxRowCount < 0) return postgresOnboardingLocale.discovery.rowCountUnknown;
+  return postgresOnboardingLocale.discovery.rowCountLabel(approxRowCount);
+}
+
+// ADR-0097: only a base/partitioned table's projection can narrow columns;
+// the original five-column VIEW/MATERIALIZED_VIEW contract is server-fixed.
+function postgresSupportsColumnExclusion(relationKind: string): boolean {
+  return relationKind === "TABLE" || relationKind === "PARTITIONED_TABLE";
+}
+
+export function postgresIsColumnExcludable(column: SourceDiscoveryColumn): boolean {
+  return !column.primary_key;
+}
+
+// A primary-key column can never be excluded (the server refuses it and the
+// identity of every row depends on it); toggling one is a silent no-op so a
+// stray click can never produce an invalid registration request.
+export function postgresToggleExcludedColumn(excluded: readonly number[], column: SourceDiscoveryColumn): number[] {
+  if (!postgresIsColumnExcludable(column)) return [...excluded];
+  return excluded.includes(column.ordinal)
+    ? excluded.filter((ordinal) => ordinal !== column.ordinal)
+    : [...excluded, column.ordinal].sort((left, right) => left - right);
+}
+
+export type PostgresViewSortKey = "name" | "rows";
+
+export function postgresViewDisplayName(view: SourceDiscoveryView): string {
+  return `${view.schema_name}.${view.relation_name}`;
+}
+
+// The large-database result set (a "hundreds of tables" GM-sized catalog)
+// needs a client-side filter and a predictable sort; both operate on the
+// same server-issued view list, never a second network call.
+export function postgresFilterAndSortViews(
+  views: readonly SourceDiscoveryView[],
+  query: string,
+  sort: PostgresViewSortKey,
+): SourceDiscoveryView[] {
+  const needle = query.trim().toLowerCase();
+  const matched = needle === "" ? [...views] : views.filter((view) => postgresViewDisplayName(view).toLowerCase().includes(needle));
+  return matched.sort((left, right) => {
+    if (sort === "rows") {
+      const leftRows = left.approx_row_count < 0 ? -1 : left.approx_row_count;
+      const rightRows = right.approx_row_count < 0 ? -1 : right.approx_row_count;
+      if (leftRows !== rightRows) return rightRows - leftRows;
+    }
+    return postgresViewDisplayName(left).localeCompare(postgresViewDisplayName(right));
+  });
+}
+
+export type PostgresRegistrationRequest = { view: SourceDiscoveryView; body: SourceDiscoveryRegisterInput | undefined };
+
+// One register call per ticked table, each carrying only that table's own
+// excluded ordinals (sorted for a stable, testable request body); a table
+// with no exclusions gets an empty body, exactly like the original
+// single-view flow. Anything not PREPARED or not ticked is silently dropped,
+// so a stale selection can never reach the network layer.
+export function postgresRegistrationPlan(
+  views: readonly SourceDiscoveryView[],
+  selected: ReadonlySet<string>,
+  excludedColumnsByView: ReadonlyMap<string, readonly number[]>,
+): PostgresRegistrationRequest[] {
+  return views
+    .filter((view) => view.status === "PREPARED" && selected.has(view.view_id))
+    .map((view) => {
+      const excluded = [...(excludedColumnsByView.get(view.view_id) ?? [])].sort((left, right) => left - right);
+      return { view, body: excluded.length > 0 ? { excluded_columns: excluded } : undefined };
+    });
+}
+
+type PostgresRegistrationOutcome = { view: SourceDiscoveryView; status: "pending" | "success" | "failure"; detail: string };
+
+// Runs the plan sequentially: register, then bind to the workspace. Binding
+// carries the workspace revision forward from one successful bind to the
+// next (each bind advances it), with a single re-fetch-and-retry on a
+// revision conflict -- the same recovery submitConnection's caller used to
+// get from withRevisionRetry, just carried across the whole batch instead of
+// one call.
+async function runPostgresRegistrationPlan(
+  discoveryRequestID: string,
+  workspaceID: string,
+  plan: readonly PostgresRegistrationRequest[],
+  startEtag: string,
+  startRevision: number,
+  onOutcome: (outcome: PostgresRegistrationOutcome) => void,
+): Promise<void> {
+  let workspaceEtag = startEtag;
+  let workspaceRevision = startRevision;
+
+  for (const { view, body } of plan) {
+    const registration = await apiPostWithoutIdempotency<SourceRegisterResponse>(
+      `/api/v1/sources/discovery/${encodeURIComponent(discoveryRequestID)}/views/${encodeURIComponent(view.view_id)}:register`,
+      body,
+    );
+    if (registration.kind !== "ok") {
+      onOutcome({ view, status: "failure", detail: closedText(registration) });
+      continue;
+    }
+
+    const bindOnce = (workEtag: string, workRevision: number) => apiMutation<WorkspaceSnapshot>(
+      "POST",
+      `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/sources`,
+      {
+        expected_workspace_revision: workRevision,
+        source_scope_id: registration.value.source_scope_id,
+        source_scope_revision: registration.value.revision,
+        scope_config_hash: registration.value.scope_config_hash,
+        access_mode: registration.value.access_mode,
+      },
+      newIdempotencyKey(),
+      workEtag,
+    );
+
+    let binding = await bindOnce(workspaceEtag, workspaceRevision);
+    if (binding.kind === "failure" && (binding.code === "WORKSPACE_REVISION_CONFLICT" || binding.code === "CONFLICT")) {
+      const refreshed = await apiGet<WorkspaceSnapshot>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}`);
+      if (refreshed.kind === "ok" && refreshed.etag) binding = await bindOnce(refreshed.etag, refreshed.value.revision);
+    }
+
+    if (binding.kind !== "ok") {
+      onOutcome({ view, status: "failure", detail: closedText(binding) });
+      continue;
+    }
+
+    workspaceEtag = binding.etag ?? workspaceEtag;
+    workspaceRevision = binding.value.revision;
+    onOutcome({ view, status: "success", detail: "" });
+  }
 }
 
 function postgresLogicalTypeLabel(type: string): string {
@@ -6888,18 +7040,37 @@ function postgresInterpretationLabel(reason: string | undefined): string {
   return postgresOnboardingLocale.discovery.interpretations[reason as keyof typeof postgresOnboardingLocale.discovery.interpretations] ?? postgresOnboardingLocale.discovery.needsInterpretation;
 }
 
-function PostgreSQLDiscoveredColumn({ column }: { column: SourceDiscoveryColumn }) {
+export function PostgreSQLDiscoveredColumn({ view, column, excluded, onToggleExcluded, disabled }: {
+  view: SourceDiscoveryView;
+  column: SourceDiscoveryColumn;
+  excluded: boolean;
+  onToggleExcluded: (view: SourceDiscoveryView, column: SourceDiscoveryColumn) => void;
+  disabled: boolean;
+}) {
   const details: string[] = [postgresLogicalTypeLabel(column.logical_type)];
   details.push(column.nullable ? postgresOnboardingLocale.discovery.nullable : postgresOnboardingLocale.discovery.required);
   if (column.precision !== undefined) details.push(`${postgresOnboardingLocale.discovery.precision}: ${column.precision}`);
   if (column.scale !== undefined) details.push(`${postgresOnboardingLocale.discovery.scale}: ${column.scale}`);
   if (column.max_bytes !== undefined) details.push(`${postgresOnboardingLocale.discovery.maxBytes}: ${column.max_bytes} ${postgresOnboardingLocale.discovery.bytes}`);
+  // A table that cannot be selected at all (NEEDS_INTERPRETATION) offers no
+  // per-column exclusion either -- there is nothing a checkbox here could do.
+  const canExclude = view.status === "PREPARED" && postgresSupportsColumnExclusion(view.relation_kind);
 
   return (
-    <li className="postgres-column-card">
+    <li className={excluded ? "postgres-column-card postgres-column-excluded" : "postgres-column-card"}>
       <div className="postgres-column-name">
+        {canExclude && (
+          <input
+            aria-label={`Show column ${column.name}`}
+            checked={!excluded}
+            disabled={disabled || column.primary_key}
+            onChange={() => onToggleExcluded(view, column)}
+            type="checkbox"
+          />
+        )}
         <span className="postgres-column-ordinal">{column.ordinal}</span>
         <code>{column.name}</code>
+        {column.primary_key && <span className="postgres-column-key-badge">{postgresOnboardingLocale.discovery.keyColumn}</span>}
       </div>
       <div className="postgres-column-details">
         <span>{column.type_name}</span>
@@ -6911,29 +7082,38 @@ function PostgreSQLDiscoveredColumn({ column }: { column: SourceDiscoveryColumn 
   );
 }
 
-function PostgreSQLDiscoveredViewCard({ view, actionDisabled, onRegister }: {
+export function PostgreSQLDiscoveredViewCard({ view, selected, disabled, onToggleSelected, excludedColumns, onToggleColumn }: {
   view: SourceDiscoveryView;
-  actionDisabled: boolean;
-  onRegister: (view: SourceDiscoveryView) => void;
+  selected: boolean;
+  disabled: boolean;
+  onToggleSelected: (view: SourceDiscoveryView) => void;
+  excludedColumns: readonly number[];
+  onToggleColumn: (view: SourceDiscoveryView, column: SourceDiscoveryColumn) => void;
 }) {
   const prepared = view.status === "PREPARED";
   return (
     <article className={prepared ? "postgres-view-card postgres-view-prepared" : "postgres-view-card postgres-view-needs-interpretation"}>
       <header className="postgres-view-card-header">
+        {prepared && (
+          <input
+            aria-label={`Select ${postgresViewDisplayName(view)}`}
+            checked={selected}
+            className="postgres-view-select"
+            disabled={disabled}
+            onChange={() => onToggleSelected(view)}
+            type="checkbox"
+          />
+        )}
         <div className="postgres-view-title">
           <span className="postgres-view-kind">{postgresRelationKindLabel(view.relation_kind)}</span>
           <h4><code>{view.schema_name}.{view.relation_name}</code></h4>
+          <p className="postgres-view-rowcount">{postgresApproxRowCountLabel(view.approx_row_count)}</p>
           {view.comment && <p>{view.comment}</p>}
         </div>
         <div className="postgres-view-action">
           <span className={prepared ? "postgres-view-status postgres-view-status-prepared" : "postgres-view-status postgres-view-status-needs-interpretation"}>
             {postgresDiscoveryStatusLabel(view.status)}
           </span>
-          {prepared && (
-            <button className="primary-button" disabled={actionDisabled} onClick={() => onRegister(view)} type="button">
-              {actionDisabled ? postgresOnboardingLocale.discovery.registering : postgresOnboardingLocale.discovery.register}
-            </button>
-          )}
         </div>
       </header>
 
@@ -6943,13 +7123,28 @@ function PostgreSQLDiscoveredViewCard({ view, actionDisabled, onRegister }: {
         </p>
       )}
 
-      <div className="postgres-columns-heading">
-        <strong>{postgresOnboardingLocale.discovery.columns}</strong>
-        <span>{view.columns.length}</span>
-      </div>
-      {view.columns.length > 0
-        ? <ul className="postgres-column-list">{view.columns.map((column) => <PostgreSQLDiscoveredColumn column={column} key={`${view.view_id}-${column.ordinal}-${column.name}`} />)}</ul>
-        : <p className="postgres-no-columns">{postgresOnboardingLocale.discovery.noColumns}</p>}
+      <details className="postgres-columns-details">
+        <summary className="postgres-columns-heading">
+          <strong>{postgresOnboardingLocale.discovery.columns}</strong>
+          <span>{view.columns.length}</span>
+        </summary>
+        {view.columns.length > 0
+          ? (
+            <ul className="postgres-column-list">
+              {view.columns.map((column) => (
+                <PostgreSQLDiscoveredColumn
+                  column={column}
+                  disabled={disabled}
+                  excluded={excludedColumns.includes(column.ordinal)}
+                  key={`${view.view_id}-${column.ordinal}-${column.name}`}
+                  onToggleExcluded={onToggleColumn}
+                  view={view}
+                />
+              ))}
+            </ul>
+          )
+          : <p className="postgres-no-columns">{postgresOnboardingLocale.discovery.noColumns}</p>}
+      </details>
     </article>
   );
 }
@@ -6973,14 +7168,22 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
   const [trustVerified, setTrustVerified] = useState(false);
   const [discoveryRequestID, setDiscoveryRequestID] = useState<string | null>(null);
   const [discovery, setDiscovery] = useState<SourceDiscoveryResponse | null>(null);
-  const [selectedViewID, setSelectedViewID] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [sortKey, setSortKey] = useState<PostgresViewSortKey>("name");
+  const [selectedViewIDs, setSelectedViewIDs] = useState<ReadonlySet<string>>(new Set());
+  const [excludedColumnsByView, setExcludedColumnsByView] = useState<ReadonlyMap<string, readonly number[]>>(new Map());
+  const [registrationResults, setRegistrationResults] = useState<PostgresRegistrationOutcome[]>([]);
   const [result, setResult] = useState<ApiResult<unknown> | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [discoveryFailure, setDiscoveryFailure] = useState<"failed" | "expired" | null>(null);
 
-  const busy = phase === "bootstrapping" || phase === "verifying-submit" || phase === "discovering" || phase === "registering" || phase === "binding";
+  const busy = phase === "bootstrapping" || phase === "verifying-submit" || phase === "discovering" || phase === "registering";
   const dialogRef = useModalDialog(onClose, busy);
-  const showingCatalog = discovery !== null && (phase === "catalog" || phase === "registering" || phase === "binding");
+  const showingCatalog = discovery !== null && phase === "catalog";
+  const showingResults = phase === "registering" || phase === "done";
+  const filteredViews = discovery ? postgresFilterAndSortViews(discovery.views, filterQuery, sortKey) : [];
+  const registrationSuccessCount = registrationResults.filter((row) => row.status === "success").length;
+  const registrationFailureCount = registrationResults.filter((row) => row.status === "failure").length;
 
   async function copyConnectionID() {
     if (!connectionID) return;
@@ -7032,25 +7235,17 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
     };
   }, [discoveryRequestID]);
 
-  // Workspace binding is conditional on the source registration result. The
-  // same revision retry used by the other source types keeps a stale sheet
-  // from submitting an old workspace revision after a concurrent edit.
-  async function withRevisionRetry<T>(
-    run: (workspaceEtag: string, workspaceRevision: number) => Promise<ApiResult<T>>,
-  ): Promise<ApiResult<T>> {
-    const first = await run(etag, snapshot.revision);
-    if (first.kind !== "failure" || (first.code !== "WORKSPACE_REVISION_CONFLICT" && first.code !== "CONFLICT")) return first;
-    const refreshed = await apiGet<WorkspaceSnapshot>(`/api/v1/workspaces/${encodeURIComponent(snapshot.id)}`);
-    if (refreshed.kind !== "ok" || !refreshed.etag) return first;
-    return run(refreshed.etag, refreshed.value.revision);
-  }
-
   async function requestDiscovery() {
     if (!connectionID) return;
     setFormError(null);
     setResult(null);
     setDiscoveryFailure(null);
     setDiscoveryRequestID(null);
+    setFilterQuery("");
+    setSortKey("name");
+    setSelectedViewIDs(new Set());
+    setExcludedColumnsByView(new Map());
+    setRegistrationResults([]);
     setPhase("discovering");
     const request = await apiAction<SourceDiscoveryRequestResponse>(
       `/api/v1/sources/connections/${encodeURIComponent(connectionID)}:discover`,
@@ -7132,45 +7327,73 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
     await requestDiscovery();
   }
 
-  async function registerView(view: SourceDiscoveryView) {
-    if (view.status !== "PREPARED" || !discoveryRequestID || busy || phase !== "catalog") return;
-    setSelectedViewID(view.view_id);
-    setResult(null);
-    setPhase("registering");
-    const registration = await apiPostWithoutIdempotency<SourceRegisterResponse>(
-      `/api/v1/sources/discovery/${encodeURIComponent(discoveryRequestID)}/views/${encodeURIComponent(view.view_id)}:register`,
-    );
-    if (registration.kind !== "ok") {
-      setSelectedViewID(null);
-      setResult(registration);
-      setPhase("catalog");
+  function toggleViewSelected(view: SourceDiscoveryView) {
+    if (view.status !== "PREPARED" || busy) return;
+    setSelectedViewIDs((current) => {
+      const next = new Set(current);
+      if (next.has(view.view_id)) next.delete(view.view_id); else next.add(view.view_id);
+      return next;
+    });
+  }
+
+  function toggleColumnExcluded(view: SourceDiscoveryView, column: SourceDiscoveryColumn) {
+    if (busy) return;
+    setExcludedColumnsByView((current) => {
+      const next = new Map(current);
+      next.set(view.view_id, postgresToggleExcludedColumn(next.get(view.view_id) ?? [], column));
+      return next;
+    });
+  }
+
+  function selectAllReadyViews() {
+    if (!discovery || busy) return;
+    setSelectedViewIDs(new Set(discovery.views.filter((view) => view.status === "PREPARED").map((view) => view.view_id)));
+  }
+
+  function clearViewSelection() {
+    if (busy) return;
+    setSelectedViewIDs(new Set());
+  }
+
+  async function confirmRegistration() {
+    if (!discovery || !discoveryRequestID || busy || phase !== "catalog") return;
+    const plan = postgresRegistrationPlan(discovery.views, selectedViewIDs, excludedColumnsByView);
+    if (plan.length === 0) {
+      setFormError(postgresOnboardingLocale.discovery.noSelection);
       return;
     }
 
-    setPhase("binding");
-    const binding = await withRevisionRetry<WorkspaceSnapshot>((workspaceEtag, workspaceRevision) =>
-      apiMutation<WorkspaceSnapshot>(
-        "POST",
-        `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/sources`,
-        {
-          expected_workspace_revision: workspaceRevision,
-          source_scope_id: registration.value.source_scope_id,
-          source_scope_revision: registration.value.revision,
-          scope_config_hash: registration.value.scope_config_hash,
-          access_mode: registration.value.access_mode,
-        },
-        newIdempotencyKey(),
-        workspaceEtag,
-      ));
-    if (binding.kind !== "ok") {
-      setSelectedViewID(null);
-      setResult(binding);
-      setPhase("catalog");
-      return;
-    }
+    setFormError(null);
+    setResult(null);
+    setRegistrationResults(plan.map(({ view }) => ({ view, status: "pending", detail: "" })));
+    setPhase("registering");
+
+    await runPostgresRegistrationPlan(
+      discoveryRequestID,
+      snapshot.id,
+      plan,
+      etag,
+      snapshot.revision,
+      (outcome) => setRegistrationResults((current) => current.map((row) => (row.view.view_id === outcome.view.view_id ? outcome : row))),
+    );
 
     setPhase("done");
-    onCompleted(postgresOnboardingLocale.completion.doneText);
+  }
+
+  function retryFailedRegistrations() {
+    const failedViewIDs = new Set(registrationResults.filter((row) => row.status === "failure").map((row) => row.view.view_id));
+    setSelectedViewIDs(failedViewIDs);
+    setRegistrationResults([]);
+    setResult(null);
+    setPhase("catalog");
+  }
+
+  function finishRegistration() {
+    if (registrationSuccessCount > 0) {
+      onCompleted(postgresOnboardingLocale.completion.resultsSummary(registrationSuccessCount, registrationResults.length));
+    } else {
+      onClose();
+    }
   }
 
   const activeStep = phase === "connection" || phase === "bootstrapping" ? "connection" : phase === "verifying" || phase === "verifying-submit" ? "verification" : phase === "discovering" ? "discovery" : showingCatalog ? "selection" : "finish";
@@ -7339,34 +7562,94 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
                 <p>{postgresOnboardingLocale.discovery.emptyHint}</p>
               </div>
             ) : (
-              <div className="postgres-view-grid">
-                {discovery.views.map((view) => (
-                  <PostgreSQLDiscoveredViewCard
-                    actionDisabled={busy}
-                    key={view.view_id}
-                    onRegister={(candidate) => void registerView(candidate)}
-                    view={view}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="postgres-catalog-toolbar">
+                  <label className="postgres-filter-field">
+                    <span>{postgresOnboardingLocale.discovery.filterLabel}</span>
+                    <input
+                      onChange={(event) => setFilterQuery(event.target.value)}
+                      placeholder={postgresOnboardingLocale.discovery.filterPlaceholder}
+                      type="search"
+                      value={filterQuery}
+                    />
+                  </label>
+                  <label className="postgres-sort-field">
+                    <span>{postgresOnboardingLocale.discovery.sortLabel}</span>
+                    <select onChange={(event) => setSortKey(event.target.value as PostgresViewSortKey)} value={sortKey}>
+                      <option value="name">{postgresOnboardingLocale.discovery.sortName}</option>
+                      <option value="rows">{postgresOnboardingLocale.discovery.sortRows}</option>
+                    </select>
+                  </label>
+                  <div className="postgres-selection-controls">
+                    <span>{postgresOnboardingLocale.discovery.selectedCount(selectedViewIDs.size)}</span>
+                    <button className="link-button" disabled={busy} onClick={selectAllReadyViews} type="button">{postgresOnboardingLocale.discovery.selectAll}</button>
+                    <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={clearViewSelection} type="button">{postgresOnboardingLocale.discovery.clearSelection}</button>
+                  </div>
+                </div>
+
+                <div className="postgres-view-grid">
+                  {filteredViews.map((view) => (
+                    <PostgreSQLDiscoveredViewCard
+                      disabled={busy}
+                      excludedColumns={excludedColumnsByView.get(view.view_id) ?? []}
+                      key={view.view_id}
+                      onToggleColumn={toggleColumnExcluded}
+                      onToggleSelected={toggleViewSelected}
+                      selected={selectedViewIDs.has(view.view_id)}
+                      view={view}
+                    />
+                  ))}
+                </div>
+              </>
             )}
 
-            {phase === "registering" && selectedViewID && <p className="postgres-progress" role="status">{postgresOnboardingLocale.completion.registering}</p>}
-            {phase === "binding" && <p className="postgres-progress" role="status">{postgresOnboardingLocale.completion.binding}</p>}
+            {formError && <aside className="plain-note evidence-denied"><span aria-hidden="true"><IconInfo /></span><p>{formError}</p></aside>}
             {result && result.kind !== "ok" && <ClosedOrError result={result} />}
 
             <footer className="sheet-footer postgres-footer">
               <button className="secondary-button" disabled={busy} onClick={onBack} type="button">{postgresOnboardingLocale.discovery.back}</button>
+              <button className="primary-button" disabled={busy || selectedViewIDs.size === 0} onClick={() => void confirmRegistration()} type="button">
+                {postgresOnboardingLocale.discovery.registerSelected}
+              </button>
             </footer>
           </div>
         )}
 
-        {phase === "done" && (
-          <div className="postgres-wizard postgres-complete" role="status">
-            <span aria-hidden="true"><IconCheckCircle /></span>
-            <h3>{postgresOnboardingLocale.completion.doneHeading}</h3>
-            <p>{postgresOnboardingLocale.completion.doneText}</p>
-            <button className="primary-button" onClick={onClose} type="button">{postgresOnboardingLocale.completion.done}</button>
+        {showingResults && (
+          <div className="postgres-wizard postgres-results-view" role="status">
+            <header className="postgres-catalog-header">
+              <div>
+                <p className="eyebrow">{postgresOnboardingLocale.completion.resultsEyebrow}</p>
+                <h3>{phase === "registering" ? postgresOnboardingLocale.completion.registering : postgresOnboardingLocale.completion.doneHeading}</h3>
+                <p>{postgresOnboardingLocale.completion.resultsSummary(registrationSuccessCount, registrationResults.length)}</p>
+              </div>
+            </header>
+
+            <ul className="postgres-results-list">
+              {registrationResults.map((row) => (
+                <li className={`postgres-result-row postgres-result-${row.status}`} key={row.view.view_id}>
+                  <span aria-hidden="true">
+                    {row.status === "success" ? <IconCheckCircle /> : row.status === "failure" ? <IconAlertTriangle /> : <span className="postgres-result-spinner" />}
+                  </span>
+                  <div>
+                    <code>{postgresViewDisplayName(row.view)}</code>
+                    {row.status === "failure" && <p>{row.detail}</p>}
+                    {row.status === "success" && <p>{postgresOnboardingLocale.completion.resultSuccessDetail}</p>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <footer className="sheet-footer postgres-footer">
+              {phase === "done" && registrationFailureCount > 0 && (
+                <button className="secondary-button" onClick={retryFailedRegistrations} type="button">{postgresOnboardingLocale.completion.retryFailed}</button>
+              )}
+              {phase === "done" && (
+                <button className="primary-button" onClick={finishRegistration} type="button">
+                  {registrationSuccessCount > 0 ? postgresOnboardingLocale.completion.done : postgresOnboardingLocale.close}
+                </button>
+              )}
+            </footer>
           </div>
         )}
       </section>
