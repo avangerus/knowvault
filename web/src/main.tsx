@@ -7,6 +7,15 @@ import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governe
 import { PendingAction, type PendingActionKind, type PendingActionState, type PendingActionStep } from "./pending-action";
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
+import {
+  MODEL_CONTEXT_DESCRIPTION_MAX, MODEL_CONTEXT_RULE_TEXT_MAX, MODEL_CONTEXT_RULES_MAX,
+  cloneModelContextDocument, decodeModelContext, decodeModelContextProposals, decodeModelContextVersions,
+  fieldErrorsFromServerFields, modelContextAcceptRequest, modelContextPath, modelContextProposalPath,
+  modelContextRestoreRequest, modelContextSaveRequest, newModelContextLocation, newModelContextRule, newModelContextTerm,
+  workspaceContextUsageLineFromToolLoop,
+  type ModelContext, type ModelContextDataLocation, type ModelContextDocument, type ModelContextProposal,
+  type ModelContextProposalEdits, type ModelContextRule, type ModelContextTerm, type ModelContextVersion,
+} from "./model-context";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -125,12 +134,22 @@ function IconTable() {
     </svg>
   );
 }
+function IconSettings() {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18.01 5.99l-1.56 1.56M7.55 16.45l-1.56 1.56M18.01 18.01l-1.56-1.56M7.55 7.55 5.99 5.99" stroke="currentColor" strokeLinecap="round" strokeWidth="1.6" />
+    </svg>
+  );
+}
 
 // Exactly three top-level sections (decision 9, anti-SAP): Search is the
 // screen a person actually works in; Sources is the rare "connect data"
 // journey a data owner walks without IT; the audit journal stays within
 // Access as a secondary tab because "who did what" is a property of access.
-type Section = "search" | "sources" | "access";
+// S2 adds Settings beside them: the workspace's own model context, which the
+// same owner who manages sources curates.
+type Section = "search" | "sources" | "access" | "settings";
 
 export type EvidenceQuoteSelector = {
   start: number;
@@ -808,6 +827,9 @@ type QuestionRun = {
     model: string;
     stop_reason: string;
     all_claims_bound: boolean;
+    // S2: the workspace model context the run matched, strictly decoded by
+    // WorkspaceContextUsage rather than trusted inline.
+    workspace_context?: unknown;
     calls: Array<{
       id: string;
       name: string;
@@ -876,7 +898,7 @@ export function sidebarConversations(conversations: readonly ConversationSummary
 // ---------------------------------------------------------------------------
 
 type ApiOk<T> = { kind: "ok"; value: T; etag?: string };
-type ApiFailure = { kind: "failure"; status: number; code: string; requestId: string; clarification?: string };
+type ApiFailure = { kind: "failure"; status: number; code: string; requestId: string; clarification?: string; fields?: string[] };
 type ApiBroken = { kind: "broken"; status: number };
 type ApiResult<T> = ApiOk<T> | ApiFailure | ApiBroken;
 
@@ -928,13 +950,13 @@ async function apiPost<T>(path: string, body: unknown, idempotencyKey: string): 
     });
     notifySessionExpired(response);
     if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
-    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string } } | null;
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string; fields?: string[] } } | null;
     const code = responseBody?.error?.code;
     // R2 Outcome 2: a typed QueryIntent refusal carries an additive, optional
     // clarification. It is passed through verbatim and never synthesized: an
     // absent field stays undefined, so ClosedOrError falls back to the generic
     // code sentence exactly as before.
-    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", clarification: responseBody?.error?.clarification };
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", clarification: responseBody?.error?.clarification, fields: responseBody?.error?.fields };
     return { kind: "broken", status: response.status };
   } catch {
     return { kind: "broken", status: 0 };
@@ -1059,9 +1081,9 @@ async function apiAction<T>(path: string, idempotencyKey: string): Promise<ApiRe
     });
     notifySessionExpired(response);
     if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
-    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string } } | null;
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; fields?: string[] } } | null;
     const code = responseBody?.error?.code;
-    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "" };
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", fields: responseBody?.error?.fields };
     return { kind: "broken", status: response.status };
   } catch {
     return { kind: "broken", status: 0 };
@@ -1086,9 +1108,9 @@ async function apiMutation<T>(method: "POST" | "PUT" | "DELETE", path: string, b
     const response = await fetch(path, init);
     notifySessionExpired(response);
     if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
-    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string } } | null;
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; fields?: string[] } } | null;
     const code = responseBody?.error?.code;
-    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "" };
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", fields: responseBody?.error?.fields };
     return { kind: "broken", status: response.status };
   } catch {
     return { kind: "broken", status: 0 };
@@ -1986,10 +2008,786 @@ function useWorkspaceJournal(
   return [revisionChanged ? idleJournalState : state, loadMore, reloadFirstPage];
 }
 
+// ---------------------------------------------------------------------------
+// S2 card D: Settings — the workspace model context. The view reads one
+// context document, edits it locally, and saves it with the current content
+// hash. Every response is decoded (never trusted as T) and every string is a
+// React text child, so a term containing markup is escaped, not executed.
+// ---------------------------------------------------------------------------
+
+type ModelContextTab = "description" | "rules" | "glossary" | "sources" | "proposals" | "history";
+
+const modelContextTabLabels: Record<ModelContextTab, string> = {
+  description: "Description",
+  rules: "Rules",
+  glossary: "Glossary",
+  sources: "Sources",
+  proposals: "Proposals",
+  history: "History",
+};
+
+const modelContextProposalKindLabels: Record<string, string> = {
+  NEW_TERM: "New term",
+  SYNONYM: "Synonym",
+  DEFINITION_CORRECTION: "Definition correction",
+};
+
+const modelContextChangeKindLabels: Record<string, string> = {
+  EDIT: "Edit",
+  PROPOSAL_ACCEPTED: "Proposal accepted",
+  RESTORE: "Restore",
+};
+
+function modelContextProposalKindLabel(kind: string): string {
+  return modelContextProposalKindLabels[kind] ?? kind;
+}
+
+function modelContextChangeKindLabel(kind: string): string {
+  return modelContextChangeKindLabels[kind] ?? kind;
+}
+
+// A server field path may be indexed (document.glossary[0].term) or bare
+// (document.description); this matches the documented leaf either way and
+// never invents a message for a field the server did not name.
+function modelContextFieldError(errors: Record<string, string>, path: string): string | null {
+  if (errors[path]) return errors[path];
+  const key = Object.keys(errors).find((candidate) => candidate.endsWith(`.${path}`));
+  return key ? errors[key] : null;
+}
+
+function parseSynonymText(text: string): string[] {
+  return text.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+function ModelContextTermForm({ draft, synonymsText, index, editable, fieldErrors, onChange, onSynonymsChange, onSave, onCancel }: {
+  draft: ModelContextTerm;
+  synonymsText: string;
+  index: number;
+  editable: boolean;
+  fieldErrors: Record<string, string>;
+  onChange: (next: ModelContextTerm) => void;
+  onSynonymsChange: (text: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const termError = modelContextFieldError(fieldErrors, `glossary[${index}].term`);
+  const definitionError = modelContextFieldError(fieldErrors, `glossary[${index}].definition`);
+  return (
+    <tr className="model-context-term-editor">
+      <td>
+        <label className="sr-only" htmlFor={`context-term-${index}`}>Term</label>
+        <input disabled={!editable} id={`context-term-${index}`} maxLength={200} onChange={(event) => onChange({ ...draft, term: event.target.value })} value={draft.term} />
+        {termError && <small className="field-error">{termError}</small>}
+      </td>
+      <td>
+        <label className="sr-only" htmlFor={`context-term-synonyms-${index}`}>Synonyms, comma separated</label>
+        <input disabled={!editable} id={`context-term-synonyms-${index}`} onChange={(event) => onSynonymsChange(event.target.value)} placeholder="comma,separated" value={synonymsText} />
+      </td>
+      <td>
+        <label className="sr-only" htmlFor={`context-term-definition-${index}`}>Definition</label>
+        <textarea disabled={!editable} id={`context-term-definition-${index}`} onChange={(event) => onChange({ ...draft, definition: event.target.value })} value={draft.definition} />
+        {definitionError && <small className="field-error">{definitionError}</small>}
+      </td>
+      <td>
+        <ul className="model-context-location-editor">
+          {draft.data_locations.map((location, locationIndex) => (
+            <li key={locationIndex}>
+              <input aria-label={`Source for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, source_connection_id: event.target.value } : item) })} placeholder="source" value={location.source_connection_id} />
+              <input aria-label={`Relation for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, relation: event.target.value } : item) })} placeholder="relation" value={location.relation} />
+              <input aria-label={`Column for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, column: event.target.value } : item) })} placeholder="column (optional)" value={location.column ?? ""} />
+              <input aria-label={`Hint for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, hint: event.target.value } : item) })} placeholder="hint" value={location.hint ?? ""} />
+              {editable && <button className="icon-button" onClick={() => onChange({ ...draft, data_locations: draft.data_locations.filter((_, itemIndex) => itemIndex !== locationIndex) })} title="Remove location" type="button">×</button>}
+            </li>
+          ))}
+        </ul>
+        {editable && <button className="link-button" onClick={() => onChange({ ...draft, data_locations: [...draft.data_locations, newModelContextLocation()] })} type="button">Add location</button>}
+      </td>
+      <td>
+        {editable && (
+          <>
+            <button className="secondary-button" onClick={onSave} type="button">Save term</button>
+            <button className="link-button" onClick={onCancel} type="button">Cancel</button>
+          </>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function ModelContextProposalCard({ proposal, editable, busy, editing, draft, onChangeDraft, onEdit, onCancelEdit, onAccept, onReject, conversationHref, onOpenConversation }: {
+  proposal: ModelContextProposal;
+  editable: boolean;
+  busy: boolean;
+  editing: boolean;
+  draft: { term: string; synonyms: string; definition: string } | null;
+  onChangeDraft: (next: { term: string; synonyms: string; definition: string }) => void;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onAccept: (edits?: ModelContextProposalEdits) => void;
+  onReject: () => void;
+  conversationHref: (conversationID: string) => string;
+  onOpenConversation?: (conversationID: string) => void;
+}) {
+  return (
+    <article className="model-context-proposal">
+      <header className="model-context-proposal-head">
+        <span className="badge badge-tell">{modelContextProposalKindLabel(proposal.kind)}</span>
+        <span className="state-chip muted">{proposal.occurrences} occurrence{proposal.occurrences === 1 ? "" : "s"}</span>
+      </header>
+      <dl className="model-context-proposal-fields">
+        <div><dt>Candidate term</dt><dd>{proposal.candidate_term}</dd></div>
+        {proposal.target_term !== undefined && proposal.target_term.length > 0 && <div><dt>Target term</dt><dd>{proposal.target_term}</dd></div>}
+        <div><dt>Suggested text</dt><dd>{proposal.suggested_text}</dd></div>
+      </dl>
+      {proposal.examples.length > 0 && (
+        <ul aria-label="Examples" className="model-context-proposal-examples">
+          {proposal.examples.map((example, index) => (
+            <li key={`${example.conversation_id}-${index}`}>
+              <a
+                href={conversationHref(example.conversation_id)}
+                onClick={(event) => {
+                  if (!onOpenConversation) return;
+                  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  onOpenConversation(example.conversation_id);
+                }}
+              >
+                {example.question_excerpt}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {proposal.hidden_examples > 0 && <p className="msg-note">{proposal.hidden_examples} further example{proposal.hidden_examples === 1 ? "" : "s"} are not visible to you.</p>}
+      {editable && (editing && draft ? (
+        <div className="model-context-proposal-edit">
+          <label className="field"><span>Term</span>
+            <input onChange={(event) => onChangeDraft({ ...draft, term: event.target.value })} value={draft.term} />
+          </label>
+          <label className="field"><span>Synonyms, comma separated</span>
+            <input onChange={(event) => onChangeDraft({ ...draft, synonyms: event.target.value })} value={draft.synonyms} />
+          </label>
+          <label className="field"><span>Definition</span>
+            <textarea onChange={(event) => onChangeDraft({ ...draft, definition: event.target.value })} value={draft.definition} />
+          </label>
+          <div className="model-context-proposal-actions">
+            <button className="primary-button" disabled={busy} onClick={() => onAccept({ term: draft.term, synonyms: parseSynonymText(draft.synonyms), definition: draft.definition })} type="button">Accept changes</button>
+            <button className="link-button" disabled={busy} onClick={onCancelEdit} type="button">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="model-context-proposal-actions">
+          <button className="primary-button" disabled={busy} onClick={() => onAccept()} type="button">Accept</button>
+          <button className="secondary-button" disabled={busy} onClick={onEdit} type="button">Edit &amp; accept</button>
+          <button className="secondary-button" disabled={busy} onClick={onReject} type="button">Reject</button>
+        </div>
+      ))}
+    </article>
+  );
+}
+
+// The two mutations the tests assert on are exported as thin transports so the
+// exact If-Match / Idempotency-Key / body a real browser sends can be proven
+// against the pure request descriptors without rendering the container.
+export async function sendModelContextSave(workspaceID: string, context: ModelContext, document: ModelContextDocument): Promise<ApiResult<unknown>> {
+  const request = modelContextSaveRequest(workspaceID, context, document, newIdempotencyKey());
+  return apiMutation<unknown>(request.method, request.path, request.body, request.idempotencyKey, request.ifMatch);
+}
+
+export async function sendModelContextProposalAccept(workspaceID: string, context: ModelContext, proposalID: string, edits?: ModelContextProposalEdits): Promise<ApiResult<unknown>> {
+  const request = modelContextAcceptRequest(workspaceID, context, proposalID, edits, newIdempotencyKey());
+  return apiMutation<unknown>(request.method, request.path, request.body, request.idempotencyKey, request.ifMatch);
+}
+
+export function ModelContextEditorSurface({
+  context, document: modelDocument, proposals, versions, workspaceID,
+  viewedVersion = null,
+  saving = false,
+  busyProposalID = null,
+  restoringVersion = null,
+  saveError = null,
+  fieldErrors = {},
+  notice = null,
+  initialTab,
+  onReload,
+  onChange,
+  onSave,
+  onAccept,
+  onReject,
+  onRestore,
+  onViewVersion,
+  onCloseVersion,
+  onOpenConversation,
+}: {
+  context: ModelContext;
+  document: ModelContextDocument;
+  proposals: ModelContextProposal[];
+  versions: ModelContextVersion[];
+  workspaceID: string;
+  viewedVersion?: number | null;
+  saving?: boolean;
+  busyProposalID?: string | null;
+  restoringVersion?: number | null;
+  saveError?: string | null;
+  fieldErrors?: Record<string, string>;
+  notice?: string | null;
+  initialTab?: ModelContextTab;
+  onReload?: () => void;
+  onChange: (document: ModelContextDocument) => void;
+  onSave?: () => void;
+  onAccept?: (proposalID: string, edits?: ModelContextProposalEdits) => void;
+  onReject?: (proposalID: string) => void;
+  onRestore?: (version: number) => void;
+  onViewVersion?: (version: number) => void;
+  onCloseVersion?: () => void;
+  onOpenConversation?: (conversationID: string) => void;
+}) {
+  const editable = context.editable;
+  const [activeTab, setActiveTab] = useState<ModelContextTab>(initialTab ?? "description");
+  const [editingTermIndex, setEditingTermIndex] = useState<number | null>(null);
+  const [termDraft, setTermDraft] = useState<ModelContextTerm | null>(null);
+  const [termSynonymsText, setTermSynonymsText] = useState("");
+  const [editingProposalID, setEditingProposalID] = useState<string | null>(null);
+  const [proposalDraft, setProposalDraft] = useState<{ term: string; synonyms: string; definition: string } | null>(null);
+  const effectiveTab: ModelContextTab = activeTab === "proposals" && !editable ? "description" : activeTab;
+  const tabs: ModelContextTab[] = editable
+    ? ["description", "rules", "glossary", "sources", "proposals", "history"]
+    : ["description", "rules", "glossary", "sources", "history"];
+
+  function updateDocument(patch: Partial<ModelContextDocument>) {
+    onChange({ ...modelDocument, ...patch });
+  }
+
+  function beginTermEdit(index: number) {
+    const term = modelDocument.glossary[index];
+    if (!term) return;
+    setEditingTermIndex(index);
+    setTermDraft({ ...term, synonyms: [...term.synonyms], data_locations: term.data_locations.map((location) => ({ ...location })) });
+    setTermSynonymsText(term.synonyms.join(", "));
+  }
+
+  function addTerm() {
+    setEditingTermIndex(modelDocument.glossary.length);
+    setTermDraft(newModelContextTerm());
+    setTermSynonymsText("");
+  }
+
+  function saveTerm() {
+    if (editingTermIndex === null || termDraft === null) return;
+    const glossary = modelDocument.glossary.map((term, index) => index === editingTermIndex
+      ? { ...termDraft, synonyms: parseSynonymText(termSynonymsText) }
+      : term);
+    if (editingTermIndex >= modelDocument.glossary.length) glossary.push({ ...termDraft, synonyms: parseSynonymText(termSynonymsText) });
+    updateDocument({ glossary });
+    setEditingTermIndex(null);
+    setTermDraft(null);
+    setTermSynonymsText("");
+  }
+
+  function cancelTermEdit() {
+    setEditingTermIndex(null);
+    setTermDraft(null);
+    setTermSynonymsText("");
+  }
+
+  function beginProposalEdit(proposal: ModelContextProposal) {
+    setEditingProposalID(proposal.proposal_id);
+    setProposalDraft({
+      term: proposal.target_term ?? proposal.candidate_term,
+      synonyms: "",
+      definition: proposal.suggested_text,
+    });
+  }
+
+  const conversationHref = (conversationID: string) => buildSearchHash(workspaceID, conversationID);
+
+  return (
+    <div className="page model-context-page">
+      <header className="model-context-head">
+        <div>
+          <p className="eyebrow">{viewedVersion !== null ? `Version ${viewedVersion}` : "Model context"}</p>
+          <h2>{viewedVersion !== null ? `Version ${viewedVersion} (read-only)` : "Workspace model context"}</h2>
+          <p className="model-context-meta">
+            {context.version === 0 ? "No saved version yet." : `Version ${context.version}`}
+            {" · "}
+            <span className="mono">{context.content_hash}</span>
+            {context.updated_by ? ` · ${context.updated_by}` : ""}
+          </p>
+        </div>
+        {editable && onSave && (
+          <button className="primary-button" disabled={saving} onClick={onSave} type="button">
+            {saving ? "Saving…" : "Save"}
+          </button>
+        )}
+      </header>
+      {viewedVersion !== null && (
+        <aside className="plain-note">
+          <span aria-hidden="true"><IconInfo /></span>
+          <div>
+            <p>You are viewing an older version. Restore it to make it current, or go back.</p>
+            {onCloseVersion && <button className="link-button" onClick={onCloseVersion} type="button">Back to current version</button>}
+          </div>
+        </aside>
+      )}
+      {!editable && viewedVersion === null && <p className="evidence-state">You can read this context, but only an owner or manager can change it.</p>}
+      {saveError && (
+        <div className="launch-note" role="alert">
+          <strong>Could not save.</strong>
+          <span>{saveError}</span>
+          {onReload && <button className="link-button" onClick={onReload} type="button">Reload</button>}
+        </div>
+      )}
+      {notice && <p className="msg-warning" role="alert">{notice}</p>}
+      {Object.keys(fieldErrors).length > 0 && (
+        <div className="model-context-field-errors" role="alert">
+          <p>The server rejected these fields:</p>
+          <ul>
+            {Object.entries(fieldErrors).map(([field, message]) => (
+              <li key={field}><code className="mono">{field}</code> — {message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <nav aria-label="Model context sections" className="tabs model-context-tabs" role="tablist">
+        {tabs.map((tab) => (
+          <button
+            aria-controls={`model-context-panel-${tab}`}
+            aria-selected={effectiveTab === tab}
+            className={effectiveTab === tab ? "active" : undefined}
+            id={`model-context-tab-${tab}`}
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            role="tab"
+            tabIndex={effectiveTab === tab ? 0 : -1}
+            type="button"
+          >
+            {modelContextTabLabels[tab]}{tab === "proposals" ? ` (${proposals.length})` : ""}
+          </button>
+        ))}
+      </nav>
+
+      {effectiveTab === "description" && (
+        <section aria-labelledby="model-context-tab-description" className="model-context-panel" id="model-context-panel-description" role="tabpanel" tabIndex={0}>
+          <label className="field">
+            <span>Description</span>
+            <textarea
+              disabled={!editable}
+              maxLength={MODEL_CONTEXT_DESCRIPTION_MAX}
+              onChange={(event) => updateDocument({ description: event.target.value })}
+              value={modelDocument.description}
+            />
+            <small>{modelDocument.description.length} / {MODEL_CONTEXT_DESCRIPTION_MAX} characters</small>
+            {modelContextFieldError(fieldErrors, "description") && <small className="field-error">{modelContextFieldError(fieldErrors, "description")}</small>}
+          </label>
+        </section>
+      )}
+
+      {effectiveTab === "rules" && (
+        <section aria-labelledby="model-context-tab-rules" className="model-context-panel" id="model-context-panel-rules" role="tabpanel" tabIndex={0}>
+          <ul className="model-context-rules">
+            {modelDocument.rules.map((rule, index) => (
+              <li key={`${rule.id}-${index}`}>
+                <label className="sr-only" htmlFor={`model-context-rule-${index}`}>Rule {index + 1}</label>
+                <input
+                  disabled={!editable}
+                  id={`model-context-rule-${index}`}
+                  maxLength={MODEL_CONTEXT_RULE_TEXT_MAX}
+                  onChange={(event) => updateDocument({ rules: modelDocument.rules.map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item) })}
+                  value={rule.text}
+                />
+                {editable && <button className="icon-button" onClick={() => updateDocument({ rules: modelDocument.rules.filter((_, itemIndex) => itemIndex !== index) })} title="Remove rule" type="button">×</button>}
+                {modelContextFieldError(fieldErrors, `rules[${index}].text`) && <small className="field-error">{modelContextFieldError(fieldErrors, `rules[${index}].text`)}</small>}
+              </li>
+            ))}
+          </ul>
+          {modelDocument.rules.length === 0 && <p className="evidence-state">No rules yet.</p>}
+          {editable && (
+            <button className="secondary-button" disabled={modelDocument.rules.length >= MODEL_CONTEXT_RULES_MAX} onClick={() => updateDocument({ rules: [...modelDocument.rules, newModelContextRule()] })} type="button">
+              Add rule
+            </button>
+          )}
+          <p className="model-context-hint">{modelDocument.rules.length} / {MODEL_CONTEXT_RULES_MAX} rules.</p>
+        </section>
+      )}
+
+      {effectiveTab === "glossary" && (
+        <section aria-labelledby="model-context-tab-glossary" className="model-context-panel" id="model-context-panel-glossary" role="tabpanel" tabIndex={0}>
+          <table className="model-context-table">
+            <thead>
+              <tr><th scope="col">Term</th><th scope="col">Synonyms</th><th scope="col">Definition</th><th scope="col">Data locations</th><th scope="col"><span className="sr-only">Actions</span></th></tr>
+            </thead>
+            <tbody>
+              {modelDocument.glossary.map((term, index) => editingTermIndex === index && termDraft ? (
+                <ModelContextTermForm
+                  draft={termDraft}
+                  editable={editable}
+                  fieldErrors={fieldErrors}
+                  index={index}
+                  key={`editor-${index}`}
+                  onCancel={cancelTermEdit}
+                  onChange={setTermDraft}
+                  onSave={saveTerm}
+                  onSynonymsChange={setTermSynonymsText}
+                  synonymsText={termSynonymsText}
+                />
+              ) : (
+                <tr key={`${term.id}-${index}`}>
+                  <td>{term.term}</td>
+                  <td>
+                    {term.synonyms.length === 0 ? <span className="model-context-empty">—</span> : term.synonyms.map((synonym, synonymIndex) => <span className="chip" key={`${synonym}-${synonymIndex}`}>{synonym}</span>)}
+                  </td>
+                  <td>{term.definition}</td>
+                  <td>
+                    {term.data_locations.length === 0 ? <span className="model-context-empty">—</span> : (
+                      <ul className="model-context-locations">
+                        {term.data_locations.map((location, locationIndex) => (
+                          <li key={locationIndex}>{location.source_connection_id} · {location.relation}{location.column ? `.${location.column}` : ""}{location.hint ? ` — ${location.hint}` : ""}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                  <td>
+                    {editable && (
+                      <>
+                        <button className="link-button" onClick={() => beginTermEdit(index)} type="button">Edit</button>
+                        <button className="icon-button" onClick={() => updateDocument({ glossary: modelDocument.glossary.filter((_, itemIndex) => itemIndex !== index) })} title="Remove term" type="button">×</button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {editingTermIndex === modelDocument.glossary.length && termDraft && (
+                <ModelContextTermForm
+                  draft={termDraft}
+                  editable={editable}
+                  fieldErrors={fieldErrors}
+                  index={editingTermIndex}
+                  key="editor-new"
+                  onCancel={cancelTermEdit}
+                  onChange={setTermDraft}
+                  onSave={saveTerm}
+                  onSynonymsChange={setTermSynonymsText}
+                  synonymsText={termSynonymsText}
+                />
+              )}
+            </tbody>
+          </table>
+          {modelDocument.glossary.length === 0 && <p className="evidence-state">No glossary terms yet.</p>}
+          {editable && <button className="secondary-button" onClick={addTerm} type="button">Add term</button>}
+        </section>
+      )}
+
+      {effectiveTab === "sources" && (
+        <section aria-labelledby="model-context-tab-sources" className="model-context-panel" id="model-context-panel-sources" role="tabpanel" tabIndex={0}>
+          {modelDocument.sources.length === 0 && <p className="evidence-state">No source notes yet.</p>}
+          {modelDocument.sources.map((source, sourceIndex) => (
+            <section className="model-context-source" key={`${source.source_connection_id}-${sourceIndex}`}>
+              <h3>{source.source_connection_id}</h3>
+              <label className="field">
+                <span>Source description</span>
+                <textarea
+                  disabled={!editable}
+                  onChange={(event) => updateDocument({ sources: modelDocument.sources.map((item, itemIndex) => itemIndex === sourceIndex ? { ...item, description: event.target.value } : item) })}
+                  value={source.description ?? ""}
+                />
+              </label>
+              {source.tables.map((table, tableIndex) => (
+                <div className="model-context-table-note" key={`${table.relation}-${tableIndex}`}>
+                  <h4>{table.relation}</h4>
+                  <label className="field">
+                    <span>Table note</span>
+                    <input
+                      disabled={!editable}
+                      onChange={(event) => updateDocument({ sources: modelDocument.sources.map((item, itemIndex) => itemIndex === sourceIndex ? { ...item, tables: item.tables.map((tableItem, tableItemIndex) => tableItemIndex === tableIndex ? { ...tableItem, note: event.target.value } : tableItem) } : item) })}
+                      value={table.note ?? ""}
+                    />
+                  </label>
+                  {table.columns.map((column, columnIndex) => (
+                    <label className="field model-context-column-note" key={`${column.name}-${columnIndex}`}>
+                      <span>{column.name}</span>
+                      <input
+                        disabled={!editable}
+                        onChange={(event) => updateDocument({ sources: modelDocument.sources.map((item, itemIndex) => itemIndex === sourceIndex ? { ...item, tables: item.tables.map((tableItem, tableItemIndex) => tableItemIndex === tableIndex ? { ...tableItem, columns: tableItem.columns.map((columnItem, columnItemIndex) => columnItemIndex === columnIndex ? { ...columnItem, note: event.target.value } : columnItem) } : tableItem) } : item) })}
+                        value={column.note ?? ""}
+                      />
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </section>
+          ))}
+        </section>
+      )}
+
+      {effectiveTab === "proposals" && editable && (
+        <section aria-labelledby="model-context-tab-proposals" className="model-context-panel" id="model-context-panel-proposals" role="tabpanel" tabIndex={0}>
+          {proposals.length === 0 && <p className="evidence-state">No proposals are waiting.</p>}
+          {proposals.map((proposal) => (
+            <ModelContextProposalCard
+              busy={busyProposalID === proposal.proposal_id}
+              conversationHref={conversationHref}
+              draft={editingProposalID === proposal.proposal_id ? proposalDraft : null}
+              editing={editingProposalID === proposal.proposal_id}
+              editable={editable}
+              key={proposal.proposal_id}
+              onAccept={(edits) => { onAccept?.(proposal.proposal_id, edits); setEditingProposalID(null); setProposalDraft(null); }}
+              onCancelEdit={() => { setEditingProposalID(null); setProposalDraft(null); }}
+              onChangeDraft={setProposalDraft}
+              onEdit={() => beginProposalEdit(proposal)}
+              onOpenConversation={onOpenConversation}
+              onReject={() => onReject?.(proposal.proposal_id)}
+              proposal={proposal}
+            />
+          ))}
+        </section>
+      )}
+
+      {effectiveTab === "history" && (
+        <section aria-labelledby="model-context-tab-history" className="model-context-panel" id="model-context-panel-history" role="tabpanel" tabIndex={0}>
+          {versions.length === 0 ? <p className="evidence-state">No saved versions yet.</p> : (
+            <ol className="model-context-history">
+              {versions.map((version) => (
+                <li key={`${version.version}-${version.content_hash}`}>
+                  <div className="model-context-history-main">
+                    <strong>v{version.version}</strong>
+                    <span>{modelContextChangeKindLabel(version.change_kind)}</span>
+                    <span>{version.created_at ?? "—"}</span>
+                    <span>{version.created_by ?? "—"}</span>
+                    {version.proposal_id ? <span className="mono">{version.proposal_id}</span> : null}
+                  </div>
+                  <div className="model-context-history-actions">
+                    <button className="link-button" onClick={() => onViewVersion?.(version.version)} type="button">View</button>
+                    {editable && <button className="secondary-button" disabled={restoringVersion !== null} onClick={() => onRestore?.(version.version)} type="button">{restoringVersion === version.version ? "Restoring…" : "Restore"}</button>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+export function ModelContextSettingsView({ workspaceID, pushToast, onOpenConversation }: {
+  workspaceID: string | null;
+  pushToast: (kind: "success" | "error", text: string) => void;
+  onOpenConversation: (conversationID: string) => void;
+}) {
+  const [contextResult, setContextResult] = useState<ApiResult<ModelContext> | null>(null);
+  const [proposals, setProposals] = useState<ModelContextProposal[]>([]);
+  const [versions, setVersions] = useState<ModelContextVersion[]>([]);
+  const [draft, setDraft] = useState<ModelContextDocument | null>(null);
+  const [viewed, setViewed] = useState<{ version: number; context: ModelContext } | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [busyProposalID, setBusyProposalID] = useState<string | null>(null);
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setViewed(null);
+    setSaveError(null);
+    setNotice(null);
+    setFieldErrors({});
+    if (workspaceID === null) {
+      setContextResult(null);
+      setProposals([]);
+      setVersions([]);
+      setDraft(null);
+      return;
+    }
+    let alive = true;
+    setContextResult(null);
+    setDraft(null);
+    (async () => {
+      const result = await apiGet<unknown>(modelContextPath(workspaceID));
+      if (!alive) return;
+      if (result.kind !== "ok") {
+        setContextResult(result);
+        setProposals([]);
+        setVersions([]);
+        return;
+      }
+      const decoded = decodeModelContext(result.value);
+      if (decoded === null) {
+        setContextResult({ kind: "broken", status: 0 });
+        setProposals([]);
+        setVersions([]);
+        return;
+      }
+      setContextResult({ kind: "ok", value: decoded, etag: result.etag });
+      setDraft(cloneModelContextDocument(decoded.document));
+      if (!decoded.editable) {
+        setProposals([]);
+        setVersions([]);
+        return;
+      }
+      const [proposalReply, versionReply] = await Promise.all([
+        apiGet<unknown>(`${modelContextPath(workspaceID)}/proposals?${new URLSearchParams({ status: "PROPOSED" }).toString()}`),
+        apiGet<unknown>(`${modelContextPath(workspaceID)}/versions`),
+      ]);
+      if (!alive) return;
+      setProposals(proposalReply.kind === "ok" ? decodeModelContextProposals(proposalReply.value) ?? [] : []);
+      setVersions(versionReply.kind === "ok" ? decodeModelContextVersions(versionReply.value) ?? [] : []);
+    })();
+    return () => { alive = false; };
+  }, [workspaceID, reloadToken]);
+
+  function reload() {
+    setReloadToken((token) => token + 1);
+  }
+
+  async function save() {
+    if (workspaceID === null || contextResult?.kind !== "ok" || draft === null) return;
+    setSaving(true);
+    setSaveError(null);
+    setNotice(null);
+    setFieldErrors({});
+    const result = await sendModelContextSave(workspaceID, contextResult.value, draft);
+    setSaving(false);
+    if (result.kind === "ok") {
+      pushToast("success", "Model context saved.");
+      reload();
+      return;
+    }
+    if (result.kind === "failure" && result.status === 412) {
+      // Keep the user's edits: only the hash is stale, so a reload discards work.
+      const message = "Someone changed the context — reload";
+      setSaveError(message);
+      pushToast("error", message);
+      return;
+    }
+    if (result.kind === "failure" && result.status === 400) {
+      const errors = fieldErrorsFromServerFields(result.fields ?? []);
+      setFieldErrors(errors);
+      if (Object.keys(errors).length === 0) setSaveError(closedText(result));
+      return;
+    }
+    const message = closedText(result);
+    setSaveError(message);
+    pushToast("error", message);
+  }
+
+  async function accept(proposalID: string, edits?: ModelContextProposalEdits) {
+    if (workspaceID === null || contextResult?.kind !== "ok") return;
+    setBusyProposalID(proposalID);
+    const result = await sendModelContextProposalAccept(workspaceID, contextResult.value, proposalID, edits);
+    setBusyProposalID(null);
+    if (result.kind === "ok") {
+      pushToast("success", "Proposal accepted.");
+      reload();
+      return;
+    }
+    if (result.kind === "failure" && result.status === 412) {
+      const message = "Someone changed the context — reload";
+      setNotice(message);
+      pushToast("error", message);
+      return;
+    }
+    pushToast("error", closedText(result));
+  }
+
+  async function reject(proposalID: string) {
+    if (workspaceID === null) return;
+    setBusyProposalID(proposalID);
+    const result = await apiAction<{ proposal_id: string; status: string }>(`${modelContextProposalPath(workspaceID, proposalID)}:reject`, newIdempotencyKey());
+    setBusyProposalID(null);
+    if (result.kind === "ok") {
+      pushToast("success", "Proposal rejected.");
+      reload();
+      return;
+    }
+    pushToast("error", closedText(result));
+  }
+
+  async function restore(version: number) {
+    if (workspaceID === null || contextResult?.kind !== "ok") return;
+    if (!window.confirm(`Restore version ${version}? This creates a new version.`)) return;
+    setRestoringVersion(version);
+    const request = modelContextRestoreRequest(workspaceID, contextResult.value, version, newIdempotencyKey());
+    const result = await apiMutation<unknown>(request.method, request.path, request.body, request.idempotencyKey, request.ifMatch);
+    setRestoringVersion(null);
+    if (result.kind === "ok") {
+      pushToast("success", `Version ${version} restored.`);
+      setViewed(null);
+      reload();
+      return;
+    }
+    const message = result.kind === "failure" && result.status === 412 ? "Someone changed the context — reload" : closedText(result);
+    pushToast("error", message);
+  }
+
+  async function viewVersion(version: number) {
+    if (workspaceID === null) return;
+    const result = await apiGet<unknown>(`${modelContextPath(workspaceID)}/versions/${encodeURIComponent(String(version))}`);
+    if (result.kind !== "ok") {
+      pushToast("error", closedText(result));
+      return;
+    }
+    const decoded = decodeModelContext(result.value);
+    if (decoded === null) {
+      pushToast("error", "The server returned an unreadable version.");
+      return;
+    }
+    setViewed({ version, context: decoded });
+  }
+
+  if (workspaceID === null) return <p className="evidence-state">Select a workspace.</p>;
+  if (contextResult === null) return <p className="evidence-state">Loading model context…</p>;
+  if (contextResult.kind !== "ok") return <ClosedOrError result={contextResult} />;
+  if (viewed !== null) {
+    return (
+      <ModelContextEditorSurface
+        context={viewed.context}
+        document={viewed.context.document}
+        key={`viewed-${viewed.version}`}
+        onCloseVersion={() => setViewed(null)}
+        onChange={() => {}}
+        onOpenConversation={onOpenConversation}
+        onViewVersion={(version) => void viewVersion(version)}
+        proposals={[]}
+        versions={versions}
+        viewedVersion={viewed.version}
+        workspaceID={workspaceID}
+      />
+    );
+  }
+  if (draft === null) return <p className="evidence-state">Loading model context…</p>;
+  return (
+    <ModelContextEditorSurface
+      busyProposalID={busyProposalID}
+      context={contextResult.value}
+      document={draft}
+      fieldErrors={fieldErrors}
+      key={`${contextResult.value.version}:${contextResult.value.content_hash}`}
+      notice={notice}
+      onAccept={(proposalID, edits) => void accept(proposalID, edits)}
+      onChange={setDraft}
+      onOpenConversation={onOpenConversation}
+      onReject={(proposalID) => void reject(proposalID)}
+      onReload={reload}
+      onRestore={(version) => void restore(version)}
+      onSave={() => void save()}
+      onViewVersion={(version) => void viewVersion(version)}
+      proposals={proposals}
+      restoringVersion={restoringVersion}
+      saveError={saveError}
+      saving={saving}
+      versions={versions}
+      workspaceID={workspaceID}
+    />
+  );
+}
+
 const sectionCopy: Record<Section, { label: string; hint: string; icon: ComponentType }> = {
   search: { label: "Search", hint: "Search connected data", icon: IconQuestions },
   sources: { label: "Sources", hint: "Connected data and source status", icon: IconSources },
   access: { label: "Access", hint: "Workspace members and activity", icon: IconAccess },
+  settings: { label: "Settings", hint: "Workspace model context", icon: IconSettings },
 };
 
 type Session = "checking" | "signedOut" | "signedIn" | "unavailable";
@@ -2361,6 +3159,21 @@ function App() {
                 workspaceID={selectedWorkspaceID}
               />
             </>
+          )}
+          {session === "signedIn" && !evidenceTarget && section === "settings" && (
+            <ModelContextSettingsView
+              key={selectedWorkspaceID ?? "no-workspace"}
+              onOpenConversation={(conversationID) => {
+                if (!selectedWorkspaceID) return;
+                const hash = buildSearchHash(selectedWorkspaceID, conversationID);
+                setSection("search");
+                setSelectedConversationID(conversationID);
+                window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+                routeHash.current = hash;
+              }}
+              pushToast={pushToast}
+              workspaceID={selectedWorkspaceID}
+            />
           )}
         </section>
       </div>
@@ -3349,6 +4162,15 @@ function ToolCallsDisclosure({ run, showResults = true, footer }: { run: Questio
       {footer}
     </details>
   );
+}
+
+// S2: the model-context usage summary. It is plain React text (never HTML),
+// so a term like "<script>" is escaped by the renderer, and it is shown only
+// when the run's strictly decoded workspace_context actually carries terms.
+export function WorkspaceContextUsage({ toolLoop }: { toolLoop?: unknown }) {
+  const line = workspaceContextUsageLineFromToolLoop(toolLoop);
+  if (line === null) return null;
+  return <p className="workspace-context-usage">{line}</p>;
 }
 
 export function hasLiveDataReceipt(run: Pick<QuestionRun, "status" | "answer_result">): boolean {
@@ -4445,6 +5267,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   };
   return (
     <>
+      <WorkspaceContextUsage toolLoop={run.tool_loop} />
       <ToolCallsDisclosure run={run} showResults={false} />
       {statusMessage ? <p className="msg-warning">{statusMessage}</p> : hasLiveReceipt ? (
         <div className="answer-body live-calculation-answer">
