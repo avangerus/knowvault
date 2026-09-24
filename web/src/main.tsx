@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
-import { PendingAction, type PendingActionState } from "./pending-action";
+import { PendingAction, type PendingActionKind, type PendingActionState, type PendingActionStep } from "./pending-action";
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 
@@ -942,15 +942,21 @@ async function apiPost<T>(path: string, body: unknown, idempotencyKey: string): 
 }
 
 // A stream is one POST. Older servers may answer with JSON; decode that same
-// response without retrying a question or reusing its idempotency key.
+// response without retrying a question or reusing its idempotency key. R3:
+// signal aborts the underlying HTTP request from the browser (leaving the
+// conversation, switching conversations or pressing stop), which closes the
+// connection so the server's request-scoped context is cancelled and the
+// backend tool loop stops; see internal/platform/workspaceapi/workspaceapi.go
+// questionCreate and internal/question/tool_loop.go's ctx.Err() checks.
 async function apiPostQuestionStream(
   path: string, body: unknown, idempotencyKey: string, onAction: (action: QuestionActionFrame) => void,
+  signal?: AbortSignal,
 ): Promise<ApiResult<QuestionRun>> {
   try {
     const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
     if (csrf.kind !== "ok") return csrf;
     const response = await fetch(path, {
-      method: "POST", cache: "no-store",
+      method: "POST", cache: "no-store", signal,
       headers: { Accept: "application/x-ndjson", "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey, "X-KnowVault-CSRF": csrf.value.csrf_token },
       body: JSON.stringify(body),
@@ -979,12 +985,31 @@ const pendingKindByAction: Record<QuestionActionLabel, PendingActionState["curre
   live_data: "checking_data", trusted_comparison: "comparing", other_tool: "working",
 };
 
+// The backend invokes at most one action at a time (see tool_loop.go's
+// sequential invoke loop), so a "started" event is always immediately
+// followed — after zero or more intervening events for other in-flight
+// turns' generations, which observationForGeneration already filters out —
+// by its own "finished" event before another "started" event can occur.
+// Pairing therefore only needs to track the single most recently opened,
+// not-yet-finished step; the wire protocol deliberately carries no separate
+// call-correlation id (R2: no internal identifier beyond what the UI needs).
 export function pendingActionFromEvents(events: readonly QuestionActionFrame[]): PendingActionState {
   const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
-  const completed = ordered.filter((event) => event.phase === "action_finished" && event.outcome)
-    .map((event) => ({ kind: pendingKindByAction[event.label], outcome: event.outcome!, durationMS: event.duration_ms }));
-  const latest = ordered.at(-1);
-  return { current: latest?.phase === "action_started" ? pendingKindByAction[latest.label] : "working", completed };
+  const completed: PendingActionStep[] = [];
+  let open: { kind: PendingActionKind; request?: string } | null = null;
+  for (const event of ordered) {
+    if (event.phase === "action_started") {
+      open = { kind: pendingKindByAction[event.label], request: event.request };
+    } else if (event.outcome) {
+      const kind = pendingKindByAction[event.label];
+      completed.push({
+        kind, request: open?.kind === kind ? open.request : undefined,
+        outcome: event.outcome, detail: event.detail, durationMS: event.duration_ms,
+      });
+      open = null;
+    }
+  }
+  return { current: open?.kind ?? "working", currentRequest: open?.request, completed };
 }
 
 // Source registration is deliberately content-idempotent on the server and
@@ -4719,6 +4744,29 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   // the pagination epoch but must not discard a valid in-flight question or
   // archive.
   const workspaceGenerationRef = useRef(0);
+  // R3 cancellation: the AbortController of the in-flight question stream
+  // request, if any. Leaving the conversation, switching conversations or
+  // pressing stop calls abortActiveQuestion(), which aborts it so the browser
+  // closes the underlying connection and the backend tool loop stops (see
+  // apiPostQuestionStream above). conversationGenerationRef is bumped by the
+  // same transitions so a response that arrives after the abort (or simply
+  // late) can never mutate a different conversation's state; it is distinct
+  // from workspaceGenerationRef, which already guards a workspace change.
+  // stoppedByUserRef distinguishes a deliberate Stop click from any other
+  // aborted/broken request so submitQuestion does not show a scary error
+  // card for a cancellation the user asked for.
+  const questionAbortRef = useRef<AbortController | null>(null);
+  const conversationGenerationRef = useRef(0);
+  const stoppedByUserRef = useRef(false);
+  function abortActiveQuestion() {
+    questionAbortRef.current?.abort();
+    questionAbortRef.current = null;
+    conversationGenerationRef.current += 1;
+    setSubmitting(false);
+    setPendingQuestion(null);
+    setObservedActions([]);
+  }
+  useEffect(() => () => { questionAbortRef.current?.abort(); }, []);
   // R2 refresh-fix: the workspace whose protected chat state (shown rows,
   // selection, local turns and continuation cursor) this state currently owns.
   // A null workspaceID has two very different causes, and retention
@@ -4754,6 +4802,9 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
 
   useEffect(() => {
     if (routedConversationRef.current === initialConversationID) return;
+    // R3: navigation away from the previously routed conversation aborts its
+    // in-flight question, exactly like an explicit conversation switch below.
+    abortActiveQuestion();
     routedConversationRef.current = initialConversationID;
     setSelectedConversationID(initialConversationID);
     setConversation(null);
@@ -5230,6 +5281,10 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
       return current;
     });
     const workspaceGeneration = workspaceGenerationRef.current;
+    const conversationGeneration = conversationGenerationRef.current;
+    const controller = new AbortController();
+    questionAbortRef.current = controller;
+    stoppedByUserRef.current = false;
     setSubmitting(true);
     setLastFailure(null);
     setQuestion("");
@@ -5241,14 +5296,25 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
       newIdempotencyKey(),
       observationForGeneration(workspaceGeneration, () => workspaceGenerationRef.current,
         (action) => setObservedActions((current) => [...current, action])),
+      controller.signal,
     );
+    if (questionAbortRef.current === controller) questionAbortRef.current = null;
+    const wasStopped = stoppedByUserRef.current;
+    stoppedByUserRef.current = false;
     // R3: before ANY post-await mutation, drop an answer that belongs to a
-    // workspace generation that has since been reset or denied. The pending
-    // state was already cleared by that reset, so a stale completion must not
-    // clear or mutate anything.
-    if (workspaceGenerationRef.current !== workspaceGeneration) return;
+    // workspace generation that has since been reset or denied, or to a
+    // conversation that has since been left (switched away from, replaced by
+    // a new conversation, or navigated away from) — abortActiveQuestion()
+    // already aborted the request and reset the pending UI state in that
+    // case, so a late completion must not clear or mutate anything.
+    if (workspaceGenerationRef.current !== workspaceGeneration || conversationGenerationRef.current !== conversationGeneration) return;
     setPendingQuestion(null);
     setSubmitting(false);
+    if (wasStopped) {
+      // The user pressed Stop: restore the draft without showing an error card.
+      setQuestion(trimmed);
+      return;
+    }
     if (result.kind === "ok") {
       const turn: ConversationTurn = {
         turn_id: result.value.question_run_id,
@@ -5289,7 +5355,19 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
+  // R3: pressing Stop aborts the in-flight question from the browser so the
+  // backend loop stops; submitQuestion restores the draft without an error
+  // card once its (now-aborted) request settles.
+  function stopQuestion() {
+    if (!submitting) return;
+    stoppedByUserRef.current = true;
+    questionAbortRef.current?.abort();
+  }
+
   function startNewConversation() {
+    // R3: leaving the conversation for a new, empty one aborts any in-flight
+    // question rather than letting its answer land in the new conversation.
+    abortActiveQuestion();
     dismissFootnoteTooltip();
     setSelectedConversationID(null);
     routedConversationRef.current = null;
@@ -5304,7 +5382,10 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   }
 
   function selectConversation(conversationID: string) {
-    if (submitting || conversationID === selectedConversationID) return;
+    if (conversationID === selectedConversationID) return;
+    // R3: switching conversations aborts any in-flight question rather than
+    // blocking the switch or letting a late answer land in the new one.
+    abortActiveQuestion();
     dismissFootnoteTooltip();
     setLastFailure(null);
     setLocalTurns([]);
@@ -5510,6 +5591,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
             <article className="turn turn-on turn-pending">
               <p className="turn-question"><span className="turn-role">Question</span>{pendingQuestion}</p>
               <PendingAction elapsedSeconds={pendingElapsedSeconds} state={pendingActionFromEvents(observedActions)} />
+              <button aria-label="Stop" className="text-button" onClick={stopQuestion} type="button">Stop</button>
             </article>
           )}
 

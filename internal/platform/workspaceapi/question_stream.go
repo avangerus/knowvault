@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"unicode/utf8"
 
 	"knowvault.local/verified-workspace/internal/question"
 )
@@ -26,8 +27,10 @@ type questionStreamFrame struct {
 	Sequence   uint64        `json:"sequence,omitempty"`
 	Phase      string        `json:"phase,omitempty"`
 	Label      string        `json:"label,omitempty"`
+	Request    string        `json:"request,omitempty"`
 	Outcome    string        `json:"outcome,omitempty"`
 	DurationMS *int64        `json:"duration_ms,omitempty"`
+	Detail     string        `json:"detail,omitempty"`
 	Result     *question.Run `json:"result,omitempty"`
 	Code       string        `json:"code,omitempty"`
 	RequestID  string        `json:"request_id,omitempty"`
@@ -47,11 +50,21 @@ func (stream *questionEventStream) action(event question.ActionEvent) error {
 		(label != "model" && label != "document_search" && label != "document_read" && label != "live_data" && label != "trusted_comparison" && label != "other_tool") {
 		return errors.New("invalid question action event")
 	}
-	if phase == "action_started" && (outcome != "" || event.DurationMS != nil) ||
-		phase == "action_finished" && (outcome != "succeeded" && outcome != "failed" || event.DurationMS != nil && *event.DurationMS < 0) {
+	// Request describes what was asked (known only once a call starts);
+	// Detail describes what came back (known only once it finishes). Each is
+	// therefore valid on exactly one phase, mirroring the existing
+	// outcome/duration_ms split below.
+	if phase == "action_started" && (outcome != "" || event.DurationMS != nil || event.Detail != "") ||
+		phase == "action_finished" && (outcome != "succeeded" && outcome != "failed" || event.DurationMS != nil && *event.DurationMS < 0 || event.Request != "") {
 		return errors.New("invalid question action outcome")
 	}
-	return stream.write(questionStreamFrame{Type: "action", Sequence: event.Sequence, Phase: phase, Label: label, Outcome: outcome, DurationMS: event.DurationMS}, false)
+	// Defense in depth: question.ActionTextMaxRunes is already enforced where
+	// Request/Detail are computed, but the transport re-checks its own wire
+	// bound rather than trusting the caller.
+	if utf8.RuneCountInString(event.Request) > question.ActionTextMaxRunes || utf8.RuneCountInString(event.Detail) > question.ActionTextMaxRunes {
+		return errors.New("question action text exceeds the disclosed bound")
+	}
+	return stream.write(questionStreamFrame{Type: "action", Sequence: event.Sequence, Phase: phase, Label: label, Request: event.Request, Outcome: outcome, DurationMS: event.DurationMS, Detail: event.Detail}, false)
 }
 
 func (stream *questionEventStream) result(run question.Run) error {

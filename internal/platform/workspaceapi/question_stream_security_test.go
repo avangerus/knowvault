@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,5 +70,29 @@ func TestQuestionStreamThroughSecurityHeadersArrivesBeforeTerminal(t *testing.T)
 	}
 	if err := <-writeErrors; err != nil {
 		t.Fatalf("stream write failed: %v", err)
+	}
+}
+
+// R2: Request/Detail must stay length-bounded and correctly paired with the
+// phase that can actually know them (a request is known once a call starts,
+// an outcome only once it finishes), even if a caller upstream of the
+// transport ever computed them incorrectly.
+func TestQuestionEventStreamRejectsUnboundedOrMispairedActionText(t *testing.T) {
+	overlong := strings.Repeat("a", 181)
+	cases := map[string]question.ActionEvent{
+		"request on a finished frame": {Sequence: 1, Type: "action_finished", Label: "document_search", Outcome: "succeeded", Request: "leaked after the fact"},
+		"detail on a started frame":   {Sequence: 1, Type: "action_started", Label: "document_search", Detail: "leaked before the call ran"},
+		"request exceeds the bound":   {Sequence: 1, Type: "action_started", Label: "document_search", Request: overlong},
+		"detail exceeds the bound":    {Sequence: 1, Type: "action_finished", Label: "document_search", Outcome: "succeeded", Detail: overlong},
+	}
+	for name, event := range cases {
+		writer := &countingStreamWriter{ResponseRecorder: httptest.NewRecorder()}
+		stream := newQuestionEventStream(writer)
+		if err := stream.action(event); err == nil {
+			t.Fatalf("%s: accepted an invalid action event: %+v", name, event)
+		}
+		if writer.Body.Len() != 0 {
+			t.Fatalf("%s: an invalid frame was written before being rejected: %q", name, writer.Body.String())
+		}
 	}
 }
