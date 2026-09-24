@@ -1106,13 +1106,25 @@ func (service *Service) invokeToolLoopGovernedData(ctx context.Context, access d
 	return result, &projection, nil
 }
 
-func (service *Service) executeToolLoop(parent context.Context, access database.AccessContext, run Run, questionText string, generation generationSelection, history []toolLoopConversationTurn) error {
+// executeToolLoop's named return (loopErr) lets a single defer, right after
+// ctx is created below, mark any DeadlineExceeded this function returns with
+// errQuestionTimeBudgetExpired when it is genuinely ctx's OWN
+// profile.TimeoutSeconds budget that expired (see
+// markQuestionTimeBudgetExpired) -- whichever of this function's many
+// ctx.Err()-checking return sites produced it, and however deep the call that
+// actually surfaced the DeadlineExceeded value. questionFailureTerminal
+// trusts only that marker (or its own direct ctx.Err() check) for TIME_LIMIT,
+// never a bare DeadlineExceeded (F2): an unrelated inner timeout, such as the
+// model gateway's own bounded HTTP client, must never masquerade as this
+// question's own budget expiring.
+func (service *Service) executeToolLoop(parent context.Context, access database.AccessContext, run Run, questionText string, generation generationSelection, history []toolLoopConversationTurn) (loopErr error) {
 	profile, ok := generation.adapter.ToolLoopProfile()
 	if !ok || service.tools == nil {
 		return &Error{code: CodeUnsupportedMode}
 	}
 	ctx, cancel := context.WithTimeout(parent, time.Duration(profile.TimeoutSeconds)*time.Second)
 	defer cancel()
+	defer func() { loopErr = markQuestionTimeBudgetExpired(ctx, loopErr) }()
 	researchCtx, researchCancel := toolLoopResearchContext(ctx, time.Now())
 	defer researchCancel()
 	scope := workspacetools.Scope{Access: access, WorkspaceID: run.WorkspaceID, Revision: run.WorkspaceRevision}
