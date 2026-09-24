@@ -2,21 +2,15 @@
 
 **Status:** accepted on 2026-09-24.
 
-**Provenance:**
-- Product direction: the owner, 2026-09-24, verbatim:
-  > «есть рабочая область, у нее источники, источники поглощаются и
-  > предоставляются через mcp или api в виде раг поиска + инструменты для
-  > каждого типа источника чтобы например агент прочитал документ и сделал sql
-  > запрос того что просит пользователь»
-- Architecture decision: the release lead, under the owner's explicit
-  delegation of the same day (constitution §9, item 4), verbatim:
-  > «по адр 0078 - тут ты должен решить как правильно»
+**Provenance:** product direction set by the owner on 2026-09-24; architecture
+decision taken by the release lead under the owner's explicit delegation of the
+same day (constitution §9, item 4). Verbatim statements are kept in the private
+project record.
 
 **Date:** 2026-09-24
 
 **Related:** ADR-0078 (amends §2), ADR-0089 (amends §3), PRODUCT_CONSTITUTION
-§5 and §7, `docs/release/SOURCE-TOOLS-PLAN.md`,
-`docs/release/SOURCE-TOOLS-DESIGN.md`.
+§5 and §7, and the private delivery plan.
 
 ## Context
 
@@ -28,8 +22,8 @@ Two rules currently contradict this for databases:
 - ADR-0078 admits a PostgreSQL source only as DBA-created views with a fixed
   five-column contract. It refuses base tables. As a result a customer
   database cannot be connected without prior DBA work in that database.
-- The constitution forbids model-authored SQL. So a question like «сколько
-  МНО на действующих договорах» can be answered only through a separately
+- The constitution forbids model-authored SQL. So a question that needs a count over customer
+  data can be answered only through a separately
   mounted connection, where a second model composes SQL over a hand-registered
   schema of at most 32 objects. That path is invisible in Sources and
   unavailable to external MCP agents as a source tool.
@@ -91,7 +85,7 @@ A base table with a primary key keeps all four.
 
 | Option | Why it was not selected |
 | --- | --- |
-| Keep DBA-prepared views only | Every customer database needs DBA work before it can be discussed; contradicts «подключаешь базу — она индексируется». |
+| Keep DBA-prepared views only | Every customer database needs DBA work before it can be discussed; contradicts the owner's requirement that a connected database is indexed and discussable. |
 | Keep second-model SQL composition | The composing model does not see what the agent read (for example the data dictionary). External MCP agents cannot use it, every question pays an extra model call, and it scales only to a hand-registered 32-object schema. |
 | Parse and allowlist SQL syntax as the boundary | A parser is not a security boundary. Role privileges and the read-only transaction are, and the plan walk only adds defence in depth. |
 | Index everything and answer only from the index | Aggregates over thousands of rows ("how many…") cannot be read page by page. Live SQL is needed for exact numbers, and the index is needed for search and citation. |
@@ -117,5 +111,4 @@ A base table with a primary key keeps all four.
 
 ### Acceptance
 
-The owner-facing acceptance criteria are in
-`docs/release/SOURCE-TOOLS-PLAN.md` (S1–S3).
+The owner-facing acceptance criteria live in the private delivery plan.

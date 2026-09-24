@@ -58,6 +58,5 @@ Behavior changes require the corresponding contract or decision update before
 the implementation; explanatory wording cannot override an invariant.
 
 KnowVault is licensed under [Apache-2.0](../LICENSE); third-party components and
-model artifacts retain their own licenses. Original accepted-decision hashes
-and their reviewed English equivalents are retained in the
-[translation provenance record](release/ENGLISH-ADR-REVIEW.json).
+model artifacts retain their own licenses.
+

@@ -2476,7 +2476,6 @@ func collectProtectedPaths(root string) ([]string, []string) {
 		"docs/MODEL-PROFILES.md",
 		"docs/NATIVE-INGEST.md",
 		"docs/PILOT-ACCEPTANCE.md",
-		"docs/release/PLAN.md",
 		"internal/modelgateway/converse.go",
 		"internal/modelgateway/converse_diagnostics_test.go",
 		"internal/modelgateway/lab_adapter.go",
