@@ -373,7 +373,7 @@ func TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace(t *testing.T) {
 		Question: priorQuestion,
 		Answer:   priorAnswer,
 		Sources:  []string{priorSource},
-	}}, 32*1024)
+	}}, 32*1024, "")
 	if len(outbound) != 3 || !strings.Contains(outbound[1].Content, priorQuestion) {
 		t.Fatalf("outbound messages do not contain prior question context: %#v", outbound)
 	}
@@ -469,7 +469,7 @@ func TestRevokedGovernedPriorQuestionIsOmittedFromNextModelPrompt(t *testing.T) 
 	if len(history) != 1 || history[0].Question != readableQuestion {
 		t.Fatalf("history = %#v, want only the surviving prior run", history)
 	}
-	outbound, _ := initialToolLoopMessages("next model question", history, 32*1024)
+	outbound, _ := initialToolLoopMessages("next model question", history, 32*1024, "")
 	foundReadable, foundRevoked := false, false
 	for _, message := range outbound {
 		foundReadable = foundReadable || strings.Contains(message.Content, readableQuestion)
