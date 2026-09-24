@@ -563,6 +563,11 @@ export type SourceStatus = {
   // separation-of-duty check would then refuse). Gate the verify-trust
   // action on this field, never on the workspace-wide one.
   can_verify_connection_trust: boolean;
+  // ADR-0097's per-connection "SQL available" state: the connection revision
+  // carries a separate read-only query credential, so knowvault_source_sql can
+  // run for its enabled sources. False means "SQL not configured" and the tool
+  // answers SOURCE_SQL_NOT_CONFIGURED. It is a display fact, never a grant.
+  sql_available?: boolean;
 };
 
 // ADR-0087 §1-§2 operator-visible read: everything needed to build a
@@ -6669,6 +6674,11 @@ export type SourceConnectionSummary = {
   state: SourceConnectionState;
   state_label: string;
   variant: "ready" | "attention" | "updating" | "disconnected";
+  // ADR-0097: every table of one connection answers with the same connection
+  // revision, so the connection's SQL state is the flag any of its tables
+  // carries. A missing field (an older server) reads as "not configured",
+  // which fails closed.
+  sql_available: boolean;
 };
 
 const sourceConnectionStateLabels: Record<SourceConnectionState, string> = {
@@ -6704,6 +6714,7 @@ export function sourceConnectionSummary(group: SourceConnectionGroup): SourceCon
     state,
     state_label: stateLabel,
     variant,
+    sql_available: group.tables.some((table) => table.sql_available === true),
   };
 }
 
@@ -6881,6 +6892,9 @@ export function SourceConnectionCard({ group, renderTableExtra }: {
         <p className="source-note source-success-time">
           Last successful update: {summary.last_successful_sync_at ? formatTime(summary.last_successful_sync_at) : "no information"}
           {" · "}Freshness: {freshnessStateLabel(summary.freshness_state)}
+        </p>
+        <p className="source-note source-sql-availability">
+          {summary.sql_available ? "SQL available" : "SQL not configured"}
         </p>
         <details className="source-connection-tables">
           <summary>Tables ({summary.table_count})</summary>

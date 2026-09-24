@@ -503,7 +503,7 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}
-	workspaceHandler, err := workspaceapi.NewWithServiceAccess(authenticator, workspaceStore, sources, relationViewer, questions, conversations, accessCodes, string(config.OrganizationID()))
+	workspaceHandler, err := workspaceapi.NewWithServiceAccess(authenticator, workspaceStore, newSourceServiceWithSQL(sources, workspaceStore, auditStore, secrets), relationViewer, questions, conversations, accessCodes, string(config.OrganizationID()))
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}

@@ -3621,6 +3621,58 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/tools/source-sql:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: workspaceSourceSQLToolParity
+      tags: [Sources]
+      summary: "REST parity of the knowvault_source_sql MCP tool (ADR-0097, S3)"
+      description: >-
+        Agent-facing REST twin of the knowvault_source_sql knowledge tool: one SELECT/WITH statement
+        written by the caller (the chat model or an authenticated MCP/API agent) against one
+        PostgreSQL source enabled in the workspace. The statement runs with the source's own
+        read-only query credential, in a read-only transaction, under the shared governed-execution
+        statement timeout, EXPLAIN cost cap and row/byte cap; every relation the planner touches must
+        belong to the source's registered tables, so pg_catalog, information_schema, another schema
+        and a function scan are refused. The body carries source_id, sql (at most 8192 bytes) and a
+        bounded purpose note. A closed refusal (SQL_REJECTED_STATIC, RELATION_NOT_IN_SOURCE,
+        COST_LIMIT, ROW_LIMIT, TIMEOUT, DATABASE_REJECTED, SOURCE_SQL_NOT_CONFIGURED) is a 200 tool
+        result with an error code the agent reacts to. An unknown, foreign, disabled or non-member
+        source is a single content-free 404 NOT_FOUND. No UI, operator or user-facing field accepts
+        SQL. Every attempt is audited with the source id, sql hash and result digest; a failed audit
+        returns no rows.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceSQLToolRequest"
+      responses:
+        "200":
+          description: "The executed statement's text-table projection, or a closed refusal result carrying its error code."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSQLToolResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/governed-query-connections/{connection_id}:set-live-queries:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -5125,6 +5177,12 @@ components:
           enum: [DRAFT, SYNCING, READY, REVOKED, FAILED]
         trust_verified:
           type: boolean
+        sql_available:
+          type: boolean
+          description: >-
+            ADR-0097: whether this connection revision carries the separate read-only query credential,
+            so knowvault_source_sql can run for its enabled sources. False means SQL not configured and
+            the tool answers SOURCE_SQL_NOT_CONFIGURED. A display fact, never an authorization.
         sync_status:
           type: string
           nullable: true
@@ -6408,6 +6466,72 @@ components:
           type: boolean
         note:
           type: string
+    SourceSQLToolRequest:
+      type: object
+      additionalProperties: false
+      required: [source_id, sql]
+      properties:
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        sql:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        purpose:
+          type: string
+          maxLength: 200
+    SourceSQLToolResponse:
+      type: object
+      additionalProperties: false
+      required: [format, columns, rows, row_count, attempt_id, sql_hash, result_digest, database_identity, execution_started_at, execution_completed_at, complete]
+      properties:
+        format:
+          type: string
+          enum: [postgres-text-table-v1]
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: [string, "null"]
+        row_count:
+          type: integer
+          minimum: 0
+        attempt_id:
+          type: string
+        sql_hash:
+          type: string
+        result_digest:
+          type: string
+        database_identity:
+          type: string
+        execution_started_at:
+          type: string
+        execution_completed_at:
+          type: string
+        complete:
+          type: boolean
+    SourceSQLToolRefusal:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - SQL_REJECTED_STATIC
+            - RELATION_NOT_IN_SOURCE
+            - COST_LIMIT
+            - ROW_LIMIT
+            - TIMEOUT
+            - DATABASE_REJECTED
+            - SOURCE_SQL_NOT_CONFIGURED
   responses:
     CSRFResponse:
       description: Derived CSRF proof.

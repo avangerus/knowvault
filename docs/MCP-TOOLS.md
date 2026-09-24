@@ -1014,6 +1014,85 @@ Without `source_id`:
 { "sources": [ { "id": "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", "name": "Ops database", "table_count": 3 } ] }
 ```
 
+## `knowvault_source_sql`
+
+Run one read-only statement the agent writes against one PostgreSQL source
+enabled in the caller's workspace (ADR-0097, S3 card 2). The agent reads the
+source's tables and columns with `knowvault_source_schema` first and then sends
+exactly one `SELECT` or `WITH` statement. This is the only workspace knowledge
+tool that accepts SQL text, and the only SQL it can run is one statement against
+one source: the statement executes with the source's own query credential (a
+role distinct from the ingestion role) inside a read-only transaction, under the
+shared governed-execution statement timeout, `EXPLAIN` cost cap and row/byte
+cap. Every relation PostgreSQL's planner touches must belong to the source's
+registered tables, so `pg_catalog`, `information_schema`, another schema and a
+function scan are refused before execution. A column the administrator excluded
+is refused by the query role's own column grants.
+
+The result is the whole text table with its row count, SQL hash, result digest
+and database identity. Each attempt is audited with the source id, SQL hash and
+result digest; a failed audit returns no rows. At most three successful
+statements are allowed per chat run, and parallel query workers are disabled.
+
+An unknown, foreign, disabled or non-member source is the single content-free
+`NOT_FOUND` (`-32004` over MCP), exactly like `knowvault_source_schema`. A
+connection without a query credential is a successful tool result with
+`{"error":"SOURCE_SQL_NOT_CONFIGURED"}`, and a composition mounted without the
+capability fails closed with `-32000`.
+
+### Parameters
+
+| field | type | required | notes |
+| --- | --- | --- | --- |
+| `workspace_id` | string | yes | The workspace whose enabled source is queried. |
+| `source_id` | string | yes | The source connection id `knowvault_sources` or `knowvault_source_schema` returns. |
+| `sql` | string | yes | Exactly one `SELECT`/`WITH` statement, at most 8192 bytes. |
+| `purpose` | string | no | Short note on what the statement answers, at most 200 characters. |
+
+### Request
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "sql1",
+  "method": "tools/call",
+  "params": {
+    "name": "knowvault_source_sql",
+    "arguments": {
+      "workspace_id": "ws_alpha",
+      "source_id": "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ",
+      "sql": "SELECT count(*) FROM public.contract WHERE status = 'active'",
+      "purpose": "how many contracts are active"
+    }
+  }
+}
+```
+
+### Response (example)
+
+```json
+{
+  "format": "postgres-text-table-v1",
+  "columns": ["count"],
+  "rows": [["3"]],
+  "row_count": 1,
+  "attempt_id": "gqat_01H9ABCDEFGHJKMNPQRSTVWXYZ",
+  "sql_hash": "sha256:4d2a0f6c8b1e5a9d3c7f2b6e0a4d8c1f5b9e3a7d2c6f0b4e8a1d5c9f3b7e2a6d",
+  "result_digest": "sha256:8b1e5a9d3c7f2b6e0a4d8c1f5b9e3a7d2c6f0b4e8a1d5c9f3b7e2a6d4d2a0f6c",
+  "database_identity": "pgdb:4d2a0f6c8b1e5a9d3c7f2b6e0a4d8c1f5b9e3a7d2c6f0b4e8a1d5c9f3b7e2a6d",
+  "execution_started_at": "2026-09-24T10:00:00Z",
+  "execution_completed_at": "2026-09-24T10:00:01Z",
+  "complete": true
+}
+```
+
+### Closed refusals
+
+A refused statement is a successful tool result (MCP `isError: true`) whose JSON
+body carries one closed `error` code, so an agent can react to it:
+`SQL_REJECTED_STATIC`, `RELATION_NOT_IN_SOURCE`, `COST_LIMIT`, `ROW_LIMIT`,
+`TIMEOUT`, `DATABASE_REJECTED` or `SOURCE_SQL_NOT_CONFIGURED`.
+
 ## `knowvault_refresh`
 
 Refresh the sources of one workspace that allow it, through the same authorized

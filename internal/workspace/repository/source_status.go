@@ -66,6 +66,11 @@ type SourceStatus struct {
 	// can_verify_connection_trust did not account for SoD, so the button
 	// was shown to a viewer 000059 would refuse).
 	ViewerVerifyConflict bool
+	// SQLAvailable reports whether the connection revision carries ADR-0097's
+	// separate query credential (migration 000116). It is the read-only fact
+	// behind the Sources card's "SQL available" / "SQL not configured" state;
+	// it is never derived from the ingestion credential.
+	SQLAvailable bool
 }
 
 // SelfConfirmationGrant is the caller's own live, unrevoked, unexpired
@@ -164,7 +169,8 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 			            WHERE confirmation.organization_id = $2
 			              AND confirmation.confirmed_by = $3
 			              AND confirmation.source_scope_id = conflict_scope.id
-			       ) AS viewer_verify_conflict
+			       ) AS viewer_verify_conflict,
+			       (connection_revision.query_credential_reference IS NOT NULL) AS sql_available
 			FROM app.workspace_source_status_v3($1) AS status
 			JOIN public.source_scope_revision AS scope_revision
 			  ON scope_revision.organization_id = $2
@@ -176,7 +182,11 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 			 AND projection.source_scope_id = scope_revision.source_scope_id
 			 AND projection.source_scope_revision = scope_revision.revision
 			 AND projection.connection_id = scope_revision.connection_id
-			 AND scope_revision.source_type = 'POSTGRESQL_QUERY'`, workspaceID, access.OrganizationID, access.PrincipalID)
+			 AND scope_revision.source_type = 'POSTGRESQL_QUERY'
+			LEFT JOIN public.source_connection_revision AS connection_revision
+			  ON connection_revision.organization_id = scope_revision.organization_id
+			 AND connection_revision.connection_id = scope_revision.connection_id
+			 AND connection_revision.revision = scope_revision.connection_revision`, workspaceID, access.OrganizationID, access.PrincipalID)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -193,7 +203,7 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 				&status.JobLeaseExpiresAt, &status.JobLastErrorCode, &status.ContentFreshnessSLASeconds,
 				&status.LastSuccessfulSyncAt, &status.FreshnessState, &status.SyncIntervalSeconds,
 				&status.SourceType, &status.PostgreSQLSchemaName, &status.PostgreSQLRelationName,
-				&status.Confirmed, &status.ViewerVerifyConflict,
+				&status.Confirmed, &status.ViewerVerifyConflict, &status.SQLAvailable,
 			); scanErr != nil {
 				return scanErr
 			}

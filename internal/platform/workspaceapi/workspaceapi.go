@@ -754,7 +754,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.modelContextProposalReject(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
 	case endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep,
 		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh,
-		endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema:
+		endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
 		handler.workspaceToolDispatch(writer, request, access, requestID, endpoint)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
@@ -959,6 +959,17 @@ const (
 	// compose, so the projection, the page window and the content-free denial
 	// are the same implementation, not a re-derivation.
 	endpointWorkspaceToolSourceSchema
+	// endpointWorkspaceToolSourceSQL is ADR-0097's REST tool-parity route for
+	// the knowvault_source_sql knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/source-sql, POST-only like
+	// the source-schema route: its source_id/sql/purpose arguments travel in a
+	// JSON body). It dispatches through the identical injected
+	// SourceSQLProvider and shared sourceSQLToolResult core the MCP tool and
+	// the chat tool runtime compose, so the projection, the closed refusal
+	// vocabulary and the content-free denial are the same implementation, not
+	// a re-derivation. The route is the agent-facing parity surface ADR-0097
+	// §2 permits; no UI, operator or user-facing field accepts SQL.
+	endpointWorkspaceToolSourceSQL
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -995,6 +1006,8 @@ func workspaceToolEndpointKind(kind workspacetools.Kind) (endpointKind, bool) {
 		return endpointWorkspaceToolWorkspaceContext, true
 	case workspacetools.KindSourceSchema:
 		return endpointWorkspaceToolSourceSchema, true
+	case workspacetools.KindSourceSQL:
+		return endpointWorkspaceToolSourceSQL, true
 	default:
 		return 0, false
 	}
@@ -2268,11 +2281,11 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		return method == http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return method == http.MethodGet || method == http.MethodPost
-	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema:
+	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
 		// ADR-0098's tool-parity route is POST-only (S2-CONTRACT.md "Tool
 		// parity"): its optional filter travels in a JSON body, unlike the
 		// other six GET/POST workspace tool-parity routes. ADR-0097's
-		// source-schema route follows the same shape.
+		// source-schema and source-sql routes follow the same shape.
 		return method == http.MethodPost
 	case endpointWorkspaceSourceRemove:
 		return method == http.MethodDelete
@@ -2302,7 +2315,7 @@ func allowedMethods(endpoint endpoint) string {
 		return http.MethodGet
 	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
 		return http.MethodGet + ", " + http.MethodPost
-	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema:
+	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
 		return http.MethodPost
 	case endpointWorkspaceSourceDrafts:
 		return http.MethodGet
@@ -3640,6 +3653,7 @@ func (handler *Handler) listSources(writer http.ResponseWriter, request *http.Re
 				status.Enabled, status.Confirmed, status.TrustVerified, status.ActivationStatus, confirmation.SelfGrant != nil,
 			),
 			CanVerifyConnectionTrust: confirmation.CanVerifyConnectionTrust && !status.ViewerVerifyConflict,
+			SQLAvailable:             status.SQLAvailable,
 		}
 	}
 	response := map[string]any{"sources": items, "confirmation_context": confirmationContextResponseFrom(confirmation)}
@@ -4588,11 +4602,11 @@ type sourceDiscoveryViewResponse struct {
 // auto-excluded column: identity and the bounded reason, never a type
 // fingerprint, value or comment.
 type sourceDiscoveryExcludedColumnResponse struct {
-	Ordinal     int                                 `json:"ordinal"`
-	Name        string                              `json:"name"`
-	TypeName    string                              `json:"type_name"`
-	LogicalType postgresqlquery.LogicalType         `json:"logical_type,omitempty"`
-	PrimaryKey  bool                                `json:"primary_key,omitempty"`
+	Ordinal     int                                  `json:"ordinal"`
+	Name        string                               `json:"name"`
+	TypeName    string                               `json:"type_name"`
+	LogicalType postgresqlquery.LogicalType          `json:"logical_type,omitempty"`
+	PrimaryKey  bool                                 `json:"primary_key,omitempty"`
 	Reason      postgresqlquery.InterpretationReason `json:"reason"`
 }
 
@@ -4676,6 +4690,12 @@ type sourceStatusResponse struct {
 	// the workspace-wide one, so the button is never shown to a viewer the
 	// database would then deny.
 	CanVerifyConnectionTrust bool `json:"can_verify_connection_trust"`
+	// SQLAvailable reports ADR-0097's per-connection "SQL available" state:
+	// the connection revision carries a separate query credential, so the
+	// knowvault_source_sql tool can run for its enabled sources. A false value
+	// means "SQL not configured" and the tool answers
+	// SOURCE_SQL_NOT_CONFIGURED. It is a display fact, never an authorization.
+	SQLAvailable bool `json:"sql_available"`
 }
 
 // confirmationStateFor derives the ADR-0087 operator-visible pending state of

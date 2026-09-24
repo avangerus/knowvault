@@ -74,6 +74,25 @@ type fakeSourceService struct {
 	schemaOffset        int
 	schemaLimit         int
 	schemaCalls         int
+
+	// S3 card 2's optional SourceSQLProvider capability: the governed
+	// agent-authored SQL execution behind knowvault_source_sql.
+	sqlResult   SourceSQLResult
+	sqlErr      error
+	sqlSourceID string
+	sqlSQL      string
+	sqlPurpose  string
+	sqlCalls    int
+}
+
+func (service *fakeSourceService) SourceSQL(_ context.Context, access database.AccessContext, _ string, request SourceSQLRequest) (SourceSQLResult, error) {
+	service.call, service.access = "source_sql", access
+	service.sqlSourceID, service.sqlSQL, service.sqlPurpose = request.SourceID, request.SQL, request.Purpose
+	service.sqlCalls++
+	if service.sqlErr != nil {
+		return SourceSQLResult{}, service.sqlErr
+	}
+	return service.sqlResult, nil
 }
 
 func (service *fakeSourceService) ListSourceSchemas(_ context.Context, access database.AccessContext, _ string) ([]workspacerepository.SourceSchemaSource, error) {

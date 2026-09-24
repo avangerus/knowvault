@@ -1412,6 +1412,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	workspaceToolRequested := false
 	var retainedAnalyticScalarPair *analyticScalarPair
 	var liveDataState liveDataRunState
+	var sourceSQLState sourceSQLRunState
 	invoke := func(id, name string, args json.RawMessage, system bool) (workspacetools.Result, error) {
 		if err := ctx.Err(); err != nil {
 			return workspacetools.Result{}, err
@@ -1445,6 +1446,17 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				result, pair = service.invokeAnalyticScalarTool(callCtx, access, run.WorkspaceID, run.ID, scalarCapability, args)
 				if pair != nil {
 					retainedAnalyticScalarPair = pair
+				}
+			}
+		} else if name == sourceSQLToolName {
+			// ADR-0097: at most three successful agent-authored statements per
+			// run. A refusal is free so the agent can correct a statement.
+			if !sourceSQLState.allow() {
+				result = sourceSQLState.refused()
+			} else {
+				result, callErr = service.tools.Invoke(callCtx, scope, name, args)
+				if callErr == nil {
+					sourceSQLState.record(result)
 				}
 			}
 		} else {

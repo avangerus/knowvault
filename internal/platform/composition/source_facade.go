@@ -76,6 +76,27 @@ var _ workspaceapi.SourceDiscoveryRegistration = sourceServiceFacade{}
 var _ workspaceapi.SourceConnectionDrafts = sourceServiceFacade{}
 var _ workspaceapi.SourceSchemaProvider = sourceServiceFacade{}
 
+// sourceServiceFacadeWithSQL is the production facade plus ADR-0097's
+// agent-authored SQL capability. It is a distinct concrete type on purpose:
+// the handler discovers SourceSQLProvider by a type assertion, so a deployment
+// that mounted no source trust bundle leaves the tool failing closed as
+// SERVICE_UNAVAILABLE instead of advertising a capability it cannot serve.
+// Embedding the base facade promotes every other SourceService method
+// unchanged.
+type sourceServiceFacadeWithSQL struct {
+	sourceServiceFacade
+	sourceSQL sourceSQLExecutor
+}
+
+var _ workspaceapi.SourceSQLProvider = sourceServiceFacadeWithSQL{}
+
+// SourceSQL is a pure delegation to the executor, which owns the authorization,
+// credential resolution, the single governedquery execution path and the
+// mandatory attempt audit.
+func (facade sourceServiceFacadeWithSQL) SourceSQL(ctx context.Context, access database.AccessContext, workspaceID string, request workspaceapi.SourceSQLRequest) (workspaceapi.SourceSQLResult, error) {
+	return facade.sourceSQL.SourceSQL(ctx, access, workspaceID, request)
+}
+
 // newAppArtifactCodec mounts the application-side artifact codec on the same
 // wrap key the worker uses, so source artifacts sealed by the web process open
 // in the worker and vice versa.

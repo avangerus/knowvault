@@ -311,6 +311,12 @@ const mcpToolWorkspaceContext = "knowvault_workspace_context"
 // stored projections and discovery metadata only.
 const mcpToolSourceSchema = "knowvault_source_schema"
 
+// mcpToolSourceSQL is ADR-0097's agent-authored read-only SQL knowledge tool:
+// one SELECT/WITH statement against one enabled PostgreSQL source, executed
+// with the source's own query credential through the single governedquery
+// path. It is the only workspace knowledge tool that accepts SQL text.
+const mcpToolSourceSQL = "knowvault_source_sql"
+
 // mcpRefreshArguments is the closed argument envelope for knowvault_refresh:
 // the workspace whose refreshable sources are refreshed, an optional
 // source_scope_id narrowing the call to exactly one bound scope, and the
@@ -724,6 +730,15 @@ func mcpToolCatalog(access database.AccessContext) []any {
 				"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": maxSourceSchemaToolLimit, "default": maxSourceSchemaToolLimit},
 			}},
 		},
+		map[string]any{
+			"name": mcpToolSourceSQL, "description": "Run one read-only SELECT/WITH statement you write against one PostgreSQL source enabled in this workspace (ADR-0097). Read the source's tables, columns and primary keys with knowvault_source_schema first, then use exactly those names. The statement runs with the source's own read-only query credential in a read-only transaction; every relation the planner touches must belong to the source, so pg_catalog, information_schema, another schema and a function scan are refused. The whole result table is returned with row_count, sql_hash and result_digest; cite it in the answer. Server-owned limits apply: at most 8192 bytes of SQL, an EXPLAIN cost cap, a statement timeout, a row/byte cap and at most three successful calls per answer. A refusal is returned as a result whose error is one of SQL_REJECTED_STATIC, RELATION_NOT_IN_SOURCE, COST_LIMIT, ROW_LIMIT, TIMEOUT, DATABASE_REJECTED or SOURCE_SQL_NOT_CONFIGURED.",
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id", "source_id", "sql"}, "properties": map[string]any{
+				"workspace_id": map[string]any{"type": "string"},
+				"source_id":    map[string]any{"type": "string", "minLength": 1, "maxLength": maxSourceSQLSourceIDChars, "description": "The source connection id returned by knowvault_sources or knowvault_source_schema."},
+				"sql":          map[string]any{"type": "string", "minLength": 1, "maxLength": maxSourceSQLBytes, "description": "Exactly one SELECT or WITH statement. No trailing second statement, no comment, no write or DDL."},
+				"purpose":      map[string]any{"type": "string", "maxLength": maxSourceSQLPurposeChars, "description": "Optional short note describing what the statement answers."},
+			}},
+		},
 	}
 	return mcpToolsForActor(all, access)
 }
@@ -891,6 +906,8 @@ func (handler *Handler) mcpKnowledgeToolCall(writer http.ResponseWriter, request
 		handler.mcpWorkspaceContextToolCall(writer, request, access, envelope, params)
 	case workspacetools.KindSourceSchema:
 		handler.mcpSourceSchemaToolCall(writer, request, access, envelope, params)
+	case workspacetools.KindSourceSQL:
+		handler.mcpSourceSQLToolCall(writer, request, access, envelope, params)
 	default:
 		writeMCPError(writer, envelope.ID, -32602, "invalid tool call")
 	}
@@ -2251,6 +2268,7 @@ func mcpSourcesListItems(statuses []workspacerepository.SourceStatus, confirmati
 				status.Enabled, status.Confirmed, status.TrustVerified, status.ActivationStatus, confirmation.SelfGrant != nil,
 			),
 			CanVerifyConnectionTrust: confirmation.CanVerifyConnectionTrust && !status.ViewerVerifyConflict,
+			SQLAvailable:             status.SQLAvailable,
 		}
 	}
 	return items

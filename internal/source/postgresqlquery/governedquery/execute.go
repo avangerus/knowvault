@@ -267,6 +267,14 @@ func runQuery(ctx context.Context, tx pgx.Tx, sqlText string, limits Limits) (Qu
 	defer rows.Close()
 	fields := rows.FieldDescriptions()
 	if len(fields) == 0 || len(fields) > maxColumnCount {
+		// A statement PostgreSQL cancels or refuses can produce no
+		// RowDescription at all (a statement timeout is the common case), so
+		// the reader must be drained here: otherwise the driver's own error is
+		// masked by the shape check and the attempt is reported with no cause.
+		_ = rows.Next()
+		if err := rows.Err(); err != nil {
+			return QueryResult{}, &Error{code: CodeExternalFailure, cause: err}
+		}
 		return QueryResult{}, &Error{code: CodeExternalFailure}
 	}
 	result := QueryResult{Columns: make([]string, len(fields)), Rows: make([][]*string, 0), ExecutionStartedAt: started}

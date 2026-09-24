@@ -4,7 +4,7 @@
 // service-principal exposure and tools/list mount gating of knowvault_search,
 // knowvault_read, knowvault_list_objects, knowvault_related, knowvault_grep,
 // knowvault_sources, knowvault_refresh, knowvault_workspace_context and,
-// per ADR-0097, knowvault_source_schema.
+// per ADR-0097, knowvault_source_schema and knowvault_source_sql.
 //
 // The registry is deliberately transport-free: it carries identifiers and
 // dispatch kinds, never an HTTP handler, so the MCP adapter and the REST parity
@@ -43,6 +43,16 @@ const (
 	// never opens the source database, never runs SQL and never exposes a
 	// column excluded at registration.
 	KindSourceSchema Kind = "source_schema"
+	// KindSourceSQL is ADR-0097's agent-authored read-only SQL tool
+	// (knowvault_source_sql): one SELECT/WITH statement written by the agent
+	// against one PostgreSQL source enabled in the caller's workspace. It runs
+	// with the source's own query credential in a read-only transaction, under
+	// the shared governed-execution limits, and the planner's own relations
+	// are walked against the source's registered scope. It is the only
+	// workspace knowledge tool that executes SQL, and it does so through the
+	// one governedquery execution path; no other package gains that
+	// capability.
+	KindSourceSQL Kind = "source_sql"
 )
 
 // Capability names the optional mounted evidence capability a dynamic tool needs
@@ -196,6 +206,7 @@ var knowledgeTools = New([]Tool{
 	{Kind: KindRefresh, Name: "knowvault_refresh", RESTPath: "refresh", Service: true},
 	{Kind: KindWorkspaceContext, Name: "knowvault_workspace_context", RESTPath: "workspace-context", Service: true},
 	{Kind: KindSourceSchema, Name: "knowvault_source_schema", RESTPath: "source-schema", Service: true},
+	{Kind: KindSourceSQL, Name: "knowvault_source_sql", RESTPath: "source-sql", Service: true},
 })
 
 // KnowledgeTools returns the canonical R3a-1 workspace knowledge tool registry.
