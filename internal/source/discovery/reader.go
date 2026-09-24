@@ -41,6 +41,9 @@ type View struct {
 	RelationName   string
 	RelationKind   string
 	Comment        string
+	// ApproxRowCount is the server's pg_class.reltuples estimate (-1 when
+	// PostgreSQL has not analyzed the relation). It is display metadata only.
+	ApproxRowCount int64
 	Status         postgresqlquery.DiscoveryStatus
 	Interpretation postgresqlquery.InterpretationReason
 	Columns        []Column
@@ -72,6 +75,9 @@ type Column struct {
 	MaxBytes    int
 	Comment     string
 	Roles       []postgresqlquery.Role
+	// PrimaryKey is native primary-key membership (ADR-0097). It is always
+	// false for a VIEW/MATERIALIZED_VIEW column.
+	PrimaryKey bool
 }
 
 // Reader authorizes and decrypts discovery results for the source-management
@@ -238,13 +244,13 @@ func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, ac
 				Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
 				LogicalType: column.LogicalType, Nullable: column.Nullable,
 				Precision: column.Precision, Scale: column.Scale, MaxBytes: column.MaxBytes,
-				Comment: column.Comment, Roles: roles[column.Ordinal],
+				Comment: column.Comment, Roles: roles[column.Ordinal], PrimaryKey: column.PrimaryKey,
 			}
 		}
 		views[index] = View{
 			Selector: selector, SchemaName: discovered.SchemaName,
 			RelationName: discovered.RelationName, RelationKind: discovered.RelationKind,
-			Comment: discovered.Comment, Status: discovered.Status,
+			Comment: discovered.Comment, ApproxRowCount: discovered.ApproxRowCount, Status: discovered.Status,
 			Interpretation: discovered.Interpretation, Columns: columns,
 			projection: discovered.Projection,
 		}

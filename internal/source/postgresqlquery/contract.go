@@ -100,8 +100,9 @@ type Column struct {
 }
 
 // Projection is the trusted, immutable server-side projection. RelationKind
-// must be VIEW or MATERIALIZED_VIEW and SelectSQL is generated from these
-// fields; no SQL text is stored or accepted.
+// is VIEW, MATERIALIZED_VIEW, TABLE or PARTITIONED_TABLE (ADR-0097) and
+// SelectSQL is generated from these fields; no SQL text is stored or
+// accepted.
 type Projection struct {
 	ConnectionID        string
 	DatabaseIdentity    string
@@ -122,7 +123,7 @@ func (p Projection) Validate() error {
 	if !validOpaque(p.ConnectionID) || !validOpaque(p.DatabaseIdentity) ||
 		!validOpaque(p.LineageID) || p.Revision < 1 || !digestPattern.MatchString(p.ContractHash) ||
 		!identifierPattern.MatchString(p.SchemaName) || !identifierPattern.MatchString(p.RelationName) ||
-		(p.RelationKind != "VIEW" && p.RelationKind != "MATERIALIZED_VIEW") || len(p.Columns) == 0 ||
+		!validRelationKind(p.RelationKind) || len(p.Columns) == 0 ||
 		(p.EmptySnapshotPolicy != "HELD" && p.EmptySnapshotPolicy != "AUTHORITATIVE") {
 		return &Error{code: CodeInvalidProjection}
 	}
@@ -224,6 +225,18 @@ func (p Projection) SelectSQL() (string, error) {
 
 func quoteIdentifier(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+// validRelationKind is the ADR-0097 closed set: the original DBA-reviewed
+// VIEW/MATERIALIZED_VIEW contract plus an ordinary or partitioned base table
+// admitted only through its primary key.
+func validRelationKind(value string) bool {
+	switch value {
+	case "VIEW", "MATERIALIZED_VIEW", "TABLE", "PARTITIONED_TABLE":
+		return true
+	default:
+		return false
+	}
 }
 
 func validRole(value Role) bool {

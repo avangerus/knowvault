@@ -32,7 +32,7 @@ func TestProjectionGeneratesOnlyValidatedSelect(t *testing.T) {
 		t.Fatalf("generated SQL = %q, want %q", sql, want)
 	}
 	for _, mutate := range []func(*Projection){
-		func(value *Projection) { value.RelationKind = "TABLE" },
+		func(value *Projection) { value.RelationKind = "FOREIGN_TABLE" },
 		func(value *Projection) { value.RelationName = `waste_daily"; DROP TABLE x;--` },
 		func(value *Projection) { value.Columns[0].Roles = nil },
 		func(value *Projection) { value.Columns[0].Nullable = true },
@@ -44,6 +44,25 @@ func TestProjectionGeneratesOnlyValidatedSelect(t *testing.T) {
 		if _, err := mutated.SelectSQL(); CodeOf(err) != CodeInvalidProjection {
 			t.Fatalf("mutation accepted: err=%v code=%s", err, CodeOf(err))
 		}
+	}
+}
+
+// TestProjectionValidateAcceptsTableAndPartitionedTableRelationKinds is the
+// ADR-0097 S1 widening: a base or partitioned table is as valid a
+// RelationKind as the original DBA-reviewed VIEW/MATERIALIZED_VIEW, while an
+// unrecognized kind stays refused.
+func TestProjectionValidateAcceptsTableAndPartitionedTableRelationKinds(t *testing.T) {
+	for _, kind := range []string{"VIEW", "MATERIALIZED_VIEW", "TABLE", "PARTITIONED_TABLE"} {
+		p := testProjection()
+		p.RelationKind = kind
+		if err := p.Validate(); err != nil {
+			t.Fatalf("relation kind %q rejected: %v", kind, err)
+		}
+	}
+	unrecognized := testProjection()
+	unrecognized.RelationKind = "FOREIGN_TABLE"
+	if err := unrecognized.Validate(); CodeOf(err) != CodeInvalidProjection {
+		t.Fatalf("unrecognized relation kind accepted: err=%v code=%s", err, CodeOf(err))
 	}
 }
 

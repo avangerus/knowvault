@@ -67,6 +67,69 @@ func TestBuildMetadataRejectsInvalidConnectorOutput(t *testing.T) {
 	}
 }
 
+// TestBuildMetadataAcceptsPreparedBaseTable proves the worker's untrusted-
+// connector-output gate accepts the ADR-0097 widened relation-kind set (a
+// PREPARED base table with an IDENTITY-bearing primary key), not only the
+// original VIEW/MATERIALIZED_VIEW five-column envelope.
+func TestBuildMetadataAcceptsPreparedBaseTable(t *testing.T) {
+	const connectionID = "conn_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	target := target{connectionID: connectionID, connectionRevision: 1, maxViews: 64, maxColumns: 2, maxCommentBytes: 4096}
+	projection := postgresqlquery.Projection{
+		ConnectionID: connectionID, DatabaseIdentity: "db_demo", LineageID: "lineage_demo", Revision: 1,
+		ContractHash: "sha256:" + strings.Repeat("a", 64), SchemaName: "public", RelationName: "accounts",
+		RelationKind: "TABLE", EmptySnapshotPolicy: "HELD",
+		Columns: []postgresqlquery.Column{
+			{Ordinal: 1, Name: "account_id", TypeFingerprint: "oid:2950", LogicalType: postgresqlquery.TypeUUID, Roles: []postgresqlquery.Role{postgresqlquery.RoleIdentity}, MaxBytes: 64},
+			{Ordinal: 2, Name: "display_name", TypeFingerprint: "oid:25", LogicalType: postgresqlquery.TypeText, Roles: []postgresqlquery.Role{postgresqlquery.RoleEvidence}, MaxBytes: 1024},
+		},
+	}
+	snapshot := postgresqlquery.CatalogSnapshot{
+		DatabaseOID: 16384, DatabaseName: "source_db", PrivilegeDigest: "sha256:" + strings.Repeat("a", 64),
+		Views: []postgresqlquery.ViewDiscovery{{
+			ConnectionID: connectionID, DatabaseOID: 16384, DatabaseName: "source_db",
+			RelationOID: 30001, SchemaName: "public", RelationName: "accounts", RelationKind: "TABLE",
+			ApproxRowCount: 4200,
+			Columns: []postgresqlquery.DiscoveredColumn{
+				{Ordinal: 1, Name: "account_id", TypeOID: 2950, TypeName: "uuid", TypeFingerprint: "oid:2950", LogicalType: postgresqlquery.TypeUUID, PrimaryKey: true, MaxBytes: 64},
+				{Ordinal: 2, Name: "display_name", TypeOID: 25, TypeName: "text", TypeFingerprint: "oid:25", LogicalType: postgresqlquery.TypeText, MaxBytes: 1024},
+			},
+			Status:     postgresqlquery.DiscoveryPrepared,
+			Projection: &projection,
+		}},
+	}
+	metadata, counts, err := buildMetadata(target, snapshot)
+	if err != nil {
+		t.Fatalf("prepared base table connector output rejected: %v (code=%s)", err, CodeOf(err))
+	}
+	if len(metadata) == 0 || counts.status != resultSucceeded || counts.viewCount != 1 || counts.preparedCount != 1 || counts.needsCount != 0 {
+		t.Fatalf("metadata/counts = %d/%#v", len(metadata), counts)
+	}
+}
+
+// TestBuildMetadataRejectsUnrecognizedRelationKind proves the closed
+// relation-kind set stays closed: a foreign table (or any other spelling
+// outside VIEW/MATERIALIZED_VIEW/TABLE/PARTITIONED_TABLE) is untrusted
+// connector output, not a silently accepted fifth kind.
+func TestBuildMetadataRejectsUnrecognizedRelationKind(t *testing.T) {
+	const connectionID = "conn_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	target := target{connectionID: connectionID, connectionRevision: 1, maxViews: 64, maxColumns: 1, maxCommentBytes: 4096}
+	if _, _, err := buildMetadata(target, postgresqlquery.CatalogSnapshot{
+		DatabaseOID: 16384, DatabaseName: "source_db", PrivilegeDigest: "sha256:" + strings.Repeat("a", 64),
+		Views: []postgresqlquery.ViewDiscovery{{
+			ConnectionID: connectionID, DatabaseOID: 16384, DatabaseName: "source_db",
+			RelationOID: 24576, SchemaName: "prepared", RelationName: "unknown", RelationKind: "FOREIGN_TABLE",
+			Columns: []postgresqlquery.DiscoveredColumn{{
+				Ordinal: 1, Name: "amount", TypeOID: 1700, TypeName: "numeric", TypeFingerprint: "oid:1700",
+				LogicalType: postgresqlquery.TypeNumeric,
+			}},
+			Status:         postgresqlquery.DiscoveryNeedsInterpretation,
+			Interpretation: postgresqlquery.InterpretationUnrecognizedFormat,
+		}},
+	}); CodeOf(err) != CodeMetadataInvalid {
+		t.Fatalf("unrecognized relation kind code=%s err=%v", CodeOf(err), err)
+	}
+}
+
 func TestDiscoveryPayloadIsExactlyRequestReference(t *testing.T) {
 	requestID := "sdrq_01ARZ3NDEKTSV4RRFFQ69G5FAV"
 	if !validDiscoveryPayload(jobs.Payload{"source_discovery_request_id": requestID}, requestID) {

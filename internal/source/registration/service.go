@@ -1679,7 +1679,7 @@ func (request RegisterRequest) validatePostgreSQLQuery() error {
 	if request.SourceType != "POSTGRESQL_QUERY" || !validName(request.Name) || !validKind(request.Kind) ||
 		!validSchemaID(request.DatabaseIdentity) || !validSchemaID(request.LineageID) || request.ProjectionRevision < 1 ||
 		!validSchemaID(request.SchemaName) || !validSchemaID(request.RelationName) || request.ContractHash == "" ||
-		(request.RelationKind != "VIEW" && request.RelationKind != "MATERIALIZED_VIEW") ||
+		!validPostgreSQLRelationKind(request.RelationKind) ||
 		(request.EmptySnapshotPolicy != "HELD" && request.EmptySnapshotPolicy != "AUTHORITATIVE") {
 		return &Error{code: CodeRequestInvalid}
 	}
@@ -1703,6 +1703,20 @@ func (request RegisterRequest) validatePostgreSQLQuery() error {
 		return &Error{code: CodeRequestInvalid, cause: err}
 	}
 	return nil
+}
+
+// validPostgreSQLRelationKind is the ADR-0097 closed set this surface
+// accepts: the original DBA-reviewed VIEW/MATERIALIZED_VIEW contract, plus an
+// ordinary or partitioned base table. postgresqlquery.Projection.Validate
+// enforces the same set again once the full projection is assembled; this
+// check exists so an unrecognized kind fails before that assembly.
+func validPostgreSQLRelationKind(value string) bool {
+	switch value {
+	case "VIEW", "MATERIALIZED_VIEW", "TABLE", "PARTITIONED_TABLE":
+		return true
+	default:
+		return false
+	}
 }
 
 func (request RegisterRequest) validateRemote() error {

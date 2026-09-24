@@ -329,14 +329,14 @@ func TestSourceDiscoveryWorkerPersistsEncryptedCatalogResult(t *testing.T) {
 	}
 	registered, err := registrationService.RegisterDiscoveredView(ctx, database.AccessContext{
 		OrganizationID: fixture.organizationID, PrincipalID: fixture.ownerID, RequestID: "req_sdr_register",
-	}, selected)
+	}, selected, nil)
 	if err != nil || !registered.Created || registered.SourceScopeID == "" || registered.ConnectionID != fixture.connectionID {
 		t.Fatalf("register discovered view = %#v err=%v cause=%v root=%v", registered, err,
 			errors.Unwrap(err), errors.Unwrap(errors.Unwrap(err)))
 	}
 	replay, err := registrationService.RegisterDiscoveredView(ctx, database.AccessContext{
 		OrganizationID: fixture.organizationID, PrincipalID: fixture.ownerID, RequestID: "req_sdr_register_replay",
-	}, selected)
+	}, selected, nil)
 	if err != nil || replay.Created || replay.SourceScopeID != registered.SourceScopeID || replay.ScopeConfigHash != registered.ScopeConfigHash {
 		t.Fatalf("replay discovered view registration = %#v err=%v", replay, err)
 	}

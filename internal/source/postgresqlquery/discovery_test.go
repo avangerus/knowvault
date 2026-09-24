@@ -93,6 +93,93 @@ func TestDiscoveryLimitsRejectOversizedProfile(t *testing.T) {
 	}
 }
 
+// TestDiscoveryTableWithPrimaryKeyIsPreparedWithIdentityOnKeyColumns is the
+// ADR-0097 S1 counterpart of the view envelope test above: an ordinary base
+// table needs no business-object contract, only a declared primary key. Its
+// key column(s) become IDENTITY, every other column becomes EVIDENCE, and a
+// composite key puts RoleIdentity on every key column.
+func TestDiscoveryTableWithPrimaryKeyIsPreparedWithIdentityOnKeyColumns(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30001, schemaName: "public", relationName: "accounts", relationKind: "TABLE",
+		comment: "customer accounts", approxRowCount: 4200,
+	}, []catalogColumn{
+		{ordinal: 1, name: "account_id", typeOID: 2950, typeName: "uuid", nullable: false, primaryKey: true},
+		{ordinal: 2, name: "region", typeOID: 25, typeName: "text", nullable: false, primaryKey: true},
+		{ordinal: 3, name: "display_name", typeOID: 25, typeName: "text", nullable: false},
+		{ordinal: 4, name: "phone", typeOID: 25, typeName: "text", nullable: true, comment: "personal data"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryPrepared || view.Interpretation != "" || view.Projection == nil {
+		t.Fatalf("prepared table discovery=%#v", view)
+	}
+	if view.ApproxRowCount != 4200 {
+		t.Fatalf("approx row count=%d, want 4200", view.ApproxRowCount)
+	}
+	if !view.Columns[0].PrimaryKey || !view.Columns[1].PrimaryKey || view.Columns[2].PrimaryKey || view.Columns[3].PrimaryKey {
+		t.Fatalf("discovered primary-key flags=%#v", view.Columns)
+	}
+	projection := view.Projection
+	if err := projection.Validate(); err != nil {
+		t.Fatalf("table projection invalid: %v", err)
+	}
+	if projection.RelationKind != "TABLE" {
+		t.Fatalf("projection relation kind=%q, want TABLE", projection.RelationKind)
+	}
+	if !hasRole(projection.Columns[0].Roles, RoleIdentity) || projection.Columns[0].Nullable {
+		t.Fatalf("account_id was not server-owned identity: %#v", projection.Columns[0])
+	}
+	if !hasRole(projection.Columns[1].Roles, RoleIdentity) || projection.Columns[1].Nullable {
+		t.Fatalf("region was not part of the composite identity: %#v", projection.Columns[1])
+	}
+	if !hasRole(projection.Columns[2].Roles, RoleEvidence) || hasRole(projection.Columns[2].Roles, RoleIdentity) {
+		t.Fatalf("display_name was not evidence-only: %#v", projection.Columns[2])
+	}
+	if !hasRole(projection.Columns[3].Roles, RoleEvidence) || hasRole(projection.Columns[3].Roles, RoleIdentity) {
+		t.Fatalf("phone was not evidence-only: %#v", projection.Columns[3])
+	}
+	if _, err := projection.SelectSQL(); err != nil {
+		t.Fatalf("generated table projection SQL: %v", err)
+	}
+}
+
+// TestDiscoveryTableWithoutPrimaryKeyNeedsInterpretation is ADR-0097's fail-
+// closed rule: a table this connector cannot key never becomes PREPARED, and
+// it never receives an invented ordinal identity.
+func TestDiscoveryTableWithoutPrimaryKeyNeedsInterpretation(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30002, schemaName: "public", relationName: "events_log", relationKind: "TABLE",
+	}, []catalogColumn{
+		{ordinal: 1, name: "occurred_at", typeOID: 1184, typeName: "timestamptz", nullable: false},
+		{ordinal: 2, name: "message", typeOID: 25, typeName: "text", nullable: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryNeedsInterpretation || view.Interpretation != InterpretationNoPrimaryKey || view.Projection != nil {
+		t.Fatalf("keyless table discovery=%#v", view)
+	}
+}
+
+// TestDiscoveryPartitionedTableWithPrimaryKeyIsPrepared proves the second
+// widened relation kind (pg_class.relkind = 'p') follows the same table rule
+// as an ordinary base table.
+func TestDiscoveryPartitionedTableWithPrimaryKeyIsPrepared(t *testing.T) {
+	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+		relationOID: 30003, schemaName: "public", relationName: "measurements", relationKind: "PARTITIONED_TABLE",
+	}, []catalogColumn{
+		{ordinal: 1, name: "measurement_id", typeOID: 2950, typeName: "uuid", nullable: false, primaryKey: true},
+		{ordinal: 2, name: "value", typeOID: 1700, typeName: "numeric", typmod: 4 + (10 << 16) + 2, nullable: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != DiscoveryPrepared || view.Projection == nil || view.Projection.RelationKind != "PARTITIONED_TABLE" {
+		t.Fatalf("partitioned table discovery=%#v", view)
+	}
+}
+
 func TestNumericTypmodDecodesSignedElevenBitScale(t *testing.T) {
 	precision, scale, ok := numericTypmod(4 + (3 << 16) + 0x7fe)
 	if !ok || precision != 3 || scale != -2 {

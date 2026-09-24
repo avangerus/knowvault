@@ -337,7 +337,7 @@ func buildMetadata(target target, snapshot postgresqlquery.CatalogSnapshot) ([]b
 	for _, view := range snapshot.Views {
 		if view.ConnectionID != target.connectionID || view.DatabaseOID != snapshot.DatabaseOID || view.DatabaseName != snapshot.DatabaseName ||
 			view.RelationOID < 1 || !validCatalogText(view.SchemaName, 128) || !validCatalogText(view.RelationName, 128) ||
-			(view.RelationKind != "VIEW" && view.RelationKind != "MATERIALIZED_VIEW") ||
+			!validRelationKind(view.RelationKind) || view.ApproxRowCount < -1 ||
 			!validCatalogComment(view.Comment, target.maxCommentBytes) || len(view.Columns) == 0 || len(view.Columns) > target.maxColumns ||
 			(view.Status != postgresqlquery.DiscoveryPrepared && view.Status != postgresqlquery.DiscoveryNeedsInterpretation) {
 			return nil, resultCounts{}, &Error{code: CodeMetadataInvalid, cause: errMetadataInvalid}
@@ -388,7 +388,20 @@ func validInterpretation(reason postgresqlquery.InterpretationReason) bool {
 		postgresqlquery.InterpretationIncompleteContract,
 		postgresqlquery.InterpretationMalformedContract,
 		postgresqlquery.InterpretationUnsupportedType,
-		postgresqlquery.InterpretationInvalidIdentifier:
+		postgresqlquery.InterpretationInvalidIdentifier,
+		postgresqlquery.InterpretationNoPrimaryKey:
+		return true
+	default:
+		return false
+	}
+}
+
+// validRelationKind is the same ADR-0097 closed set the connector package
+// enforces on Projection.RelationKind; the worker repeats it because the
+// encrypted metadata payload is untrusted input until this check passes.
+func validRelationKind(value string) bool {
+	switch value {
+	case "VIEW", "MATERIALIZED_VIEW", "TABLE", "PARTITIONED_TABLE":
 		return true
 	default:
 		return false

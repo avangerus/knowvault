@@ -58,6 +58,43 @@ func TestDiscoveryRequestValidationRejectsCallerControlledSecretsAndSelection(t 
 	}
 }
 
+// tableRegisterRequest is a well-formed POSTGRESQL_QUERY RegisterRequest over
+// a base table: one primary-key IDENTITY column and one EVIDENCE column, the
+// same shape discovery would derive from a table with a declared primary key.
+func tableRegisterRequest(relationKind string) RegisterRequest {
+	return RegisterRequest{
+		SourceType: "POSTGRESQL_QUERY", Name: "Accounts", Kind: "business-objects",
+		DatabaseIdentity: "pgdb_demo", LineageID: "lineage_accounts", ProjectionRevision: 1,
+		ContractHash: "sha256:" + repeatHex('a', 64),
+		SchemaName:   "public", RelationName: "accounts", RelationKind: relationKind,
+		Columns: []postgresqlquery.Column{
+			{Ordinal: 1, Name: "account_id", TypeFingerprint: "oid:2950", LogicalType: postgresqlquery.TypeUUID,
+				Roles: []postgresqlquery.Role{postgresqlquery.RoleIdentity}, MaxBytes: 64},
+			{Ordinal: 2, Name: "display_name", TypeFingerprint: "oid:25", LogicalType: postgresqlquery.TypeText,
+				Roles: []postgresqlquery.Role{postgresqlquery.RoleEvidence}, MaxBytes: 1024},
+		},
+		EmptySnapshotPolicy: "HELD",
+	}
+}
+
+// TestValidatePostgreSQLQueryAcceptsBaseAndPartitionedTable is the S1
+// "contract/worker/registration accept TABLE" acceptance test for the
+// registration surface: an ordinary or partitioned base table validates
+// exactly like the original VIEW/MATERIALIZED_VIEW contract, and an
+// unrecognized relation kind stays refused.
+func TestValidatePostgreSQLQueryAcceptsBaseAndPartitionedTable(t *testing.T) {
+	for _, kind := range []string{"VIEW", "MATERIALIZED_VIEW", "TABLE", "PARTITIONED_TABLE"} {
+		request := tableRegisterRequest(kind)
+		if err := request.validatePostgreSQLQuery(); err != nil {
+			t.Fatalf("relation kind %q rejected: %v", kind, err)
+		}
+	}
+	unrecognized := tableRegisterRequest("FOREIGN_TABLE")
+	if err := unrecognized.validatePostgreSQLQuery(); CodeOf(err) != CodeRequestInvalid {
+		t.Fatalf("unrecognized relation kind accepted: err=%v code=%s", err, CodeOf(err))
+	}
+}
+
 func repeatHex(character byte, count int) string {
 	result := make([]byte, count)
 	for index := range result {

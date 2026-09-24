@@ -9,19 +9,52 @@ import (
 	"knowvault.local/verified-workspace/internal/policy"
 	"knowvault.local/verified-workspace/internal/source/canon"
 	"knowvault.local/verified-workspace/internal/source/discovery"
+	"knowvault.local/verified-workspace/internal/source/postgresqlquery"
 )
+
+// tableDiscoveredDefaultMaxRows is ADR-0097's default per-table row limit. A
+// base/partitioned-table registration coming through discovery has no
+// administrator-reviewed view standing between it and a possibly very large
+// table, so it defaults far below the general POSTGRESQL_QUERY default
+// (postgreSQLLimits' 1,000,000); an operator who needs more raises MaxRows
+// explicitly through the general registration surface.
+const tableDiscoveredDefaultMaxRows = 50_000
 
 // RegisterDiscoveredView creates a DRAFT PostgreSQL scope from one prepared
 // server-owned discovery projection. It accepts no browser-authored schema,
 // relation, column, role, hash, SQL or connection metadata.
+//
+// excludedColumnOrdinals are ordinals from the same sealed discovery result
+// (never a caller-chosen name or index) and are accepted only for a base or
+// partitioned table: the five-column view contract has no excludable field.
+// Each ordinal must name a real EVIDENCE column of that exact projection;
+// naming a primary-key column, or any ordinal the discovery result never
+// reported, is refused. Excluding narrows the projection and therefore mints
+// a new ContractHash/LineageID (ADR-0097): a table registered with different
+// exclusions is a distinct immutable lineage, not a mutation of an existing
+// one.
 func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.AccessContext,
-	selected discovery.SelectedView) (RegisterResult, error) {
+	selected discovery.SelectedView, excludedColumnOrdinals []int) (RegisterResult, error) {
 	projection := selected.Projection
 	if s == nil || s.database == nil || s.audit == nil || s.codec == nil || access.Validate() != nil ||
 		selected.RequestID == "" || selected.ResultID == "" || selected.Selector == "" ||
 		selected.ConnectionRevision < 1 || selected.ConnectionID != projection.ConnectionID ||
 		projection.Validate() != nil {
 		return RegisterResult{}, &Error{code: CodeRequestInvalid}
+	}
+	if len(excludedColumnOrdinals) > 0 {
+		if projection.RelationKind != "TABLE" && projection.RelationKind != "PARTITIONED_TABLE" {
+			return RegisterResult{}, &Error{code: CodeRequestInvalid}
+		}
+		excludedSet, ok := excludedColumnOrdinalSet(excludedColumnOrdinals, len(projection.Columns))
+		if !ok {
+			return RegisterResult{}, &Error{code: CodeRequestInvalid}
+		}
+		narrowed, err := postgresqlquery.NarrowProjection(projection, excludedSet)
+		if err != nil {
+			return RegisterResult{}, &Error{code: CodeRequestInvalid, cause: err}
+		}
+		projection = narrowed
 	}
 	columnsJSON, err := postgresqlColumnsJSON(projection.Columns)
 	if err != nil {
@@ -40,6 +73,9 @@ func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.Ac
 		return RegisterResult{}, &Error{code: CodeRequestInvalid, cause: err}
 	}
 	limits := (RegisterRequest{}).postgreSQLLimits()
+	if projection.RelationKind == "TABLE" || projection.RelationKind == "PARTITIONED_TABLE" {
+		limits.maxRows = tableDiscoveredDefaultMaxRows
+	}
 	configBytes, err := canon.PostgreSQLQueryScopeConfigBytes(
 		projection.DatabaseIdentity, projection.LineageID, projection.Revision,
 		projection.SchemaName, projection.RelationName, projection.RelationKind,
@@ -185,4 +221,24 @@ func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.Ac
 		return RegisterResult{}, &Error{code: CodeDenied}
 	}
 	return result, nil
+}
+
+// excludedColumnOrdinalSet bounds-checks the browser-chosen exclusion
+// ordinals against the sealed discovery projection's own column count before
+// they ever reach postgresqlquery.NarrowProjection. Every entry must be a
+// distinct, in-range positive ordinal, and at least one column must survive;
+// ADR-0097 permits only narrowing an already-discovered table, never naming a
+// column the server never reported.
+func excludedColumnOrdinalSet(ordinals []int, columnCount int) (map[int]bool, bool) {
+	if len(ordinals) == 0 || len(ordinals) >= columnCount {
+		return nil, false
+	}
+	set := make(map[int]bool, len(ordinals))
+	for _, ordinal := range ordinals {
+		if ordinal < 1 || ordinal > columnCount || set[ordinal] {
+			return nil, false
+		}
+		set[ordinal] = true
+	}
+	return set, true
 }

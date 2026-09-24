@@ -44,6 +44,11 @@ const (
 	InterpretationMalformedContract  InterpretationReason = "MALFORMED_BUSINESS_OBJECT_CONTRACT"
 	InterpretationUnsupportedType    InterpretationReason = "UNSUPPORTED_TYPE"
 	InterpretationInvalidIdentifier  InterpretationReason = "INVALID_IDENTIFIER"
+	// InterpretationNoPrimaryKey is returned only for an ordinary or
+	// partitioned base table (never a view): ADR-0097 requires a declared
+	// primary key before a table's rows can be given IDENTITY, so a table
+	// without one is visible metadata, never a Projection.
+	InterpretationNoPrimaryKey InterpretationReason = "NO_PRIMARY_KEY"
 )
 
 // DiscoveryLimits are server-owned bounds for PostgreSQL catalog discovery.
@@ -116,6 +121,11 @@ type DiscoveredColumn struct {
 	Scale           int         `json:"scale,omitempty"`
 	MaxBytes        int         `json:"max_bytes,omitempty"`
 	Comment         string      `json:"comment,omitempty"`
+	// PrimaryKey is native pg_index.indisprimary membership. It is the only
+	// signal a base/partitioned table uses to become PREPARED: primary-key
+	// columns become IDENTITY, every other column becomes EVIDENCE. It is
+	// always false for a VIEW/MATERIALIZED_VIEW column.
+	PrimaryKey bool `json:"primary_key"`
 }
 
 // ViewDiscovery is one visible VIEW or MATERIALIZED_VIEW and its bounded
@@ -123,14 +133,21 @@ type DiscoveredColumn struct {
 // BusinessObjectContract envelope; no source rows or view definition are
 // returned.
 type ViewDiscovery struct {
-	ConnectionID   string               `json:"connection_id"`
-	DatabaseOID    uint32               `json:"database_oid"`
-	DatabaseName   string               `json:"database_name"`
-	RelationOID    uint32               `json:"relation_oid"`
-	SchemaName     string               `json:"schema_name"`
-	RelationName   string               `json:"relation_name"`
-	RelationKind   string               `json:"relation_kind"`
-	Comment        string               `json:"comment,omitempty"`
+	ConnectionID string `json:"connection_id"`
+	DatabaseOID  uint32 `json:"database_oid"`
+	DatabaseName string `json:"database_name"`
+	RelationOID  uint32 `json:"relation_oid"`
+	SchemaName   string `json:"schema_name"`
+	RelationName string `json:"relation_name"`
+	// RelationKind is one of VIEW, MATERIALIZED_VIEW, TABLE or
+	// PARTITIONED_TABLE (ADR-0097). It is server-derived from pg_class.relkind
+	// and never caller-supplied.
+	RelationKind string `json:"relation_kind"`
+	Comment      string `json:"comment,omitempty"`
+	// ApproxRowCount is pg_class.reltuples, rounded. It is planner-statistics
+	// metadata, not a live count: -1 means PostgreSQL has not analyzed the
+	// relation yet. It is never used for a security or capacity decision.
+	ApproxRowCount int64                `json:"approx_row_count"`
 	Columns        []DiscoveredColumn   `json:"columns"`
 	Status         DiscoveryStatus      `json:"status"`
 	Interpretation InterpretationReason `json:"interpretation,omitempty"`
@@ -384,38 +401,58 @@ func discoveryDatabase(ctx context.Context, tx pgx.Tx) (uint32, string, error) {
 }
 
 type catalogRelation struct {
-	relationOID  uint32
-	schemaName   string
-	relationName string
-	relationKind string
-	comment      string
+	relationOID    uint32
+	schemaName     string
+	relationName   string
+	relationKind   string
+	comment        string
+	approxRowCount int64
 }
 
 // PostgreSQL's obj_description catalog_name argument is the unqualified
 // catalog identifier "pg_class"; the function itself is catalog-qualified.
+//
+// A relation is a candidate exactly when at least one of its live columns is
+// individually selectable by the discovery role (has_column_privilege,
+// checked below). has_table_privilege is deliberately not used here: it
+// reports only a whole-relation ACL entry and is false whenever the DBA
+// granted SELECT one column at a time -- a common way to hand over a table
+// that has some columns the role must never see -- so requiring it would
+// hide a legitimately column-scoped table entirely.  A relation with some but
+// not all columns column-REVOKEd or never column-GRANTed is still listed --
+// discoveryColumns drops exactly the restricted columns instead of hiding the
+// whole relation, so a customer's own pre-existing column-level lockdown
+// narrows a table the same way an administrator's own exclusion choice does.
+//
+// relispartition excludes every individual partition child, at any nesting
+// depth, from candidacy: a partitioned table's own root relation (relkind
+// 'p') already reads every partition through PostgreSQL's own inheritance
+// scan, so also listing each child as its own TABLE would let an operator
+// register the same rows twice under two different projections.
 const discoverRelationsSQL = `
 WITH candidates AS (
 	SELECT c.oid::bigint AS relation_oid, n.nspname AS schema_name, c.relname AS relation_name,
-		CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED_VIEW' END AS relation_kind,
-		pg_catalog.obj_description(c.oid, 'pg_class') AS relation_comment
+		CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED_VIEW' WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'PARTITIONED_TABLE' END AS relation_kind,
+		pg_catalog.obj_description(c.oid, 'pg_class') AS relation_comment,
+		CASE WHEN c.reltuples < 0 THEN -1::bigint ELSE pg_catalog.round(c.reltuples::numeric)::bigint END AS approx_row_count
 	FROM pg_catalog.pg_class AS c
 	JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-	WHERE c.relkind IN ('v', 'm')
+	WHERE c.relkind IN ('v', 'm', 'r', 'p')
+		AND NOT c.relispartition
 		AND n.nspname <> 'pg_catalog'
 		AND n.nspname <> 'information_schema'
 		AND pg_catalog.left(n.nspname, 3) <> 'pg_'
 		AND pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE')
-		AND pg_catalog.has_table_privilege(current_user, c.oid, 'SELECT')
-		AND NOT EXISTS (
+		AND EXISTS (
 			SELECT 1
-			FROM pg_catalog.pg_attribute AS restricted_attribute
-			WHERE restricted_attribute.attrelid = c.oid
-				AND restricted_attribute.attnum > 0
-				AND NOT restricted_attribute.attisdropped
-				AND NOT pg_catalog.has_column_privilege(current_user, restricted_attribute.attrelid, restricted_attribute.attnum, 'SELECT')
+			FROM pg_catalog.pg_attribute AS visible_attribute
+			WHERE visible_attribute.attrelid = c.oid
+				AND visible_attribute.attnum > 0
+				AND NOT visible_attribute.attisdropped
+				AND pg_catalog.has_column_privilege(current_user, visible_attribute.attrelid, visible_attribute.attnum, 'SELECT')
 		)
 )
-SELECT relation_oid, schema_name, relation_name, relation_kind,
+SELECT relation_oid, schema_name, relation_name, relation_kind, approx_row_count,
 	COALESCE(pg_catalog.octet_length(relation_comment), 0)::bigint AS comment_bytes,
 	CASE WHEN relation_comment IS NULL OR pg_catalog.octet_length(relation_comment) > $1
 		THEN '' ELSE relation_comment END AS relation_comment
@@ -426,25 +463,26 @@ LIMIT $2`
 const discoverSelectedRelationSQL = `
 WITH candidates AS (
 	SELECT c.oid::bigint AS relation_oid, n.nspname AS schema_name, c.relname AS relation_name,
-		CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED_VIEW' END AS relation_kind,
-		pg_catalog.obj_description(c.oid, 'pg_class') AS relation_comment
+		CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED_VIEW' WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'PARTITIONED_TABLE' END AS relation_kind,
+		pg_catalog.obj_description(c.oid, 'pg_class') AS relation_comment,
+		CASE WHEN c.reltuples < 0 THEN -1::bigint ELSE pg_catalog.round(c.reltuples::numeric)::bigint END AS approx_row_count
 	FROM pg_catalog.pg_class AS c
 	JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-	WHERE c.relkind IN ('v', 'm')
+	WHERE c.relkind IN ('v', 'm', 'r', 'p')
+		AND NOT c.relispartition
 		AND n.nspname = $2
 		AND c.relname = $3
 		AND pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE')
-		AND pg_catalog.has_table_privilege(current_user, c.oid, 'SELECT')
-		AND NOT EXISTS (
+		AND EXISTS (
 			SELECT 1
-			FROM pg_catalog.pg_attribute AS restricted_attribute
-			WHERE restricted_attribute.attrelid = c.oid
-				AND restricted_attribute.attnum > 0
-				AND NOT restricted_attribute.attisdropped
-				AND NOT pg_catalog.has_column_privilege(current_user, restricted_attribute.attrelid, restricted_attribute.attnum, 'SELECT')
+			FROM pg_catalog.pg_attribute AS visible_attribute
+			WHERE visible_attribute.attrelid = c.oid
+				AND visible_attribute.attnum > 0
+				AND NOT visible_attribute.attisdropped
+				AND pg_catalog.has_column_privilege(current_user, visible_attribute.attrelid, visible_attribute.attnum, 'SELECT')
 		)
 )
-SELECT relation_oid, schema_name, relation_name, relation_kind,
+SELECT relation_oid, schema_name, relation_name, relation_kind, approx_row_count,
 	COALESCE(pg_catalog.octet_length(relation_comment), 0)::bigint AS comment_bytes,
 	CASE WHEN relation_comment IS NULL OR pg_catalog.octet_length(relation_comment) > $1
 		THEN '' ELSE relation_comment END AS relation_comment
@@ -466,10 +504,10 @@ func discoveryRelations(ctx context.Context, tx pgx.Tx, schemaName, relationName
 	for rows.Next() {
 		var rawOID, commentBytes int64
 		var relation catalogRelation
-		if err := rows.Scan(&rawOID, &relation.schemaName, &relation.relationName, &relation.relationKind, &commentBytes, &relation.comment); err != nil {
+		if err := rows.Scan(&rawOID, &relation.schemaName, &relation.relationName, &relation.relationKind, &relation.approxRowCount, &commentBytes, &relation.comment); err != nil {
 			return nil, &Error{code: CodeExternalFailure, cause: err}
 		}
-		if commentBytes < 0 || commentBytes > int64(limits.MaxCommentBytes) {
+		if commentBytes < 0 || commentBytes > int64(limits.MaxCommentBytes) || relation.approxRowCount < -1 {
 			return nil, &Error{code: CodeLimitExceeded}
 		}
 		relation.relationOID, _ = boundedOID(rawOID)
@@ -488,27 +526,39 @@ func discoveryRelations(ctx context.Context, tx pgx.Tx, schemaName, relationName
 }
 
 type catalogColumn struct {
-	ordinal  int
-	name     string
-	typeOID  uint32
-	typeName string
-	typmod   int64
-	nullable bool
-	comment  string
+	ordinal    int
+	name       string
+	typeOID    uint32
+	typeName   string
+	typmod     int64
+	nullable   bool
+	primaryKey bool
+	comment    string
 }
 
+// discoverColumnsSQL selects only columns the discovery role can itself
+// SELECT (has_column_privilege). A table whose DBA already column-REVOKEd a
+// sensitive field this way never reports that field here; discoveryColumns
+// then renumbers the remaining ordinals 1..N, so a dropped or column-REVOKEd
+// attribute in the middle of a table never leaves a gap that would fail
+// Projection.Validate's ordinal-contiguity rule.
 const discoverColumnsSQL = `
 WITH candidates AS (
 	SELECT a.attnum::int AS ordinal, a.attname, a.atttypid::bigint AS type_oid,
 		t.typname, a.atttypmod::bigint AS typmod, NOT a.attnotnull AS nullable,
+		EXISTS (
+			SELECT 1 FROM pg_catalog.pg_index AS i
+			WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey)
+		) AS is_primary_key,
 		pg_catalog.col_description(a.attrelid, a.attnum) AS column_comment
 	FROM pg_catalog.pg_attribute AS a
 	JOIN pg_catalog.pg_type AS t ON t.oid = a.atttypid
 	WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
+		AND pg_catalog.has_column_privilege(current_user, a.attrelid, a.attnum, 'SELECT')
 	ORDER BY a.attnum
 	LIMIT $3
 )
-SELECT ordinal, attname, type_oid, typname, typmod, nullable,
+SELECT ordinal, attname, type_oid, typname, typmod, nullable, is_primary_key,
 	COALESCE(pg_catalog.octet_length(column_comment), 0)::bigint AS comment_bytes,
 	CASE WHEN column_comment IS NULL OR pg_catalog.octet_length(column_comment) > $2
 		THEN '' ELSE column_comment END AS column_comment
@@ -525,7 +575,7 @@ func discoveryColumns(ctx context.Context, tx pgx.Tx, relationOID uint32, limits
 	for rows.Next() {
 		var rawTypeOID, commentBytes int64
 		var column catalogColumn
-		if err := rows.Scan(&column.ordinal, &column.name, &rawTypeOID, &column.typeName, &column.typmod, &column.nullable, &commentBytes, &column.comment); err != nil {
+		if err := rows.Scan(&column.ordinal, &column.name, &rawTypeOID, &column.typeName, &column.typmod, &column.nullable, &column.primaryKey, &commentBytes, &column.comment); err != nil {
 			return nil, &Error{code: CodeExternalFailure, cause: err}
 		}
 		if commentBytes < 0 || commentBytes > int64(limits.MaxCommentBytes) {
@@ -546,6 +596,14 @@ func discoveryColumns(ctx context.Context, tx pgx.Tx, relationOID uint32, limits
 	if len(columns) == 0 {
 		return nil, &Error{code: CodeDiscoveryInvalid}
 	}
+	// The physical attnum can have gaps (a dropped column, or one this role
+	// cannot SELECT and the query above therefore omitted). Every downstream
+	// consumer -- Projection.Validate, CanonicalizeRow, SelectSQL's column
+	// list -- requires a contiguous 1..N ordinal in slice order, so this is
+	// the one place that renumbers rather than trusting the source position.
+	for index := range columns {
+		columns[index].ordinal = index + 1
+	}
 	return columns, nil
 }
 
@@ -553,7 +611,7 @@ func newViewDiscovery(connectionID string, databaseOID uint32, databaseName stri
 	view := ViewDiscovery{
 		ConnectionID: connectionID, DatabaseOID: databaseOID, DatabaseName: databaseName, RelationOID: relation.relationOID,
 		SchemaName: relation.schemaName, RelationName: relation.relationName,
-		RelationKind: relation.relationKind, Comment: relation.comment,
+		RelationKind: relation.relationKind, Comment: relation.comment, ApproxRowCount: relation.approxRowCount,
 		Columns: make([]DiscoveredColumn, 0, len(columns)), Status: DiscoveryNeedsInterpretation,
 	}
 	for _, column := range columns {
@@ -577,8 +635,23 @@ func newDiscoveredColumn(column catalogColumn) (DiscoveredColumn, error) {
 		Ordinal: column.ordinal, Name: column.name, TypeOID: column.typeOID,
 		TypeName: column.typeName, TypeFingerprint: typeFingerprint,
 		LogicalType: logicalType, Nullable: column.nullable, Precision: precision,
-		Scale: scale, MaxBytes: maxBytes, Comment: column.comment,
+		Scale: scale, MaxBytes: maxBytes, Comment: column.comment, PrimaryKey: column.primaryKey,
 	}, nil
+}
+
+// columnTypesSupported reports whether every discovered column has a
+// recognized logical type and, for NUMERIC, a bounded precision/scale. It is
+// shared by the view's five-column envelope classification and the table/
+// primary-key classification below; a column this package cannot canonicalize
+// leaves the whole relation NEEDS_INTERPRETATION rather than silently
+// dropping just that column's evidence.
+func columnTypesSupported(columns []DiscoveredColumn) bool {
+	for _, column := range columns {
+		if column.LogicalType == "" || (column.LogicalType == TypeNumeric && (column.Precision < 1 || column.Scale < 0 || column.Scale > column.Precision)) || column.MaxBytes < 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func classifyDiscoveredView(view ViewDiscovery) (DiscoveryStatus, InterpretationReason, *Projection) {
@@ -586,6 +659,12 @@ func classifyDiscoveredView(view ViewDiscovery) (DiscoveryStatus, Interpretation
 		if !identifierPattern.MatchString(column.Name) {
 			return DiscoveryNeedsInterpretation, InterpretationInvalidIdentifier, nil
 		}
+	}
+	if view.RelationKind == "TABLE" || view.RelationKind == "PARTITIONED_TABLE" {
+		// ADR-0097: an ordinary or partitioned base table is classified only
+		// by its declared primary key, never by the view's five-column
+		// business-object envelope below.
+		return classifyDiscoveredTable(view)
 	}
 	fieldNames := map[string]struct{}{
 		preparedEntityIDColumn: {}, preparedEntityVersionColumn: {}, preparedUpdatedAtColumn: {}, preparedPayloadColumn: {}, preparedPayloadFormatColumn: {},
@@ -609,12 +688,40 @@ func classifyDiscoveredView(view ViewDiscovery) (DiscoveryStatus, Interpretation
 	if !preparedColumnTypes(byName) {
 		return DiscoveryNeedsInterpretation, InterpretationMalformedContract, nil
 	}
-	for _, column := range view.Columns {
-		if column.LogicalType == "" || (column.LogicalType == TypeNumeric && (column.Precision < 1 || column.Scale < 0 || column.Scale > column.Precision)) || column.MaxBytes < 1 {
-			return DiscoveryNeedsInterpretation, InterpretationUnsupportedType, nil
-		}
+	if !columnTypesSupported(view.Columns) {
+		return DiscoveryNeedsInterpretation, InterpretationUnsupportedType, nil
 	}
 	projection, err := buildDiscoveredProjection(view)
+	if err != nil {
+		if CodeOf(err) == CodeDiscoveryInvalid {
+			return DiscoveryNeedsInterpretation, InterpretationInvalidIdentifier, nil
+		}
+		return DiscoveryNeedsInterpretation, InterpretationUnsupportedType, nil
+	}
+	return DiscoveryPrepared, "", &projection
+}
+
+// classifyDiscoveredTable is the ADR-0097 counterpart of the view's
+// five-column envelope: an ordinary or partitioned base table needs no
+// business-object contract, only a declared primary key. Primary-key columns
+// become IDENTITY and every other column becomes EVIDENCE. A table without a
+// primary key is visible metadata -- NEEDS_INTERPRETATION/NO_PRIMARY_KEY --
+// never silently skipped and never assigned an invented identity.
+func classifyDiscoveredTable(view ViewDiscovery) (DiscoveryStatus, InterpretationReason, *Projection) {
+	if !columnTypesSupported(view.Columns) {
+		return DiscoveryNeedsInterpretation, InterpretationUnsupportedType, nil
+	}
+	hasPrimaryKey := false
+	for _, column := range view.Columns {
+		if column.PrimaryKey {
+			hasPrimaryKey = true
+			break
+		}
+	}
+	if !hasPrimaryKey {
+		return DiscoveryNeedsInterpretation, InterpretationNoPrimaryKey, nil
+	}
+	projection, err := buildTableProjection(view)
 	if err != nil {
 		if CodeOf(err) == CodeDiscoveryInvalid {
 			return DiscoveryNeedsInterpretation, InterpretationInvalidIdentifier, nil
@@ -667,6 +774,84 @@ func buildDiscoveredProjection(view ViewDiscovery) (Projection, error) {
 			roles = []Role{RoleVersionHint, RoleEvidence}
 			nullable = false
 		case preparedPayloadColumn, preparedPayloadFormatColumn:
+			nullable = false
+		}
+		columns = append(columns, Column{
+			Ordinal: discovered.Ordinal, Name: discovered.Name, TypeFingerprint: discovered.TypeFingerprint,
+			LogicalType: discovered.LogicalType, Roles: roles, Nullable: nullable,
+			Precision: discovered.Precision, Scale: discovered.Scale, MaxBytes: discovered.MaxBytes,
+		})
+	}
+	hashBytes, err := canon.CanonicalJSON(struct {
+		ValueFormat  string                 `json:"value_format"`
+		DatabaseOID  uint32                 `json:"database_oid"`
+		DatabaseName string                 `json:"database_name"`
+		RelationOID  uint32                 `json:"relation_oid"`
+		SchemaName   string                 `json:"schema_name"`
+		RelationName string                 `json:"relation_name"`
+		RelationKind string                 `json:"relation_kind"`
+		ViewComment  string                 `json:"view_comment"`
+		Columns      []projectionHashColumn `json:"columns"`
+	}{
+		ValueFormat: ValueContractVersion, DatabaseOID: view.DatabaseOID, DatabaseName: view.DatabaseName,
+		RelationOID: view.RelationOID, SchemaName: view.SchemaName, RelationName: view.RelationName,
+		RelationKind: view.RelationKind, ViewComment: view.Comment, Columns: projectionHashColumns(view, columns),
+	})
+	if err != nil {
+		return Projection{}, &Error{code: CodeDiscoveryInvalid, cause: err}
+	}
+	contractHash := canon.Hash(hashBytes)
+	lineageBytes, err := canon.CanonicalJSON(struct {
+		ConnectionID string `json:"connection_id"`
+		DatabaseID   string `json:"database_id"`
+		RelationOID  uint32 `json:"relation_oid"`
+		ContractHash string `json:"contract_hash"`
+	}{ConnectionID: view.ConnectionID, DatabaseID: databaseIdentity, RelationOID: view.RelationOID, ContractHash: contractHash})
+	if err != nil {
+		return Projection{}, &Error{code: CodeDiscoveryInvalid, cause: err}
+	}
+	lineageID := "projection-lineage:" + strings.TrimPrefix(canon.Hash(lineageBytes), "sha256:")
+	projection := Projection{
+		ConnectionID: view.ConnectionID, DatabaseIdentity: databaseIdentity, LineageID: lineageID,
+		Revision: 1, ContractHash: contractHash, SchemaName: view.SchemaName,
+		RelationName: view.RelationName, RelationKind: view.RelationKind, Columns: columns,
+		EmptySnapshotPolicy: "HELD",
+	}
+	if err := projection.Validate(); err != nil {
+		return Projection{}, &Error{code: CodeDiscoveryInvalid, cause: err}
+	}
+	return projection, nil
+}
+
+// buildTableProjection is buildDiscoveredProjection's ADR-0097 counterpart
+// for an ordinary or partitioned base table: primary-key columns become
+// IDENTITY and every other column becomes EVIDENCE, instead of the view's
+// fixed five-field business-object envelope. It always builds the complete,
+// unnarrowed projection over every column this discovery role can see;
+// registration-time column exclusion is a distinct later step
+// (NarrowProjection) so the sealed discovery result always reflects exactly
+// what the server observed.
+func buildTableProjection(view ViewDiscovery) (Projection, error) {
+	if !validCatalogText(view.DatabaseName, 128) || !discoverySchemaAllowed(view.SchemaName) || !identifierPattern.MatchString(view.SchemaName) || !identifierPattern.MatchString(view.RelationName) {
+		return Projection{}, &Error{code: CodeDiscoveryInvalid}
+	}
+	databaseBytes, err := canon.CanonicalJSON(struct {
+		OID  uint32 `json:"oid"`
+		Name string `json:"name"`
+	}{OID: view.DatabaseOID, Name: view.DatabaseName})
+	if err != nil {
+		return Projection{}, &Error{code: CodeDiscoveryInvalid, cause: err}
+	}
+	databaseIdentity := "pgdb:" + strings.TrimPrefix(canon.Hash(databaseBytes), "sha256:")
+	columns := make([]Column, 0, len(view.Columns))
+	for _, discovered := range view.Columns {
+		if discovered.Ordinal < 1 || !identifierPattern.MatchString(discovered.Name) || !validOpaque(discovered.TypeFingerprint) || discovered.LogicalType == "" || discovered.MaxBytes < 1 {
+			return Projection{}, &Error{code: CodeDiscoveryInvalid}
+		}
+		roles := []Role{RoleEvidence}
+		nullable := discovered.Nullable
+		if discovered.PrimaryKey {
+			roles = []Role{RoleIdentity}
 			nullable = false
 		}
 		columns = append(columns, Column{
