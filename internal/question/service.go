@@ -3748,9 +3748,25 @@ func (service *Service) previousTurnQuestionText(ctx context.Context, access dat
 
 // toolLoopConversationTurn is the bounded conversation context made available
 // to the tool loop. Its contents are included only after current-access checks
-// through GetBatch.
+// through GetBatch: Answer and Sources are populated only from a run GetBatch
+// has already fully reauthorized, including every citation's own artifact
+// decrypt (readStoredRunBatch drops the whole run, not just the one source,
+// the instant any of its citations no longer decrypts for this caller). A
+// prior turn that lost that reauthorization is simply absent here, never
+// projected with partial content.
 type toolLoopConversationTurn struct {
 	Question string
+	// Answer is the prior run's markdown answer, or its clarification text
+	// when the prior turn asked one instead of answering. It is model context
+	// only, never evidence: see toolLoopInstructions and the citation binding
+	// in executeToolLoop, which accepts only addresses observed by a tool call
+	// made in the current turn.
+	Answer string
+	// Sources are the prior answer's own cited addresses (deduplicated), so
+	// the model can choose to re-read one this turn rather than re-searching
+	// from scratch. An address alone cannot become a citation: it must still
+	// be read again in this run before it can support a new claim.
+	Sources []string
 }
 
 // recentToolLoopConversationTurns loads the most recent readable turns before
@@ -3835,9 +3851,36 @@ func toolLoopConversationTurnsFromBatch(runIDs []string, runs map[string]Run) []
 		if !ok {
 			continue
 		}
-		turns = append(turns, toolLoopConversationTurn{Question: run.Question})
+		answer := run.Answer
+		if answer == "" {
+			answer = run.Clarification
+		}
+		turns = append(turns, toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)})
 	}
 	return turns
+}
+
+// toolLoopConversationSources returns the deduplicated citation addresses
+// GetBatch already reauthorized for this run, in citation-number order. It is
+// a pointer to where the prior answer's evidence was found, never the
+// excerpt text itself.
+func toolLoopConversationSources(citations []Citation) []string {
+	if len(citations) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(citations))
+	sources := make([]string, 0, len(citations))
+	for _, citation := range citations {
+		if citation.Address == "" {
+			continue
+		}
+		if _, exists := seen[citation.Address]; exists {
+			continue
+		}
+		seen[citation.Address] = struct{}{}
+		sources = append(sources, citation.Address)
+	}
+	return sources
 }
 
 var errPreviousTurnUnreadable = errors.New("question: previous turn not currently readable")
