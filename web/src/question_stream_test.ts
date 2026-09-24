@@ -73,12 +73,16 @@ refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
 refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
   type: "action", sequence: 1, phase: "action_started", label: "document_search", detail: "leaked before the call ran",
 }) + "\n")), "a detail on a started frame is refused");
-refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
-  type: "action", sequence: 1, phase: "action_started", label: "document_search", request: "a".repeat(181),
-}) + "\n")), "a request past the bound is refused");
-refuses(() => new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
-  type: "action", sequence: 1, phase: "action_finished", label: "document_search", outcome: "succeeded", detail: "a".repeat(181),
-}) + "\n")), "a detail past the bound is refused");
+const longRequest = new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_started", label: "document_search", request: "я".repeat(181),
+}) + "\n"))[0];
+check(longRequest.type === "action" && Array.from(longRequest.request ?? "").length === 180 && (longRequest.request ?? "").endsWith("…"),
+  "a request past the bound is clamped, not refused");
+const longDetail = new QuestionStreamDecoder<unknown>().push(encode(JSON.stringify({
+  type: "action", sequence: 1, phase: "action_finished", label: "document_search", outcome: "succeeded", detail: "я".repeat(181),
+}) + "\n"))[0];
+check(longDetail.type === "action" && Array.from(longDetail.detail ?? "").length === 180 && (longDetail.detail ?? "").endsWith("…"),
+  "a detail past the bound is clamped, not refused");
 const tooManyActions = new QuestionStreamDecoder<unknown>();
 tooManyActions.push(encode(Array.from({ length: 4096 }, (_, index) => action(index + 1)).join("")));
 refuses(() => tooManyActions.push(encode(action(4097))), "unbounded action history is refused");
