@@ -30,7 +30,9 @@ func boundedActionText(value string) string {
 	}
 	runes := []rune(value)
 	if len(runes) > ActionTextMaxRunes {
-		return string(runes[:ActionTextMaxRunes]) + "…"
+		// The ellipsis counts toward the bound: the transport and the browser
+		// both reject text longer than ActionTextMaxRunes.
+		return string(runes[:ActionTextMaxRunes-1]) + "…"
 	}
 	return value
 }

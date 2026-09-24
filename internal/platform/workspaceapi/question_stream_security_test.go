@@ -77,13 +77,10 @@ func TestQuestionStreamThroughSecurityHeadersArrivesBeforeTerminal(t *testing.T)
 // phase that can actually know them (a request is known once a call starts,
 // an outcome only once it finishes), even if a caller upstream of the
 // transport ever computed them incorrectly.
-func TestQuestionEventStreamRejectsUnboundedOrMispairedActionText(t *testing.T) {
-	overlong := strings.Repeat("a", 181)
+func TestQuestionEventStreamRejectsMispairedActionText(t *testing.T) {
 	cases := map[string]question.ActionEvent{
 		"request on a finished frame": {Sequence: 1, Type: "action_finished", Label: "document_search", Outcome: "succeeded", Request: "leaked after the fact"},
 		"detail on a started frame":   {Sequence: 1, Type: "action_started", Label: "document_search", Detail: "leaked before the call ran"},
-		"request exceeds the bound":   {Sequence: 1, Type: "action_started", Label: "document_search", Request: overlong},
-		"detail exceeds the bound":    {Sequence: 1, Type: "action_finished", Label: "document_search", Outcome: "succeeded", Detail: overlong},
 	}
 	for name, event := range cases {
 		writer := &countingStreamWriter{ResponseRecorder: httptest.NewRecorder()}
@@ -93,6 +90,33 @@ func TestQuestionEventStreamRejectsUnboundedOrMispairedActionText(t *testing.T) 
 		}
 		if writer.Body.Len() != 0 {
 			t.Fatalf("%s: an invalid frame was written before being rejected: %q", name, writer.Body.String())
+		}
+	}
+}
+
+// An over-long step text must be clamped to the disclosed bound, never turned
+// into a stream error: an action error cancels the whole question (as on
+// Cicada, where a 181-rune live-data request ended a follow-up turn).
+func TestQuestionEventStreamClampsOverlongActionText(t *testing.T) {
+	overlong := strings.Repeat("я", 500)
+	cases := map[string]question.ActionEvent{
+		"request exceeds the bound": {Sequence: 1, Type: "action_started", Label: "document_search", Request: overlong},
+		"detail exceeds the bound":  {Sequence: 1, Type: "action_finished", Label: "document_search", Outcome: "succeeded", Detail: overlong},
+	}
+	for name, event := range cases {
+		writer := &countingStreamWriter{ResponseRecorder: httptest.NewRecorder()}
+		stream := newQuestionEventStream(writer)
+		if err := stream.action(event); err != nil {
+			t.Fatalf("%s: over-long text failed the stream: %v", name, err)
+		}
+		var frame questionStreamFrame
+		if err := json.NewDecoder(writer.Body).Decode(&frame); err != nil {
+			t.Fatalf("%s: decode frame: %v", name, err)
+		}
+		text := frame.Request + frame.Detail
+		runes := []rune(text)
+		if len(runes) != question.ActionTextMaxRunes || runes[len(runes)-1] != '…' {
+			t.Fatalf("%s: clamped text has %d runes, want %d ending in an ellipsis", name, len(runes), question.ActionTextMaxRunes)
 		}
 	}
 }
