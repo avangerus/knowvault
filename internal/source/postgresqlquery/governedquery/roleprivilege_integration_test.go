@@ -36,6 +36,13 @@ const (
 	rolePrivilegeOther     = "kv_s3_2c_other"
 	rolePrivilegeExtension = "kv_s3_2c_ext"
 	rolePrivilegePassword  = "kvrolepass"
+	// Card S3.2f's fixtures: the schema and relation an installed extension
+	// owns and exposes to PUBLIC, and the plain schema of the control relation
+	// that no extension owns but PUBLIC can still read.
+	rolePrivilegeExtensionSchema = "kv_s3_2f_ext"
+	rolePrivilegeExtensionTable  = "extension_member"
+	rolePrivilegePublicSchema    = "kv_s3_2f_public"
+	rolePrivilegePublicTable     = "public_reference"
 )
 
 // The fixture roles: one properly scoped role and one role per least-privilege
@@ -63,6 +70,10 @@ const (
 	// properly scoped one only by being able to EXECUTE a SECURITY DEFINER
 	// trigger function owned by a non-bootstrap role.
 	rolePrivilegeTrigger = "kv_s3_2e_trigger"
+	// Card S3.2f's extension-member fixture: the properly scoped role plus a
+	// direct SELECT on the extension-owned reference table PUBLIC may read. A
+	// direct grant is not a PUBLIC read, so this role must still be refused.
+	rolePrivilegeExtensionDirect = "kv_s3_2f_extdirect"
 )
 
 func rolePrivilegeRelations() []ScopedRelation {
@@ -105,6 +116,14 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		`CREATE SCHEMA IF NOT EXISTS ` + rolePrivilegeSchema,
 		`CREATE SCHEMA IF NOT EXISTS ` + rolePrivilegeOther,
 		`CREATE SCHEMA IF NOT EXISTS ` + rolePrivilegeExtension,
+		// Card S3.2f: the extension reference relation lives in its own
+		// non-system schema, exactly as PostGIS puts spatial_ref_sys in its own
+		// schema. The control relation is dropped by every seed: it is created
+		// only inside the one proof that expects it to fail, because a PUBLIC
+		// grant on it would widen every other fixture role.
+		`CREATE SCHEMA IF NOT EXISTS ` + rolePrivilegeExtensionSchema,
+		`DROP SCHEMA IF EXISTS ` + rolePrivilegePublicSchema + ` CASCADE`,
+		`CREATE TABLE IF NOT EXISTS ` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable + ` (id int PRIMARY KEY, label text)`,
 		`CREATE TABLE IF NOT EXISTS ` + rolePrivilegeSchema + `.contracts (id int PRIMARY KEY, status text, amount numeric, secret text)`,
 		`CREATE TABLE IF NOT EXISTS ` + rolePrivilegeSchema + `.customers (id int PRIMARY KEY, name text)`,
 		`CREATE TABLE IF NOT EXISTS ` + rolePrivilegeOther + `.rows (id int PRIMARY KEY)`,
@@ -143,6 +162,25 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		`ALTER FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() OWNER TO ` + rolePrivilegeDefinerOwner,
 		`REVOKE ALL ON FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() FROM PUBLIC`,
 		`REVOKE ALL ON SCHEMA ` + rolePrivilegeExtension + ` FROM PUBLIC`,
+		// Card S3.2f: the reference relation is owned by an installed extension
+		// (plpgsql here, as PostGIS owns spatial_ref_sys) and PUBLIC may read
+		// it. The guard makes the seed idempotent; the relation is never
+		// dropped, because PostgreSQL refuses to drop an object an extension
+		// requires and a cascade would take the extension with it.
+		`DO $$ BEGIN
+		    IF NOT EXISTS (
+		        SELECT 1
+		        FROM pg_catalog.pg_depend AS dependency
+		        WHERE dependency.classid = 'pg_catalog.pg_class'::regclass
+		          AND dependency.objid = '` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable + `'::regclass
+		          AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		          AND dependency.deptype = 'e')
+		    THEN
+		        EXECUTE 'ALTER EXTENSION plpgsql ADD TABLE ` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable + `';
+		    END IF;
+		END $$`,
+		`GRANT USAGE ON SCHEMA ` + rolePrivilegeExtensionSchema + ` TO PUBLIC`,
+		`GRANT SELECT ON ` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable + ` TO PUBLIC`,
 		`TRUNCATE ` + rolePrivilegeSchema + `.canary`,
 	}
 	for _, statement := range statements {
@@ -155,6 +193,7 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		rolePrivilegeWrite, rolePrivilegeElevated, rolePrivilegeMember, rolePrivilegeHelper,
 		rolePrivilegeDefiner, rolePrivilegeRemote, rolePrivilegeUnlimited, rolePrivilegeBigMem,
 		rolePrivilegeLob, rolePrivilegeUntrusted, rolePrivilegeCatalogDefin, rolePrivilegeTrigger,
+		rolePrivilegeExtensionDirect,
 	}
 	for _, role := range roles {
 		for _, statement := range []string{
@@ -183,6 +222,7 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		rolePrivilegeWrite, rolePrivilegeElevated, rolePrivilegeMember, rolePrivilegeHelper,
 		rolePrivilegeDefiner, rolePrivilegeRemote, rolePrivilegeLob, rolePrivilegeUntrusted,
 		rolePrivilegeCatalogDefin, rolePrivilegeBigMem, rolePrivilegeTrigger,
+		rolePrivilegeExtensionDirect,
 	} {
 		for _, statement := range []string{
 			`ALTER ROLE ` + role + ` SET temp_file_limit = '512MB'`,
@@ -216,6 +256,9 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		// Card S3.2e R4: the reviewed-language trigger function, owned by the
 		// non-bootstrap superuser, is the language branch of the exemption.
 		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() TO ` + rolePrivilegeTrigger,
+		// Card S3.2f: a direct grant on the extension reference relation is not
+		// a PUBLIC read, so this role must still fail the scope rule.
+		`GRANT SELECT ON ` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable + ` TO ` + rolePrivilegeExtensionDirect,
 	}
 	for _, statement := range extras {
 		if _, err := admin.Exec(ctx, statement); err != nil {
@@ -555,6 +598,112 @@ func TestQueryRoleTriggerFunctionsDoNotBlockTheProof(t *testing.T) {
 	// A non-trigger function in the untrusted language still fails the proof.
 	if err := verifyRole(t, ctx, admin, rolePrivilegeUntrusted); CodeOf(err) != CodeQueryRoleUntrustedLanguage {
 		t.Fatalf("non-trigger untrusted function = %v (%s), want %s", err, CodeOf(err), CodeQueryRoleUntrustedLanguage)
+	}
+}
+
+// TestQueryRoleExtensionOwnedRelationDoesNotBlockTheProof is card S3.2f. A
+// relation an installed extension owns and exposes to PUBLIC holds extension
+// metadata, not business data -- PostGIS's spatial_ref_sys and its reference
+// views -- so the scope rule ignores it and a real PostGIS database can pass
+// the proof. The exemption is exactly "an extension member readable only
+// through PUBLIC": the same relation granted directly to the query role is not
+// a PUBLIC read and still fails.
+func TestQueryRoleExtensionOwnedRelationDoesNotBlockTheProof(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	seedRolePrivilegeFixtures(t, ctx, admin)
+
+	// The positive control is worthless if the fixture is not genuinely an
+	// extension member, so read the catalogue fact first.
+	var member bool
+	if err := admin.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM pg_catalog.pg_depend AS dependency
+		    WHERE dependency.classid = 'pg_catalog.pg_class'::regclass
+		      AND dependency.objid = '`+rolePrivilegeExtensionSchema+`.`+rolePrivilegeExtensionTable+`'::regclass
+		      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		      AND dependency.deptype = 'e')`).Scan(&member); err != nil {
+		t.Fatalf("read the extension membership of the reference relation: %v", err)
+	}
+	if !member {
+		t.Fatalf("the reference relation is not an extension member; the fixture is wrong")
+	}
+
+	// PUBLIC reads the extension relation, so the properly scoped role can
+	// read it too and must still pass the proof.
+	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); err != nil {
+		t.Fatalf("extension-owned PUBLIC relation refused the scoped role: %v (%s)", err, CodeOf(err))
+	}
+	// A direct grant is not the PUBLIC grant and is never exempt.
+	if err := verifyRole(t, ctx, admin, rolePrivilegeExtensionDirect); CodeOf(err) != CodeQueryRoleExtraRelation {
+		t.Fatalf("direct grant on the extension relation = %v (%s), want %s", err, CodeOf(err), CodeQueryRoleExtraRelation)
+	}
+}
+
+// TestQueryRolePlainPublicRelationStillFailsTheProof is card S3.2f's control:
+// only an extension member PUBLIC reads is ignored. A table no extension owns
+// that PUBLIC can read is business data, so the scope rule still refuses it.
+func TestQueryRolePlainPublicRelationStillFailsTheProof(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	seedRolePrivilegeFixtures(t, ctx, admin)
+
+	// The control relation exists only for this proof and is removed again:
+	// a PUBLIC grant on a plain table would widen every fixture role and mask
+	// the single rule each one is meant to exercise. The shared seed also
+	// drops the schema, so a failed run cannot leak it into another test.
+	if _, err := admin.Exec(ctx, `CREATE SCHEMA `+rolePrivilegePublicSchema); err != nil {
+		t.Fatalf("create the control schema: %v", err)
+	}
+	defer func() {
+		if _, err := admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+rolePrivilegePublicSchema+` CASCADE`); err != nil {
+			t.Errorf("drop the control schema: %v", err)
+		}
+	}()
+	if _, err := admin.Exec(ctx, `CREATE TABLE `+rolePrivilegePublicSchema+`.`+rolePrivilegePublicTable+` (id int PRIMARY KEY)`); err != nil {
+		t.Fatalf("create the control relation: %v", err)
+	}
+	if _, err := admin.Exec(ctx, `GRANT SELECT ON `+rolePrivilegePublicSchema+`.`+rolePrivilegePublicTable+` TO PUBLIC`); err != nil {
+		t.Fatalf("grant PUBLIC the control relation: %v", err)
+	}
+
+	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); CodeOf(err) != CodeQueryRoleExtraRelation {
+		t.Fatalf("plain relation readable by PUBLIC = %v (%s), want %s", err, CodeOf(err), CodeQueryRoleExtraRelation)
+	}
+}
+
+// TestExecuteScopedRefusesExtensionOwnedRelation is card S3.2f's other half:
+// the least-privilege proof ignores the extension metadata relation, but the
+// plan walk still refuses agent SQL that names it, so it is never readable
+// through the tool.
+func TestExecuteScopedRefusesExtensionOwnedRelation(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	seedRolePrivilegeFixtures(t, ctx, admin)
+
+	config := rolePrivilegeConfig(t, ctx, admin, rolePrivilegeOK)
+	_, _, err = ExecuteScoped(ctx, config, ScopedParams{
+		SQLText: `SELECT count(*) FROM ` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable,
+		Schema:  ScopedSchema{Relations: rolePrivilegeRelations()},
+	})
+	if CodeOf(err) != CodeRelationNotInSource {
+		t.Fatalf("agent SQL naming the extension relation = %v (%s), want %s", err, CodeOf(err), CodeRelationNotInSource)
 	}
 }
 

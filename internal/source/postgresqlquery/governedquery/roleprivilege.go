@@ -14,7 +14,10 @@ package governedquery
 //   - no SELECT on an excluded column, and no table-level SELECT on a relation
 //     that has excluded columns;
 //   - no SELECT on a relation outside the registered tables in a non-system
-//     schema;
+//     schema, except a relation an installed extension owns that the role can
+//     read only through PUBLIC (card S3.2f: extension reference metadata such
+//     as PostGIS's spatial_ref_sys, which revoking would break for the
+//     customer's own users);
 //   - no INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER privilege anywhere;
 //   - not superuser, not BYPASSRLS, not REPLICATION, cannot create roles or
 //     databases;
@@ -59,7 +62,10 @@ const (
 	// relation that has excluded columns.
 	CodeQueryRoleExcludedColumn ErrorCode = "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE"
 	// CodeQueryRoleExtraRelation is the scope rule: the role can SELECT a
-	// relation outside the registered tables in a non-system schema.
+	// relation outside the registered tables in a non-system schema. A
+	// relation an installed extension owns and that the role can read only
+	// through PUBLIC is extension metadata, not business data, and is
+	// exempt (card S3.2f).
 	CodeQueryRoleExtraRelation ErrorCode = "SOURCE_QUERY_CREDENTIAL_EXTRA_RELATION"
 	// CodeQueryRoleWritePrivilege is the write rule: the role holds INSERT,
 	// UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER anywhere.
@@ -338,6 +344,18 @@ func verifyNoWritePrivilege(ctx context.Context, tx pgx.Tx) error {
 // verifyNoExtraRelation refuses the role if it can SELECT (table- or
 // column-level) any relation in a non-system schema that is not one of the
 // registered tables. Sequences count too: SELECT on a sequence can leak values.
+//
+// Card S3.2f adds one exemption: a relation an installed extension owns
+// (pg_depend deptype 'e' against pg_extension) that the role can read only
+// through PUBLIC. Real extensions expose reference metadata that way -- PostGIS
+// grants PUBLIC SELECT on spatial_ref_sys, geometry_columns, geography_columns
+// and the tiger geocoder tables -- and revoking it breaks the extension for the
+// customer's own users, while the objects hold extension metadata rather than
+// business data. "Only through PUBLIC" is proven from the catalogue: the
+// relation carries a PUBLIC SELECT grant and the role holds no other source of
+// SELECT (no table- or column-level grant to the role or to a role it belongs
+// to, and it is not the relation's owner). A relation granted to the role
+// directly, or through any role membership, therefore keeps the rule.
 func verifyNoExtraRelation(ctx context.Context, tx pgx.Tx, relations []ScopedRelation) error {
 	registered := make(map[string]struct{}, len(relations))
 	for _, relation := range relations {
@@ -348,7 +366,52 @@ func verifyNoExtraRelation(ctx context.Context, tx pgx.Tx, relations []ScopedRel
 		       has_table_privilege(current_user, class.oid, 'SELECT'),
 		       CASE WHEN class.relkind IN ('r', 'v', 'm', 'f', 'p')
 		            THEN has_any_column_privilege(current_user, class.oid, 'SELECT')
-		            ELSE false END
+		            ELSE false END,
+		       EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.pg_depend AS dependency
+		           WHERE dependency.classid = 'pg_catalog.pg_class'::regclass
+		             AND dependency.objid = class.oid
+		             AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		             AND dependency.deptype = 'e'
+		       ),
+		       (
+		           EXISTS (
+		               SELECT 1
+		               FROM pg_catalog.aclexplode(class.relacl) AS public_grant
+		               WHERE public_grant.privilege_type = 'SELECT'
+		                 AND public_grant.grantee = 0
+		           )
+		           OR EXISTS (
+		               SELECT 1
+		               FROM pg_catalog.pg_attribute AS public_attribute
+		               CROSS JOIN LATERAL pg_catalog.aclexplode(public_attribute.attacl) AS public_grant
+		               WHERE public_attribute.attrelid = class.oid
+		                 AND public_attribute.attnum > 0
+		                 AND NOT public_attribute.attisdropped
+		                 AND public_grant.privilege_type = 'SELECT'
+		                 AND public_grant.grantee = 0
+		           )
+		       )
+		       AND NOT EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.aclexplode(class.relacl) AS role_grant
+		           WHERE role_grant.privilege_type = 'SELECT'
+		             AND role_grant.grantee <> 0
+		             AND pg_catalog.pg_has_role(current_user, role_grant.grantee, 'USAGE')
+		       )
+		       AND NOT EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.pg_attribute AS role_attribute
+		           CROSS JOIN LATERAL pg_catalog.aclexplode(role_attribute.attacl) AS role_grant
+		           WHERE role_attribute.attrelid = class.oid
+		             AND role_attribute.attnum > 0
+		             AND NOT role_attribute.attisdropped
+		             AND role_grant.privilege_type = 'SELECT'
+		             AND role_grant.grantee <> 0
+		             AND pg_catalog.pg_has_role(current_user, role_grant.grantee, 'USAGE')
+		       )
+		       AND NOT pg_catalog.pg_has_role(current_user, class.relowner, 'USAGE')
 		FROM pg_catalog.pg_class AS class
 		JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
 		WHERE class.relkind IN ('r', 'v', 'm', 'f', 'p', 'S')
@@ -360,16 +423,23 @@ func verifyNoExtraRelation(ctx context.Context, tx pgx.Tx, relations []ScopedRel
 	defer rows.Close()
 	for rows.Next() {
 		var schema, table, kind string
-		var tableSelect, columnSelect bool
-		if scanErr := rows.Scan(&schema, &table, &kind, &tableSelect, &columnSelect); scanErr != nil {
+		var tableSelect, columnSelect, extensionMember, publicOnly bool
+		if scanErr := rows.Scan(&schema, &table, &kind, &tableSelect, &columnSelect, &extensionMember, &publicOnly); scanErr != nil {
 			return &Error{code: CodeQueryCredentialRejected, cause: scanErr}
 		}
 		if _, ok := registered[schema+"."+table]; ok {
 			continue
 		}
-		if tableSelect || columnSelect {
-			return &Error{code: CodeQueryRoleExtraRelation}
+		if !tableSelect && !columnSelect {
+			continue
 		}
+		if extensionMember && publicOnly {
+			// The relation holds extension metadata and every SELECT the role
+			// holds on it comes from PUBLIC, so the scope rule ignores it. The
+			// plan walk in scoped.go still refuses any agent SQL that names it.
+			continue
+		}
+		return &Error{code: CodeQueryRoleExtraRelation}
 	}
 	if err := rows.Err(); err != nil {
 		return &Error{code: CodeQueryCredentialRejected, cause: err}
