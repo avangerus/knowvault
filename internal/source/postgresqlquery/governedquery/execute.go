@@ -189,13 +189,17 @@ func staticPrecheck(sqlText string) error {
 	for _, forbidden := range []string{
 		"insert", "update", "delete", "drop", "alter", "create", "grant", "revoke",
 		"truncate", "copy", "call", "do ", "vacuum", "merge", "execute", "prepare",
-		"listen", "notify", "set ", "reset", "begin", "commit", "rollback", "savepoint",
+		"listen", "notify", "begin", "commit", "rollback", "savepoint",
 		"lock ",
 	} {
 		if containsWord(lower, strings.TrimSpace(forbidden)) {
 			return &Error{code: CodeInvalid}
 		}
 	}
+	// `set` and `reset` are deliberately absent from the word list: both are
+	// ordinary identifiers (a column or alias named set/reset is valid SQL) and
+	// a setting change is refused by the statement shape above plus the gate's
+	// set_config call rule below, never by a bare spelling.
 	// Card S3.2d: a deterministic, spelling-aware gate refuses a setting change
 	// and the cross-session, file, large-object and query-executing function
 	// families before EXPLAIN. The keyword scan above is only a first pass; this

@@ -27,6 +27,9 @@ package governedquery
 //     the built-in internal and c);
 //   - no EXECUTE on a SECURITY DEFINER function not owned by the bootstrap
 //     superuser, in any schema including pg_catalog and information_schema;
+//     trigger and event-trigger functions owned by the bootstrap superuser or
+//     written in a reviewed trigger language are exempt (card S3.2e), because
+//     they cannot be called from a SELECT;
 //   - no access to dblink, postgres_fdw or any other foreign-data or
 //     remote-execution extension that is installed.
 //
@@ -98,6 +101,16 @@ const (
 	// roleWorkMemCeilingKB is the card's 64 MB per-operation memory bound.
 	roleWorkMemCeilingKB = 64 << 10
 )
+
+// triggerExemptLanguages are the procedural languages whose trigger functions
+// card S3.2e exempts from the SECURITY DEFINER and untrusted-language rules,
+// together with ownership by the bootstrap superuser. A function whose return
+// type is trigger or event_trigger can only be invoked by the trigger
+// machinery, never from a SELECT, so it cannot be the escape hatch those two
+// rules exist to close. The list is the trigger-capable language families the
+// product reviewed (plpgsql, the PL/Python and PL/Perl variants and the Tcl
+// variants); anything else, and any non-trigger function, keeps the rule.
+var triggerExemptLanguages = []string{"plpgsql", "plpython3u", "plperl", "plperlu", "pltcl", "pltclu"}
 
 // remoteExecutionExtensions is the closed deny-list of installed extensions
 // that grant remote or out-of-process execution. It is deliberately a list of
@@ -252,7 +265,10 @@ func verifyNoLargeObjectRead(ctx context.Context, tx pgx.Tx) error {
 // procedural language is untrusted (lanpltrusted = false). The two built-in
 // unsafe languages internal and c are excluded: their functions are compiled
 // into PostgreSQL itself and cannot be replaced by a database user, while
-// plpython3u, plperlu and every other extension language can.
+// plpython3u, plperlu and every other extension language can. Card S3.2e adds
+// one exemption: a trigger or event-trigger function owned by the bootstrap
+// superuser or written in a reviewed trigger language cannot be called from a
+// SELECT, so it cannot run the untrusted body as a query.
 func verifyNoUntrustedLanguage(ctx context.Context, tx pgx.Tx) error {
 	var found bool
 	err := tx.QueryRow(ctx, `
@@ -263,7 +279,11 @@ func verifyNoUntrustedLanguage(ctx context.Context, tx pgx.Tx) error {
 		    WHERE NOT language.lanpltrusted
 		      AND language.lanname NOT IN ('internal', 'c')
 		      AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
-		)`).Scan(&found)
+		      AND NOT (
+		          procedure.prorettype IN ('pg_catalog.trigger'::regtype, 'pg_catalog.event_trigger'::regtype)
+		          AND (procedure.proowner = $1 OR language.lanname = ANY($2))
+		      )
+		)`, bootstrapSuperuserOID, triggerExemptLanguages).Scan(&found)
 	if err != nil {
 		return &Error{code: CodeQueryCredentialRejected, cause: err}
 	}
@@ -365,16 +385,24 @@ func verifyNoExtraRelation(ctx context.Context, tx pgx.Tx, relations []ScopedRel
 // bootstrap superuser owns the system catalogs' own SECURITY DEFINER helpers
 // (and every function an extension created), so those trusted built-ins are the
 // one exemption; a function any other role owns is refused wherever it lives.
+// Card S3.2e adds the trigger exemption: a trigger or event-trigger function
+// owned by the bootstrap superuser or written in a reviewed trigger language
+// cannot be called from a SELECT, so it is not an escape hatch for this path.
 func verifyNoSecurityDefiner(ctx context.Context, tx pgx.Tx) error {
 	var found bool
 	err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		    SELECT 1
 		    FROM pg_catalog.pg_proc AS procedure
+		    JOIN pg_catalog.pg_language AS language ON language.oid = procedure.prolang
 		    WHERE procedure.prosecdef
 		      AND procedure.proowner <> $1
 		      AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
-		)`, bootstrapSuperuserOID).Scan(&found)
+		      AND NOT (
+		          procedure.prorettype IN ('pg_catalog.trigger'::regtype, 'pg_catalog.event_trigger'::regtype)
+		          AND (procedure.proowner = $1 OR language.lanname = ANY($2))
+		      )
+		)`, bootstrapSuperuserOID, triggerExemptLanguages).Scan(&found)
 	if err != nil {
 		return &Error{code: CodeQueryCredentialRejected, cause: err}
 	}

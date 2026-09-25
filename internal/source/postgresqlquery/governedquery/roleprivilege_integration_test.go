@@ -59,6 +59,10 @@ const (
 	rolePrivilegeCatalogDefin  = "kv_s3_2d_catdefiner"
 	rolePrivilegeDefinerOwner  = "kv_s3_2d_defowner"
 	rolePrivilegeUntrustedLang = "kv_s3_2d_untrusted_lang"
+	// Card S3.2e's trigger-function rule fixture: a role that differs from the
+	// properly scoped one only by being able to EXECUTE a SECURITY DEFINER
+	// trigger function owned by a non-bootstrap role.
+	rolePrivilegeTrigger = "kv_s3_2e_trigger"
 )
 
 func rolePrivilegeRelations() []ScopedRelation {
@@ -125,6 +129,19 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		`CREATE PROCEDURAL LANGUAGE ` + rolePrivilegeUntrustedLang + ` HANDLER plpgsql_call_handler`,
 		`CREATE FUNCTION ` + rolePrivilegeSchema + `.untrusted_fn() RETURNS int LANGUAGE ` + rolePrivilegeUntrustedLang + ` AS $$ BEGIN RETURN 1; END $$`,
 		`REVOKE ALL ON FUNCTION ` + rolePrivilegeSchema + `.untrusted_fn() FROM PUBLIC`,
+		// Card S3.2e R4: SECURITY DEFINER trigger functions cannot be called
+		// from a SELECT. trigger_untrusted exercises the owner exemption (it is
+		// created by the bootstrap superuser, in an untrusted language);
+		// trigger_definer exercises the language exemption (a non-bootstrap
+		// owner, but plpgsql); trigger_event proves the event_trigger type is
+		// exempt too.
+		`CREATE OR REPLACE FUNCTION ` + rolePrivilegeSchema + `.trigger_untrusted() RETURNS trigger LANGUAGE ` + rolePrivilegeUntrustedLang + ` SECURITY DEFINER AS $$ BEGIN RETURN NEW; END $$`,
+		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeSchema + `.trigger_untrusted() TO PUBLIC`,
+		`CREATE OR REPLACE FUNCTION ` + rolePrivilegeSchema + `.trigger_event() RETURNS event_trigger LANGUAGE ` + rolePrivilegeUntrustedLang + ` SECURITY DEFINER AS $$ BEGIN END $$`,
+		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeSchema + `.trigger_event() TO PUBLIC`,
+		`CREATE OR REPLACE FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$ BEGIN RETURN NEW; END $$`,
+		`ALTER FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() OWNER TO ` + rolePrivilegeDefinerOwner,
+		`REVOKE ALL ON FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() FROM PUBLIC`,
 		`REVOKE ALL ON SCHEMA ` + rolePrivilegeExtension + ` FROM PUBLIC`,
 		`TRUNCATE ` + rolePrivilegeSchema + `.canary`,
 	}
@@ -137,7 +154,7 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		rolePrivilegeOK, rolePrivilegeMissing, rolePrivilegeExcluded, rolePrivilegeExtra,
 		rolePrivilegeWrite, rolePrivilegeElevated, rolePrivilegeMember, rolePrivilegeHelper,
 		rolePrivilegeDefiner, rolePrivilegeRemote, rolePrivilegeUnlimited, rolePrivilegeBigMem,
-		rolePrivilegeLob, rolePrivilegeUntrusted, rolePrivilegeCatalogDefin,
+		rolePrivilegeLob, rolePrivilegeUntrusted, rolePrivilegeCatalogDefin, rolePrivilegeTrigger,
 	}
 	for _, role := range roles {
 		for _, statement := range []string{
@@ -165,7 +182,7 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		rolePrivilegeOK, rolePrivilegeMissing, rolePrivilegeExcluded, rolePrivilegeExtra,
 		rolePrivilegeWrite, rolePrivilegeElevated, rolePrivilegeMember, rolePrivilegeHelper,
 		rolePrivilegeDefiner, rolePrivilegeRemote, rolePrivilegeLob, rolePrivilegeUntrusted,
-		rolePrivilegeCatalogDefin, rolePrivilegeBigMem,
+		rolePrivilegeCatalogDefin, rolePrivilegeBigMem, rolePrivilegeTrigger,
 	} {
 		for _, statement := range []string{
 			`ALTER ROLE ` + role + ` SET temp_file_limit = '512MB'`,
@@ -196,6 +213,9 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeSchema + `.mark() TO ` + rolePrivilegeOK,
 		`GRANT EXECUTE ON FUNCTION pg_catalog.kv_s3_2d_catalog_definer() TO ` + rolePrivilegeCatalogDefin,
 		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeSchema + `.untrusted_fn() TO ` + rolePrivilegeUntrusted,
+		// Card S3.2e R4: the reviewed-language trigger function, owned by the
+		// non-bootstrap superuser, is the language branch of the exemption.
+		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeSchema + `.trigger_definer() TO ` + rolePrivilegeTrigger,
 	}
 	for _, statement := range extras {
 		if _, err := admin.Exec(ctx, statement); err != nil {
@@ -484,6 +504,57 @@ func TestQueryRoleSecurityDefinerOwnershipOnRealPostgreSQL(t *testing.T) {
 	// must still pass, so the exemption is not a blanket admission.
 	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); err != nil {
 		t.Fatalf("the bootstrap-owned definer exemption refused the scoped role: %v (%s)", err, CodeOf(err))
+	}
+}
+
+// TestQueryRoleTriggerFunctionsDoNotBlockTheProof is card S3.2e R4 on real
+// PostgreSQL. A SECURITY DEFINER trigger function in an untrusted language and
+// owned by the bootstrap superuser, executable by PUBLIC, must not fail the
+// proof; the same holds for a non-bootstrap-owned trigger function written in a
+// reviewed trigger language. A SECURITY DEFINER non-trigger function still
+// fails it, so the exemption is exactly the trigger return type.
+func TestQueryRoleTriggerFunctionsDoNotBlockTheProof(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	seedRolePrivilegeFixtures(t, ctx, admin)
+
+	// The owner branch is only proven when the fixture is genuinely owned by the
+	// bootstrap superuser.
+	var ownerOID int
+	if err := admin.QueryRow(ctx, `
+		SELECT procedure.proowner::int
+		FROM pg_catalog.pg_proc AS procedure
+		JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+		WHERE namespace.nspname = $1 AND procedure.proname = 'trigger_untrusted'`,
+		rolePrivilegeSchema).Scan(&ownerOID); err != nil {
+		t.Fatalf("read the trigger fixture owner: %v", err)
+	}
+	if ownerOID != bootstrapSuperuserOID {
+		t.Fatalf("bootstrap-owned trigger fixture owner = %d, want %d", ownerOID, bootstrapSuperuserOID)
+	}
+
+	// The scoped role can EXECUTE the bootstrap-owned SECURITY DEFINER trigger
+	// functions through PUBLIC and must pass.
+	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); err != nil {
+		t.Fatalf("the bootstrap-owned trigger function refused the scoped role: %v (%s)", err, CodeOf(err))
+	}
+	// The scoped role can EXECUTE the plpgsql trigger owned by the non-bootstrap
+	// superuser and must pass too.
+	if err := verifyRole(t, ctx, admin, rolePrivilegeTrigger); err != nil {
+		t.Fatalf("the reviewed-language trigger function refused the scoped role: %v (%s)", err, CodeOf(err))
+	}
+	// A SECURITY DEFINER non-trigger function still fails the proof.
+	if err := verifyRole(t, ctx, admin, rolePrivilegeDefiner); CodeOf(err) != CodeQueryRoleSecurityDefiner {
+		t.Fatalf("non-trigger definer = %v (%s), want %s", err, CodeOf(err), CodeQueryRoleSecurityDefiner)
+	}
+	// A non-trigger function in the untrusted language still fails the proof.
+	if err := verifyRole(t, ctx, admin, rolePrivilegeUntrusted); CodeOf(err) != CodeQueryRoleUntrustedLanguage {
+		t.Fatalf("non-trigger untrusted function = %v (%s), want %s", err, CodeOf(err), CodeQueryRoleUntrustedLanguage)
 	}
 }
 
