@@ -55,10 +55,12 @@ type modelContextSourceBody struct {
 }
 
 type modelContextDocumentBody struct {
-	Description *string                  `json:"description"`
-	Rules       []modelContextRuleBody   `json:"rules"`
-	Glossary    []modelContextTermBody   `json:"glossary"`
-	Sources     []modelContextSourceBody `json:"sources"`
+	Description  *string                  `json:"description"`
+	Instructions *string                  `json:"instructions"`
+	GlossaryText *string                  `json:"glossary_text"`
+	Rules        []modelContextRuleBody   `json:"rules"`
+	Glossary     []modelContextTermBody   `json:"glossary"`
+	Sources      []modelContextSourceBody `json:"sources"`
 }
 
 type modelContextSaveBody struct {
@@ -100,7 +102,11 @@ func stringValueOrEmpty(value *string) string {
 // DataLocation's identity fields) rather than guessing a value for them.
 func (body modelContextDocumentBody) toDocument() (workspacecontext.Document, []string) {
 	var missing []string
-	document := workspacecontext.Document{Description: stringValueOrEmpty(body.Description)}
+	document := workspacecontext.Document{
+		Description:  stringValueOrEmpty(body.Description),
+		Instructions: stringValueOrEmpty(body.Instructions),
+		GlossaryText: stringValueOrEmpty(body.GlossaryText),
+	}
 
 	document.Rules = make([]workspacecontext.Rule, len(body.Rules))
 	for index, rule := range body.Rules {
@@ -228,7 +234,14 @@ func modelContextDocumentResponse(document workspacecontext.Document) map[string
 		sources[index] = modelContextSourceResponse(source)
 	}
 	return map[string]any{
-		"description": document.Description, "rules": rules, "glossary": glossary, "sources": sources,
+		"description": document.Description,
+		// Card W-2: the three plain-text fields the screen edits. Instructions
+		// and glossary_text are projected as the effective text, so a workspace
+		// whose structured rules/terms predate this card shows them as readable
+		// text without exposing their ids or data-location blocks.
+		"instructions":  workspacecontext.EffectiveInstructions(document),
+		"glossary_text": workspacecontext.EffectiveGlossaryText(document),
+		"rules":         rules, "glossary": glossary, "sources": sources,
 	}
 }
 
