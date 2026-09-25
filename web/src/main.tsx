@@ -4516,6 +4516,27 @@ export function relySourceSummary(sources: SourceStatus[]): RelySourceSummary[] 
   }));
 }
 
+/** The opened Sources control: the workspace's sources with their freshness,
+ * and the way to manage them. This is exactly the content the chat screen's one
+ * control shows when expanded; it is exported so the static render probe can
+ * check the opened control without a browser. */
+export function RelySourceList({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
+  const enabled = relySourceSummary(sources);
+  return (
+    <div className="rely-list">
+      <h3>Workspace sources — {enabled.length}</h3>
+      {enabled.map((source) => (
+        <div className="rely-row" key={source.source_scope_id}>
+          <span aria-hidden="true" className={`dot dot-${source.variant}`} />
+          <span className="rely-name">{source.label}</span>
+          <small>{source.headline}</small>
+        </div>
+      ))}
+      {onManageSources && <button className="text-button rely-manage" onClick={onManageSources} type="button">Manage sources</button>}
+    </div>
+  );
+}
+
 function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -4547,17 +4568,10 @@ function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onMana
   return (
     <div className="rely" ref={containerRef}>
       {open && (
-        <div className="rely-list">
-          <h3>Workspace sources — {enabled.length}</h3>
-          {enabled.map((source) => (
-            <div className="rely-row" key={source.source_scope_id}>
-              <span aria-hidden="true" className={`dot dot-${source.variant}`} />
-              <span className="rely-name">{source.label}</span>
-              <small>{source.headline}</small>
-            </div>
-          ))}
-          {onManageSources && <button className="text-button rely-manage" onClick={() => { setOpen(false); onManageSources(); }} type="button">Manage sources</button>}
-        </div>
+        <RelySourceList
+          onManageSources={onManageSources ? () => { setOpen(false); onManageSources(); } : undefined}
+          sources={sources}
+        />
       )}
       <button aria-expanded={open} className="rely-summary" onClick={() => setOpen((value) => !value)} type="button">
         <IconSources /><span>Sources: <b>{enabled.length}</b>{attention > 0 && <span className="rely-warn"> · need attention: {attention}</span>}</span>
@@ -5164,6 +5178,11 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
       <header className="ask-page-header">
         <h1>Ask</h1>
         <div className="ask-page-actions">
+          {/* Card W-5: this is the chat screen's one control for the workspace's
+              sources — the count, how many need attention, and, opened, the
+              per-source list with the way to manage them. The question composer
+              used to render a second copy of the same summary, so the screen
+              showed two controls for one fact; only this one remains. */}
           {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
         </div>
       </header>
@@ -6418,7 +6437,6 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
 
         <div className="foot">
-          <RelyBar sources={allSources} />
           <form className="question-composer" onSubmit={submitQuestion}>
             <label className="sr-only" htmlFor="ask-question">Question</label>
             <textarea

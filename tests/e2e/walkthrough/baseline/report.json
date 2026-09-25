@@ -2,10 +2,10 @@
   "schema_version": "walkthrough-report-v2",
   "command": "bash tests/e2e/walkthrough/run-walkthrough.sh",
   "scenario": "local",
-  "base_url": "https://127.0.0.1:55471",
-  "started_at": "2026-09-25T15:52:55.281Z",
-  "finished_at": "2026-09-25T15:52:58.861Z",
-  "total_seconds": 3.58,
+  "base_url": "https://127.0.0.1:55476",
+  "started_at": "2026-09-25T18:26:45.280Z",
+  "finished_at": "2026-09-25T18:26:48.065Z",
+  "total_seconds": 2.785,
   "passed": true,
   "step_count": 5,
   "failed_step_count": 0,
@@ -21,8 +21,8 @@
     {
       "name": "sign in as the test user",
       "status": "passed",
-      "started_at": "2026-09-25T15:52:55.282Z",
-      "seconds": 0.2508178,
+      "started_at": "2026-09-25T18:26:45.280Z",
+      "seconds": 0.2105607,
       "screenshot": "screenshots/01-sign-in-as-the-test-user.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -31,7 +31,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req__PfYDP-yF48qHyQBDIjPKg\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req__a-buSk7W7OerY1OYHvbJA\"}}"
         }
       ],
       "consoleErrors": [
@@ -46,8 +46,8 @@
     {
       "name": "open Sources and confirm the synthetic database tables",
       "status": "passed",
-      "started_at": "2026-09-25T15:52:55.619Z",
-      "seconds": 1.0903092,
+      "started_at": "2026-09-25T18:26:45.522Z",
+      "seconds": 1.0488335,
       "screenshot": "screenshots/02-open-sources-and-confirm-the-synthetic-database-tables.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -74,8 +74,8 @@
     {
       "name": "open the model settings and save a change",
       "status": "passed",
-      "started_at": "2026-09-25T15:52:56.771Z",
-      "seconds": 0.1373313,
+      "started_at": "2026-09-25T18:26:46.610Z",
+      "seconds": 0.2308364,
       "screenshot": "screenshots/03-open-the-model-settings-and-save-a-change.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -94,8 +94,8 @@
     {
       "name": "ask the question in the chat and get an answer",
       "status": "passed",
-      "started_at": "2026-09-25T15:52:56.971Z",
-      "seconds": 1.5081413,
+      "started_at": "2026-09-25T18:26:46.875Z",
+      "seconds": 0.9552842,
       "screenshot": "screenshots/04-ask-the-question-in-the-chat-and-get-an-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -119,8 +119,8 @@
     {
       "name": "open the evidence of that answer",
       "status": "passed",
-      "started_at": "2026-09-25T15:52:58.540Z",
-      "seconds": 0.2290107,
+      "started_at": "2026-09-25T18:26:47.862Z",
+      "seconds": 0.1183831,
       "screenshot": "screenshots/05-open-the-evidence-of-that-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],

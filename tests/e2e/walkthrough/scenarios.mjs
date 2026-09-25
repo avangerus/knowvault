@@ -176,6 +176,16 @@ export async function runLocalScenario(page, walk, options = {}) {
     // control: a footnote mark woven into the text, or a basis row when the
     // server returned a citation the answer text did not reference.
     await turn.locator("button.fn, button.basis").first().waitFor({ state: "visible", timeout: 30_000 });
+    // Card W-5: the chat screen carries exactly one control for the
+    // workspace's sources. Every source control belongs to the Ask surface,
+    // whose header control and the composer control used to render the same
+    // summary twice; the screenshot of this step shows the one that remains.
+    const sourceControls = page.locator(".ask-surface .rely-summary");
+    const sourceControlCount = await sourceControls.count();
+    if (sourceControlCount !== 1) {
+      throw new Error(`the chat screen shows ${sourceControlCount} sources controls, want exactly 1`);
+    }
+    await sourceControls.first().waitFor({ state: "visible", timeout: 30_000 });
   });
 
   await walk.step("open the evidence of that answer", async () => {

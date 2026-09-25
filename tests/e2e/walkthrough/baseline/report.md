@@ -4,10 +4,10 @@ A robot walked the real web interface of the local synthetic stand.
 
 - Command: `bash tests/e2e/walkthrough/run-walkthrough.sh`
 - Scenario: local
-- Stand: https://127.0.0.1:55471
-- Started: 2026-09-25T15:52:55.281Z
-- Finished: 2026-09-25T15:52:58.861Z
-- Total: 3.58 s
+- Stand: https://127.0.0.1:55476
+- Started: 2026-09-25T18:26:45.280Z
+- Finished: 2026-09-25T18:26:48.065Z
+- Total: 2.785 s
 - Result: **PASS** (5 steps, 0 failed)
 
 ## Answers (1)
@@ -18,7 +18,7 @@ A robot walked the real web interface of the local synthetic stand.
 
 ## Steps
 
-### 1. sign in as the test user — passed (0.25 s)
+### 1. sign in as the test user — passed (0.21 s)
 
 ![sign in as the test user](screenshots/01-sign-in-as-the-test-user.png)
 
@@ -38,7 +38,7 @@ HTTP responses 400-499 (1):
 
 - GET /api/v1/workspaces -> 401 (UNAUTHENTICATED)
 
-### 2. open Sources and confirm the synthetic database tables — passed (1.09 s)
+### 2. open Sources and confirm the synthetic database tables — passed (1.05 s)
 
 ![open Sources and confirm the synthetic database tables](screenshots/02-open-sources-and-confirm-the-synthetic-database-tables.png)
 
@@ -56,7 +56,7 @@ Browser console errors (0):
 
 - none
 
-### 3. open the model settings and save a change — passed (0.14 s)
+### 3. open the model settings and save a change — passed (0.23 s)
 
 ![open the model settings and save a change](screenshots/03-open-the-model-settings-and-save-a-change.png)
 
@@ -72,7 +72,7 @@ Browser console errors (0):
 
 - none
 
-### 4. ask the question in the chat and get an answer — passed (1.51 s)
+### 4. ask the question in the chat and get an answer — passed (0.96 s)
 
 ![ask the question in the chat and get an answer](screenshots/04-ask-the-question-in-the-chat-and-get-an-answer.png)
 
@@ -94,7 +94,7 @@ Browser console errors (0):
 
 - none
 
-### 5. open the evidence of that answer — passed (0.23 s)
+### 5. open the evidence of that answer — passed (0.12 s)
 
 ![open the evidence of that answer](screenshots/05-open-the-evidence-of-that-answer.png)
 
