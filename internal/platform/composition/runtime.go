@@ -348,6 +348,28 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}
+	// 000121: before the listener can exist, finish every Question Run whose
+	// answering process died with the previous incarnation. The tenant-wide
+	// scan is database-gated and compare-and-set, so a run a live replica is
+	// still answering (or a slow model call) is never touched. A failure here
+	// is a startup failure: serving a conversation with an unfinishable
+	// spinner is the exact defect this stage prevents.
+	startupReconcileRequest, err := newStartupRequestID()
+	if err != nil {
+		return fail(StartupStageQuestionReconciliation)
+	}
+	if _, err := questions.ReconcileInterruptedRuns(ctx, database.AccessContext{
+		OrganizationID: string(config.OrganizationID()), PrincipalID: questionReconcilePrincipal,
+		RequestID: startupReconcileRequest,
+	}); err != nil {
+		return fail(StartupStageQuestionReconciliation)
+	}
+	// The same sweep keeps running for the lifetime of the composed runtime so
+	// a run that crashed too recently for the startup grace window still
+	// converges. It is retired by the runtime's own cleanup stack.
+	if stopReconcile := startQuestionReconcileLoop(questions, string(config.OrganizationID())); stopReconcile != nil {
+		acquired.push(stopReconcile)
+	}
 	// R1.1 (micro-card C): the trusted analytic DatasetProfile catalog is
 	// wired only behind its own explicit administrator mount
 	// (analyticcatalog.LoadMounted), exactly like the generation mount

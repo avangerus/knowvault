@@ -545,6 +545,13 @@ type Service struct {
 	now            func() time.Time
 	newID          func(string) (string, error)
 
+	// runOwner is this process instance's identity on every Question Run it
+	// answers (000121). It is minted once per Service, so several replicas
+	// sharing one database can tell each other's live runs apart, and it is
+	// paired with a heartbeat the run keeps refreshing until it is terminal
+	// (interruption.go). It is never caller-supplied.
+	runOwner string
+
 	// lookupIdempotencyFn and previousTurnQuestionFn are the two governed read
 	// steps of Create. They are nil in production (where the real methods run)
 	// and exist so the protected-independent unit tests can drive Create itself
@@ -845,8 +852,16 @@ func NewWithRetrieval(db *database.Store, auditStore *audit.Store, codec *artifa
 	if err != nil {
 		return nil, &Error{code: CodeUnavailable, cause: err}
 	}
+	// The per-process owner identity every run this Service answers records.
+	// Its only use is liveness (000121): a run whose heartbeat stopped proves
+	// its owner is gone, and a live owner's run is never reconciled.
+	runOwner, err := ids.New("proc")
+	if err != nil {
+		return nil, &Error{code: CodeUnavailable, cause: err}
+	}
 	return &Service{db: db, audit: auditStore, admission: auditStore, codec: codec, evidence: viewer, retrieval: executor,
-		retrievalStore: retrievalStore, planner: planner.New(), artifacts: repository, now: time.Now, newID: ids.New}, nil
+		retrievalStore: retrievalStore, planner: planner.New(), artifacts: repository, now: time.Now, newID: ids.New,
+		runOwner: runOwner}, nil
 }
 
 // Create starts and completes one synchronous question run. The initial row
@@ -933,6 +948,13 @@ func (service *Service) Create(ctx context.Context, access database.AccessContex
 	} else if err := service.emitAdmission(runCtx, access, request.WorkspaceID, runID); err != nil {
 		return Run{}, &Error{code: CodeUnavailable, cause: err}
 	}
+	// 000121: from here on this process owns the run it is about to write (and
+	// any run a delegated path writes), and it proves that by refreshing the
+	// run's heartbeat until this Create returns. A crash stops the heartbeat,
+	// which is exactly the proof the startup/periodic reconciler needs to
+	// finish the run; a slow model call keeps it beating and is never touched.
+	stopHeartbeat := service.startRunHeartbeat(runCtx, access, runID, request.WorkspaceID)
+	defer stopHeartbeat()
 	if requestedMode == AnswerModeToolLoop {
 		return service.createToolLoopRun(runCtx, access, request, questionText, runID, conversationID, conversationTurnID, selectedGeneration)
 	}
@@ -2567,12 +2589,13 @@ func (service *Service) start(ctx context.Context, access database.AccessContext
 				conversation_id, conversation_turn_id,
 				question_hash, answer_mode, verification_method, result_status,
 				corpus_status, workspace_scope_hash, policy_revision,
-				planner_status, planner_operation, planner_confidence, planner_plan_hash, planner_clarification
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'RUNNING','COMPLETE',$11,$12,$13,$14,$15,$16,$17)
+				planner_status, planner_operation, planner_confidence, planner_plan_hash, planner_clarification,
+				owner_id, owner_heartbeat_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'RUNNING','COMPLETE',$11,$12,$13,$14,$15,$16,$17,$18,clock_timestamp())
 			RETURNING started_at
 		`, access.OrganizationID, runID, request.WorkspaceID, workspaceRevision, access.PrincipalID,
 			conversationID, conversationTurnID, requestHash, mode, verify, scopeHash, policyRevisionID, planned.Status,
-			planned.Operation, planned.Confidence, planned.PlanHash, planned.Clarification).Scan(&startedAt); err != nil {
+			planned.Operation, planned.Confidence, planned.PlanHash, planned.Clarification, service.runOwner).Scan(&startedAt); err != nil {
 			return err
 		}
 		if _, err := service.retrievalStore.CaptureAccessProvenance(txCtx, tx, access, runID, startedAt); err != nil {

@@ -74,9 +74,15 @@ const (
 	// depends on are already mounted, unlike the optional LoadMounted-gated
 	// capabilities above it.
 	StartupStageWorkspaceContext StartupStage = "WORKSPACE_CONTEXT"
-	StartupStageWebUI            StartupStage = "WEB_UI"
-	StartupStageHTTPDispatcher      StartupStage = "HTTP_DISPATCHER"
-	StartupStageHTTPServer          StartupStage = "HTTP_SERVER"
+	// StartupStageQuestionReconciliation is 000121: the pre-listener sweep
+	// that finishes Question Runs whose answering process died with the
+	// previous incarnation. It is mandatory because a run left RUNNING is a
+	// user-visible spinner that never ends; a transient database failure here
+	// fails startup rather than serving a conversation that cannot converge.
+	StartupStageQuestionReconciliation StartupStage = "QUESTION_RECONCILIATION"
+	StartupStageWebUI                  StartupStage = "WEB_UI"
+	StartupStageHTTPDispatcher         StartupStage = "HTTP_DISPATCHER"
+	StartupStageHTTPServer             StartupStage = "HTTP_SERVER"
 )
 
 // StartupStageOf returns a stage only for a composition startup failure and
@@ -131,6 +137,7 @@ func knownStartupStage(stage StartupStage) bool {
 		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
 		StartupStageWorkspaceContext,
+		StartupStageQuestionReconciliation,
 		StartupStageWebUI,
 		StartupStageHTTPDispatcher,
 		StartupStageHTTPServer:

@@ -3474,10 +3474,15 @@ function SignedOutView() {
 }
 
 // Human-readable copy for a non-COMPLETED question run, without raw status codes.
-function questionStatusMessage(run: QuestionRun): string {
+export function questionStatusMessage(run: QuestionRun): string {
   if (run.tool_loop?.stop_reason === "CLARIFICATION") return run.answer ?? "Please clarify your question.";
   if (run.tool_loop && run.status === "INSUFFICIENT_EVIDENCE") return run.answer ?? NO_DATA_IN_WORKSPACE_LABEL;
   if (run.planning_status === "CLARIFICATION_REQUIRED" && run.clarification) return run.clarification;
+  // 000121: the server finishes a run whose answering process died as
+  // INTERRUPTED. It has no answer at all, so the turn must say so and invite
+  // a retry instead of rendering the generic "not enough evidence" copy (or,
+  // worse, a partial answer as if it were complete).
+  if (run.status === "INTERRUPTED") return "The answer was interrupted before it finished. Ask again to get a complete answer.";
   if (run.status === "COMPLETED") return "";
   return "There is not enough evidence to answer. Try rephrasing your question or check the source status in Sources.";
 }

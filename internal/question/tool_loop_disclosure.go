@@ -20,7 +20,12 @@ func toolLoopDisclosure(ctx context.Context, tx toolLoopDisclosureScanner, acces
 		return nil
 	}
 	if run.ToolLoop == nil {
-		if run.ResultStatus == "RUNNING" || run.ResultStatus == "FAILED" || run.ResultStatus == "CANCELLED" {
+		// A run that never published a trace is disclosed only while it is
+		// still in flight or after a terminal state that is allowed to have no
+		// trace. INTERRUPTED (000121) is one of those: the answering process
+		// died before it could publish one, so the turn must render its
+		// terminal "interrupted, ask again" state rather than disappear.
+		if run.ResultStatus == "RUNNING" || run.ResultStatus == "FAILED" || run.ResultStatus == "CANCELLED" || run.ResultStatus == "INTERRUPTED" {
 			return nil
 		}
 		return &Error{code: CodeNotFound}

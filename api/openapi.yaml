@@ -5978,7 +5978,11 @@ components:
           default: UNCONFIRMED
         status:
           type: string
-          enum: [RUNNING, COMPLETED, INSUFFICIENT_EVIDENCE, FAILED, CANCELLED]
+          description: >-
+            INTERRUPTED is the terminal state of a run whose answering server process
+            stopped before it finished (for example a restart). It carries no answer and
+            the client should invite the user to ask again.
+          enum: [RUNNING, COMPLETED, INSUFFICIENT_EVIDENCE, FAILED, CANCELLED, INTERRUPTED]
         corpus_status:
           type: string
           enum: [COMPLETE, PARTIAL]

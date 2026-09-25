@@ -105,7 +105,7 @@ func TestQuestionRESTAndMCPDelegateEquivalentAuthority(t *testing.T) {
 }
 
 func TestQuestionRESTAndMCPTerminalSemantics(t *testing.T) {
-	for _, status := range []string{"COMPLETED", "INSUFFICIENT_EVIDENCE", "FAILED", "CANCELLED"} {
+	for _, status := range []string{"COMPLETED", "INSUFFICIENT_EVIDENCE", "FAILED", "CANCELLED", "INTERRUPTED"} {
 		t.Run(status, func(t *testing.T) {
 			harness, service := newParityHarness(t)
 			service.run.ResultStatus = status
