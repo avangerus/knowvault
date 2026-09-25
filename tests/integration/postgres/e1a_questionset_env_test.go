@@ -54,6 +54,20 @@ type e1aEnvOptions struct {
 	// ContractChecksum computes the synthetic contract table's row count and
 	// checksum, or nil when no real source database is attached.
 	ContractChecksum func(ctx context.Context) (string, error)
+	// Origin overrides the tenant security origin the HTTP authenticator
+	// enforces. Empty keeps kvA01Origin, so the question set is unchanged;
+	// card U-1 passes the origin of its local stand.
+	Origin string
+	// LeaveSourcesUnconfirmed binds every PostgreSQL source scope to the
+	// workspace, activates its projection, and stops before minting its
+	// managed-source confirmation, so the workspace's Sources surface offers
+	// the table confirmation action (card U-1). The document folder keeps its
+	// normal confirmed, activated lifecycle.
+	LeaveSourcesUnconfirmed bool
+	// WireHTTPQuestions mounts the question service on the workspace handler so
+	// the HTTP question routes the web interface uses are served (card U-1).
+	// The question set calls the service directly and leaves this off.
+	WireHTTPQuestions bool
 }
 
 // e1aEnvironment is the composed proving environment.
@@ -155,6 +169,17 @@ func buildE1aEnvironment(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		connectionIDs[source.ID] = registered.ConnectionID
 		sourceFixture := seedRegistrationWorkspaceBinding(t, ctx, admin, registered.SourceScopeID,
 			e1aScopeConfigHash(t, ctx, admin, registered.SourceScopeID), mustID(t, "binding"))
+		if opts.LeaveSourcesUnconfirmed {
+			// The binding stays unconfirmed, so the Sources surface offers the
+			// table confirmation action. Trust verification and an ACTIVE
+			// projection are still required: the question tool loop discloses a
+			// run only while every enabled binding is trust-verified, and the
+			// workspace model context resolves its data locations against
+			// ACTIVE projections.
+			verifyIsolationTrust(t, ctx, admin, registered.ConnectionID)
+			e1aActivateSource(t, ctx, admin, registered.SourceScopeID)
+			continue
+		}
 		e1aMintConfirmation(t, ctx, sourceFixture)
 		verifyIsolationTrust(t, ctx, admin, registered.ConnectionID)
 		e1aActivateSource(t, ctx, admin, registered.SourceScopeID)
@@ -227,13 +252,17 @@ func buildE1aEnvironment(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 	}
 	sourceService := e1aSourceService{registrations: registrations, workspaces: authority, sql: opts.SourceSQL}
 	authenticator, err := httpauth.New(
-		kvA01TenantResolver{organizationID: regOrg},
+		kvA01TenantResolver{organizationID: regOrg, origin: opts.Origin},
 		kvA01SessionResolver{organizationID: regOrg, principalID: regOwner, claims: kvA01Claims(t, regOrg, regOwner)},
 	)
 	if err != nil {
 		t.Fatalf("authenticator: %v", err)
 	}
-	handler, err := workspaceapi.NewWithQuestionsAndConversations(authenticator, authority, sourceService, viewer, nil, conversations)
+	var httpQuestions workspaceapi.QuestionService
+	if opts.WireHTTPQuestions {
+		httpQuestions = questionsService
+	}
+	handler, err := workspaceapi.NewWithQuestionsAndConversations(authenticator, authority, sourceService, viewer, httpQuestions, conversations)
 	if err != nil {
 		t.Fatalf("workspace handler: %v", err)
 	}

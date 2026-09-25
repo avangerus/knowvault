@@ -128,14 +128,26 @@ var _ WorkspaceAuditJournalBefore = (*workspacerepository.Store)(nil)
 type WorkspaceAuthority interface {
 	IssueConfirmationGrant(context.Context, database.AccessContext, workspacerepository.IssueGrantRequest) (workspacerepository.AuthorityResult, error)
 	ConfirmManagedSource(context.Context, database.AccessContext, workspacerepository.ConfirmRequest) (workspacerepository.AuthorityResult, error)
-	// ConfirmManagedSourceBatch is card S3.4b's bounded composite of
+	// ConfirmManagedSourcesBatch is card S3.4b's bounded composite of
 	// ConfirmManagedSource: up to workspacerepository.MaxBatchConfirmTables
 	// tables in one request, each one through the unchanged individual command,
-	// with one closed per-table outcome.
-	ConfirmManagedSourceBatch(context.Context, database.AccessContext, workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error)
+	// with one closed per-table outcome. The name matches the repository's own
+	// method so the production Store really satisfies this interface; the
+	// compile-time assertion below keeps that from regressing silently.
+	ConfirmManagedSourcesBatch(context.Context, database.AccessContext, workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error)
 	RevokeConfirmationGrant(context.Context, database.AccessContext, workspacerepository.RevokeGrantRequest) (workspacerepository.AuthorityResult, error)
 	RevokeManagedConfirmation(context.Context, database.AccessContext, workspacerepository.RevokeConfirmationRequest) (workspacerepository.AuthorityResult, error)
 }
+
+// The production workspace repository is the one runtime that must satisfy
+// WorkspaceAuthority. Card U-1's screen walkthrough found that it did not: the
+// interface named ConfirmManagedSourceBatch while the Store implements
+// ConfirmManagedSourcesBatch, so the type assertion in authorityCommands()
+// failed at run time and every managed-source confirmation (individual and
+// batch) answered 503 SERVICE_UNAVAILABLE -- exactly the «Confirm» error the
+// owner saw on the demo stand. This assertion makes that mismatch a build
+// failure instead of a silent dead route.
+var _ WorkspaceAuthority = (*workspacerepository.Store)(nil)
 
 // ConnectionTrustAuthority is the ADR-0087 §2 connection trust verification
 // runtime. Like WorkspaceAuthority it is satisfied at composition time by the
@@ -1218,6 +1230,18 @@ func parseEndpoint(request *http.Request) (endpoint, string) {
 		result.conversationPaginated = paginated
 		result.conversationPageLimit = limit
 		result.conversationCursor = cursor
+		return result, ""
+	}
+	if result.kind == endpointModelContextProposals {
+		// The proposal review queue is the model-context route that carries a
+		// query string (?status=&limit=&cursor=); modelContextProposalsList
+		// re-parses it with the same closed validator. Without this branch the
+		// generic "no query string" rule below rejected the web interface's
+		// ?status=PROPOSED with REQUEST_INVALID, so the queue never loaded
+		// (found by card U-1's screen walkthrough).
+		if _, _, _, ok := validModelContextProposalsQuery(request.URL); !ok {
+			return endpoint{}, "REQUEST_INVALID"
+		}
 		return result, ""
 	}
 	if result.kind == endpointWorkspaceToolListObjects {
@@ -3829,7 +3853,7 @@ func (handler *Handler) managedSourceConfirmBatch(writer http.ResponseWriter, re
 			SourceScopeRevision: table.SourceScopeRevision, ScopeConfigHash: table.ScopeConfigHash,
 		}
 	}
-	result, err := authority.ConfirmManagedSourceBatch(request.Context(), access, workspacerepository.BatchConfirmRequest{
+	result, err := authority.ConfirmManagedSourcesBatch(request.Context(), access, workspacerepository.BatchConfirmRequest{
 		IdempotencyKey:                 key,
 		OrganizationID:                 access.OrganizationID,
 		WorkspaceID:                    workspaceID,

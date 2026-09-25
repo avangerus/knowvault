@@ -258,6 +258,18 @@ func (service e1aSourceService) GetDiscovery(ctx context.Context, access databas
 	return service.reader.Get(ctx, access, requestID)
 }
 
+// ListSourceConnectionDrafts and DiscardSourceConnectionDraft are card D-1's
+// workspace-scoped unfinished-connection view. The question set never needs
+// them, but the card U-1 stand's Sources screen reads them, so the service
+// delegates to the same workspace repository the production facade uses.
+func (service e1aSourceService) ListSourceConnectionDrafts(ctx context.Context, access database.AccessContext, workspaceID string) ([]workspacerepository.SourceConnectionDraft, error) {
+	return service.workspaces.ListSourceConnectionDrafts(ctx, access, workspaceID)
+}
+
+func (service e1aSourceService) DiscardSourceConnectionDraft(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	return service.workspaces.DiscardSourceConnectionDraft(ctx, access, workspaceID, connectionID)
+}
+
 func (service e1aSourceService) ListSourceSchemas(ctx context.Context, access database.AccessContext, workspaceID string) ([]workspacerepository.SourceSchemaSource, error) {
 	return service.workspaces.ListSourceSchemas(ctx, access, workspaceID)
 }

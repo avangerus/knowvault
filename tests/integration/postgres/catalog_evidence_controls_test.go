@@ -78,12 +78,23 @@ const (
 
 // --- minimal MCP transport helpers (real workspaceapi handler, real auth) ---
 
-type kvA01TenantResolver struct{ organizationID string }
+type kvA01TenantResolver struct {
+	organizationID string
+	// origin overrides the enforced HTTPS origin. Empty keeps kvA01Origin, so
+	// every existing caller is unchanged; the card U-1 walkthrough passes the
+	// origin of its own local stand so the browser's real Origin header is the
+	// one httpauth compares against.
+	origin string
+}
 
 func (resolver kvA01TenantResolver) Resolve(context.Context) (httpauth.TenantSecurityContext, error) {
+	origin := resolver.origin
+	if origin == "" {
+		origin = kvA01Origin
+	}
 	return httpauth.TenantSecurityContext{
 		OrganizationID: identity.OrganizationID(resolver.organizationID),
-		Origin:         kvA01Origin,
+		Origin:         origin,
 		Digestor:       kvA01Digestor{},
 	}, nil
 }
