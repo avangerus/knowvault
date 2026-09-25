@@ -67,8 +67,8 @@ func TestEnableWorkspaceContextInstallsOnceAndRejectsInvalid(t *testing.T) {
 func TestResolveToolLoopWorkspaceContextNoReaderIsRegression(t *testing.T) {
 	service := &Service{}
 	access := database.AccessContext{OrganizationID: "org_1", PrincipalID: "usr_1", RequestID: "req_1"}
-	suffix, record, present := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "question text", 32*1024)
-	if suffix != "" || record != nil || present {
+	suffix, record, present, description := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "question text", 32*1024)
+	if suffix != "" || record != nil || present || description != "" {
 		t.Fatalf("no reader configured: suffix=%q record=%#v present=%v; want empty/nil/false", suffix, record, present)
 	}
 }
@@ -85,8 +85,8 @@ func TestResolveToolLoopWorkspaceContextEmptyContextIsRegression(t *testing.T) {
 		t.Fatalf("EnableWorkspaceContext: %v", err)
 	}
 	access := database.AccessContext{OrganizationID: "org_1", PrincipalID: "usr_1", RequestID: "req_1"}
-	suffix, record, present := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "question text", 32*1024)
-	if suffix != "" || record != nil || present {
+	suffix, record, present, description := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "question text", 32*1024)
+	if suffix != "" || record != nil || present || description != "" {
 		t.Fatalf("version-0 context: suffix=%q record=%#v present=%v; want empty/nil/false", suffix, record, present)
 	}
 	if reader.calls != 1 {
@@ -107,8 +107,8 @@ func TestResolveToolLoopWorkspaceContextReaderErrorDegradesGracefully(t *testing
 		t.Fatalf("EnableWorkspaceContext: %v", err)
 	}
 	access := database.AccessContext{OrganizationID: "org_1", PrincipalID: "usr_1", RequestID: "req_1"}
-	suffix, record, present := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "question text", 32*1024)
-	if suffix != "" || record != nil || present {
+	suffix, record, present, description := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "question text", 32*1024)
+	if suffix != "" || record != nil || present || description != "" {
 		t.Fatalf("reader error: suffix=%q record=%#v present=%v; want empty/nil/false", suffix, record, present)
 	}
 }
@@ -138,7 +138,7 @@ func TestResolveToolLoopWorkspaceContextPinsVersionAndRendersAfterRules(t *testi
 		t.Fatalf("EnableWorkspaceContext: %v", err)
 	}
 	access := database.AccessContext{OrganizationID: "org_x", PrincipalID: "usr_x", RequestID: "req_x"}
-	suffix, record, present := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_x", "Что такое МНО?", 32*1024)
+	suffix, record, present, description := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_x", "Что такое МНО?", 32*1024)
 	if !present {
 		t.Fatal("non-empty pinned context: present = false, want true")
 	}
@@ -176,6 +176,11 @@ func TestResolveToolLoopWorkspaceContextPinsVersionAndRendersAfterRules(t *testi
 	if len(term.Locations) != len(wantLocations) || term.Locations[0] != wantLocations[0] || term.Locations[1] != wantLocations[1] {
 		t.Fatalf("term.Locations = %#v, want %#v", term.Locations, wantLocations)
 	}
+	// Card D-5: the same pinned read also hands back the description the
+	// compact overview renders, so no second read is needed.
+	if description != doc.Description {
+		t.Fatalf("pinned description = %q, want %q", description, doc.Description)
+	}
 }
 
 // TestResolveToolLoopWorkspaceContextHonorsBudget proves the budget passed
@@ -191,12 +196,15 @@ func TestResolveToolLoopWorkspaceContextHonorsBudget(t *testing.T) {
 	}
 	access := database.AccessContext{OrganizationID: "org_1", PrincipalID: "usr_1", RequestID: "req_1"}
 	const maxInputBytes = 800 // MaxInputBytes/8 = 100 bytes, far under 16 KiB.
-	suffix, record, present := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "", maxInputBytes)
+	suffix, record, present, description := service.resolveToolLoopWorkspaceContext(context.Background(), access, "ws_1", "", maxInputBytes)
 	if !present || record == nil || !record.Truncated {
 		t.Fatalf("present=%v record=%#v; want a present, truncated record under a tiny budget", present, record)
 	}
 	if len(suffix) > len(toolLoopWorkspaceContextSentence)+2+200 {
 		t.Fatalf("suffix length %d did not respect the small MaxInputBytes/8 budget: %q", len(suffix), suffix)
+	}
+	if description == "" {
+		t.Fatalf("description vanished under the render budget")
 	}
 }
 
@@ -332,8 +340,13 @@ func TestExecuteToolLoopPinsWorkspaceContextExactlyOnce(t *testing.T) {
 	}
 	callIndex := strings.Index(body, callSite)
 	messagesIndex := strings.Index(body, "initialToolLoopMessages(questionText, history, profile.MaxInputBytes, workspaceContextSuffix)")
-	turnLoopIndex := strings.Index(body, "for turn := 0; turn < profile.MaxTurns; turn++")
+	turnLoopIndex := strings.Index(body, "for !forcedFinalSpent {")
 	if callIndex < 0 || messagesIndex < 0 || turnLoopIndex < 0 || !(callIndex < messagesIndex && messagesIndex < turnLoopIndex) {
 		t.Fatalf("resolveToolLoopWorkspaceContext must be pinned once, before initialToolLoopMessages and before the per-turn loop: call=%d messages=%d turnLoop=%d", callIndex, messagesIndex, turnLoopIndex)
+	}
+	// Card D-5: the overview is built from that same pinned read, so the second
+	// workspace-context read the overview would otherwise need never exists.
+	if strings.Contains(body, "workspaceContext.Current(") {
+		t.Fatal("executeToolLoop reads the workspace context a second time instead of reusing the pinned version")
 	}
 }

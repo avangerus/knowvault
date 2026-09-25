@@ -231,3 +231,52 @@ func TestSourceSQLStructuredAnswerRoundTrips(t *testing.T) {
 		t.Fatal("the rendered SQL live-read answer markdown did not validate")
 	}
 }
+
+// Card D-5 requirement 4: the inline live-result marker follows the question's
+// language, and the recorded AnswerLanguage lets a reader reconstruct exactly
+// the bytes the user saw. Before the fix a Russian answer carried the English
+// service marker "[Live result N]"; after it, the same record renders and
+// verifies with a Cyrillic marker, and the English marker no longer validates.
+func TestSourceSQLAnswerMarkerFollowsQuestionLanguage(t *testing.T) {
+	retained, execution, ok := sourceSQLRetainResult(testSourceSQLRunID, testSourceSQLCanonicalResult(t), 1<<20)
+	if !ok || execution == nil {
+		t.Fatal("the canonical SQL result was not retained")
+	}
+	const claimText = "\u0414\u0435\u0439\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0445 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u043e\u0432 3."
+	call := modelgateway.ToolCall{ID: "submit-1", Type: "function"}
+	call.Function.Name = submitAnswerToolName
+	call.Function.Arguments = `{"no_data":false,"claims":[{"text":"` + claimText + `","live_reads":[{"result_id":"` +
+		execution.projection.AttemptID + `","receipt_digest":"` + execution.projection.ReceiptDigest + `"}]}]}`
+	base := ToolLoopRecord{
+		Profile: modelgateway.ToolLoopProfile{MaxToolResultBytes: len(retained.Structured) + 1},
+		Calls:   []ToolCallRecord{{ID: "call-sql", Name: sourceSQLToolName, Outcome: "SUCCEEDED", Result: retained}},
+		AllClaimsBound: true, ClaimEvidenceVersion: "v1", StopReason: "ANSWER",
+		Messages: []modelgateway.Message{{Role: "assistant", ToolCalls: []modelgateway.ToolCall{call}}},
+		ClaimEvidence: []ToolClaimEvidence{{
+			TextHash: canon.Hash([]byte(claimText)),
+			LiveReads: []toolLiveReadReference{{
+				ResultID: execution.projection.AttemptID, ReceiptDigest: execution.projection.ReceiptDigest,
+			}},
+		}},
+	}
+	dependencies := []governedQueryDependency{execution.dependency}
+	russian := base
+	russian.AnswerLanguage = questionLanguageRussian
+	russianMarkdown := claimText + " [\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 1]"
+	if !validateToolLoopClaimEvidence(testSourceSQLRunID, russianMarkdown, &russian, dependencies, nil) {
+		t.Fatal("a Russian live-read answer did not validate against its own Cyrillic marker")
+	}
+	if validateToolLoopClaimEvidence(testSourceSQLRunID, claimText+" [Live result 1]", &russian, dependencies, nil) {
+		t.Fatal("the English service marker was still accepted for a Russian answer")
+	}
+	english := base
+	english.AnswerLanguage = questionLanguageEnglish
+	if !validateToolLoopClaimEvidence(testSourceSQLRunID, claimText+" [Live result 1]", &english, dependencies, nil) {
+		t.Fatal("an English live-read answer lost its historical marker")
+	}
+	// A record persisted before AnswerLanguage existed keeps the old bytes.
+	legacy := base
+	if !validateToolLoopClaimEvidence(testSourceSQLRunID, claimText+" [Live result 1]", &legacy, dependencies, nil) {
+		t.Fatal("a legacy record did not keep its historical English marker")
+	}
+}

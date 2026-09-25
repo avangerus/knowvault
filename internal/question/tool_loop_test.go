@@ -325,7 +325,7 @@ func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: trustedMetricToolName, Outcome: "REFUSED",
 		Result: workspacetools.Result{Text: `{"error":"SNAPSHOT_UNAVAILABLE","date":"2026-09-10"}`},
-	}}}, false); got != refusedMetricComparison {
+	}}}, false, questionLanguageEnglish); got != refusedMetricComparison {
 		t.Fatalf("refused metric comparison fallback = %q; want %q", got, refusedMetricComparison)
 	}
 	if strings.Contains(refusedMetricComparison, "2026-09-10") || strings.Contains(refusedMetricComparison, "access") {
@@ -333,19 +333,29 @@ func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: trustedMetricToolName, Outcome: "REFUSED",
-	}}}, true); got != noWorkspaceData {
+	}}}, true, questionLanguageEnglish); got != noWorkspaceData {
 		t.Fatalf("fallback with successful comparison = %q; want %q", got, noWorkspaceData)
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: liveDataToolName, Outcome: "REFUSED",
 		Result: workspacetools.Result{Text: `{"error":"TOOL_UNAVAILABLE"}`},
-	}}}, false); got != unreadableWorkspaceData {
+	}}}, false, questionLanguageEnglish); got != unreadableWorkspaceData {
 		t.Fatalf("fallback for an unavailable live read = %q; want %q", got, unreadableWorkspaceData)
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: "knowvault_search", Outcome: "SUCCEEDED",
-	}}}, false); got != noWorkspaceData {
+	}}}, false, questionLanguageEnglish); got != noWorkspaceData {
 		t.Fatalf("fallback for an empty successful search = %q; want %q", got, noWorkspaceData)
+	}
+	// Card D-5 requirement 4: the same reason produces the Russian text for a
+	// Russian question.
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{}, false, questionLanguageRussian); got != noWorkspaceDataRussian {
+		t.Fatalf("russian fallback = %q; want %q", got, noWorkspaceDataRussian)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "REFUSED",
+	}}}, false, questionLanguageRussian); got != refusedMetricComparisonRussian {
+		t.Fatalf("russian refused-comparison fallback = %q; want %q", got, refusedMetricComparisonRussian)
 	}
 }
 

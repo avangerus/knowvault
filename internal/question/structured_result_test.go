@@ -130,3 +130,31 @@ func TestAnswerResultWithoutUnifiedFieldsKeepsTheR1Shape(t *testing.T) {
 		t.Fatalf("pre-R2 payload invented unified fields: %#v", decoded)
 	}
 }
+
+// TestUncertaintyMessagesFollowQuestionLanguage is card D-5 requirement 4's
+// read-path proof: the same recorded code renders in the run's own question
+// language, the message is derived only from the code, and an unknown code
+// still gets its safe content-free fallback.
+func TestUncertaintyMessagesFollowQuestionLanguage(t *testing.T) {
+	items := []Uncertainty{{Code: UncertaintyUnverifiedCitations}}
+	russian := attachUncertaintyMessagesForLanguage(items, "\u0447\u0442\u043e \u0442\u044b \u0437\u043d\u0430\u0435\u0448\u044c?")
+	if len(russian) != 1 || !strings.Contains(russian[0].Message, "\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c") {
+		t.Fatalf("russian uncertainty message = %+v", russian)
+	}
+	english := attachUncertaintyMessagesForLanguage(items, "what do you know?")
+	if len(english) != 1 || !strings.Contains(english[0].Message, "could not be verified") {
+		t.Fatalf("english uncertainty message = %+v", english)
+	}
+	if english[0].Code != UncertaintyUnverifiedCitations || english[0].EvidenceIDs != nil {
+		t.Fatalf("localization changed the recorded code or evidence: %+v", english[0])
+	}
+	unknown := attachUncertaintyMessagesForLanguage([]Uncertainty{{Code: "UNDOCUMENTED_CODE"}}, "hello")
+	if len(unknown) != 1 || !strings.Contains(unknown[0].Message, "UNDOCUMENTED_CODE") {
+		t.Fatalf("unknown code lost its content-free fallback: %+v", unknown)
+	}
+	// The Russian dictionary must actually be Russian: a code that previously
+	// held an English sentence now localizes.
+	if !strings.Contains(uncertaintyMessage(UncertaintyInsufficientEvidence), "\u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b") {
+		t.Fatalf("russian dictionary still holds English: %q", uncertaintyMessage(UncertaintyInsufficientEvidence))
+	}
+}
