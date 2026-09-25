@@ -1,0 +1,70 @@
+# Question set (card E-1a)
+
+This directory is the single home of the E-1a question set: real questions asked
+of the real model on a synthetic proving environment, judged by fixed rules
+before anything reaches the owner.
+
+## One command
+
+```text
+KNOWVAULT_QUESTION_SET_API_KEY_FILE=/path/to/deepseek/key \
+  bash tests/e2e/questions/run-question-set.sh
+```
+
+The command:
+
+1. starts the two card containers (`kv-card-e-1a-pg` on 55488 for the product
+   database, `kv-card-e-1a-src` on 55489 for the synthetic source database) and
+   removes both when it finishes;
+2. builds the synthetic workspace (three documents, a workspace dictionary, and
+   the `contract`, `client` and `container_group` PostgreSQL source relations
+   with their query credentials and confirmed tables);
+3. runs every question three times against DeepSeek `deepseek-flash`;
+4. writes `report.md` and `report.json` (default output
+   `tests/e2e/questions/baseline/`);
+5. exits non-zero when any question fails.
+
+The DeepSeek key is read from its file only at run time. It is never written
+into the repository, the report or the logs. Every other value here is
+synthetic: the documents, the counts, the contract number and the source
+database contain no customer data.
+
+## The data file
+
+`questions.json` is the one data file: environment (containers, synthetic
+documents, dictionary, table columns and seed SQL, known counts `A`/`M` and
+contract number `N`), the universal rules, and the questions with their own
+checks. The rule engine and the runner read it and contain no second copy of
+the questions or expectations.
+
+Every answer must pass the universal hard rules: non-empty text, no
+`profile limits` / `could not be completed`, no short label followed by a colon
+at the start of a line, no `Evidence 1`-style marker, no prose claiming a
+citation was verified, no internal identifiers, the question's language, no
+duplicated tool call, the same tool on the same source at most twice, the
+question's step and length limits, and a verification status that is not a
+failure.
+
+Hard rules must pass 3 of 3 runs; value and time rules must pass 2 of 3. The
+verification status field is the response's `status` with
+`tool_loop.stop_reason`; `CITATIONS_UNVERIFIED` is the one tolerated failure.
+
+## Tests
+
+```text
+go test ./tests/e2e/questions              # rule engine on canned answers
+go test ./tests/integration/postgres -run '^TestQuestionSetSmoke$'
+```
+
+The smoke test runs the same runner against a stub OpenAI-compatible endpoint
+and the real product database, so CI can exercise the pipeline without a key.
+
+The rule-engine tests pin the owner's real failed answer to «что ты знаешь?»,
+the label/evidence/id answer, a renamed label, and a short correct answer.
+
+## Baseline
+
+`baseline/report.md` and `baseline/report.json` are one full run of the current
+code. Q1 is expected to fail: it reproduces the owner's failure. The report
+records every run's tool calls, steps, seconds, rule verdicts and answer text,
+plus the total time and the DeepSeek token use and cost.

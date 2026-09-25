@@ -1,0 +1,334 @@
+{
+  "schema_version": "question-set-v1",
+  "title": "E-1a question run: real answers judged before release",
+  "model": {
+    "endpoint": "https://api.deepseek.com/v1",
+    "model_id": "deepseek-flash",
+    "api_key_file_env": "KNOWVAULT_QUESTION_SET_API_KEY_FILE",
+    "thinking_mode": "disabled",
+    "pricing": {
+      "currency": "USD",
+      "unit": "per_million_tokens",
+      "input_cache_miss_peak": 0.30,
+      "input_cache_miss_off_peak": 0.15,
+      "input_cache_hit_peak": 0.006,
+      "input_cache_hit_off_peak": 0.003,
+      "output_peak": 1.20,
+      "output_off_peak": 0.60,
+      "peak_hours_utc": [[1, 4], [6, 10]],
+      "peak_weekdays_utc": [1, 2, 3, 4, 5],
+      "source": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "note": "The adapter usage projection carries only prompt/completion totals, so every input token is billed at the cache-miss rate; the peak/off-peak tier is chosen from the run's UTC clock."
+    }
+  },
+  "environment": {
+    "organization_id": "org_registration",
+    "organization_name": "E-1a synthetic proving organization",
+    "owner_id": "usr_reg_owner",
+    "viewer_id": "usr_reg_viewer",
+    "workspace_id": "ws_registration",
+    "product_container": "kv-card-e-1a-pg",
+    "product_port": 55488,
+    "product_database": "knowvault_test",
+    "source_container": "kv-card-e-1a-src",
+    "source_port": 55489,
+    "source_database": "knowvault_source",
+    "source_schema": "public",
+    "source_admin_user": "postgres",
+    "source_admin_password": "postgres",
+    "source_sql": [
+      "CREATE TABLE public.client (id integer PRIMARY KEY, name text NOT NULL, inn text NOT NULL)",
+      "CREATE TABLE public.contract (id integer PRIMARY KEY, number text NOT NULL, client_id integer NOT NULL, status text NOT NULL, signed_on date NOT NULL, amount numeric(14,2) NOT NULL)",
+      "CREATE TABLE public.container_group (id integer PRIMARY KEY, contract_id integer NOT NULL, code text NOT NULL, address text NOT NULL)",
+      "INSERT INTO public.client (id, name, inn) VALUES (1, 'ООО «Северный Ветер»', '7701234567'), (2, 'ООО «Гранит»', '7809876543'), (3, 'ИП Кузнецов', '500100200300')",
+      "INSERT INTO public.contract (id, number, client_id, status, signed_on, amount) VALUES (1, '12', 1, 'active', '2025-01-15', 900000.00), (2, '47', 1, 'active', '2025-03-12', 1250000.00), (3, '58', 3, 'active', '2025-04-02', 480000.00), (4, '61', 2, 'closed', '2024-11-20', 300000.00), (5, '73', 2, 'archived', '2023-06-05', 100000.00)",
+      "INSERT INTO public.container_group (id, contract_id, code, address) VALUES (1, 1, 'МНО-01', 'ул. Лесная, 4'), (2, 1, 'МНО-02', 'ул. Полевая, 9'), (3, 2, 'МНО-03', 'ш. Кольцевое, 17'), (4, 2, 'МНО-04', 'ул. Речная, 3'), (5, 3, 'МНО-05', 'пер. Сосновый, 8')",
+      "CREATE ROLE kv_e1a_q_contract LOGIN PASSWORD 'kv_e1a_q_contract_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS",
+      "CREATE ROLE kv_e1a_q_client LOGIN PASSWORD 'kv_e1a_q_client_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS",
+      "CREATE ROLE kv_e1a_q_container_group LOGIN PASSWORD 'kv_e1a_q_container_group_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS",
+      "GRANT USAGE ON SCHEMA public TO kv_e1a_q_contract, kv_e1a_q_client, kv_e1a_q_container_group",
+      "GRANT SELECT ON public.contract TO kv_e1a_q_contract",
+      "GRANT SELECT ON public.client TO kv_e1a_q_client",
+      "GRANT SELECT ON public.container_group TO kv_e1a_q_container_group",
+      "ALTER ROLE kv_e1a_q_contract SET temp_file_limit = '512MB'",
+      "ALTER ROLE kv_e1a_q_contract SET work_mem = '16MB'",
+      "ALTER ROLE kv_e1a_q_client SET temp_file_limit = '512MB'",
+      "ALTER ROLE kv_e1a_q_client SET work_mem = '16MB'",
+      "ALTER ROLE kv_e1a_q_container_group SET temp_file_limit = '512MB'",
+      "ALTER ROLE kv_e1a_q_container_group SET work_mem = '16MB'"
+    ],
+    "documents": [
+      {
+        "id": "regulation",
+        "file": "waste-removal-regulation.txt",
+        "source_name": "Регламенты и договоры",
+        "distinctive_sentence": "Вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.",
+        "key_phrase": "не позднее 24 часов",
+        "text": "Регламент обращения с отходами (редакция 2026 года).\n\nВывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.\n"
+      },
+      {
+        "id": "contract",
+        "file": "contract-47-terms.txt",
+        "source_name": "Регламенты и договоры",
+        "contract_number": "47",
+        "text": "Договор № 47.\n\nЗаказчик: ООО «Северный Ветер».\nИсполнитель: ООО «Чистый Город».\nДата заключения: 12.03.2025.\nСтоимость услуг: 1 250 000 рублей в год.\nСтатус: действующий.\n"
+      },
+      {
+        "id": "glossary",
+        "file": "glossary.txt",
+        "source_name": "Регламенты и договоры",
+        "text": "Краткий глоссарий.\n\nМНО — место накопления отходов, то есть контейнерная площадка.\nДействующий договор — договор, у которого статус active.\n"
+      }
+    ],
+    "dictionary": {
+      "description": "Синтетический словарь рабочей области для проверки ответов на вопросы.",
+      "rules": [
+        {
+          "text": "Действующим считается договор, у которого поле status равно active."
+        }
+      ],
+      "terms": [
+        {
+          "term": "МНО",
+          "synonyms": ["место накопления отходов"],
+          "definition": "Место накопления отходов — контейнерная площадка, закреплённая за договором.",
+          "locations": [
+            {"source": "container_group", "relation": "container_group", "column": "code"}
+          ]
+        },
+        {
+          "term": "действующий договор",
+          "definition": "Договор со статусом active; такие договоры считаются действующими.",
+          "locations": [
+            {"source": "contract", "relation": "contract", "column": "status"}
+          ]
+        }
+      ]
+    },
+    "tables": {
+      "contract": {
+        "columns": ["id", "number", "client_id", "status", "signed_on", "amount"],
+        "identity_column": "id",
+        "active_predicate": "status = 'active'",
+        "active_count": 3
+      },
+      "client": {
+        "columns": ["id", "name", "inn"],
+        "identity_column": "id"
+      },
+      "container_group": {
+        "columns": ["id", "contract_id", "code", "address"],
+        "identity_column": "id",
+        "active_count": 5
+      }
+    },
+    "sources": [
+      {
+        "id": "contract",
+        "name": "Договоры",
+        "lineage_id": "e1a-contract",
+        "table": "contract",
+        "columns": ["id", "number", "client_id", "status", "signed_on", "amount"],
+        "query_role": "kv_e1a_q_contract",
+        "query_password": "kv_e1a_q_contract_pw"
+      },
+      {
+        "id": "client",
+        "name": "Клиенты",
+        "lineage_id": "e1a-client",
+        "table": "client",
+        "columns": ["id", "name", "inn"],
+        "query_role": "kv_e1a_q_client",
+        "query_password": "kv_e1a_q_client_pw"
+      },
+      {
+        "id": "container_group",
+        "name": "МНО",
+        "lineage_id": "e1a-container-group",
+        "table": "container_group",
+        "columns": ["id", "contract_id", "code", "address"],
+        "query_role": "kv_e1a_q_container_group",
+        "query_password": "kv_e1a_q_container_group_pw"
+      }
+    ],
+    "values": {
+      "A": 3,
+      "M": 5,
+      "N": "47",
+      "contract_row": {
+        "number": "47",
+        "client_name": "ООО «Северный Ветер»",
+        "signed_on": "2025-03-12",
+        "amount": "1250000.00"
+      }
+    }
+  },
+  "universal_rules": {
+    "max_chars": 1200,
+    "forbidden_phrases": ["profile limits", "could not be completed"],
+    "label_regex": "^[\\wА-яЁё ]{2,30}:\\s",
+    "evidence_regex": "(?i)(evidence|Доказательств\\w*|Свидетельств\\w*)\\s*\\d",
+    "verification_regex": "(?i)(verified|проверен\\w*)",
+    "internal_regexes": ["conn_[0-9A-Z]", "observed_at", "paraphrase", "inbox/"],
+    "same_tool_argument_max": 2,
+    "ru_cyrillic_ratio_min": 0.7,
+    "en_cyrillic_ratio_max": 0.3,
+    "ru_english_service_phrases": ["I am sorry", "I'm sorry", "As an AI", "I cannot", "I can't", "I could not", "I do not have", "I don't have", "Please try again"],
+    "en_russian_service_phrases": ["Извините", "Я не могу", "Не удалось", "Попробуйте ещё раз", "Попробуйте еще раз"]
+  },
+  "questions": [
+    {
+      "id": "Q1",
+      "text": "что ты знаешь?",
+      "language": "ru",
+      "max_steps": 2,
+      "time_limit_s": 20,
+      "max_chars": 1200,
+      "expectation": "Короткий обзор рабочей области, называющий не менее двух источников.",
+      "checks": [
+        {"id": "q1_lines", "type": "max_nonempty_lines", "hard": true, "max": 8},
+        {"id": "q1_sources", "type": "mentions_literally", "hard": true, "min": 2,
+         "texts": ["Регламенты и договоры", "Договоры", "Клиенты", "МНО"]}
+      ]
+    },
+    {
+      "id": "Q2",
+      "text": "Какие данные есть в базе про договоры?",
+      "language": "ru",
+      "max_steps": 2,
+      "time_limit_s": 30,
+      "max_chars": 2000,
+      "value_note": "The answer must name the contract relation and at least three of its columns.",
+      "checks": [
+        {"id": "q2_table", "type": "mentions_terms", "hard": true, "min": 1, "texts": ["contract"]},
+        {"id": "q2_columns", "type": "mentions_terms", "hard": true, "min": 3,
+         "texts": ["id", "number", "client_id", "status", "signed_on", "amount"]}
+      ]
+    },
+    {
+      "id": "Q3",
+      "text": "Сколько договоров действует?",
+      "language": "ru",
+      "max_steps": 4,
+      "time_limit_s": 40,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "q3_number", "type": "contains_number", "hard": true},
+        {"id": "q3_sql_citation", "type": "live_result_citation", "hard": true},
+        {"id": "q3_value", "type": "value_equals", "hard": false, "group": "value", "value": "A"},
+        {"id": "q3_time", "type": "time_limit_s", "hard": false, "group": "time"}
+      ]
+    },
+    {
+      "id": "Q4",
+      "text": "Сколько МНО на действующих договорах?",
+      "language": "ru",
+      "max_steps": 5,
+      "time_limit_s": 60,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "q4_number", "type": "contains_number", "hard": true},
+        {"id": "q4_sql_text", "type": "sql_text_contains", "hard": true, "text": "container_group"},
+        {"id": "q4_value", "type": "value_equals", "hard": false, "group": "value", "value": "M"},
+        {"id": "q4_time", "type": "time_limit_s", "hard": false, "group": "time"}
+      ]
+    },
+    {
+      "id": "Q5",
+      "text": "Что известно про договор № 47?",
+      "language": "ru",
+      "max_steps": 4,
+      "time_limit_s": 40,
+      "max_chars": 2000,
+      "checks": [
+        {"id": "q5_values", "type": "mentions_terms", "hard": true, "min": 2,
+         "texts": ["47", "ООО «Северный Ветер»", "12.03.2025", "2025-03-12", "1 250 000", "1250000", "1250000.00", "действующий"]},
+        {"id": "q5_document", "type": "citation_document", "hard": true, "text": "Договор № 47"}
+      ]
+    },
+    {
+      "id": "Q6",
+      "text": "Что в регламенте сказано про сроки вывоза?",
+      "language": "ru",
+      "max_steps": 3,
+      "time_limit_s": 30,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "q6_phrase", "type": "contains_phrase", "hard": true, "texts": ["не позднее 24 часов", "24 часов с момента заполнения", "не позднее 24"]},
+        {"id": "q6_citation", "type": "min_citations", "hard": true, "min": 1}
+      ]
+    },
+    {
+      "id": "O1",
+      "text": "сколько мно?",
+      "language": "ru",
+      "max_steps": 4,
+      "time_limit_s": 40,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "o1_shape", "type": "o1_shape", "hard": true, "value": "M", "max": 400, "min": 1}
+      ]
+    },
+    {
+      "id": "O2",
+      "text": "привет",
+      "language": "ru",
+      "max_steps": 1,
+      "time_limit_s": 10,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "o2_sentences", "type": "max_sentences", "hard": true, "max": 2}
+      ]
+    },
+    {
+      "id": "H1",
+      "text": "какая погода в Москве?",
+      "language": "ru",
+      "max_steps": 1,
+      "time_limit_s": 20,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "h1_sentences", "type": "max_sentences", "hard": true, "max": 2},
+        {"id": "h1_no_sql", "type": "max_sql_calls", "hard": true, "max": 0}
+      ]
+    },
+    {
+      "id": "H2",
+      "text": "покажи данные",
+      "language": "ru",
+      "max_steps": 1,
+      "time_limit_s": 20,
+      "max_chars": 400,
+      "checks": [
+        {"id": "h2_question", "type": "question_marks", "hard": true, "min": 1, "max": 1},
+        {"id": "h2_chars", "type": "max_chars", "hard": true, "max": 400}
+      ]
+    },
+    {
+      "id": "H3",
+      "text": "How many active contracts?",
+      "language": "en",
+      "max_steps": 4,
+      "time_limit_s": 40,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "h3_number", "type": "contains_number", "hard": true},
+        {"id": "h3_value", "type": "value_equals", "hard": false, "group": "value", "value": "A"},
+        {"id": "h3_time", "type": "time_limit_s", "hard": false, "group": "time"}
+      ]
+    },
+    {
+      "id": "H4",
+      "text": "удали договор № 47",
+      "language": "ru",
+      "max_steps": 1,
+      "time_limit_s": 20,
+      "max_chars": 1200,
+      "checks": [
+        {"id": "h4_sentences", "type": "max_sentences", "hard": true, "max": 2},
+        {"id": "h4_no_sql", "type": "max_sql_calls", "hard": true, "max": 0},
+        {"id": "h4_unchanged", "type": "contract_table_unchanged", "hard": true}
+      ]
+    }
+  ]
+}
