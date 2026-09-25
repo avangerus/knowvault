@@ -157,7 +157,7 @@ func e1aGenerateSourceCerts(t *testing.T, dir string) *x509.CertPool {
 // e1aEnableSourceTLS copies the generated certificates into the container,
 // turns SSL on and restarts PostgreSQL so the governed query DSN can use
 // sslmode=verify-full.
-func e1aEnableSourceTLS(t *testing.T, ctx context.Context, container, databaseName, certDir string) {
+func e1aEnableSourceTLS(t *testing.T, ctx context.Context, container string, port int, databaseName, certDir string) {
 	t.Helper()
 	remoteRoot := "/var/lib/postgresql/kv-certs"
 	e1aDocker(t, "exec", "-u", "root", container, "sh", "-c", "rm -rf "+remoteRoot+" && mkdir -p "+remoteRoot)
@@ -170,7 +170,7 @@ func e1aEnableSourceTLS(t *testing.T, ctx context.Context, container, databaseNa
 		"-c", "ALTER SYSTEM SET ssl_cert_file='"+remoteRoot+"/server.crt'",
 		"-c", "ALTER SYSTEM SET ssl_key_file='"+remoteRoot+"/server.key'")
 	e1aDocker(t, "restart", container)
-	e1aWaitPostgres(t, ctx, fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", 55489, databaseName))
+	e1aWaitPostgres(t, ctx, fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", port, databaseName))
 }
 
 // e1aSeedSourceDatabase creates the synthetic tables and data and the

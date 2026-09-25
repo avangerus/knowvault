@@ -160,7 +160,7 @@ func TestQuestionSetRealModel(t *testing.T) {
 
 	certDir := t.TempDir()
 	roots := e1aGenerateSourceCerts(t, certDir)
-	e1aEnableSourceTLS(t, ctx, set.Environment.SourceContainer, set.Environment.SourceDatabase, certDir)
+	e1aEnableSourceTLS(t, ctx, set.Environment.SourceContainer, set.Environment.SourcePort, set.Environment.SourceDatabase, certDir)
 
 	queryDSNFor := func(source questions.SourceSpec) string {
 		return fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=verify-full",
