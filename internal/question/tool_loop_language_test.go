@@ -99,11 +99,11 @@ func TestToolLoopUserVisibleTextsFollowQuestionLanguage(t *testing.T) {
 	if got := toolLoopIncompleteAnswer(questionLanguageEnglish, &ToolLoopRecord{}); !strings.Contains(got, "The model") {
 		t.Fatalf("english incomplete text = %q", got)
 	}
-	if got := toolLoopIncompleteAnswer(questionLanguageEnglish, &ToolLoopRecord{Calls: []ToolCallRecord{{
+	if got := toolLoopIncompleteAnswer(questionLanguageRussian, &ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: "knowvault_read", Outcome: "SUCCEEDED",
 		Result: workspacetools.Result{Structured: []byte(`{"objects":[{"source_path":"projects/alpha/waste.txt"}]}`)},
-	}}}); !strings.Contains(got, "projects/alpha/waste.txt") {
-		t.Fatalf("incomplete text did not name the consulted source: %q", got)
+	}}}); !strings.Contains(got, "projects/alpha/waste.txt") || strings.Contains(strings.ToLower(got), "проверен") {
+		t.Fatalf("russian incomplete text must name the consulted source without verification prose: %q", got)
 	}
 	if got := toolLoopUnverifiedCitationsText(questionLanguageRussian); !strings.Contains(got, "\u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c") {
 		t.Fatalf("russian unverified-citations text = %q", got)

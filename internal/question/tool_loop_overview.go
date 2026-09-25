@@ -50,12 +50,11 @@ var overviewQuestionCue = regexp.MustCompile(`\d|` +
 	`таблиц|колонк|пол[ея]|строк|запис|метрик|показател|рейс|отход|компан|договор|` +
 	`table|column|field|row|record|metric|report|contract|revenue`)
 
-// toolLoopOverviewQuestion recognizes a question about the workspace as a
-// whole, or a greeting. It is deliberately narrow: a question that names a
-// concrete subject -- a date, a number, a document or a field -- keeps the
-// ordinary full tool loop, so this never turns a data question into a
-// one-turn guess.
-func toolLoopOverviewQuestion(question string) bool {
+// toolLoopGreetingQuestion reports whether the question is only a greeting.
+// A greeting is also an overview question (card D-5 requirement 3 gives it the
+// same overview), but it is told to answer with a short reply instead of an
+// inventory, so the greeting is recognized separately.
+func toolLoopGreetingQuestion(question string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(question))
 	trimmed := strings.Trim(normalized, " \t\r\n?!.,;:«»\"'")
 	if trimmed == "" {
@@ -68,6 +67,23 @@ func toolLoopOverviewQuestion(question string) bool {
 		if trimmed == greeting {
 			return true
 		}
+	}
+	return false
+}
+
+// toolLoopOverviewQuestion recognizes a question about the workspace as a
+// whole, or a greeting. It is deliberately narrow: a question that names a
+// concrete subject -- a date, a number, a document or a field -- keeps the
+// ordinary full tool loop, so this never turns a data question into a
+// one-turn guess.
+func toolLoopOverviewQuestion(question string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(question))
+	trimmed := strings.Trim(normalized, " \t\r\n?!.,;:«»\"'")
+	if trimmed == "" {
+		return false
+	}
+	if toolLoopGreetingQuestion(question) {
+		return true
 	}
 	if overviewQuestionCue.MatchString(normalized) {
 		return false
@@ -96,8 +112,14 @@ func toolLoopOverviewQuestion(question string) bool {
 // optional inventory degrades to a smaller overview rather than failing the
 // run, and a changed or cancelled scope leaves the overview absent so the
 // ordinary loop takes over.
+//
+// greeting selects the opening instruction only: a greeting gets the same
+// overview (card D-5 requirement 3) but is told to answer with a short reply
+// instead of an inventory. Every source line carries the source's human name,
+// its source connection id (the identifier knowvault_source_schema and
+// knowvault_source_sql require) and its type, status and object counts.
 func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspacetools.Scope,
-	record *ToolLoopRecord, language string, workspaceContextDocument string) (*toolLoopOverview, error) {
+	record *ToolLoopRecord, language string, workspaceContextDocument string, greeting bool) (*toolLoopOverview, error) {
 	if service == nil || service.tools == nil || record == nil {
 		return nil, nil
 	}
@@ -107,6 +129,7 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 	if err != nil {
 		return nil, err
 	}
+	sources := toolLoopOverviewSourcesFromResult(sourcesResult.Structured)
 
 	objectsArgs, _ := json.Marshal(map[string]any{"limit": toolLoopOverviewObjects})
 	objectsResult, err := service.invokeOverviewTool(ctx, scope, record, "knowvault_list_objects", objectsArgs)
@@ -120,23 +143,49 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 	documents = service.readToolLoopOverviewFragments(ctx, scope, record, documents)
 
 	var builder strings.Builder
+	// The heading is always the overview heading: the overview answer and the
+	// greeting share the same orientation block, and every reader (model or
+	// test) can recognize it by this line.
 	if language == questionLanguageRussian {
-		builder.WriteString("Обзор рабочей области, прочитанный сервером для этого вопроса. Это ориентир, а не замена чтению: описывайте только то, что подтверждено приведёнными ниже фрагментами, и указывайте границы обзора.\n")
+		builder.WriteString("Обзор рабочей области, прочитанный сервером для этого вопроса. Это ориентир, а не замена чтению.\n")
+		if greeting {
+			builder.WriteString("Это приветствие. Ответьте ровно одним коротким предложением (можно начать с «Здравствуйте»), не перечисляйте источники и документы; при необходимости предложите, что можно найти. Такой ответ не содержит утверждений о содержимом рабочей области: отправьте его вариантом clarification с пустым списком claims и не добавляйте искусственную цитату.\n")
+		} else {
+			builder.WriteString("Начните ответ предложением, в котором перечислены точные имена не менее двух источников из списка ниже: скопируйте эти имена в кавычках-ёлочках, как в списке, а не пересказывайте их общими словами. Затем одним или двумя предложениями опишите содержание прочитанных фрагментов и завершите предложением о том, что обзор охватывает только прочитанные фрагменты. Весь ответ — менее 1000 символов. Пишите обычными предложениями: не начинайте строку подписью с двоеточием («Границы обзора:», «Документы:» и подобные запрещены). Каждое утверждение должно ссылаться хотя бы на один прочитанный фрагмент — утверждение без ссылки не принимается и отменяет весь ответ.\n")
+		}
 	} else {
-		builder.WriteString("Workspace overview read by the server for this question. It is orientation, not a substitute for reading: describe only what the fragments below support, and state the overview's boundaries.\n")
+		builder.WriteString("Workspace overview read by the server for this question. It is orientation, not a substitute for reading.\n")
+		if greeting {
+			builder.WriteString("This is a greeting. Reply with exactly one short sentence (you may start with a greeting), do not enumerate sources or documents, and offer what can be looked up if useful. Such an answer states nothing about the workspace content: submit it as the clarification variant with an empty claims list and do not add an artificial citation.\n")
+		} else {
+			builder.WriteString("Begin the answer with a sentence that lists the exact names of at least two sources from the list below, copied verbatim from that list; a paraphrase or a generic phrase does not count. Then describe what the read fragments support in one or two sentences and state the overview's boundaries. The whole answer is under 1000 characters and at most 8 lines. Do not begin a line with a short label followed by a colon.\n")
+		}
 	}
 	if description := singleLine(workspaceContextDocument); description != "" {
 		builder.WriteString(localizedText(language, "Описание рабочей области: ", "Workspace description: "))
 		builder.WriteString(description)
 		builder.WriteString("\n")
 	}
-	if sourceCount := overviewSourceCount(sourcesResult.Text); sourceCount > 0 {
+	if len(sources) > 0 {
+		builder.WriteString(localizedText(language,
+			"Источники (имя; source_id — идентификатор подключения для knowvault_source_schema и knowvault_source_sql; тип; состояние; объектов):\n",
+			"Sources (name; source_id is the connection identifier knowvault_source_schema and knowvault_source_sql need; type; status; objects):\n"))
+		for _, source := range sources {
+			builder.WriteString("- ")
+			builder.WriteString(toolLoopOverviewSourceLine(language, source))
+			builder.WriteString("\n")
+		}
+		if !greeting {
+			// Card D-5: the source list is the one place the exact names live,
+			// so the requirement is repeated immediately after it; a model that
+			// summarizes content instead of naming sources misses the rule.
+			builder.WriteString(localizedText(language,
+				"В ответе обязательно назовите точные имена не менее двух источников из этого списка, скопировав их как есть.\n",
+				"The answer must name at least two sources from this list by their exact names, copied as they are.\n"))
+		}
+	} else if sourceCount := overviewSourceCount(sourcesResult.Text); sourceCount > 0 {
 		builder.WriteString(localizedText(language, "Всего источников: ", "Total sources: "))
 		builder.WriteString(strconv.Itoa(sourceCount))
-		builder.WriteString("\n")
-	}
-	if sourcesText := singleLineLimit(sourcesResult.Text, toolLoopOverviewSrcBytes); sourcesText != "" {
-		builder.WriteString(sourcesText)
 		builder.WriteString("\n")
 	}
 	if len(documents) > 0 {
@@ -168,6 +217,120 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 		return nil, nil
 	}
 	return overview, nil
+}
+
+// toolLoopOverviewSource is one workspace source the overview renders from the
+// knowvault_sources structured envelope. Name is the human display name the
+// answer must use; ConnectionID is the identifier the schema and SQL tools
+// require, which the content-text channel of knowvault_sources does not carry.
+type toolLoopOverviewSource struct {
+	Name             string
+	ConnectionID     string
+	SourceType       string
+	Schema           string
+	Relation         string
+	Enabled          bool
+	ActivationStatus string
+	SyncStatus       string
+	FreshnessState   string
+	ObjectsSeen      *int64
+	ObjectsIngested  *int64
+}
+
+// toolLoopOverviewSourcesFromResult decodes the same structured source
+// inventory the text channel is built from. An absent or unexpected shape
+// degrades to no lines; the caller then falls back to the text count.
+func toolLoopOverviewSourcesFromResult(raw json.RawMessage) []toolLoopOverviewSource {
+	if len(raw) == 0 {
+		return nil
+	}
+	var envelope struct {
+		Sources []struct {
+			ConnectionID           string `json:"connection_id"`
+			ConnectionName         string `json:"connection_name"`
+			SourceType             string `json:"source_type"`
+			PostgreSQLSchemaName   string `json:"postgresql_schema_name"`
+			PostgreSQLRelationName string `json:"postgresql_relation_name"`
+			Enabled                bool   `json:"enabled"`
+			ActivationStatus       string `json:"activation_status"`
+			SyncStatus             string `json:"sync_status"`
+			FreshnessState         string `json:"freshness_state"`
+			ObjectsSeen            *int64 `json:"objects_seen"`
+			ObjectsIngested        *int64 `json:"objects_ingested"`
+		} `json:"sources"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return nil
+	}
+	sources := make([]toolLoopOverviewSource, 0, len(envelope.Sources))
+	for _, source := range envelope.Sources {
+		if source.ConnectionID == "" && source.ConnectionName == "" {
+			continue
+		}
+		name := source.ConnectionName
+		if name == "" {
+			name = source.ConnectionID
+		}
+		sources = append(sources, toolLoopOverviewSource{
+			Name: name, ConnectionID: source.ConnectionID, SourceType: source.SourceType,
+			Schema: source.PostgreSQLSchemaName, Relation: source.PostgreSQLRelationName,
+			Enabled: source.Enabled, ActivationStatus: source.ActivationStatus,
+			SyncStatus: source.SyncStatus, FreshnessState: source.FreshnessState,
+			ObjectsSeen: source.ObjectsSeen, ObjectsIngested: source.ObjectsIngested,
+		})
+	}
+	return sources
+}
+
+// toolLoopOverviewSourceLine renders one compact, model-readable source line:
+// its human name, the connection id the source tools need, its type and
+// registered relation, an honest status and the observed object counts when the
+// source reports them.
+func toolLoopOverviewSourceLine(language string, source toolLoopOverviewSource) string {
+	var builder strings.Builder
+	builder.WriteString("\u00ab")
+	builder.WriteString(singleLine(source.Name))
+	builder.WriteString("\u00bb")
+	if source.ConnectionID != "" {
+		builder.WriteString(localizedText(language, ", source_id=", ", source_id="))
+		builder.WriteString(source.ConnectionID)
+	}
+	if source.SourceType != "" {
+		builder.WriteString(localizedText(language, ", тип ", ", type "))
+		builder.WriteString(source.SourceType)
+	}
+	if relation := singleLine(strings.Trim(strings.Join([]string{source.Schema, source.Relation}, "."), ".")); relation != "" {
+		builder.WriteString(localizedText(language, ", таблица ", ", relation "))
+		builder.WriteString(relation)
+	}
+	if source.ActivationStatus != "" {
+		builder.WriteString(localizedText(language, ", состояние ", ", status "))
+		builder.WriteString(source.ActivationStatus)
+	} else if source.Enabled {
+		builder.WriteString(localizedText(language, ", включён", ", enabled"))
+	}
+	if source.SyncStatus != "" {
+		builder.WriteString(", sync_status=")
+		builder.WriteString(source.SyncStatus)
+	}
+	if source.FreshnessState != "" {
+		builder.WriteString(localizedText(language, ", свежесть ", ", freshness "))
+		builder.WriteString(source.FreshnessState)
+	}
+	if source.ObjectsSeen != nil || source.ObjectsIngested != nil {
+		builder.WriteString(localizedText(language, ", объектов ", ", objects "))
+		builder.WriteString(int64PointerText(source.ObjectsIngested))
+		builder.WriteString("/")
+		builder.WriteString(int64PointerText(source.ObjectsSeen))
+	}
+	return builder.String()
+}
+
+func int64PointerText(value *int64) string {
+	if value == nil {
+		return "?"
+	}
+	return strconv.FormatInt(*value, 10)
 }
 
 // invokeOverviewTool performs one overview read and records it in the run trace

@@ -2297,6 +2297,14 @@ func mcpSourcesListText(items []sourceStatusResponse) string {
 		builder.WriteString(item.WorkspaceSourceID)
 		builder.WriteString(" source_scope_id=")
 		builder.WriteString(item.SourceScopeID)
+		// The model-facing text channel must name the source and carry the
+		// source connection id, because knowvault_source_schema and
+		// knowvault_source_sql are addressed by connection id and the tool
+		// description points the model at this inventory for it.
+		builder.WriteString(" connection_id=")
+		builder.WriteString(item.ConnectionID)
+		builder.WriteString(" connection_name=")
+		builder.WriteString(mcpContentSingleLine(item.ConnectionName))
 		builder.WriteString(" source_type=")
 		builder.WriteString(item.SourceType)
 		builder.WriteString(" postgresql_schema_name=")

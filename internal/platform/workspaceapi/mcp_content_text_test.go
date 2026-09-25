@@ -842,6 +842,7 @@ func TestMCPContentTextCarriesSourcesInventory(t *testing.T) {
 	harness.sources.statuses = []workspacerepository.SourceStatus{
 		{
 			WorkspaceSourceID: "wsrc_01H9ABCDEFGHJKMNPQRSTVWXYZ", SourceScopeID: testScopeID,
+			ConnectionID: "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", ConnectionName: "Engineering docs",
 			Enabled: true, ActivationStatus: "READY", TrustVerified: true,
 			SourceType: "POSTGRESQL_QUERY", PostgreSQLSchemaName: &postgresqlSchemaName, PostgreSQLRelationName: &postgresqlRelationName,
 			SyncStatus: &syncStatus, LastSuccessfulSyncAt: &completed,
@@ -869,6 +870,7 @@ func TestMCPContentTextCarriesSourcesInventory(t *testing.T) {
 	for _, want := range []string{
 		"workspace_source_id=wsrc_01H9ABCDEFGHJKMNPQRSTVWXYZ",
 		"source_scope_id=" + testScopeID,
+		"connection_id=conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", "connection_name=Engineering docs",
 		"source_type=POSTGRESQL_QUERY", "postgresql_schema_name=reporting", "postgresql_relation_name=waste_daily",
 		"enabled=true", "activation_status=READY", "sync_status=SYNCED",
 		"freshness_state=FRESH", "sync_interval_seconds=1800",
