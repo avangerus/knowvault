@@ -20,6 +20,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +38,19 @@ func loadE1aSet(t *testing.T) *questions.Set {
 	set, err := questions.LoadSet(path)
 	if err != nil {
 		t.Fatalf("load question set %s: %v", path, err)
+	}
+	// KNOWVAULT_QUESTION_SET_INSTANCE (1..9) lets two worktrees run the set
+	// at the same time: container names get the instance suffix and both
+	// host ports move by ten per instance.
+	if value := strings.TrimSpace(os.Getenv("KNOWVAULT_QUESTION_SET_INSTANCE")); value != "" {
+		instance, convErr := strconv.Atoi(value)
+		if convErr != nil || instance < 1 || instance > 9 {
+			t.Fatalf("KNOWVAULT_QUESTION_SET_INSTANCE=%q, want 1..9", value)
+		}
+		set.Environment.ProductContainer += fmt.Sprintf("-%d", instance)
+		set.Environment.SourceContainer += fmt.Sprintf("-%d", instance)
+		set.Environment.ProductPort += 10 * instance
+		set.Environment.SourcePort += 10 * instance
 	}
 	return set
 }

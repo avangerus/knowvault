@@ -7,6 +7,8 @@
 #   KNOWVAULT_QUESTION_SET_REPORT_DIR    report output directory
 #                                        (default: tests/e2e/questions/baseline)
 #   KNOWVAULT_QUESTION_SET_ONLY          optional comma-separated question ids
+#   KNOWVAULT_QUESTION_SET_INSTANCE      1..9: run next to another worktree (container
+#                                        suffix -N, host ports +10*N)
 #
 # The test starts and removes both card containers itself (kv-card-e-1a-pg on
 # 55488, kv-card-e-1a-src on 55489) and exits non-zero when any question fails.
