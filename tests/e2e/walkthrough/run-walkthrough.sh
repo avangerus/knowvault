@@ -4,9 +4,22 @@
 # browser, writes the report with screenshots, and removes everything it
 # started (the PostgreSQL container together with its volume).
 #
-#   KNOWVAULT_WALKTHROUGH_REPORT_DIR  report output directory
-#                                     (default: tests/e2e/walkthrough/baseline)
-#   KNOWVAULT_WALKTHROUGH_INSTANCE    1..9: run next to another walkthrough
+# Card U-2: the same command, with KNOWVAULT_WALKTHROUGH_TARGET=stand, points
+# the robot at another address and signs in with a login read from a
+# credentials file. No code change is needed to switch stands.
+#
+#   KNOWVAULT_WALKTHROUGH_TARGET      local (default) | stand
+#   KNOWVAULT_WALKTHROUGH_BASE_URL    stand origin; required for target=stand
+#   KNOWVAULT_WALKTHROUGH_CREDENTIALS credentials file path; required for
+#                                     target=stand, read at run time only
+#   KNOWVAULT_WALKTHROUGH_USER        test user, when the file has no username
+#   KNOWVAULT_WALKTHROUGH_REPORT_DIR  report output directory; required for
+#                                     target=stand so stand data never lands
+#                                     in the repository
+#                                     (local default: tests/e2e/walkthrough/baseline)
+#   KNOWVAULT_WALKTHROUGH_SCENARIO    local | read-only; target=stand defaults
+#                                     to read-only
+#   KNOWVAULT_WALKTHROUGH_INSTANCE    1..9: run next to another local walkthrough
 #                                     (container suffix -N, host ports +N)
 #   KNOWVAULT_PLAYWRIGHT_MODULE       module name/path of the Playwright package
 #                                     (default: playwright)
@@ -17,10 +30,27 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+target="${KNOWVAULT_WALKTHROUGH_TARGET:-local}"
+
+if [[ "$target" == "stand" ]]; then
+  : "${KNOWVAULT_WALKTHROUGH_BASE_URL:?KNOWVAULT_WALKTHROUGH_BASE_URL is required for target=stand}"
+  : "${KNOWVAULT_WALKTHROUGH_CREDENTIALS:?KNOWVAULT_WALKTHROUGH_CREDENTIALS is required for target=stand}"
+  : "${KNOWVAULT_WALKTHROUGH_REPORT_DIR:?KNOWVAULT_WALKTHROUGH_REPORT_DIR is required for target=stand (keep it outside the repository)}"
+  export KNOWVAULT_WALKTHROUGH_SCENARIO="${KNOWVAULT_WALKTHROUGH_SCENARIO:-read-only}"
+  cd "$root"
+  exec node tests/e2e/walkthrough/walkthrough.mjs
+fi
+
+if [[ "$target" != "local" ]]; then
+  echo "KNOWVAULT_WALKTHROUGH_TARGET=$target, want local or stand" >&2
+  exit 2
+fi
+
 export GOENV=off
 export GOTOOLCHAIN=go1.26.5
 export GOEXPERIMENT=jsonv2
 export KNOWVAULT_WALKTHROUGH=1
+export KNOWVAULT_WALKTHROUGH_SCENARIO="${KNOWVAULT_WALKTHROUGH_SCENARIO:-local}"
 export KNOWVAULT_WALKTHROUGH_REPORT_DIR="${KNOWVAULT_WALKTHROUGH_REPORT_DIR:-$root/tests/e2e/walkthrough/baseline}"
 
 cd "$root"
