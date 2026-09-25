@@ -213,7 +213,9 @@ func TestToolLoopSourceSQLResultIsCitedLiveRead(t *testing.T) {
 				receipt = "sha256:" + strings.Repeat("c", 64)
 			}
 			arguments, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{
-				"text":       "The registered contracts table holds 42 rows.",
+				// Card D-6a: the answer is prose, so it names no raw relation or
+				// column; the live read carries the technical location.
+				"text":       "There are 42 registered contracts.",
 				"citations":  []any{},
 				"live_reads": []any{map[string]any{"result_id": sqlAttempt, "receipt_digest": receipt}},
 			}}})
