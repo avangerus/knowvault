@@ -16,6 +16,8 @@
 // ---------------------------------------------------------------------------
 
 export const MODEL_CONTEXT_DESCRIPTION_MAX = 4000;
+export const MODEL_CONTEXT_INSTRUCTIONS_MAX = 16000;
+export const MODEL_CONTEXT_GLOSSARY_TEXT_MAX = 64000;
 export const MODEL_CONTEXT_RULES_MAX = 30;
 export const MODEL_CONTEXT_RULE_TEXT_MAX = 500;
 export const MODEL_CONTEXT_EMPTY_HASH = "sha256:empty";
@@ -59,6 +61,12 @@ export type ModelContextSource = {
 
 export type ModelContextDocument = {
   description: string;
+  // Card W-2: the three plain-text fields the Settings screen edits. A
+  // workspace whose rules and glossary predate the card returns their readable
+  // text here (the server renders the structured records), so the field is the
+  // one place an administrator reads and writes them.
+  instructions: string;
+  glossary_text: string;
   rules: ModelContextRule[];
   glossary: ModelContextTerm[];
   sources: ModelContextSource[];
@@ -233,6 +241,8 @@ export function decodeModelContextDocument(value: unknown): ModelContextDocument
     const record = objectValue(value, "document");
     return {
       description: stringValue(record, "description", "document"),
+      instructions: stringValue(record, "instructions", "document"),
+      glossary_text: stringValue(record, "glossary_text", "document"),
       rules: arrayValue(record, "rules", "document").map(decodeRule),
       glossary: arrayValue(record, "glossary", "document").map(decodeTerm),
       sources: arrayValue(record, "sources", "document").map(decodeSource),
@@ -374,6 +384,8 @@ export function modelContextSaveRequest(
 export function modelContextDocumentForSave(document: ModelContextDocument): ModelContextDocument {
   return {
     description: document.description,
+    instructions: document.instructions,
+    glossary_text: document.glossary_text,
     rules: document.rules.map((rule) => ({ id: rule.id, text: rule.text })),
     glossary: document.glossary.map((term) => ({
       id: term.id,
@@ -492,12 +504,14 @@ export function workspaceContextUsageLineFromToolLoop(toolLoop: unknown): string
 // ---------------------------------------------------------------------------
 
 export function emptyModelContextDocument(): ModelContextDocument {
-  return { description: "", rules: [], glossary: [], sources: [] };
+  return { description: "", instructions: "", glossary_text: "", rules: [], glossary: [], sources: [] };
 }
 
 export function cloneModelContextDocument(document: ModelContextDocument): ModelContextDocument {
   return {
     description: document.description,
+    instructions: document.instructions,
+    glossary_text: document.glossary_text,
     rules: document.rules.map((rule) => ({ ...rule })),
     glossary: document.glossary.map((term) => ({
       ...term,

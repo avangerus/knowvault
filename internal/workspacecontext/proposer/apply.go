@@ -1,6 +1,8 @@
 package proposer
 
 import (
+	"strings"
+
 	"knowvault.local/verified-workspace/internal/source/ids"
 	"knowvault.local/verified-workspace/internal/workspacecontext"
 )
@@ -38,9 +40,20 @@ func applyProposal(current workspacecontext.Document, proposal workspacecontext.
 		if err != nil {
 			return workspacecontext.Document{}, newError(CodeInternal, err)
 		}
-		edited.Glossary = append(edited.Glossary, workspacecontext.Term{
+		added := workspacecontext.Term{
 			ID: newTermID, Term: term, Definition: definition, Synonyms: mergedSynonyms(nil, edits.Synonyms),
-		})
+		}
+		edited.Glossary = append(edited.Glossary, added)
+		// Card W-2 result 4: accepting a proposed term adds it as one line of
+		// the plain-text glossary. When the administrator already wrote
+		// glossary text the new line is appended to their own words; otherwise
+		// the whole block is re-rendered from the structured glossary, which
+		// now includes the accepted term.
+		if strings.TrimSpace(edited.GlossaryText) != "" {
+			edited.GlossaryText = strings.TrimRight(edited.GlossaryText, "\n") + "\n" + workspacecontext.TermLine(added)
+		} else {
+			edited.GlossaryText = workspacecontext.DerivedGlossaryText(edited.Glossary)
+		}
 		return edited, nil
 
 	case workspacecontext.ProposalKindSynonym:

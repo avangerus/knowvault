@@ -48,6 +48,8 @@ type canonicalSource struct {
 type canonicalDocument struct {
 	SchemaVersion string            `json:"schema_version"`
 	Description   string            `json:"description"`
+	Instructions  string            `json:"instructions"`
+	GlossaryText  string            `json:"glossary_text"`
 	Rules         []canonicalRule   `json:"rules"`
 	Glossary      []canonicalTerm   `json:"glossary"`
 	Sources       []canonicalSource `json:"sources"`
@@ -97,6 +99,7 @@ func canonicalBytesOf(doc Document) ([]byte, error) {
 
 	projection := canonicalDocument{
 		SchemaVersion: documentSchemaVersion, Description: doc.Description,
+		Instructions: doc.Instructions, GlossaryText: doc.GlossaryText,
 		Rules: rules, Glossary: glossary, Sources: sources,
 	}
 	return canon.CanonicalJSON(projection)
