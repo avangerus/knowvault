@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
+import { askLayoutClass, conversationSidebarStorage, readConversationsCollapsed, writeConversationsCollapsed } from "./conversation-sidebar";
 import { PendingAction, type PendingActionKind, type PendingActionState, type PendingActionStep } from "./pending-action";
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
@@ -4574,6 +4575,27 @@ export function relySourceSummary(sources: SourceStatus[]): RelySourceSummary[] 
   }));
 }
 
+/** The opened Sources control: the workspace's sources with their freshness,
+ * and the way to manage them. This is exactly the content the chat screen's one
+ * control shows when expanded; it is exported so the static render probe can
+ * check the opened control without a browser. */
+export function RelySourceList({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
+  const enabled = relySourceSummary(sources);
+  return (
+    <div className="rely-list">
+      <h3>Workspace sources — {enabled.length}</h3>
+      {enabled.map((source) => (
+        <div className="rely-row" key={source.source_scope_id}>
+          <span aria-hidden="true" className={`dot dot-${source.variant}`} />
+          <span className="rely-name">{source.label}</span>
+          <small>{source.headline}</small>
+        </div>
+      ))}
+      {onManageSources && <button className="text-button rely-manage" onClick={onManageSources} type="button">Manage sources</button>}
+    </div>
+  );
+}
+
 function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -4605,17 +4627,10 @@ function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onMana
   return (
     <div className="rely" ref={containerRef}>
       {open && (
-        <div className="rely-list">
-          <h3>Workspace sources — {enabled.length}</h3>
-          {enabled.map((source) => (
-            <div className="rely-row" key={source.source_scope_id}>
-              <span aria-hidden="true" className={`dot dot-${source.variant}`} />
-              <span className="rely-name">{source.label}</span>
-              <small>{source.headline}</small>
-            </div>
-          ))}
-          {onManageSources && <button className="text-button rely-manage" onClick={() => { setOpen(false); onManageSources(); }} type="button">Manage sources</button>}
-        </div>
+        <RelySourceList
+          onManageSources={onManageSources ? () => { setOpen(false); onManageSources(); } : undefined}
+          sources={sources}
+        />
       )}
       <button aria-expanded={open} className="rely-summary" onClick={() => setOpen((value) => !value)} type="button">
         <IconSources /><span>Sources: <b>{enabled.length}</b>{attention > 0 && <span className="rely-warn"> · need attention: {attention}</span>}</span>
@@ -5222,6 +5237,11 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
       <header className="ask-page-header">
         <h1>Ask</h1>
         <div className="ask-page-actions">
+          {/* Card W-5: this is the chat screen's one control for the workspace's
+              sources — the count, how many need attention, and, opened, the
+              per-source list with the way to manage them. The question composer
+              used to render a second copy of the same summary, so the screen
+              showed two controls for one fact; only this one remains. */}
           {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
         </div>
       </header>
@@ -5579,6 +5599,13 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
+  // Card W-6: the conversation list can be put away. The initial value is the
+  // person's remembered choice, read once from local storage; every toggle
+  // writes it back, so a reload shows the list as they left it. A browser with
+  // no local storage reads as the default expanded list.
+  const [conversationsCollapsed, setConversationsCollapsed] = useState(
+    () => readConversationsCollapsed(conversationSidebarStorage()),
+  );
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -6253,6 +6280,15 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     focusComposer();
   }
 
+  // Card W-6: one action hides the conversation list, one action shows it
+  // again. The choice is written to local storage before the state update, so
+  // the rendered screen and the remembered choice can never disagree.
+  function toggleConversations() {
+    const next = !conversationsCollapsed;
+    writeConversationsCollapsed(conversationSidebarStorage(), next);
+    setConversationsCollapsed(next);
+  }
+
   function selectConversation(conversationID: string) {
     if (conversationID === selectedConversationID) return;
     // R3: switching conversations aborts any in-flight question rather than
@@ -6310,8 +6346,12 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const currentTitle = selectedConversationID !== null && conversation?.kind === "ok" ? conversationTitle(conversation.value) : null;
 
   return (
-    <div className={fullscreen ? "ask-layout ask-layout-full" : "ask-layout"}>
-      <section aria-label="Conversations" className="topics">
+    <div className={askLayoutClass(fullscreen, conversationsCollapsed)}>
+      {/* Card W-6: the conversation list is dropped from the tree when the
+          person put it away, so the freed column really goes to the chat and
+          its answer and no stale list stays reachable behind a hidden node. */}
+      {!conversationsCollapsed && (
+      <section aria-label="Conversations" className="topics" id="ask-conversations">
         <h2>Conversations</h2>
         <label className="sidebar-search">
           <span className="sr-only">Search conversations</span>
@@ -6412,8 +6452,25 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
         <button className="topics-new" onClick={startNewConversation} type="button"><IconPlus />New conversation</button>
       </section>
+      )}
 
       <section aria-live="polite" className="talk">
+        {/* Card W-6: one control, always on screen, that hides the conversation
+            list and brings it back. It lives in the chat column so it is
+            reachable in both states; its own visible label is the accessible
+            name and aria-expanded reports which state is showing. */}
+        <div className="conversations-control">
+          <button
+            aria-controls={conversationsCollapsed ? undefined : "ask-conversations"}
+            aria-expanded={!conversationsCollapsed}
+            className="conversations-toggle"
+            onClick={toggleConversations}
+            type="button"
+          >
+            {conversationsCollapsed ? <IconExpand /> : <IconCollapse />}
+            <span>{conversationsCollapsed ? "Show conversations" : "Hide conversations"}</span>
+          </button>
+        </div>
         <div className="flow" ref={flowRef}>
           {currentTitle && (
             <header className="flow-head">
@@ -6476,7 +6533,6 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
 
         <div className="foot">
-          <RelyBar sources={allSources} />
           <form className="question-composer" onSubmit={submitQuestion}>
             <label className="sr-only" htmlFor="ask-question">Question</label>
             <textarea

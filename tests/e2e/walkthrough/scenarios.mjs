@@ -139,6 +139,22 @@ async function openEvidence(page, turn, timeoutMs = 30_000) {
     .waitFor({ state: "visible", timeout: timeoutMs });
 }
 
+// chatColumnWidth is the rendered width of the chat column in CSS pixels. Card
+// W-6's width result — the collapsed chat is wider than the expanded one — is
+// measured here, at the walkthrough's desktop viewport, on the real screen.
+async function chatColumnWidth(page) {
+  const box = await page.locator("section.talk").boundingBox();
+  if (box === null) throw new Error("the chat column is not on screen");
+  return box.width;
+}
+
+// conversationToggle is the chat screen's one conversation-list control, found
+// by the label it shows in the wanted state: "Hide conversations" while the
+// list is open, "Show conversations" while it is put away.
+function conversationToggle(page, label) {
+  return page.locator("button.conversations-toggle").filter({ hasText: label });
+}
+
 // runLocalScenario is the card U-1 walkthrough, unchanged in what it does.
 export async function runLocalScenario(page, walk, options = {}) {
   const question = options.question ?? "что ты знаешь?";
@@ -205,6 +221,51 @@ export async function runLocalScenario(page, walk, options = {}) {
     // control: a footnote mark woven into the text, or a basis row when the
     // server returned a citation the answer text did not reference.
     await turn.locator("button.fn, button.basis").first().waitFor({ state: "visible", timeout: 30_000 });
+    // Card W-5: the chat screen carries exactly one control for the
+    // workspace's sources. Every source control belongs to the Ask surface,
+    // whose header control and the composer control used to render the same
+    // summary twice; the screenshot of this step shows the one that remains.
+    const sourceControls = page.locator(".ask-surface .rely-summary");
+    const sourceControlCount = await sourceControls.count();
+    if (sourceControlCount !== 1) {
+      throw new Error(`the chat screen shows ${sourceControlCount} sources controls, want exactly 1`);
+    }
+    await sourceControls.first().waitFor({ state: "visible", timeout: 30_000 });
+  });
+
+  // Card W-6: the conversation list can be put away with one action and brought
+  // back with one action, and the chat and its answer take the freed width.
+  // The two steps are deliberately separate so the report carries one
+  // screenshot of each state after its own action.
+  let collapsedChatWidth = 0;
+  await walk.step("collapse the conversation list", async () => {
+    const list = page.locator('section[aria-label="Conversations"]');
+    await list.waitFor({ state: "visible", timeout: 30_000 });
+    const expandedChatWidth = await chatColumnWidth(page);
+    await conversationToggle(page, "Hide conversations").click();
+    await list.waitFor({ state: "detached", timeout: 30_000 });
+    await conversationToggle(page, "Show conversations").waitFor({ state: "visible", timeout: 30_000 });
+    collapsedChatWidth = await chatColumnWidth(page);
+    if (!(collapsedChatWidth > expandedChatWidth)) {
+      throw new Error(
+        `the collapsed chat column is ${collapsedChatWidth} px wide, the expanded one ${expandedChatWidth} px`,
+      );
+    }
+    console.log(`walkthrough chat column px: expanded=${expandedChatWidth} collapsed=${collapsedChatWidth}`);
+  });
+
+  await walk.step("expand the conversation list again", async () => {
+    await conversationToggle(page, "Show conversations").click();
+    const list = page.locator('section[aria-label="Conversations"]');
+    await list.waitFor({ state: "visible", timeout: 30_000 });
+    await conversationToggle(page, "Hide conversations").waitFor({ state: "visible", timeout: 30_000 });
+    const expandedChatWidth = await chatColumnWidth(page);
+    if (!(collapsedChatWidth > expandedChatWidth)) {
+      throw new Error(
+        `the collapsed chat column is ${collapsedChatWidth} px wide, the expanded one ${expandedChatWidth} px`,
+      );
+    }
+    console.log(`walkthrough chat column px: collapsed=${collapsedChatWidth} expanded-again=${expandedChatWidth}`);
   });
 
   await walk.step("open the evidence of that answer", async () => {

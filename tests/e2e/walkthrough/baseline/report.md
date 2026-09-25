@@ -4,11 +4,11 @@ A robot walked the real web interface of the local synthetic stand.
 
 - Command: `bash tests/e2e/walkthrough/run-walkthrough.sh`
 - Scenario: local
-- Stand: https://127.0.0.1:55475
-- Started: 2026-09-25T18:13:16.724Z
-- Finished: 2026-09-25T18:13:19.620Z
-- Total: 2.896 s
-- Result: **PASS** (6 steps, 0 failed)
+- Stand: https://127.0.0.1:55477
+- Started: 2026-09-25T18:55:22.165Z
+- Finished: 2026-09-25T18:55:24.888Z
+- Total: 2.723 s
+- Result: **PASS** (8 steps, 0 failed)
 
 ## Answers (1)
 
@@ -18,7 +18,7 @@ A robot walked the real web interface of the local synthetic stand.
 
 ## Steps
 
-### 1. the interface shows the running server revision — passed (0.13 s)
+### 1. the interface shows the running server revision — passed (0.12 s)
 
 ![the interface shows the running server revision](screenshots/01-the-interface-shows-the-running-server-revision.png)
 
@@ -58,7 +58,7 @@ HTTP responses 400-499 (1):
 
 - GET /api/v1/workspaces -> 401 (UNAUTHENTICATED)
 
-### 3. open Sources and confirm the synthetic database tables — passed (1.08 s)
+### 3. open Sources and confirm the synthetic database tables — passed (1.07 s)
 
 ![open Sources and confirm the synthetic database tables](screenshots/03-open-sources-and-confirm-the-synthetic-database-tables.png)
 
@@ -76,7 +76,7 @@ Browser console errors (0):
 
 - none
 
-### 4. open the model settings and save a change — passed (0.18 s)
+### 4. open the model settings and save a change — passed (0.26 s)
 
 ![open the model settings and save a change](screenshots/04-open-the-model-settings-and-save-a-change.png)
 
@@ -92,7 +92,7 @@ Browser console errors (0):
 
 - none
 
-### 5. ask the question in the chat and get an answer — passed (0.96 s)
+### 5. ask the question in the chat and get an answer — passed (0.68 s)
 
 ![ask the question in the chat and get an answer](screenshots/05-ask-the-question-in-the-chat-and-get-an-answer.png)
 
@@ -114,9 +114,41 @@ Browser console errors (0):
 
 - none
 
-### 6. open the evidence of that answer — passed (0.23 s)
+### 6. collapse the conversation list — passed (0.04 s)
 
-![open the evidence of that answer](screenshots/06-open-the-evidence-of-that-answer.png)
+![collapse the conversation list](screenshots/06-collapse-the-conversation-list.png)
+
+Mutating requests (0):
+
+- none
+
+HTTP responses >= 500 (0):
+
+- none
+
+Browser console errors (0):
+
+- none
+
+### 7. expand the conversation list again — passed (0.04 s)
+
+![expand the conversation list again](screenshots/07-expand-the-conversation-list-again.png)
+
+Mutating requests (0):
+
+- none
+
+HTTP responses >= 500 (0):
+
+- none
+
+Browser console errors (0):
+
+- none
+
+### 8. open the evidence of that answer — passed (0.13 s)
+
+![open the evidence of that answer](screenshots/08-open-the-evidence-of-that-answer.png)
 
 Mutating requests (0):
 
