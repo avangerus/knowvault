@@ -543,7 +543,7 @@
     "internal/platform/workspaceapi/workspaceapi_conversation_revocation_test.go": "6ef8008788b31d3a8308ff523f5cfaebca7eed3f22f8059945891b15194290b2",
     "internal/platform/workspaceapi/workspaceapi_evidence_query_test.go": "f7d39f6dfccb39f7a84218bda9a856d7299cf94c7491ed7b7b88d0db9bb2a80a",
     "internal/platform/workspaceapi/workspaceapi_evidence_test.go": "314bb557c476a7e67a1503d4940761c6f38373db074d898298a2c569196a8d8b",
-    "internal/platform/workspaceapi/workspaceapi_failure_log_test.go": "60ba175e782a4ef062bc322998383cead5c178132e8d7488eba955b9ff3de008",
+    "internal/platform/workspaceapi/workspaceapi_failure_log_test.go": "6923200de0d279739e6aa4142711b58bf2ef4695d15f69a5905cdfda6e3a1869",
     "internal/platform/workspaceapi/workspaceapi_mcp_evidence_test.go": "18c90698696124b22c1ac83d9401dea502194d6f713d7bf3d35d9a75e54bf44d",
     "internal/platform/workspaceapi/workspaceapi_mcp_sources_test.go": "36bb6f9ec13115a219777341f13c66286f5df8e5f28f67a5fc3d1f7422a05bd9",
     "internal/platform/workspaceapi/workspaceapi_member_candidates_test.go": "546de687e28235da34ba08e5b5c56a43f774554ec75ebbdc74c49a0931687046",

@@ -109,6 +109,28 @@ func TestWorkspaceAPIDifferentFailuresNameDifferentCauses(t *testing.T) {
 	}
 }
 
+// TestWorkspaceAPIStreamingResponseIsUnchangedThroughTheFailureRecorder is the
+// card's "the browser sees no change" rule for the riskiest path: the NDJSON
+// question stream, which flushes through http.ResponseController while the
+// failure recorder wraps its writer.
+func TestWorkspaceAPIStreamingResponseIsUnchangedThroughTheFailureRecorder(t *testing.T) {
+	plain := newTestHarness(t)
+	plainResponse := httptest.NewRecorder()
+	plain.handler.ServeHTTP(plainResponse, streamQuestionRequest(plain, `{"question":"How many?"}`))
+
+	wrapped := newTestHarness(t)
+	wrappedResponse := httptest.NewRecorder()
+	failurelog.WithFailureLog(wrapped.handler).ServeHTTP(wrappedResponse, streamQuestionRequest(wrapped, `{"question":"How many?"}`))
+
+	if wrappedResponse.Code != plainResponse.Code ||
+		wrappedResponse.Body.String() != plainResponse.Body.String() ||
+		wrappedResponse.Header().Get("Content-Type") != plainResponse.Header().Get("Content-Type") {
+		t.Fatalf("stream changed: status=%d/%d body=%q/%q type=%q/%q",
+			plainResponse.Code, wrappedResponse.Code, plainResponse.Body.String(), wrappedResponse.Body.String(),
+			plainResponse.Header().Get("Content-Type"), wrappedResponse.Header().Get("Content-Type"))
+	}
+}
+
 // TestWorkspaceAPIFailureLineCarriesNoRequestSecret runs the same 5xx through
 // both credential transports (browser session cookie and explicit bearer
 // session) with a password-shaped body secret, and requires none of the
