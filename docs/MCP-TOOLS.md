@@ -1029,10 +1029,31 @@ registered tables, so `pg_catalog`, `information_schema`, another schema and a
 function scan are refused before execution. A column the administrator excluded
 is refused by the query role's own column grants.
 
+A deterministic pre-`EXPLAIN` gate additionally refuses, with
+`SQL_REJECTED_STATIC`, any statement that could change a session setting
+(`set_config`, or any `SET` form, including quoted, schema-qualified or
+Unicode-escaped spellings) and any use of the cross-session, server-file and
+large-object function families (`pg_stat_get_*`/`pg_stat_activity`-style
+functions, `pg_cancel_backend`, `pg_terminate_backend`, `pg_backend_pid`,
+advisory locks, `pg_sleep*`, the `*_to_xml`/`*_to_json` query-executing family,
+`lo_*`, `pg_read_*`, `pg_ls_*`). Function names are matched case-folded with
+quotes and schema qualifiers stripped.
+
+The query role itself must still be least privilege, and the proof now also
+requires a bounded `work_mem` (at most 64 MB) and `temp_file_limit` (pinned,
+neither unlimited nor above 1 GB), no readable large object, no executable
+function in an untrusted procedural language, and no executable `SECURITY
+DEFINER` function that is not owned by the bootstrap superuser, in every schema
+including `pg_catalog`. The proof runs inside the statement's own read-only
+transaction on every execution, so a stored proof can never authorize a later
+statement after the role, the credential or the projection changes.
+
 The result is the whole text table with its row count, SQL hash, result digest
 and database identity. Each attempt is audited with the source id, SQL hash and
 result digest; a failed audit returns no rows. At most three successful
-statements are allowed per chat run, and parallel query workers are disabled.
+statements are allowed per chat run — a statement that reached execution
+consumes the budget even when its result is too large to retain or its
+post-processing fails — and parallel query workers are disabled.
 
 An unknown, foreign, disabled or non-member source is the single content-free
 `NOT_FOUND` (`-32004` over MCP), exactly like `knowvault_source_schema`. A

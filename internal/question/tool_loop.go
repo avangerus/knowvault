@@ -1459,18 +1459,14 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			} else {
 				result, callErr = service.tools.Invoke(callCtx, scope, name, args)
 				if callErr == nil {
-					if !result.IsError {
-						var execution *liveDataExecution
-						result, execution, _ = sourceSQLRetainResult(run.ID, result, profile.MaxToolResultBytes)
-						if execution != nil {
-							liveDataState.retain(execution)
-						}
+					// Card S3.2d R5: the budget is charged from the provider
+					// outcome before any post-processing, then the result is
+					// retained. A result too large to retain still costs one.
+					var execution *liveDataExecution
+					result, execution = sourceSQLState.invoke(run.ID, result, profile.MaxToolResultBytes)
+					if execution != nil {
+						liveDataState.retain(execution)
 					}
-					// Card S3.2c: the budget counts every attempt that reached
-					// execution, so a TIMEOUT, ROW_LIMIT, COST_LIMIT or
-					// DATABASE_REJECTED consumes it exactly like a success. A
-					// refusal that never executed stays free.
-					sourceSQLState.record(result)
 				}
 			}
 		} else {

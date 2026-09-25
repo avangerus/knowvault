@@ -37,6 +37,57 @@ func TestSourceSQLRunStateAllowsThreeAndRefusesTheFourth(t *testing.T) {
 	}
 }
 
+func TestSourceSQLBudgetChargesFromProviderOutcomeBeforeRetain(t *testing.T) {
+	canonical := testSourceSQLCanonicalResult(t)
+	var state sourceSQLRunState
+	for call := 1; call <= sourceSQLMaxSuccessfulCalls+1; call++ {
+		if !state.allow() {
+			if call != sourceSQLMaxSuccessfulCalls+1 {
+				t.Fatalf("call %d was refused before the bound", call)
+			}
+			refusal := state.refused()
+			var decoded struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(refusal.Text), &decoded); err != nil || decoded.Error != "SQL_LIMIT_REACHED" {
+				t.Fatalf("fourth call refusal = %s err=%v", refusal.Text, err)
+			}
+			return
+		}
+		// Every provider success here is too large to retain; card S3.2d R5
+		// charges it before post-processing, so it still costs one.
+		retained, execution := state.invoke(testSourceSQLRunID, canonical, 1)
+		if execution != nil {
+			t.Fatalf("call %d retained a result above the limit", call)
+		}
+		var decoded struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(retained.Text), &decoded); err != nil || decoded.Error != "SOURCE_SQL_RESULT_TOO_LARGE" {
+			t.Fatalf("call %d post-processing = %s err=%v", call, retained.Text, err)
+		}
+	}
+	t.Fatal("the fourth executed statement was allowed")
+}
+
+// TestSourceSQLBudgetChargesWhenPostProcessingCannotAuthenticate is card S3.2d
+// R5's ordering proof: a provider success whose post-processing rejects the
+// payload (a code that never reached the database layer) still consumes the
+// budget, because the charge happens before the post-processing.
+func TestSourceSQLBudgetChargesWhenPostProcessingCannotAuthenticate(t *testing.T) {
+	malformed := workspacetools.Result{Structured: []byte(`{"source_id":"conn_malformed"}`)}
+	var state sourceSQLRunState
+	for call := 1; call <= sourceSQLMaxSuccessfulCalls; call++ {
+		if !state.allow() {
+			t.Fatalf("call %d was refused before the bound", call)
+		}
+		state.invoke(testSourceSQLRunID, malformed, 1<<20)
+	}
+	if state.successfulCalls != sourceSQLMaxSuccessfulCalls || state.allow() {
+		t.Fatalf("provider successes were not charged before post-processing: successful=%d allow=%v", state.successfulCalls, state.allow())
+	}
+}
+
 func TestSourceSQLRunStateRefusalsDoNotConsumeTheBudget(t *testing.T) {
 	var state sourceSQLRunState
 	for call := 0; call < sourceSQLMaxSuccessfulCalls*2; call++ {

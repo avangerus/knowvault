@@ -6,7 +6,7 @@ import (
 )
 
 func TestDiscoveryBuildsPreparedProjectionFromExplicitEnvelope(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 24576, schemaName: "prepared", relationName: "objects", relationKind: "VIEW",
 		comment: "prepared business-object view",
 	}, []catalogColumn{
@@ -55,7 +55,7 @@ func TestDiscoveryBuildsPreparedProjectionFromExplicitEnvelope(t *testing.T) {
 }
 
 func TestDiscoveryLeavesUnknownAndMalformedViewsForInterpretation(t *testing.T) {
-	unknown, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	unknown, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 24577, schemaName: "prepared", relationName: "unknown", relationKind: "VIEW",
 	}, []catalogColumn{
 		{ordinal: 1, name: "id", typeOID: 2950, typeName: "uuid"},
@@ -68,7 +68,7 @@ func TestDiscoveryLeavesUnknownAndMalformedViewsForInterpretation(t *testing.T) 
 	if unknown.Status != DiscoveryNeedsInterpretation || unknown.Interpretation != InterpretationUnrecognizedFormat || unknown.Projection != nil {
 		t.Fatalf("unknown discovery=%#v", unknown)
 	}
-	malformed, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	malformed, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 24578, schemaName: "prepared", relationName: "malformed", relationKind: "VIEW",
 	}, []catalogColumn{
 		{ordinal: 1, name: "entity_id", typeOID: 2950, typeName: "uuid"},
@@ -126,7 +126,7 @@ func TestDiscoveryLimitsAllowUpTo1024RelationsFailClosedAbove(t *testing.T) {
 // key column(s) become IDENTITY, every other column becomes EVIDENCE, and a
 // composite key puts RoleIdentity on every key column.
 func TestDiscoveryTableWithPrimaryKeyIsPreparedWithIdentityOnKeyColumns(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30001, schemaName: "public", relationName: "accounts", relationKind: "TABLE",
 		comment: "customer accounts", approxRowCount: 4200,
 	}, []catalogColumn{
@@ -175,7 +175,7 @@ func TestDiscoveryTableWithPrimaryKeyIsPreparedWithIdentityOnKeyColumns(t *testi
 // closed rule: a table this connector cannot key never becomes PREPARED, and
 // it never receives an invented ordinal identity.
 func TestDiscoveryTableWithoutPrimaryKeyNeedsInterpretation(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30002, schemaName: "public", relationName: "events_log", relationKind: "TABLE",
 	}, []catalogColumn{
 		{ordinal: 1, name: "occurred_at", typeOID: 1184, typeName: "timestamptz", nullable: false},
@@ -193,7 +193,7 @@ func TestDiscoveryTableWithoutPrimaryKeyNeedsInterpretation(t *testing.T) {
 // widened relation kind (pg_class.relkind = 'p') follows the same table rule
 // as an ordinary base table.
 func TestDiscoveryPartitionedTableWithPrimaryKeyIsPrepared(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30003, schemaName: "public", relationName: "measurements", relationKind: "PARTITIONED_TABLE",
 	}, []catalogColumn{
 		{ordinal: 1, name: "measurement_id", typeOID: 2950, typeName: "uuid", nullable: false, primaryKey: true},
@@ -223,7 +223,7 @@ func TestNumericTypmodDecodesSignedElevenBitScale(t *testing.T) {
 // so the browser's column ordinals and the registration-time exclusion
 // ordinals always name the same projection column.
 func TestDiscoveryTableWithOneUnsupportedColumnIsPreparedAndExcludesIt(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30010, schemaName: "public", relationName: "waste_site", relationKind: "TABLE",
 	}, []catalogColumn{
 		{ordinal: 1, name: "site_id", typeOID: 2950, typeName: "uuid", nullable: false, primaryKey: true},
@@ -269,7 +269,7 @@ func TestDiscoveryTableWithOneUnsupportedColumnIsPreparedAndExcludesIt(t *testin
 // EVIDENCE set, never remove the identity it is keyed by, and a table with
 // nothing projectable left is not a source at all.
 func TestDiscoveryTableWithUnsupportedPrimaryKeyStaysBlocked(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30011, schemaName: "public", relationName: "shape_index", relationKind: "TABLE",
 	}, []catalogColumn{
 		{ordinal: 1, name: "geom", typeOID: 90001, typeName: "geometry", nullable: false, primaryKey: true},
@@ -287,7 +287,7 @@ func TestDiscoveryTableWithUnsupportedPrimaryKeyStaysBlocked(t *testing.T) {
 }
 
 func TestDiscoveryTableWithOnlyUnsupportedColumnsStaysBlocked(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30012, schemaName: "public", relationName: "tiles", relationKind: "TABLE",
 	}, []catalogColumn{
 		{ordinal: 1, name: "geom", typeOID: 90001, typeName: "geometry", nullable: false, primaryKey: true},
@@ -310,7 +310,7 @@ func TestDiscoveryTableWithOnlyUnsupportedColumnsStaysBlocked(t *testing.T) {
 // one unsupported column is still surfaced as NEEDS_INTERPRETATION rather
 // than silently narrowed.
 func TestDiscoveryViewWithUnsupportedColumnStillNeedsInterpretation(t *testing.T) {
-	view, err := newViewDiscovery("conn_discovery", 16384, "knowvault_test", catalogRelation{
+	view, err := newViewDiscovery("conn_discovery", "localhost", 5432, 16384, "knowvault_test", catalogRelation{
 		relationOID: 30013, schemaName: "public", relationName: "v_objects", relationKind: "VIEW",
 	}, []catalogColumn{
 		{ordinal: 1, name: "entity_id", typeOID: 2950, typeName: "uuid", nullable: false},

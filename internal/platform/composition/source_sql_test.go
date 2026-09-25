@@ -32,13 +32,18 @@ func TestSourceQueryCredentialRefusalCodeVocabulary(t *testing.T) {
 		string(governedquery.CodeQueryRoleMembership),
 		string(governedquery.CodeQueryRoleSecurityDefiner),
 		string(governedquery.CodeQueryRoleRemoteExecution),
+		string(governedquery.CodeQueryRoleResourceLimit),
+		string(governedquery.CodeQueryRoleLargeObject),
+		string(governedquery.CodeQueryRoleUntrustedLanguage),
 	} {
 		if code != "SOURCE_QUERY_CREDENTIAL_UNRESOLVED" && code != "SOURCE_QUERY_CREDENTIAL_INGESTION_REFERENCE" &&
 			code != "SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH" && code != "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE" &&
 			code != "SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED" && code != "SOURCE_QUERY_CREDENTIAL_MISSING_SELECT" &&
 			code != "SOURCE_QUERY_CREDENTIAL_EXTRA_RELATION" && code != "SOURCE_QUERY_CREDENTIAL_WRITE_PRIVILEGE" &&
 			code != "SOURCE_QUERY_CREDENTIAL_ELEVATED_ROLE" && code != "SOURCE_QUERY_CREDENTIAL_ROLE_MEMBERSHIP" &&
-			code != "SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER" && code != "SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION" {
+			code != "SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER" && code != "SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION" &&
+			code != "SOURCE_QUERY_CREDENTIAL_RESOURCE_LIMIT" && code != "SOURCE_QUERY_CREDENTIAL_LARGE_OBJECT" &&
+			code != "SOURCE_QUERY_CREDENTIAL_UNTRUSTED_LANGUAGE" {
 			t.Fatalf("unexpected closed credential code %q", code)
 		}
 	}

@@ -75,10 +75,23 @@ func VerifyQueryCredential(ctx context.Context, config Config, params QueryCrede
 }
 
 // queryCredentialDatabaseIdentity recomputes the source's immutable "pgdb:…"
-// identity from this connection's own database oid and name. It is the exact
-// derivation registration applies, so a credential pointing at another
-// database on the same server is refused rather than accepted as equivalent.
+// identity from this connection's own database oid and name plus the server it
+// actually reached: the host and port carried in the connection's own parsed
+// configuration, which is the exact registered/DSN authority the TLS policy
+// validated. Card S3.2d binds the host and port into the identity, so a DSN
+// that reaches another server with the same database name and oid is a
+// different identity and is refused as a mismatch. It is the exact derivation
+// registration applies, so a credential pointing at another database on the
+// same server is refused too.
 func queryCredentialDatabaseIdentity(ctx context.Context, transaction pgx.Tx) (string, error) {
+	if transaction == nil || transaction.Conn() == nil || transaction.Conn().Config() == nil {
+		return "", &Error{code: CodeQueryCredentialRejected}
+	}
+	host := transaction.Conn().Config().Host
+	port := transaction.Conn().Config().Port
+	if host == "" || port < 1 {
+		return "", &Error{code: CodeQueryCredentialRejected}
+	}
 	var oid uint32
 	var name string
 	if err := transaction.QueryRow(ctx, `
@@ -91,9 +104,11 @@ func queryCredentialDatabaseIdentity(ctx context.Context, transaction pgx.Tx) (s
 		return "", &Error{code: CodeQueryCredentialRejected}
 	}
 	raw, err := canon.CanonicalJSON(struct {
+		Host string `json:"host"`
+		Port uint16 `json:"port"`
 		OID  uint32 `json:"oid"`
 		Name string `json:"name"`
-	}{OID: oid, Name: name})
+	}{Host: host, Port: port, OID: oid, Name: name})
 	if err != nil || len(raw) == 0 {
 		return "", &Error{code: CodeQueryCredentialRejected, cause: err}
 	}

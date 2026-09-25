@@ -175,6 +175,14 @@ type ViewDiscovery struct {
 	// at all keeps every observed column in Columns and stays blocked.
 	ExcludedColumns []ExcludedColumn `json:"excluded_columns,omitempty"`
 	Projection      *Projection      `json:"projection,omitempty"`
+	// serverHost and serverPort are the connected server authority this
+	// discovery session actually reached, taken from the connector's own
+	// validated pgx connection config. Card S3.2d binds them into the
+	// projection's immutable database identity. They are deliberately
+	// unexported: they are not part of the sealed discovery JSON and should not
+	// start travelling as request-shaped data.
+	serverHost string
+	serverPort uint16
 }
 
 // CatalogSnapshot is one bounded, read-only catalog observation. Database
@@ -300,6 +308,10 @@ func discoverCatalogSnapshot(ctx context.Context, connection *pgx.Conn, connecti
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
+	serverConfig := connection.Config()
+	if serverConfig == nil || serverConfig.Host == "" || serverConfig.Port < 1 {
+		return CatalogSnapshot{}, &Error{code: CodeExternalFailure}
+	}
 	relations, err := discoveryRelations(ctx, tx, schemaName, relationName, limits)
 	if err != nil {
 		return CatalogSnapshot{}, err
@@ -313,7 +325,7 @@ func discoverCatalogSnapshot(ctx context.Context, connection *pgx.Conn, connecti
 		if err != nil {
 			return CatalogSnapshot{}, err
 		}
-		view, err := newViewDiscovery(connectionID, databaseOID, databaseName, relation, columns)
+		view, err := newViewDiscovery(connectionID, serverConfig.Host, serverConfig.Port, databaseOID, databaseName, relation, columns)
 		if err != nil {
 			return CatalogSnapshot{}, err
 		}
@@ -632,12 +644,13 @@ func discoveryColumns(ctx context.Context, tx pgx.Tx, relationOID uint32, limits
 	return columns, nil
 }
 
-func newViewDiscovery(connectionID string, databaseOID uint32, databaseName string, relation catalogRelation, columns []catalogColumn) (ViewDiscovery, error) {
+func newViewDiscovery(connectionID, serverHost string, serverPort uint16, databaseOID uint32, databaseName string, relation catalogRelation, columns []catalogColumn) (ViewDiscovery, error) {
 	view := ViewDiscovery{
 		ConnectionID: connectionID, DatabaseOID: databaseOID, DatabaseName: databaseName, RelationOID: relation.relationOID,
 		SchemaName: relation.schemaName, RelationName: relation.relationName,
 		RelationKind: relation.relationKind, Comment: relation.comment, ApproxRowCount: relation.approxRowCount,
 		Columns: make([]DiscoveredColumn, 0, len(columns)), Status: DiscoveryNeedsInterpretation,
+		serverHost: serverHost, serverPort: serverPort,
 	}
 	for _, column := range columns {
 		discovered, err := newDiscoveredColumn(column)
@@ -836,18 +849,38 @@ func preparedColumnTypes(columns map[string]DiscoveredColumn) bool {
 		payloadFormat.LogicalType == TypeText
 }
 
+// discoveryDatabaseIdentity derives the projection's immutable "pgdb:…"
+// identity from the connected server authority (host and port) plus the
+// database oid and name. Card S3.2d added the host and port, so two servers
+// with the same database name and oid no longer share an identity and a
+// credential repointed at another host is a mismatch at the tool boundary. The
+// JSON key set and order mirror governedquery.queryCredentialDatabaseIdentity
+// exactly; the two packages stay independent but must derive the same value for
+// the same connection.
+func discoveryDatabaseIdentity(view ViewDiscovery) (string, error) {
+	if view.serverHost == "" || view.serverPort < 1 {
+		return "", &Error{code: CodeDiscoveryInvalid}
+	}
+	raw, err := canon.CanonicalJSON(struct {
+		Host string `json:"host"`
+		Port uint16 `json:"port"`
+		OID  uint32 `json:"oid"`
+		Name string `json:"name"`
+	}{Host: view.serverHost, Port: view.serverPort, OID: view.DatabaseOID, Name: view.DatabaseName})
+	if err != nil {
+		return "", &Error{code: CodeDiscoveryInvalid, cause: err}
+	}
+	return "pgdb:" + strings.TrimPrefix(canon.Hash(raw), "sha256:"), nil
+}
+
 func buildDiscoveredProjection(view ViewDiscovery) (Projection, error) {
 	if !validCatalogText(view.DatabaseName, 128) || !discoverySchemaAllowed(view.SchemaName) || !identifierPattern.MatchString(view.SchemaName) || !identifierPattern.MatchString(view.RelationName) {
 		return Projection{}, &Error{code: CodeDiscoveryInvalid}
 	}
-	databaseBytes, err := canon.CanonicalJSON(struct {
-		OID  uint32 `json:"oid"`
-		Name string `json:"name"`
-	}{OID: view.DatabaseOID, Name: view.DatabaseName})
+	databaseIdentity, err := discoveryDatabaseIdentity(view)
 	if err != nil {
-		return Projection{}, &Error{code: CodeDiscoveryInvalid, cause: err}
+		return Projection{}, err
 	}
-	databaseIdentity := "pgdb:" + strings.TrimPrefix(canon.Hash(databaseBytes), "sha256:")
 	columns := make([]Column, 0, len(view.Columns))
 	for _, discovered := range view.Columns {
 		if discovered.Ordinal < 1 || !identifierPattern.MatchString(discovered.Name) || !validOpaque(discovered.TypeFingerprint) || discovered.LogicalType == "" || discovered.MaxBytes < 1 {
@@ -927,14 +960,10 @@ func buildTableProjection(view ViewDiscovery) (Projection, error) {
 	if !validCatalogText(view.DatabaseName, 128) || !discoverySchemaAllowed(view.SchemaName) || !identifierPattern.MatchString(view.SchemaName) || !identifierPattern.MatchString(view.RelationName) {
 		return Projection{}, &Error{code: CodeDiscoveryInvalid}
 	}
-	databaseBytes, err := canon.CanonicalJSON(struct {
-		OID  uint32 `json:"oid"`
-		Name string `json:"name"`
-	}{OID: view.DatabaseOID, Name: view.DatabaseName})
+	databaseIdentity, err := discoveryDatabaseIdentity(view)
 	if err != nil {
-		return Projection{}, &Error{code: CodeDiscoveryInvalid, cause: err}
+		return Projection{}, err
 	}
-	databaseIdentity := "pgdb:" + strings.TrimPrefix(canon.Hash(databaseBytes), "sha256:")
 	columns := make([]Column, 0, len(view.Columns))
 	for _, discovered := range view.Columns {
 		if discovered.Ordinal < 1 || !identifierPattern.MatchString(discovered.Name) || !validOpaque(discovered.TypeFingerprint) || discovered.LogicalType == "" || discovered.MaxBytes < 1 {

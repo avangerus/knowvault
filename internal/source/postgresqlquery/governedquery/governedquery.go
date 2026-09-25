@@ -131,13 +131,11 @@ type Config struct {
 	// close a capability. It is set from the mount manifest, never from a
 	// request.
 	PresetOnly bool
-	// RoleProven is S3 card 2c's cached least-privilege proof for the exact
-	// (connection revision, query credential revision, scope projection) pair.
-	// It is server-owned: composition sets it only from the product store's
-	// verification row after that row matched the current pair. The safe zero
-	// value is false, so a Config built without the cache always re-proves the
-	// role before executing anything.
-	RoleProven bool
+	// Card S3.2d deliberately has no cached-proof field here. The
+	// least-privilege proof is re-run inside the same read-only transaction as
+	// the statement on every execution, so no stored verdict can authorize a
+	// statement: a proof recorded for an earlier role, credential revision or
+	// projection can never stand in for the role that is connected now.
 }
 
 func (config Config) Validate() error {

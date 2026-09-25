@@ -56,12 +56,22 @@ func (workspace *fakeSourceSQLWorkspace) SetSourceQueryCredential(context.Contex
 type fakeSourceSQLAuditor struct {
 	events   []audit.EventInput
 	ctxError error
+	// attemptMatched is card S3.2d R6's read-back answer; matchCalls counts the
+	// lookups so a test can prove the audit event is actually consulted.
+	attemptMatched bool
+	matchCalls     int
+	matchErr       error
 }
 
 func (auditor *fakeSourceSQLAuditor) Append(ctx context.Context, _ database.AccessContext, input audit.EventInput) (audit.Event, error) {
 	auditor.ctxError = ctx.Err()
 	auditor.events = append(auditor.events, input)
 	return audit.Event{EventID: input.EventID}, nil
+}
+
+func (auditor *fakeSourceSQLAuditor) GovernedQueryAttemptMatches(context.Context, database.AccessContext, string, string, string, string, string) (bool, error) {
+	auditor.matchCalls++
+	return auditor.attemptMatched, auditor.matchErr
 }
 
 type fakeSourceSQLResolver struct {

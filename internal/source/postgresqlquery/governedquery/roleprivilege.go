@@ -20,8 +20,13 @@ package governedquery
 //     databases;
 //   - membership in no role at all (this includes pg_read_all_data,
 //     pg_monitor and pg_read_server_files);
-//   - no EXECUTE on a SECURITY DEFINER function outside pg_catalog and
-//     information_schema;
+//   - an effective temp_file_limit that is neither unlimited nor above 1 GB,
+//     and an effective work_mem of at most 64 MB;
+//   - no read or write privilege on any large object;
+//   - no EXECUTE on a function in an untrusted procedural language (other than
+//     the built-in internal and c);
+//   - no EXECUTE on a SECURITY DEFINER function not owned by the bootstrap
+//     superuser, in any schema including pg_catalog and information_schema;
 //   - no access to dblink, postgres_fdw or any other foreign-data or
 //     remote-execution extension that is installed.
 //
@@ -33,6 +38,7 @@ package governedquery
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -68,6 +74,29 @@ const (
 	// wrapper is usable, or an installed foreign-data/remote-execution extension
 	// is reachable by the role.
 	CodeQueryRoleRemoteExecution ErrorCode = "SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION"
+	// CodeQueryRoleResourceLimit is card S3.2d's memory/spill bound: the role's
+	// effective temp_file_limit is unlimited or above 1 GB, or its effective
+	// work_mem is above 64 MB. The DBA pins both on the role.
+	CodeQueryRoleResourceLimit ErrorCode = "SOURCE_QUERY_CREDENTIAL_RESOURCE_LIMIT"
+	// CodeQueryRoleLargeObject is card S3.2d's large-object rule: the role can
+	// read or modify a large object.
+	CodeQueryRoleLargeObject ErrorCode = "SOURCE_QUERY_CREDENTIAL_LARGE_OBJECT"
+	// CodeQueryRoleUntrustedLanguage is card S3.2d's language rule: the role can
+	// EXECUTE a function in an untrusted procedural language (other than the two
+	// built-in unsafe languages internal and c).
+	CodeQueryRoleUntrustedLanguage ErrorCode = "SOURCE_QUERY_CREDENTIAL_UNTRUSTED_LANGUAGE"
+)
+
+const (
+	// bootstrapSuperuserOID is PostgreSQL's BOOTSTRAP_SUPERUSERID: the role
+	// initdb creates to own the system catalogs. A SECURITY DEFINER function
+	// owned by that role is a trusted built-in; one owned by any other role is
+	// refused, in every schema including pg_catalog.
+	bootstrapSuperuserOID = 10
+	// roleTempFileLimitCeilingKB is the card's 1 GB spill bound.
+	roleTempFileLimitCeilingKB = 1 << 20
+	// roleWorkMemCeilingKB is the card's 64 MB per-operation memory bound.
+	roleWorkMemCeilingKB = 64 << 10
 )
 
 // remoteExecutionExtensions is the closed deny-list of installed extensions
@@ -96,10 +125,19 @@ func VerifyQueryRole(ctx context.Context, tx pgx.Tx, relations []ScopedRelation)
 	if err := verifyRoleAttributes(ctx, tx); err != nil {
 		return err
 	}
+	if err := verifyRoleResourceLimits(ctx, tx); err != nil {
+		return err
+	}
+	if err := verifyNoLargeObjectRead(ctx, tx); err != nil {
+		return err
+	}
 	if err := verifyNoWritePrivilege(ctx, tx); err != nil {
 		return err
 	}
 	if err := verifyNoExtraRelation(ctx, tx, relations); err != nil {
+		return err
+	}
+	if err := verifyNoUntrustedLanguage(ctx, tx); err != nil {
 		return err
 	}
 	if err := verifyNoSecurityDefiner(ctx, tx); err != nil {
@@ -134,6 +172,103 @@ func verifyRoleAttributes(ctx context.Context, tx pgx.Tx) error {
 	}
 	if member {
 		return &Error{code: CodeQueryRoleMembership}
+	}
+	return nil
+}
+
+// verifyRoleResourceLimits refuses a role whose effective work_mem or
+// temp_file_limit is above the card's bound. The values are read from
+// pg_settings inside the role's own transaction, so they are the effective
+// values PostgreSQL applied from the role's ALTER ROLE ... SET (the DBA pins
+// them there) and never a request field. temp_file_limit is superuser-only, so
+// an unpinned role reads back -1 (unlimited) and is refused.
+func verifyRoleResourceLimits(ctx context.Context, tx pgx.Tx) error {
+	rows, err := tx.Query(ctx, `
+		SELECT setting.name, setting.setting
+		FROM pg_catalog.pg_settings AS setting
+		WHERE setting.name IN ('temp_file_limit', 'work_mem')`)
+	if err != nil {
+		return &Error{code: CodeQueryCredentialRejected, cause: err}
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var name, value string
+		if scanErr := rows.Scan(&name, &value); scanErr != nil {
+			return &Error{code: CodeQueryCredentialRejected, cause: scanErr}
+		}
+		seen++
+		parsed, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil {
+			return &Error{code: CodeQueryRoleResourceLimit}
+		}
+		switch name {
+		case "temp_file_limit":
+			// -1 is PostgreSQL's "unlimited"; any negative value is the same.
+			if parsed < 0 || parsed > roleTempFileLimitCeilingKB {
+				return &Error{code: CodeQueryRoleResourceLimit}
+			}
+		case "work_mem":
+			if parsed < 1 || parsed > roleWorkMemCeilingKB {
+				return &Error{code: CodeQueryRoleResourceLimit}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return &Error{code: CodeQueryCredentialRejected, cause: err}
+	}
+	if seen != 2 {
+		// A server that does not expose the two settings cannot be proven; fail
+		// closed rather than assume a bound.
+		return &Error{code: CodeQueryCredentialRejected}
+	}
+	return nil
+}
+
+// verifyNoLargeObjectRead refuses a role that can read or modify any existing
+// large object. The large-object ACL is checked directly (the lo_* functions
+// are PUBLIC-executable by default, so the ACL is what actually gates a read);
+// with lo_compat_privileges off that is exactly the owner-or-grant rule
+// PostgreSQL applies.
+func verifyNoLargeObjectRead(ctx context.Context, tx pgx.Tx) error {
+	var found bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM pg_catalog.pg_largeobject_metadata AS large_object
+		    WHERE has_largeobject_privilege(current_user, large_object.oid, 'SELECT')
+		       OR has_largeobject_privilege(current_user, large_object.oid, 'UPDATE')
+		)`).Scan(&found)
+	if err != nil {
+		return &Error{code: CodeQueryCredentialRejected, cause: err}
+	}
+	if found {
+		return &Error{code: CodeQueryRoleLargeObject}
+	}
+	return nil
+}
+
+// verifyNoUntrustedLanguage refuses a role that can EXECUTE any function whose
+// procedural language is untrusted (lanpltrusted = false). The two built-in
+// unsafe languages internal and c are excluded: their functions are compiled
+// into PostgreSQL itself and cannot be replaced by a database user, while
+// plpython3u, plperlu and every other extension language can.
+func verifyNoUntrustedLanguage(ctx context.Context, tx pgx.Tx) error {
+	var found bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM pg_catalog.pg_proc AS procedure
+		    JOIN pg_catalog.pg_language AS language ON language.oid = procedure.prolang
+		    WHERE NOT language.lanpltrusted
+		      AND language.lanname NOT IN ('internal', 'c')
+		      AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
+		)`).Scan(&found)
+	if err != nil {
+		return &Error{code: CodeQueryCredentialRejected, cause: err}
+	}
+	if found {
+		return &Error{code: CodeQueryRoleUntrustedLanguage}
 	}
 	return nil
 }
@@ -223,20 +358,23 @@ func verifyNoExtraRelation(ctx context.Context, tx pgx.Tx, relations []ScopedRel
 }
 
 // verifyNoSecurityDefiner refuses the role if it can EXECUTE any SECURITY
-// DEFINER function outside pg_catalog and information_schema. Such a function
-// runs with the definer's rights, so it could read or write data the role's own
-// grants do not cover, and the planner's relation walk cannot see inside it.
+// DEFINER function that is not owned by the bootstrap superuser, in every
+// schema including pg_catalog and information_schema. Such a function runs with
+// the definer's rights, so it could read or write data the role's own grants do
+// not cover, and the planner's relation walk cannot see inside it. The
+// bootstrap superuser owns the system catalogs' own SECURITY DEFINER helpers
+// (and every function an extension created), so those trusted built-ins are the
+// one exemption; a function any other role owns is refused wherever it lives.
 func verifyNoSecurityDefiner(ctx context.Context, tx pgx.Tx) error {
 	var found bool
 	err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		    SELECT 1
 		    FROM pg_catalog.pg_proc AS procedure
-		    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
 		    WHERE procedure.prosecdef
-		      AND `+nonSystemSchemaClause+`
+		      AND procedure.proowner <> $1
 		      AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
-		)`).Scan(&found)
+		)`, bootstrapSuperuserOID).Scan(&found)
 	if err != nil {
 		return &Error{code: CodeQueryCredentialRejected, cause: err}
 	}

@@ -35,3 +35,25 @@ func TestGovernedQueryAttemptEventBuilds(t *testing.T) {
 		t.Fatalf("governed query attempt event does not build: %v", err)
 	}
 }
+
+// TestSourceQueryCredentialControlRefusalEventBuilds pins card S3.2d R7's
+// refusal shape: every set/clear attempt that passed the OWNER gate writes one
+// content-free event, and a refused candidate names its closed rule code.
+func TestSourceQueryCredentialControlRefusalEventBuilds(t *testing.T) {
+	workspaceID := "tko-operations"
+	actorID := "demo-admin"
+	connectionID := "conn_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	refusal := "SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER"
+	input := EventInput{
+		EventID: "aud_01M1WZZGSWJCM36MJ3KCXAD0AS", WorkspaceID: &workspaceID,
+		ActorType: ActorHuman, ActorPrincipalID: &actorID,
+		Action: ActionSourceQueryCredentialSet, ResourceType: ResourceSourceConnection,
+		ResourceID: connectionID, RequestID: "req_01M1WZZGSWJCM36MJ3KCXAD0AS",
+		Outcome: OutcomeFailed, ErrorCode: &refusal,
+		Metadata:   Metadata{SourceConnectionID: &connectionID},
+		OccurredAt: time.Unix(1757000000, 0).UTC(),
+	}
+	if _, err := Build("knowvault-demo", input, 0, ""); err != nil {
+		t.Fatalf("credential-control refusal event does not build: %v", err)
+	}
+}

@@ -175,6 +175,10 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 			             FROM public.source_query_credential AS query_credential
 			            WHERE query_credential.organization_id = scope_revision.organization_id
 			              AND query_credential.connection_id = scope_revision.connection_id
+			              -- Card S3.2d R1: a cleared credential is a tombstone
+			              -- row with a NULL reference, so the connection keeps its
+			              -- monotonic revision but must not advertise SQL.
+			              AND query_credential.credential_reference IS NOT NULL
 			       ) AS sql_available
 			FROM app.workspace_source_status_v3($1) AS status
 			JOIN public.source_scope_revision AS scope_revision

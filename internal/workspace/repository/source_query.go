@@ -91,8 +91,11 @@ func (source SourceQuerySource) ScopeHash() string {
 }
 
 // RoleProven reports whether the stored verification row still matches this
-// exact (connection revision, credential revision, projection) pair. A stale
-// or missing row means the execution boundary must re-prove the role.
+// exact (connection revision, credential revision, projection) pair. Card S3.2d
+// makes this a content-free evidence predicate only: the execution path
+// re-runs the least-privilege proof inside the statement's own transaction and
+// never consults this row to authorize anything, so a stale or forged row
+// cannot let a statement run.
 func (source SourceQuerySource) RoleProven() bool {
 	return source.Verification.ConnectionRevision == source.ConnectionRevision &&
 		source.Verification.CredentialRevision == source.QueryCredentialRevision &&

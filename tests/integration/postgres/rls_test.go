@@ -1952,6 +1952,7 @@ var migrationSequence = []string{
 	"000116_stage4_source_query_credential.sql",
 	"000117_stage4_source_query_credential_control.sql",
 	"000118_stage4_source_query_credential_verification.sql",
+	"000119_stage4_source_query_credential_revision.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert

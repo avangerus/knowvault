@@ -63,6 +63,9 @@ func seedScopedIntegration(t *testing.T, ctx context.Context, admin *pgx.Conn) {
 		`INSERT INTO ` + scopedIntegrationSchema + `.contracts (id, status, amount, secret) VALUES (1, 'active', 10, 's1'), (2, 'active', 20, 's2'), (3, 'closed', 30, 's3')`,
 		`INSERT INTO ` + scopedIntegrationSchema + `.customers (id, name) VALUES (1, 'Acme')`,
 		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '` + scopedIntegrationQueryRole + `') THEN CREATE ROLE ` + scopedIntegrationQueryRole + ` LOGIN PASSWORD '` + scopedIntegrationPassword + `'; END IF; END $$`,
+		// Card S3.2d R2: the DBA pins the query role's memory and spill bounds.
+		`ALTER ROLE ` + scopedIntegrationQueryRole + ` SET temp_file_limit = '512MB'`,
+		`ALTER ROLE ` + scopedIntegrationQueryRole + ` SET work_mem = '16MB'`,
 		`GRANT USAGE ON SCHEMA ` + scopedIntegrationSchema + ` TO ` + scopedIntegrationQueryRole,
 		`GRANT USAGE ON SCHEMA ` + scopedIntegrationForeign + ` TO ` + scopedIntegrationQueryRole,
 		`GRANT SELECT ON ` + scopedIntegrationSchema + `.active_contracts TO ` + scopedIntegrationQueryRole,
@@ -275,8 +278,16 @@ func TestExecuteScopedOnRealPostgreSQL(t *testing.T) {
 		t.Fatalf("cost limit = %v, want %s", CodeOf(err), CodeCostLimit)
 	}
 
-	slow := scopedIntegrationConfig(t, Limits{StatementTimeout: time.Second, MaxRows: 100, MaxResultBytes: 1 << 20, MaxCostEstimate: 1000})
-	if _, _, err := ExecuteScoped(ctx, slow, ScopedParams{SQLText: `SELECT pg_sleep(2)`, Schema: scope}); CodeOf(err) != CodeTimeout {
+	// Card S3.2d R3 refuses pg_sleep as a static rejection before any
+	// connection, so the statement-timeout proof uses a slow but admitted
+	// statement instead: a recursive CTE is a registered-scope-free plan with
+	// no function scan.
+	if _, _, err := ExecuteScoped(ctx, scopedIntegrationConfig(t, validLimits()), ScopedParams{SQLText: `SELECT pg_sleep(2)`, Schema: scope}); CodeOf(err) != CodeSQLRejectedStatic {
+		t.Fatalf("pg_sleep = %v, want %s", CodeOf(err), CodeSQLRejectedStatic)
+	}
+	slow := scopedIntegrationConfig(t, Limits{StatementTimeout: time.Second, MaxRows: 100, MaxResultBytes: 1 << 20, MaxCostEstimate: 1_000_000})
+	slowSQL := `WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 100000000) SELECT count(*) FROM r`
+	if _, _, err := ExecuteScoped(ctx, slow, ScopedParams{SQLText: slowSQL, Schema: scope}); CodeOf(err) != CodeTimeout {
 		t.Fatalf("statement timeout = %v, want %s", CodeOf(err), CodeTimeout)
 	}
 }

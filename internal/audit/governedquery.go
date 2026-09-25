@@ -9,7 +9,12 @@ package audit
 // appear here (ADR-0089 §4, mirroring MOD-007/MOD-008's content-free
 // discipline for model-gateway attempts).
 
-import "unicode/utf8"
+import (
+	"context"
+	"unicode/utf8"
+
+	"knowvault.local/verified-workspace/internal/platform/database"
+)
 
 // ActionGovernedQueryAttempted is the one action this vocabulary reserves.
 const ActionGovernedQueryAttempted Action = "source.governed_query_attempted"
@@ -139,4 +144,37 @@ func validGovernedQueryProjection(input EventInput) bool {
 		return false
 	}
 	return true
+}
+
+// GovernedQueryAttemptMatches reports whether one persisted successful
+// source.governed_query_attempted event is exactly the content-free identity a
+// stored source-SQL receipt names (card S3.2d R6): the same organization (RLS),
+// workspace, connection, SQL hash and result digest. It reads no row and
+// returns no content; a missing or mismatched event is simply false, which the
+// caller turns into its content-free not-found.
+func (store *Store) GovernedQueryAttemptMatches(ctx context.Context, access database.AccessContext, workspaceID, eventID, connectionID, sqlHash, resultDigest string) (bool, error) {
+	if store == nil || store.database == nil || access.Validate() != nil || ctx == nil ||
+		!validID(workspaceID) || !validID(eventID) || !validID(connectionID) ||
+		!validHash(sqlHash) || !validHash(resultDigest) {
+		return false, &Error{code: CodeInvalidEvent}
+	}
+	matched := false
+	err := store.database.Read(ctx, access, func(transactionContext context.Context, transaction database.Transaction) error {
+		return transaction.QueryRow(transactionContext, `
+			SELECT EXISTS (
+			    SELECT 1
+			    FROM public.audit_event AS event
+			    WHERE event.id = $1
+			      AND event.workspace_id = $2
+			      AND event.action = 'source.governed_query_attempted'
+			      AND event.outcome = 'SUCCESS'
+			      AND event.metadata_json->>'governed_query_connection_id' = $3
+			      AND event.metadata_json->>'governed_query_sql_hash' = $4
+			      AND event.metadata_json->>'governed_query_result_digest' = $5
+			)`, eventID, workspaceID, connectionID, sqlHash, resultDigest).Scan(&matched)
+	})
+	if err != nil {
+		return false, &Error{code: CodeAppendFailed, cause: err}
+	}
+	return matched, nil
 }

@@ -78,8 +78,12 @@ type sourceQueryTrustRoots interface {
 // *audit.Store satisfies it; a nil auditor means "no journal wired", which the
 // executor treats as a failed write rather than silently disclosing unaudited
 // rows, because ADR-0097 §4 makes the audit record a condition of disclosure.
+// GovernedQueryAttemptMatches is card S3.2d R6's read-back: a stored SQL
+// receipt is disclosed only while its own audit event still names the same
+// workspace, connection, SQL hash and result digest.
 type sourceSQLAuditor interface {
 	Append(context.Context, database.AccessContext, audit.EventInput) (audit.Event, error)
+	GovernedQueryAttemptMatches(ctx context.Context, access database.AccessContext, workspaceID, eventID, connectionID, sqlHash, resultDigest string) (bool, error)
 }
 
 // sourceSQLServerLimits are the server-owned bounds of every agent-authored
@@ -185,10 +189,6 @@ func (executor sourceSQLExecutor) SourceSQL(ctx context.Context, access database
 		config := governedquery.Config{
 			ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
 			DSN: dsn, TrustRoots: roots, Limits: executor.limits,
-			// RoleProven is server-owned: it is set only from the stored proof
-			// row that still matches this connection revision, credential
-			// revision and projection. The safe zero value re-proves the role.
-			RoleProven: target.RoleProven(),
 		}
 		var execErr error
 		result, attempt, execErr = governedquery.ExecuteScoped(ctx, config, governedquery.ScopedParams{
@@ -353,6 +353,16 @@ func sourceSQLRefusalCode(err error) string {
 // rules, the excluded columns and the projectable ones. Every failure is a
 // closed workspaceapi.SourceQueryCredentialRefusal naming the failed rule, and
 // nothing is written.
+//
+// Card S3.2d R7 adds two guarantees to this control:
+//
+//   - the candidate checks go through the same server-owned limiter as SQL
+//     calls, so the credential control cannot be used to open unlimited
+//     external connections; and
+//   - every set or clear attempt that passed the OWNER gate writes exactly one
+//     audit event: a refusal appends its own content-free failed event here,
+//     while a success is audited by the repository write in its own
+//     transaction.
 func (executor sourceSQLExecutor) SetSourceQueryCredential(ctx context.Context, access database.AccessContext, workspaceID, connectionID, credentialReference string) error {
 	if executor.workspaces == nil || executor.resolver == nil || executor.roots == nil || ctx == nil || ctx.Err() != nil {
 		return &workspaceapi.SourceQueryCredentialRefusal{Code: string(governedquery.CodeQueryCredentialRejected)}
@@ -360,24 +370,38 @@ func (executor sourceSQLExecutor) SetSourceQueryCredential(ctx context.Context, 
 	// The owner-gated target read is deliberately first: a non-owner, an
 	// unknown workspace and a foreign connection all resolve to the
 	// repository's content-free CodeNotFound before any mounted credential is
-	// touched or any external connection is opened.
+	// touched or any external connection is opened. Only an attempt that
+	// passed this gate is audited below.
 	target, err := executor.workspaces.SourceQueryCredentialTarget(ctx, access, workspaceID, connectionID)
 	if err != nil {
 		return err
 	}
+	action := audit.ActionSourceQueryCredentialSet
+	if credentialReference == "" {
+		action = audit.ActionSourceQueryCredentialCleared
+	}
+	// R7: the credential control shares the server-owned load limiter with the
+	// SQL path, so a burst of candidate checks cannot open unbounded external
+	// connections.
+	release, limitCode := executor.limiter.acquire(target.SourceID, access.PrincipalID)
+	if limitCode != "" {
+		return executor.refuseCredentialAudited(ctx, access, workspaceID, target.SourceID, action, limitCode)
+	}
+	defer release()
+
 	if credentialReference != "" && credentialReference == target.IngestionCredentialReference {
 		// The database trigger of migration 000118 refuses this too; the
 		// pre-check only names the rule before an external connection is opened.
-		return &workspaceapi.SourceQueryCredentialRefusal{Code: workspaceapi.SourceQueryCredentialIngestionReference}
+		return executor.refuseCredentialAudited(ctx, access, workspaceID, target.SourceID, action, workspaceapi.SourceQueryCredentialIngestionReference)
 	}
 	if credentialReference != "" {
 		dsn, resolveErr := executor.resolver.ResolveReference(ctx, credentialReference)
 		if resolveErr != nil || dsn == "" {
-			return &workspaceapi.SourceQueryCredentialRefusal{Code: workspaceapi.SourceQueryCredentialUnresolved}
+			return executor.refuseCredentialAudited(ctx, access, workspaceID, target.SourceID, action, workspaceapi.SourceQueryCredentialUnresolved)
 		}
 		roots, rootsErr := executor.roots.NewCertPool()
 		if rootsErr != nil || roots == nil || len(roots.Subjects()) == 0 {
-			return &workspaceapi.SourceQueryCredentialRefusal{Code: string(governedquery.CodeQueryCredentialRejected)}
+			return executor.refuseCredentialAudited(ctx, access, workspaceID, target.SourceID, action, string(governedquery.CodeQueryCredentialRejected))
 		}
 		config := governedquery.Config{
 			ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
@@ -386,12 +410,47 @@ func (executor sourceSQLExecutor) SetSourceQueryCredential(ctx context.Context, 
 		if verifyErr := governedquery.VerifyQueryCredential(ctx, config, governedquery.QueryCredentialParams{
 			Relations: sourceSQLRelations(target),
 		}); verifyErr != nil {
-			return &workspaceapi.SourceQueryCredentialRefusal{Code: sourceQueryCredentialRefusalCode(verifyErr)}
+			return executor.refuseCredentialAudited(ctx, access, workspaceID, target.SourceID, action, sourceQueryCredentialRefusalCode(verifyErr))
 		}
 	}
 	// The repository re-checks the OWNER inside its write and appends the one
 	// content-free audit event in the same transaction.
 	return executor.workspaces.SetSourceQueryCredential(ctx, access, workspaceID, connectionID, credentialReference)
+}
+
+// refuseCredentialAudited appends exactly one content-free control event for a
+// set/clear attempt that passed the OWNER gate and then failed before the
+// store could write it, and returns the closed refusal. A candidate-check or
+// limiter refusal is still an owner action on the connection, so it must be
+// provable; the event names only the connection and the closed rule code.
+func (executor sourceSQLExecutor) refuseCredentialAudited(ctx context.Context, access database.AccessContext, workspaceID, sourceID string, action audit.Action, code string) error {
+	if executor.auditor == nil {
+		// No journal is wired: the control cannot be audited, so it fails
+		// closed instead of silently changing a credential.
+		return errors.New("SOURCE_SQL_AUDIT_UNAVAILABLE")
+	}
+	eventID, idErr := ids.New("aud")
+	if idErr != nil {
+		return errors.New("SOURCE_SQL_AUDIT_UNAVAILABLE")
+	}
+	auditContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	workspace := workspaceID
+	principal := access.PrincipalID
+	connection := sourceID
+	refusal := code
+	_, err := executor.auditor.Append(auditContext, access, audit.EventInput{
+		EventID: eventID, WorkspaceID: &workspace, ActorType: audit.ActorType(access.EffectiveActorKind()),
+		ActorPrincipalID: &principal, Action: action,
+		ResourceType: audit.ResourceSourceConnection, ResourceID: connection,
+		RequestID: access.RequestID, Outcome: audit.OutcomeFailed, ErrorCode: &refusal,
+		Metadata:   audit.Metadata{SourceConnectionID: &connection},
+		OccurredAt: executor.now().UTC(),
+	})
+	if err != nil {
+		return errors.New("SOURCE_SQL_AUDIT_UNAVAILABLE")
+	}
+	return &workspaceapi.SourceQueryCredentialRefusal{Code: code}
 }
 
 // sourceQueryCredentialRefusalCode keeps the card's closed check vocabulary;
@@ -408,7 +467,10 @@ func sourceQueryCredentialRefusalCode(err error) string {
 		governedquery.CodeQueryRoleElevatedAttribute,
 		governedquery.CodeQueryRoleMembership,
 		governedquery.CodeQueryRoleSecurityDefiner,
-		governedquery.CodeQueryRoleRemoteExecution:
+		governedquery.CodeQueryRoleRemoteExecution,
+		governedquery.CodeQueryRoleResourceLimit,
+		governedquery.CodeQueryRoleLargeObject,
+		governedquery.CodeQueryRoleUntrustedLanguage:
 		return string(code)
 	default:
 		return string(governedquery.CodeQueryCredentialRejected)
@@ -421,8 +483,15 @@ func sourceQueryCredentialRefusalCode(err error) string {
 // caller who has lost access to the source (or a scope revision that has moved)
 // can no longer disclose the receipt. It opens no external connection and
 // carries no SQL, row or credential.
+//
+// Card S3.2d R6 narrows disclosure further: the source must still be READY and
+// trust-verified, and the receipt must still be provable by its own
+// content-free audit event — the event with the same id must exist in this
+// workspace and name the same connection, SQL hash and result digest. A
+// revoked activation, a mismatch or a tampered digest is the same content-free
+// not-found the caller already maps every other refusal to.
 func (executor sourceSQLExecutor) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {
-	if executor.workspaces == nil || ctx == nil || ctx.Err() != nil {
+	if executor.workspaces == nil || executor.auditor == nil || ctx == nil || ctx.Err() != nil {
 		return errors.New("SOURCE_SQL_REAUTHORIZATION_UNAVAILABLE")
 	}
 	target, err := executor.workspaces.SourceQuery(ctx, access, workspaceID, disclosure.ConnectionID)
@@ -430,7 +499,12 @@ func (executor sourceSQLExecutor) ReauthorizeSourceSQLAttempt(ctx context.Contex
 		return err
 	}
 	if target.SourceID != disclosure.ConnectionID || target.ScopeRevision != disclosure.ExposedSchemaRevision ||
-		target.DatabaseIdentity == "" {
+		target.DatabaseIdentity == "" || target.ActivationStatus != sourceActivationReady || !target.TrustVerified {
+		return errors.New("SOURCE_SQL_REAUTHORIZATION_MISMATCH")
+	}
+	matched, matchErr := executor.auditor.GovernedQueryAttemptMatches(ctx, access, workspaceID,
+		disclosure.AttemptID, disclosure.ConnectionID, disclosure.SQLHash, disclosure.ResultDigest)
+	if matchErr != nil || !matched {
 		return errors.New("SOURCE_SQL_REAUTHORIZATION_MISMATCH")
 	}
 	return nil

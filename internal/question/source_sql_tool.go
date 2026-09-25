@@ -59,6 +59,21 @@ func (state *sourceSQLRunState) record(result workspacetools.Result) {
 	}
 }
 
+// invoke is the one place the chat runtime turns one knowvault_source_sql
+// provider outcome into the model-facing result. Card S3.2d R5 fixes the order:
+// the budget is charged from the provider outcome — a success, or any closed
+// refusal the execution path produced after it sent the statement — before any
+// post-processing, so a result too large to retain still costs one and a
+// post-processing failure can never refund an execution that already happened.
+func (state *sourceSQLRunState) invoke(questionRunID string, result workspacetools.Result, maxResultBytes int) (workspacetools.Result, *liveDataExecution) {
+	state.record(result)
+	if result.IsError {
+		return result, nil
+	}
+	retained, execution, _ := sourceSQLRetainResult(questionRunID, result, maxResultBytes)
+	return retained, execution
+}
+
 // sourceSQLReachedExecution reports whether a closed refusal code means the
 // agent's statement reached the customer database. TIMEOUT, ROW_LIMIT and
 // COST_LIMIT are the card's named cases; DATABASE_REJECTED covers a statement

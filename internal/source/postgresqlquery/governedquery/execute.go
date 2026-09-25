@@ -51,8 +51,10 @@ type Attempt struct {
 	Outcome               Outcome
 	// RoleVerificationDigest is S3 card 2c's content-free evidence that the
 	// query role passed the least-privilege proof for the registered
-	// projection during this attempt. It is empty when the proof was served
-	// from the product store's cache (Config.RoleProven) rather than recomputed.
+	// projection during this attempt. Card S3.2d recomputes it on every
+	// execution inside the statement's own read-only transaction; it is
+	// recorded as evidence for the store's proof row and never authorizes a
+	// later statement.
 	RoleVerificationDigest string
 }
 
@@ -194,7 +196,13 @@ func staticPrecheck(sqlText string) error {
 			return &Error{code: CodeInvalid}
 		}
 	}
-	return nil
+	// Card S3.2d: a deterministic, spelling-aware gate refuses a setting change
+	// and the cross-session, file, large-object and query-executing function
+	// families before EXPLAIN. The keyword scan above is only a first pass; this
+	// one case-folds and unquotes every identifier and also strips a schema
+	// qualifier, so `pg_catalog.set_config`, `"SET"` and `U&"set"` are refused
+	// too.
+	return staticGate(body)
 }
 
 func containsWord(haystack, word string) bool {

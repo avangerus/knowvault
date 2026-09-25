@@ -172,11 +172,6 @@ func ExecuteScoped(ctx context.Context, config Config, params ScopedParams) (Que
 	}
 	defer func() { _ = tx.Rollback(dialCtx) }()
 
-	if err := prepareScopedTransaction(dialCtx, tx, config.Limits, params.Schema); err != nil {
-		attempt.Outcome = OutcomeRejectedDatabase
-		return QueryResult{}, attempt, &Error{code: CodeDatabaseRejected, cause: err}
-	}
-
 	// ADR-0097 §3 / card S3.2c: the connected database must be the exact
 	// database the source was registered against. The check runs after the
 	// connection and before any statement (including any role proof or plan
@@ -189,17 +184,27 @@ func ExecuteScoped(ctx context.Context, config Config, params ScopedParams) (Que
 	}
 
 	// The database role is the security boundary (ADR-0097 §3), so the server
-	// proves it is least privilege before the agent's statement is even
-	// planned. A cached proof bound to the same connection/credential/scope
-	// pair (server-owned Config.RoleProven) stands in for a fresh proof; a
-	// failure is the tool's closed SOURCE_SQL_NOT_CONFIGURED and nothing runs.
-	if config.RoleProven {
-		attempt.RoleVerificationDigest = roleVerificationDigest(params.Schema.Relations)
-	} else if roleErr := VerifyQueryRole(dialCtx, tx, params.Schema.Relations); roleErr != nil {
+	// proves it is least privilege inside this same read-only transaction,
+	// against the role that owns this connection, on every execution (card
+	// S3.2d R1). There is no cached verdict: a proof recorded for an earlier
+	// connection revision, credential revision or projection can never
+	// authorize the statement, and a credential repointed at a broader role is
+	// refused here with the tool's closed SOURCE_SQL_NOT_CONFIGURED and nothing
+	// runs.
+	//
+	// Card S3.2d R2 makes the order deliberate: the proof runs before
+	// prepareScopedTransaction pins the transaction's own work_mem, so the
+	// effective bound it reads is the role's configured value (the DBA's ALTER
+	// ROLE ... SET), never the 16 MB the transaction itself is about to apply.
+	if roleErr := VerifyQueryRole(dialCtx, tx, params.Schema.Relations); roleErr != nil {
 		attempt.Outcome = OutcomeRejectedDatabase
 		return QueryResult{}, attempt, &Error{code: CodeSourceSQLNotConfigured, cause: roleErr}
-	} else {
-		attempt.RoleVerificationDigest = roleVerificationDigest(params.Schema.Relations)
+	}
+	attempt.RoleVerificationDigest = roleVerificationDigest(params.Schema.Relations)
+
+	if err := prepareScopedTransaction(dialCtx, tx, config.Limits, params.Schema); err != nil {
+		attempt.Outcome = OutcomeRejectedDatabase
+		return QueryResult{}, attempt, &Error{code: CodeDatabaseRejected, cause: err}
 	}
 
 	planJSON, cost, err := explainPlan(dialCtx, tx, params.SQLText)
