@@ -169,6 +169,27 @@ func TestFlushForwardingKeepsAStreamingFiveHundredIntact(t *testing.T) {
 	}
 }
 
+// TestFlushBeforeWriteCommitsTwoHundredAndNoFailureLine proves the recorder
+// tracks the status the client actually received: once a handler flushes, the
+// response is 200 and a later ignored WriteHeader(5xx) must not invent a line.
+func TestFlushBeforeWriteCommitsTwoHundredAndNoFailureLine(t *testing.T) {
+	buffer := captureLogs(t)
+	next := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if err := http.NewResponseController(writer).Flush(); err != nil {
+			t.Errorf("flush through the failure recorder: %v", err)
+		}
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	})
+	response := httptest.NewRecorder()
+	WithFailureLog(next).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/stream", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d, want the flushed 200", response.Code)
+	}
+	if lines := loggedLines(t, buffer); len(lines) != 0 {
+		t.Fatalf("a 200 response produced a failure line: %v", lines)
+	}
+}
+
 // TestFailureLineCarriesNoRequestSecret is the card's secret rule at the
 // middleware itself: a password field, a session cookie and an authorization
 // header value never reach the line, whatever the cause says.

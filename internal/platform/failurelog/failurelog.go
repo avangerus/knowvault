@@ -130,7 +130,13 @@ func (recorder *failureRecorder) Unwrap() http.ResponseWriter {
 }
 
 // FlushError preserves streaming behaviour: a handler that flushes before
-// writing still commits a real status on the wrapped writer.
+// writing still commits a real status on the wrapped writer, and the recorder
+// records that implicit 200 so a later (ignored) 5xx write cannot invent a
+// failure line for a response the client already received as 200.
 func (recorder *failureRecorder) FlushError() error {
+	if !recorder.wrote {
+		recorder.status = http.StatusOK
+		recorder.wrote = true
+	}
 	return http.NewResponseController(recorder.ResponseWriter).Flush()
 }
