@@ -169,7 +169,10 @@
     "label_regex": "^[\\wА-яЁё ]{2,30}:\\s",
     "evidence_regex": "(?i)(evidence|Доказательств\\w*|Свидетельств\\w*)\\s*\\d",
     "verification_regex": "(?i)(verified|проверен\\w*)",
-    "internal_regexes": ["conn_[0-9A-Z]", "observed_at", "paraphrase", "inbox/"],
+    "internal_regexes": ["conn_[0-9A-Z]", "observed_at", "paraphrase", "inbox/",
+      "\\bpublic\\.[a-z_]+", "\\b[a-z][a-z0-9]*_[a-z0-9_]+\\b",
+      "\\b(READY|DRAFT|FRESH|STALE|SUCCEEDED|UNKNOWN|POSTGRESQL_QUERY|INSUFFICIENT_EVIDENCE)\\b",
+      "\\b[0-9a-f]{32,}\\b", "\\b[\\w-]+\\.(md|txt|json|csv)\\b"],
     "same_tool_argument_max": 2,
     "ru_cyrillic_ratio_min": 0.7,
     "en_cyrillic_ratio_max": 0.3,
@@ -198,11 +201,11 @@
       "max_steps": 2,
       "time_limit_s": 30,
       "max_chars": 2000,
-      "value_note": "The answer must name the contract relation and at least three of its columns.",
+      "value_note": "The answer names what the database holds about contracts in business words: at least three attributes of a contract, no table or column identifiers.",
       "checks": [
-        {"id": "q2_table", "type": "mentions_terms", "hard": true, "min": 1, "texts": ["contract"]},
-        {"id": "q2_columns", "type": "mentions_terms", "hard": true, "min": 3,
-         "texts": ["id", "number", "client_id", "status", "signed_on", "amount"]}
+        {"id": "q2_contracts", "type": "mentions_terms", "hard": true, "min": 1, "texts": ["договор"]},
+        {"id": "q2_attributes", "type": "mentions_terms", "hard": true, "min": 3,
+         "texts": ["номер", "клиент", "статус", "дат", "сумм", "стоимост"]}
       ]
     },
     {
@@ -256,6 +259,57 @@
       "checks": [
         {"id": "q6_phrase", "type": "contains_phrase", "hard": true, "texts": ["не позднее 24 часов", "24 часов с момента заполнения", "не позднее 24"]},
         {"id": "q6_citation", "type": "min_citations", "hard": true, "min": 1}
+      ]
+    },
+    {
+      "id": "Q8",
+      "text": "какие есть источники?",
+      "language": "ru",
+      "max_steps": 2,
+      "time_limit_s": 30,
+      "max_chars": 600,
+      "expectation": "Короткий перечень источников человеческими названиями, без служебных статусов. Вопрос владельца 25.09.",
+      "checks": [
+        {"id": "q8_lines", "type": "max_nonempty_lines", "hard": true, "max": 6},
+        {"id": "q8_sources", "type": "mentions_literally", "hard": true, "min": 2, "texts": ["Регламенты и договоры", "Договоры", "Клиенты", "МНО"]}
+      ]
+    },
+    {
+      "id": "Q9",
+      "text": "что в базе данных можем посмотреть?",
+      "language": "ru",
+      "max_steps": 3,
+      "time_limit_s": 30,
+      "max_chars": 700,
+      "expectation": "Что можно узнать из базы деловыми словами, без списков колонок. Вопрос владельца 25.09.",
+      "checks": [
+        {"id": "q9_lines", "type": "max_nonempty_lines", "hard": true, "max": 6},
+        {"id": "q9_topics", "type": "mentions_terms", "hard": true, "min": 2, "texts": ["договор", "клиент", "МНО", "мест накопления"]}
+      ]
+    },
+    {
+      "id": "Q10",
+      "text": "Что нового в регламенте?",
+      "language": "ru",
+      "max_steps": 3,
+      "time_limit_s": 30,
+      "max_chars": 500,
+      "expectation": "Коротко: версия одна, сравнивать не с чем; без пересказа документа. Вопрос владельца 25.09.",
+      "checks": [
+        {"id": "q10_sentences", "type": "max_sentences", "hard": true, "max": 4}
+      ]
+    },
+    {
+      "id": "Q11",
+      "text": "расскажи бизнес-терминами, что есть в базе",
+      "language": "ru",
+      "max_steps": 3,
+      "time_limit_s": 30,
+      "max_chars": 700,
+      "expectation": "Деловое описание данных базы без технических имён. Вопрос владельца 25.09.",
+      "checks": [
+        {"id": "q11_lines", "type": "max_nonempty_lines", "hard": true, "max": 6},
+        {"id": "q11_topics", "type": "mentions_terms", "hard": true, "min": 2, "texts": ["договор", "клиент", "МНО", "мест накопления"]}
       ]
     },
     {
