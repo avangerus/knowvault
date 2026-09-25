@@ -70,8 +70,11 @@ func VerifyQueryCredential(ctx context.Context, config Config, params QueryCrede
 	}
 	// Card S3.2c: the candidate is accepted only when it passes the full
 	// least-privilege proof, not merely the column check. Every rule failure is
-	// a distinct closed code that names the rule.
-	return VerifyQueryRole(ctx, transaction, params.Relations)
+	// a distinct closed code that names the rule. Card S3.2g's deny set is a
+	// per-statement gate, not a credential property, so the returned set is
+	// deliberately discarded here: no agent SQL runs on this path.
+	_, err = VerifyQueryRole(ctx, transaction, params.Relations)
+	return err
 }
 
 // queryCredentialDatabaseIdentity recomputes the source's immutable "pgdb:…"

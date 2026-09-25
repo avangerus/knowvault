@@ -212,3 +212,74 @@ func TestSQLTokensAgreeWithPostgreSQL(t *testing.T) {
 		t.Fatalf("calls = %d, want exactly the one real call", calls)
 	}
 }
+
+// TestStaticDenyGateRefusesDeniedExtensionFunctionCalls is card S3.2g's unit
+// proof for the second gate pass. A name the proof collected is refused wherever
+// it is a call, in every spelling (case, quotes, schema qualifier), while a
+// column, an alias or a string that merely shares the spelling is ordinary SQL.
+func TestStaticDenyGateRefusesDeniedExtensionFunctionCalls(t *testing.T) {
+	denied := newFunctionDenySet()
+	denied.add("dblink")
+	denied.add("st_estimatedextent")
+	denied.add("postgres_fdw_handler")
+
+	refused := []string{
+		`SELECT dblink('SELECT 1')`,
+		`SELECT public."DBLINK"('SELECT 1')`,
+		`SELECT kv_s3_2f_ext.st_estimatedextent('public', 'roads', 'geom')`,
+		`SELECT "st_estimatedextent"('public', 'roads', 'geom')`,
+		`SELECT postgres_fdw_handler()`,
+		`WITH x AS (SELECT pg_catalog.postgres_fdw_handler()) SELECT * FROM x`,
+	}
+	for _, sqlText := range refused {
+		if err := staticDenyGate(sqlText, denied); err == nil {
+			t.Fatalf("denied call %q passed the second gate pass", sqlText)
+		} else if CodeOf(err) != CodeInvalid {
+			t.Fatalf("denied call %q = %s, want %s", sqlText, CodeOf(err), CodeInvalid)
+		}
+	}
+
+	accepted := []string{
+		`SELECT count(*) FROM kv_s3_2c.contracts`,
+		`SELECT amount AS dblink FROM kv_s3_2c.contracts`,
+		`SELECT 'dblink' AS note FROM kv_s3_2c.contracts`,
+		`SELECT row_to_json(contracts) FROM kv_s3_2c.contracts`,
+		`SELECT st_estimatedextent FROM kv_s3_2c.contracts`,
+	}
+	for _, sqlText := range accepted {
+		if err := staticDenyGate(sqlText, denied); err != nil {
+			t.Fatalf("ordinary statement %q was refused by the deny gate: %v", sqlText, err)
+		}
+	}
+
+	// An empty set is the ordinary case and a nil set is never built in
+	// production; both must admit every statement.
+	if err := staticDenyGate(`SELECT dblink('SELECT 1')`, newFunctionDenySet()); err != nil {
+		t.Fatalf("the empty deny set refused a statement: %v", err)
+	}
+	if err := staticDenyGate(`SELECT dblink('SELECT 1')`, nil); err != nil {
+		t.Fatalf("a nil deny set refused a statement: %v", err)
+	}
+}
+
+// TestFunctionDenySetIsPerCall proves the deny set is a per-call value: each
+// construction is independent, names are normalized to the gate's case folding,
+// and an unset pointer refuses nothing.
+func TestFunctionDenySetIsPerCall(t *testing.T) {
+	first := newFunctionDenySet()
+	first.add("DBLINK")
+	if !first.has("dblink") {
+		t.Fatalf("a mixed-case catalogue name was not normalized to the gate's spelling")
+	}
+	second := newFunctionDenySet()
+	if !second.empty() {
+		t.Fatalf("a fresh deny set is not empty")
+	}
+	if second.has("dblink") {
+		t.Fatalf("the deny set leaked between constructions")
+	}
+	var unset *FunctionDenySet
+	if !unset.empty() || unset.has("dblink") {
+		t.Fatalf("an unset deny set must refuse nothing")
+	}
+}

@@ -34,6 +34,11 @@ package governedquery
 // function. A false refusal is a cheap closed error; a false admission would
 // not be, because the plan walk cannot see a side effect the planner does not
 // print.
+//
+// Card S3.2g adds a second pass, staticDenyGate, that runs after the role proof
+// has collected the extension functions the query role may execute only through
+// PUBLIC. It shares this file's lexer and call rule, so a denied name is refused
+// in any spelling (case, quotes, schema qualifier) before EXPLAIN.
 
 import "strings"
 
@@ -136,6 +141,33 @@ func identifierIsCall(tokens []sqlToken, index int) bool {
 	return index+1 < len(tokens) &&
 		tokens[index+1].kind == sqlTokenPunctuation &&
 		tokens[index+1].text == "("
+}
+
+// staticDenyGate is card S3.2g's second gate pass. It runs after the role proof
+// has collected the extension functions the query role may execute only through
+// PUBLIC, and refuses a statement that calls any of them before EXPLAIN. It
+// reuses staticGate's lexer and call rule, so the same normalization applies:
+// case folded, quoted identifiers decoded, and a schema qualifier ignored
+// because only the function identifier itself is compared. A nil or empty set
+// is the ordinary case (no extension function is reachable) and admits every
+// statement.
+func staticDenyGate(sqlText string, denied *FunctionDenySet) error {
+	if denied.empty() {
+		return nil
+	}
+	tokens, err := sqlTokenize(sqlText)
+	if err != nil {
+		return err
+	}
+	for index, token := range tokens {
+		if token.kind != sqlTokenIdentifier || !identifierIsCall(tokens, index) {
+			continue
+		}
+		if denied.has(token.text) {
+			return &Error{code: CodeInvalid}
+		}
+	}
+	return nil
 }
 
 // sqlTokenKind distinguishes the two tokens the deny rules need: an identifier

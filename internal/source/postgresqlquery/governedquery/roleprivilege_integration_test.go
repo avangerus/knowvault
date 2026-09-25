@@ -43,6 +43,14 @@ const (
 	rolePrivilegeExtensionTable  = "extension_member"
 	rolePrivilegePublicSchema    = "kv_s3_2f_public"
 	rolePrivilegePublicTable     = "public_reference"
+	// Card S3.2g's fixtures: the schema of a SECURITY DEFINER function added to
+	// an installed extension and exposed to PUBLIC (the positive control when
+	// dblink is unavailable), and the schema of a non-extension SECURITY DEFINER
+	// function PUBLIC may execute, which must still fail the proof.
+	rolePrivilegeDenyExtensionSchema = "kv_s3_2g_ext"
+	rolePrivilegeDenyFunction        = "extension_definer"
+	rolePrivilegeDenyPlainSchema     = "kv_s3_2g_plain"
+	rolePrivilegeDenyPlainFunction   = "plain_definer"
 )
 
 // The fixture roles: one properly scoped role and one role per least-privilege
@@ -181,6 +189,33 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 		END $$`,
 		`GRANT USAGE ON SCHEMA ` + rolePrivilegeExtensionSchema + ` TO PUBLIC`,
 		`GRANT SELECT ON ` + rolePrivilegeExtensionSchema + `.` + rolePrivilegeExtensionTable + ` TO PUBLIC`,
+		// Card S3.2g: a SECURITY DEFINER function owned by the non-bootstrap
+		// superuser and required by an installed extension, executable through
+		// PUBLIC. It stands in for a PostGIS st_estimatedextent when dblink is
+		// unavailable, and it is the function the direct-grant control grants
+		// against. It is never dropped: PostgreSQL would take the extension with
+		// it, exactly as card S3.2f's fixture table.
+		`CREATE SCHEMA IF NOT EXISTS ` + rolePrivilegeDenyExtensionSchema,
+		`CREATE OR REPLACE FUNCTION ` + rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$ SELECT 1 $$`,
+		`ALTER FUNCTION ` + rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `() OWNER TO ` + rolePrivilegeDefinerOwner,
+		`GRANT EXECUTE ON FUNCTION ` + rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `() TO PUBLIC`,
+		`GRANT USAGE ON SCHEMA ` + rolePrivilegeDenyExtensionSchema + ` TO PUBLIC`,
+		`DO $$ BEGIN
+		    IF NOT EXISTS (
+		        SELECT 1
+		        FROM pg_catalog.pg_depend AS dependency
+		        WHERE dependency.classid = 'pg_catalog.pg_proc'::regclass
+		          AND dependency.objid = '` + rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `()'::regprocedure
+		          AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		          AND dependency.deptype = 'e')
+		    THEN
+		        EXECUTE 'ALTER EXTENSION plpgsql ADD FUNCTION ` + rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `()';
+		    END IF;
+		END $$`,
+		// The non-extension control exists only inside its one proof: a PUBLIC
+		// grant on it would widen every fixture role, exactly as card S3.2f's
+		// plain PUBLIC relation. The seed drops any schema a failed run left.
+		`DROP SCHEMA IF EXISTS ` + rolePrivilegeDenyPlainSchema + ` CASCADE`,
 		`TRUNCATE ` + rolePrivilegeSchema + `.canary`,
 	}
 	for _, statement := range statements {
@@ -300,6 +335,15 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 // the role's real login-time values are proven separately by verifyRoleAsLogin.
 func verifyRole(t *testing.T, ctx context.Context, admin *pgx.Conn, role string) error {
 	t.Helper()
+	_, err := verifyRoleDenySet(t, ctx, admin, role)
+	return err
+}
+
+// verifyRoleDenySet is verifyRole plus card S3.2g's per-execution function deny
+// set, so the remote-execution and extension-function proofs can assert which
+// names the proof collected.
+func verifyRoleDenySet(t *testing.T, ctx context.Context, admin *pgx.Conn, role string) (*FunctionDenySet, error) {
+	t.Helper()
 	transaction, err := admin.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		t.Fatalf("begin role transaction: %v", err)
@@ -332,7 +376,8 @@ func verifyRoleAsLogin(t *testing.T, ctx context.Context, admin *pgx.Conn, role 
 		t.Fatalf("begin role transaction as %s: %v", role, err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	return VerifyQueryRole(ctx, transaction, rolePrivilegeRelations())
+	_, err = VerifyQueryRole(ctx, transaction, rolePrivilegeRelations())
+	return err
 }
 
 // dialAsRole opens one real connection as the fixture role against the card's
@@ -376,10 +421,13 @@ func TestQueryRoleLeastPrivilegeRulesOnRealPostgreSQL(t *testing.T) {
 		{rolePrivilegeDefiner, CodeQueryRoleSecurityDefiner},
 	}
 	if remoteAvailable {
+		// Card S3.2g: an installed remote-execution extension no longer fails
+		// the proof by itself. Its PUBLIC-executable member functions join the
+		// per-execution deny set instead of refusing the role.
 		cases = append(cases, struct {
 			role string
 			want ErrorCode
-		}{rolePrivilegeRemote, CodeQueryRoleRemoteExecution})
+		}{rolePrivilegeRemote, ""})
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.role, func(t *testing.T) {
@@ -643,6 +691,229 @@ func TestQueryRoleExtensionOwnedRelationDoesNotBlockTheProof(t *testing.T) {
 	// A direct grant is not the PUBLIC grant and is never exempt.
 	if err := verifyRole(t, ctx, admin, rolePrivilegeExtensionDirect); CodeOf(err) != CodeQueryRoleExtraRelation {
 		t.Fatalf("direct grant on the extension relation = %v (%s), want %s", err, CodeOf(err), CodeQueryRoleExtraRelation)
+	}
+}
+
+// TestQueryRoleExtensionFunctionsDoNotBlockTheProof is card S3.2g. A real
+// database grants PUBLIC EXECUTE on extension functions such as the dblink
+// family and PostGIS SECURITY DEFINER helpers; revoking that would break the
+// extension for the customer's own users. The proof no longer refuses those
+// functions: it collects their names into the per-execution deny set, and the
+// static gate's second pass refuses agent SQL that calls one. The fixture
+// function is a SECURITY DEFINER member of an installed extension owned by a
+// non-bootstrap role; dblink supplies the remote-execution branch when the
+// image has it.
+func TestQueryRoleExtensionFunctionsDoNotBlockTheProof(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	remoteAvailable := seedRolePrivilegeFixtures(t, ctx, admin)
+
+	// The positive control is worthless if the fixture is not genuinely an
+	// extension member, so read the catalogue fact first.
+	var member bool
+	if err := admin.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM pg_catalog.pg_depend AS dependency
+		    WHERE dependency.classid = 'pg_catalog.pg_proc'::regclass
+		      AND dependency.objid = '`+rolePrivilegeDenyExtensionSchema+`.`+rolePrivilegeDenyFunction+`()'::regprocedure
+		      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		      AND dependency.deptype = 'e')`).Scan(&member); err != nil {
+		t.Fatalf("read the extension membership of the SECURITY DEFINER function: %v", err)
+	}
+	if !member {
+		t.Fatalf("the SECURITY DEFINER fixture is not an extension member; the fixture is wrong")
+	}
+
+	// The scoped role can EXECUTE the extension's SECURITY DEFINER function
+	// only through PUBLIC: the proof passes and the name is collected.
+	denied, err := verifyRoleDenySet(t, ctx, admin, rolePrivilegeOK)
+	if err != nil {
+		t.Fatalf("extension SECURITY DEFINER function refused the scoped role: %v (%s)", err, CodeOf(err))
+	}
+	if !denied.has(rolePrivilegeDenyFunction) {
+		t.Fatalf("the SECURITY DEFINER extension function is missing from the deny set")
+	}
+
+	if !remoteAvailable {
+		t.Log("dblink is unavailable; the SECURITY DEFINER extension function is the positive control")
+		return
+	}
+	// The role with schema USAGE on the installed dblink extension passes too,
+	// and dblink's PUBLIC-executable member functions are collected.
+	denied, err = verifyRoleDenySet(t, ctx, admin, rolePrivilegeRemote)
+	if err != nil {
+		t.Fatalf("installed dblink refused the remote role: %v (%s)", err, CodeOf(err))
+	}
+	var found bool
+	for _, name := range []string{"dblink", "dblink_connect", "dblink_disconnect", "dblink_exec"} {
+		if denied.has(name) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("dblink's PUBLIC-executable functions are missing from the deny set")
+	}
+}
+
+// TestQueryRoleDirectGrantOnExtensionFunctionStillFailsTheProof is card S3.2g's
+// control: the exemption is exactly "executable only through PUBLIC". The same
+// extension function granted directly to the query role is not a PUBLIC read and
+// keeps the refusal, for the SECURITY DEFINER branch and for the remote
+// execution branch. Each grant is temporary so the shared fixtures stay clean.
+func TestQueryRoleDirectGrantOnExtensionFunctionStillFailsTheProof(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	remoteAvailable := seedRolePrivilegeFixtures(t, ctx, admin)
+
+	definer := rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `()`
+	remoteFunction := rolePrivilegeExtension + `.dblink(text, text)`
+	// Every grant is revoked before the next assertion and again on the way out,
+	// so the shared fixtures are clean even when an assertion fails.
+	defer func() {
+		_, _ = admin.Exec(ctx, `REVOKE EXECUTE ON FUNCTION `+definer+` FROM `+rolePrivilegeOK)
+		if remoteAvailable {
+			_, _ = admin.Exec(ctx, `REVOKE EXECUTE ON FUNCTION `+remoteFunction+` FROM `+rolePrivilegeOK)
+		}
+	}()
+
+	if _, err := admin.Exec(ctx, `GRANT EXECUTE ON FUNCTION `+definer+` TO `+rolePrivilegeOK); err != nil {
+		t.Fatalf("grant the extension SECURITY DEFINER function directly: %v", err)
+	}
+	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); CodeOf(err) != CodeQueryRoleSecurityDefiner {
+		t.Fatalf("direct grant on the extension SECURITY DEFINER function = %v (%s), want %s",
+			err, CodeOf(err), CodeQueryRoleSecurityDefiner)
+	}
+	if _, err := admin.Exec(ctx, `REVOKE EXECUTE ON FUNCTION `+definer+` FROM `+rolePrivilegeOK); err != nil {
+		t.Fatalf("revoke the direct SECURITY DEFINER grant: %v", err)
+	}
+
+	if !remoteAvailable {
+		return
+	}
+	if _, err := admin.Exec(ctx, `GRANT EXECUTE ON FUNCTION `+remoteFunction+` TO `+rolePrivilegeOK); err != nil {
+		t.Fatalf("grant the dblink function directly: %v", err)
+	}
+	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); CodeOf(err) != CodeQueryRoleRemoteExecution {
+		t.Fatalf("direct grant on a remote-execution function = %v (%s), want %s",
+			err, CodeOf(err), CodeQueryRoleRemoteExecution)
+	}
+	if _, err := admin.Exec(ctx, `REVOKE EXECUTE ON FUNCTION `+remoteFunction+` FROM `+rolePrivilegeOK); err != nil {
+		t.Fatalf("revoke the direct dblink grant: %v", err)
+	}
+}
+
+// TestQueryRoleNonExtensionSecurityDefinerStillFailsTheProof is card S3.2g's
+// control: only an installed extension's member is collected. A SECURITY DEFINER
+// function no extension owns, executable by PUBLIC, still fails the proof. The
+// control exists only inside this proof and is removed again, because a PUBLIC
+// grant on it would widen every other fixture role.
+func TestQueryRoleNonExtensionSecurityDefinerStillFailsTheProof(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	seedRolePrivilegeFixtures(t, ctx, admin)
+
+	if _, err := admin.Exec(ctx, `CREATE SCHEMA `+rolePrivilegeDenyPlainSchema); err != nil {
+		t.Fatalf("create the control schema: %v", err)
+	}
+	defer func() {
+		if _, err := admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+rolePrivilegeDenyPlainSchema+` CASCADE`); err != nil {
+			t.Errorf("drop the control schema: %v", err)
+		}
+	}()
+	control := rolePrivilegeDenyPlainSchema + `.` + rolePrivilegeDenyPlainFunction + `()`
+	for _, statement := range []string{
+		`CREATE FUNCTION ` + control + ` RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$ SELECT 1 $$`,
+		`ALTER FUNCTION ` + control + ` OWNER TO ` + rolePrivilegeDefinerOwner,
+		`GRANT EXECUTE ON FUNCTION ` + control + ` TO PUBLIC`,
+		`GRANT USAGE ON SCHEMA ` + rolePrivilegeDenyPlainSchema + ` TO PUBLIC`,
+	} {
+		if _, err := admin.Exec(ctx, statement); err != nil {
+			t.Fatalf("seed the non-extension control %q: %v", statement, err)
+		}
+	}
+	var member bool
+	if err := admin.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM pg_catalog.pg_depend AS dependency
+		    WHERE dependency.classid = 'pg_catalog.pg_proc'::regclass
+		      AND dependency.objid = '`+control+`'::regprocedure
+		      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		      AND dependency.deptype = 'e')`).Scan(&member); err != nil {
+		t.Fatalf("read the extension membership of the control function: %v", err)
+	}
+	if member {
+		t.Fatalf("the control function is an extension member; the fixture is wrong")
+	}
+
+	if err := verifyRole(t, ctx, admin, rolePrivilegeOK); CodeOf(err) != CodeQueryRoleSecurityDefiner {
+		t.Fatalf("non-extension SECURITY DEFINER function executable by PUBLIC = %v (%s), want %s",
+			err, CodeOf(err), CodeQueryRoleSecurityDefiner)
+	}
+}
+
+// TestExecuteScopedRefusesDeniedExtensionFunction is card S3.2g at the execution
+// boundary: the proof passes, but a statement that calls a collected extension
+// function in any spelling is refused with SQL_REJECTED_STATIC before EXPLAIN,
+// while a statement that does not call one still runs.
+func TestExecuteScopedRefusesDeniedExtensionFunction(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := customerDatabaseURL(t)
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect customer database: %v", err)
+	}
+	defer admin.Close(ctx)
+	remoteAvailable := seedRolePrivilegeFixtures(t, ctx, admin)
+
+	config := rolePrivilegeConfig(t, ctx, admin, rolePrivilegeOK)
+	scope := ScopedSchema{Relations: rolePrivilegeRelations()}
+
+	refused := []string{
+		`SELECT ` + rolePrivilegeDenyExtensionSchema + `.` + rolePrivilegeDenyFunction + `()`,
+		`SELECT "` + strings.ToUpper(rolePrivilegeDenyExtensionSchema) + `"."` + strings.ToUpper(rolePrivilegeDenyFunction) + `"()`,
+		`SELECT ` + rolePrivilegeDenyFunction + `()`,
+	}
+	if remoteAvailable {
+		refused = append(refused,
+			`SELECT `+rolePrivilegeExtension+`.dblink('SELECT 1')`,
+			`SELECT "`+strings.ToUpper(rolePrivilegeExtension)+`"."DBLINK"('SELECT 1')`,
+			`SELECT dblink('SELECT 1')`,
+			`WITH x AS (SELECT `+rolePrivilegeExtension+`.dblink('SELECT 1') AS value) SELECT * FROM x`,
+		)
+	}
+	for _, sqlText := range refused {
+		result, attempt, err := ExecuteScoped(ctx, config, ScopedParams{SQLText: sqlText, Schema: scope})
+		if CodeOf(err) != CodeSQLRejectedStatic {
+			t.Fatalf("%q = %v (%s), want %s", sqlText, err, CodeOf(err), CodeSQLRejectedStatic)
+		}
+		if attempt.Outcome != OutcomeRejectedStatic || len(result.Rows) != 0 || attempt.CostEstimate != 0 {
+			t.Fatalf("%q recorded %+v / %+v", sqlText, attempt, result)
+		}
+	}
+
+	result, _, err := ExecuteScoped(ctx, config, ScopedParams{
+		SQLText: `SELECT count(*) FROM ` + rolePrivilegeSchema + `.contracts`, Schema: scope,
+	})
+	if err != nil || result.RowCount != 1 {
+		t.Fatalf("a statement that calls no denied function = %+v err=%v", result, err)
 	}
 }
 

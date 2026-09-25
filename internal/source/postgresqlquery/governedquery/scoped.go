@@ -196,11 +196,24 @@ func ExecuteScoped(ctx context.Context, config Config, params ScopedParams) (Que
 	// prepareScopedTransaction pins the transaction's own work_mem, so the
 	// effective bound it reads is the role's configured value (the DBA's ALTER
 	// ROLE ... SET), never the 16 MB the transaction itself is about to apply.
-	if roleErr := VerifyQueryRole(dialCtx, tx, params.Schema.Relations); roleErr != nil {
+	//
+	// Card S3.2g: the proof no longer refuses a role that can execute an
+	// extension function PUBLIC can execute (dblink, a PostGIS SECURITY DEFINER
+	// helper). It returns that function deny set instead, and the second gate
+	// pass below refuses any statement that calls one of them, before EXPLAIN and
+	// before the statement can reach the server. The set is per execution and is
+	// never cached.
+	deniedFunctions, roleErr := VerifyQueryRole(dialCtx, tx, params.Schema.Relations)
+	if roleErr != nil {
 		attempt.Outcome = OutcomeRejectedDatabase
 		return QueryResult{}, attempt, &Error{code: CodeSourceSQLNotConfigured, cause: roleErr}
 	}
 	attempt.RoleVerificationDigest = roleVerificationDigest(params.Schema.Relations)
+
+	if err := staticDenyGate(params.SQLText, deniedFunctions); err != nil {
+		attempt.Outcome = OutcomeRejectedStatic
+		return QueryResult{}, attempt, &Error{code: CodeSQLRejectedStatic}
+	}
 
 	if err := prepareScopedTransaction(dialCtx, tx, config.Limits, params.Schema); err != nil {
 		attempt.Outcome = OutcomeRejectedDatabase

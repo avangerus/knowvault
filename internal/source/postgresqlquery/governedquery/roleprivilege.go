@@ -32,9 +32,14 @@ package governedquery
 //     superuser, in any schema including pg_catalog and information_schema;
 //     trigger and event-trigger functions owned by the bootstrap superuser or
 //     written in a reviewed trigger language are exempt (card S3.2e), because
-//     they cannot be called from a SELECT;
-//   - no access to dblink, postgres_fdw or any other foreign-data or
-//     remote-execution extension that is installed.
+//     they cannot be called from a SELECT; a function that is a member of an
+//     installed extension and executable only through PUBLIC is exempt from the
+//     refusal and instead joins the per-execution deny set (card S3.2g);
+//   - no EXECUTE on a member function of dblink, postgres_fdw or any other
+//     installed remote-execution extension, unless that function is a member of
+//     the extension and executable only through PUBLIC, in which case it joins
+//     the same per-execution deny set (card S3.2g). A usable foreign-data
+//     wrapper is refused independently.
 //
 // Every refusal is a distinct closed code that names the failed rule, so the
 // operator control (card S3.2b) can tell the administrator exactly what to fix
@@ -77,11 +82,15 @@ const (
 	// any other role.
 	CodeQueryRoleMembership ErrorCode = "SOURCE_QUERY_CREDENTIAL_ROLE_MEMBERSHIP"
 	// CodeQueryRoleSecurityDefiner is the function rule: the role can EXECUTE a
-	// SECURITY DEFINER function outside pg_catalog and information_schema.
+	// SECURITY DEFINER function not owned by the bootstrap superuser, unless it
+	// is a member of an installed extension executable only through PUBLIC (card
+	// S3.2g), which joins the per-execution deny set instead.
 	CodeQueryRoleSecurityDefiner ErrorCode = "SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER"
 	// CodeQueryRoleRemoteExecution is the remote-execution rule: a foreign-data
-	// wrapper is usable, or an installed foreign-data/remote-execution extension
-	// is reachable by the role.
+	// wrapper is usable, or the role can EXECUTE a member function of an
+	// installed foreign-data/remote-execution extension other than through
+	// PUBLIC alone. Card S3.2g collects the PUBLIC-only extension functions into
+	// the per-execution deny set instead of refusing them.
 	CodeQueryRoleRemoteExecution ErrorCode = "SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION"
 	// CodeQueryRoleResourceLimit is card S3.2d's memory/spill bound: the role's
 	// effective temp_file_limit is unlimited or above 1 GB, or its effective
@@ -129,43 +138,139 @@ var remoteExecutionExtensions = []string{
 	"plpython3u", "plperlu", "plsh", "pljava", "plr", "citus",
 }
 
+// FunctionDenySet is card S3.2g's per-execution set of function names that the
+// query role may EXECUTE only through PUBLIC because an installed extension
+// created them. The proof collects the set instead of refusing such a role, and
+// the caller hands it to the static gate's second pass, which refuses any
+// statement that calls a name in it. The set is rebuilt inside the statement's
+// own read-only transaction on every execution and is never stored or cached:
+// a name collected for one role or one catalogue revision can never authorize a
+// later statement. A nil or empty set refuses nothing.
+type FunctionDenySet struct {
+	names map[string]struct{}
+}
+
+func newFunctionDenySet() *FunctionDenySet {
+	return &FunctionDenySet{names: make(map[string]struct{})}
+}
+
+// add records one catalogue function name. The name is lowercased so it matches
+// the static gate's identifier normalization (case folded, quoted identifiers
+// decoded); the second gate pass compares a call's decoded identifier directly.
+// Duplicates from overloaded functions are harmless.
+func (set *FunctionDenySet) add(name string) {
+	name = strings.ToLower(name)
+	if name == "" {
+		return
+	}
+	set.names[name] = struct{}{}
+}
+
+// has reports whether one gate-normalized identifier names a denied function.
+func (set *FunctionDenySet) has(name string) bool {
+	if set == nil {
+		return false
+	}
+	_, found := set.names[name]
+	return found
+}
+
+// empty reports whether the set refuses nothing.
+func (set *FunctionDenySet) empty() bool {
+	return set == nil || len(set.names) == 0
+}
+
+// mergeFunctionDenySets returns one new set holding every name of the passed
+// sets, without sharing a map between proof passes.
+func mergeFunctionDenySets(sets ...*FunctionDenySet) *FunctionDenySet {
+	merged := newFunctionDenySet()
+	for _, set := range sets {
+		if set == nil {
+			continue
+		}
+		for name := range set.names {
+			merged.names[name] = struct{}{}
+		}
+	}
+	return merged
+}
+
+// functionPublicOnlyClause is the catalogue proof that every EXECUTE the role
+// holds on a function comes from PUBLIC alone: the function grants EXECUTE to
+// PUBLIC and holds no EXECUTE grant to the role or to any role it belongs to,
+// and the role is not the function's owner. It mirrors card S3.2f's relation
+// rule with one deliberate difference: a function's default ACL is PUBLIC
+// EXECUTE, so a NULL proacl must be read as a PUBLIC grant, while a relation's
+// default ACL is owner-only. A function granted to the role directly, or through
+// any role membership, is therefore not PUBLIC-only.
+const functionPublicOnlyClause = `(
+		       (
+		           procedure.proacl IS NULL
+		           OR EXISTS (
+		               SELECT 1
+		               FROM pg_catalog.aclexplode(procedure.proacl) AS public_grant
+		               WHERE public_grant.privilege_type = 'EXECUTE'
+		                 AND public_grant.grantee = 0
+		           )
+		       )
+		       AND NOT EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.aclexplode(procedure.proacl) AS role_grant
+		           WHERE role_grant.privilege_type = 'EXECUTE'
+		             AND role_grant.grantee <> 0
+		             AND pg_catalog.pg_has_role(current_user, role_grant.grantee, 'USAGE')
+		       )
+		       AND NOT pg_catalog.pg_has_role(current_user, procedure.proowner, 'USAGE')
+		   )`
+
 // VerifyQueryRole proves every least-privilege rule of ADR-0097 §3 against the
 // role that owns the passed read-only transaction. A nil error means the role
 // passed every rule; every failure is a closed Error whose code names the exact
 // rule. The caller must have already begun a read-only transaction: the proof
 // itself issues only catalogue reads.
-func VerifyQueryRole(ctx context.Context, tx pgx.Tx, relations []ScopedRelation) error {
+//
+// Card S3.2g adds the returned FunctionDenySet: the extension-owned functions
+// the role may EXECUTE only through PUBLIC are no longer a refusal, and their
+// names travel back to the caller so the static gate can refuse a statement that
+// calls one before it reaches EXPLAIN. A fresh set is built on every call and
+// never cached; an empty set means no such function exists.
+func VerifyQueryRole(ctx context.Context, tx pgx.Tx, relations []ScopedRelation) (*FunctionDenySet, error) {
 	if ctx == nil || tx == nil {
-		return &Error{code: CodeInvalid}
+		return nil, &Error{code: CodeInvalid}
 	}
 	if err := (ScopedSchema{Relations: relations}).Validate(); err != nil {
-		return &Error{code: CodeInvalid}
+		return nil, &Error{code: CodeInvalid}
 	}
 	if err := verifyRoleAttributes(ctx, tx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := verifyRoleResourceLimits(ctx, tx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := verifyNoLargeObjectRead(ctx, tx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := verifyNoWritePrivilege(ctx, tx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := verifyNoExtraRelation(ctx, tx, relations); err != nil {
-		return err
+		return nil, err
 	}
 	if err := verifyNoUntrustedLanguage(ctx, tx); err != nil {
-		return err
+		return nil, err
 	}
-	if err := verifyNoSecurityDefiner(ctx, tx); err != nil {
-		return err
+	definerDenials, err := verifyNoSecurityDefiner(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
-	if err := verifyNoRemoteExecution(ctx, tx); err != nil {
-		return err
+	remoteDenials, err := verifyNoRemoteExecution(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
-	return verifyColumnScope(ctx, tx, relations)
+	if err := verifyColumnScope(ctx, tx, relations); err != nil {
+		return nil, err
+	}
+	return mergeFunctionDenySets(definerDenials, remoteDenials), nil
 }
 
 // verifyRoleAttributes refuses a role that is superuser/BYPASSRLS/REPLICATION,
@@ -458,38 +563,76 @@ func verifyNoExtraRelation(ctx context.Context, tx pgx.Tx, relations []ScopedRel
 // Card S3.2e adds the trigger exemption: a trigger or event-trigger function
 // owned by the bootstrap superuser or written in a reviewed trigger language
 // cannot be called from a SELECT, so it is not an escape hatch for this path.
-func verifyNoSecurityDefiner(ctx context.Context, tx pgx.Tx) error {
-	var found bool
-	err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-		    SELECT 1
-		    FROM pg_catalog.pg_proc AS procedure
-		    JOIN pg_catalog.pg_language AS language ON language.oid = procedure.prolang
-		    WHERE procedure.prosecdef
-		      AND procedure.proowner <> $1
-		      AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
-		      AND NOT (
-		          procedure.prorettype IN ('pg_catalog.trigger'::regtype, 'pg_catalog.event_trigger'::regtype)
-		          AND (procedure.proowner = $1 OR language.lanname = ANY($2))
-		      )
-		)`, bootstrapSuperuserOID, triggerExemptLanguages).Scan(&found)
+//
+// Card S3.2g adds the extension exemption. A real database grants PUBLIC
+// EXECUTE on extension functions such as PostGIS's st_estimatedextent; revoking
+// that breaks the extension for the customer's own users. Such a function (a
+// member of an installed extension, executable only through PUBLIC) no longer
+// fails the proof: its name joins the returned deny set, and the static gate's
+// second pass refuses agent SQL that calls it. A non-extension SECURITY DEFINER
+// function, and one granted to the role directly or through membership, keeps
+// the refusal.
+func verifyNoSecurityDefiner(ctx context.Context, tx pgx.Tx) (*FunctionDenySet, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT procedure.proname,
+		       EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.pg_depend AS dependency
+		           WHERE dependency.classid = 'pg_catalog.pg_proc'::regclass
+		             AND dependency.objid = procedure.oid
+		             AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		             AND dependency.deptype = 'e'
+		       ),
+		       `+functionPublicOnlyClause+`
+		FROM pg_catalog.pg_proc AS procedure
+		JOIN pg_catalog.pg_language AS language ON language.oid = procedure.prolang
+		WHERE procedure.prosecdef
+		  AND procedure.proowner <> $1
+		  AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
+		  AND NOT (
+		      procedure.prorettype IN ('pg_catalog.trigger'::regtype, 'pg_catalog.event_trigger'::regtype)
+		      AND (procedure.proowner = $1 OR language.lanname = ANY($2))
+		  )
+		ORDER BY procedure.proname`, bootstrapSuperuserOID, triggerExemptLanguages)
 	if err != nil {
-		return &Error{code: CodeQueryCredentialRejected, cause: err}
+		return nil, &Error{code: CodeQueryCredentialRejected, cause: err}
 	}
-	if found {
-		return &Error{code: CodeQueryRoleSecurityDefiner}
+	defer rows.Close()
+	denied := newFunctionDenySet()
+	for rows.Next() {
+		var name string
+		var extensionMember, publicOnly bool
+		if scanErr := rows.Scan(&name, &extensionMember, &publicOnly); scanErr != nil {
+			return nil, &Error{code: CodeQueryCredentialRejected, cause: scanErr}
+		}
+		if extensionMember && publicOnly {
+			denied.add(name)
+			continue
+		}
+		return nil, &Error{code: CodeQueryRoleSecurityDefiner}
 	}
-	return nil
+	if err := rows.Err(); err != nil {
+		return nil, &Error{code: CodeQueryCredentialRejected, cause: err}
+	}
+	return denied, nil
 }
 
 // verifyNoRemoteExecution refuses the role if it can use a foreign-data wrapper
-// or reach one of the installed remote-execution extensions. The wrapper check
-// is independent of the extension deny-list, so an unreviewed FDW cannot slip
-// through; the extension check is USAGE on the extension's own schema, which is
-// what makes its functions (dblink, the procedural languages, the HTTP/S3
-// bridges) callable at all. Default PUBLIC EXECUTE alone is not enough: without
-// schema USAGE the function cannot be named.
-func verifyNoRemoteExecution(ctx context.Context, tx pgx.Tx) error {
+// or reach a member function of one of the installed remote-execution
+// extensions. The wrapper check is independent of the extension deny-list, so an
+// unreviewed FDW cannot slip through; a plain role holds no USAGE on a wrapper
+// unless it was granted, because PostgreSQL's default FDW ACL grants nothing to
+// PUBLIC.
+//
+// Card S3.2g replaces the former "the remote-execution extension is installed in
+// a schema the role can use" refusal with a per-function rule. A function that
+// is a member of a listed extension (pg_depend deptype 'e') and executable only
+// through PUBLIC no longer fails the proof: its name joins the returned deny
+// set, and the static gate's second pass refuses agent SQL that calls it. That
+// is what lets a real database with dblink installed pass without revoking
+// PUBLIC EXECUTE. A remote-execution extension function granted to the role
+// directly, or through membership, keeps the refusal.
+func verifyNoRemoteExecution(ctx context.Context, tx pgx.Tx) (*FunctionDenySet, error) {
 	var foreignData bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -497,27 +640,44 @@ func verifyNoRemoteExecution(ctx context.Context, tx pgx.Tx) error {
 		    FROM pg_catalog.pg_foreign_data_wrapper AS wrapper
 		    WHERE has_foreign_data_wrapper_privilege(current_user, wrapper.oid, 'USAGE')
 		)`).Scan(&foreignData); err != nil {
-		return &Error{code: CodeQueryCredentialRejected, cause: err}
+		return nil, &Error{code: CodeQueryCredentialRejected, cause: err}
 	}
 	if foreignData {
-		return &Error{code: CodeQueryRoleRemoteExecution}
+		return nil, &Error{code: CodeQueryRoleRemoteExecution}
 	}
-	var extension bool
-	err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-		    SELECT 1
-		    FROM pg_catalog.pg_extension AS extension
-		    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = extension.extnamespace
-		    WHERE extension.extname = ANY($1)
-		      AND has_schema_privilege(current_user, namespace.oid, 'USAGE')
-		)`, remoteExecutionExtensions).Scan(&extension)
+	rows, err := tx.Query(ctx, `
+		SELECT procedure.proname, `+functionPublicOnlyClause+`
+		FROM pg_catalog.pg_proc AS procedure
+		JOIN pg_catalog.pg_depend AS dependency
+		  ON dependency.classid = 'pg_catalog.pg_proc'::regclass
+		 AND dependency.objid = procedure.oid
+		 AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+		 AND dependency.deptype = 'e'
+		JOIN pg_catalog.pg_extension AS extension ON extension.oid = dependency.refobjid
+		WHERE extension.extname = ANY($1)
+		  AND has_function_privilege(current_user, procedure.oid, 'EXECUTE')
+		ORDER BY procedure.proname`, remoteExecutionExtensions)
 	if err != nil {
-		return &Error{code: CodeQueryCredentialRejected, cause: err}
+		return nil, &Error{code: CodeQueryCredentialRejected, cause: err}
 	}
-	if extension {
-		return &Error{code: CodeQueryRoleRemoteExecution}
+	defer rows.Close()
+	denied := newFunctionDenySet()
+	for rows.Next() {
+		var name string
+		var publicOnly bool
+		if scanErr := rows.Scan(&name, &publicOnly); scanErr != nil {
+			return nil, &Error{code: CodeQueryCredentialRejected, cause: scanErr}
+		}
+		if publicOnly {
+			denied.add(name)
+			continue
+		}
+		return nil, &Error{code: CodeQueryRoleRemoteExecution}
 	}
-	return nil
+	if err := rows.Err(); err != nil {
+		return nil, &Error{code: CodeQueryCredentialRejected, cause: err}
+	}
+	return denied, nil
 }
 
 // verifyColumnScope is the column rule. It reads the live relation (not the
