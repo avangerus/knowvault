@@ -27,12 +27,21 @@ import (
 
 const AnswerModeToolLoop = "TOOL_LOOP"
 const verificationAddress = "ADDRESS_BOUND"
+
+// Card D-5 requirement 4: these are the English variants of the texts the user
+// sees. Every call site picks between the English and Russian variant with the
+// question's own language (tool_loop_language.go); no call site uses the
+// English constant directly for a user-visible answer.
 const noWorkspaceData = "The workspace has no data to answer this question."
+const noWorkspaceDataRussian = "\u0412 \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u043e\u0431\u043b\u0430\u0441\u0442\u0438 \u043d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u043e\u0442\u0432\u0435\u0442\u0430 \u043d\u0430 \u044d\u0442\u043e\u0442 \u0432\u043e\u043f\u0440\u043e\u0441."
 const unreadableWorkspaceData = "The requested source could not be read. Please try again."
+const unreadableWorkspaceDataRussian = "\u0417\u0430\u043f\u0440\u043e\u0448\u0435\u043d\u043d\u044b\u0439 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c. \u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441."
 const refusedMetricComparison = "The requested comparison could not be verified for both dates. No comparison result is available."
+const refusedMetricComparisonRussian = "\u0417\u0430\u043f\u0440\u043e\u0448\u0435\u043d\u043d\u043e\u0435 \u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044c \u0434\u043b\u044f \u043e\u0431\u0435\u0438\u0445 \u0434\u0430\u0442. \u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 \u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u044f \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d."
 const toolScopeChangedError = `{"error":"TOOL_SCOPE_CHANGED"}`
 const toolScopeChangedStopReason = "SCOPE_CHANGED"
 const toolScopeChangedAnswer = "The workspace changed during the request. Please try again."
+const toolScopeChangedAnswerRussian = "\u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043e\u0431\u043b\u0430\u0441\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0438\u043b\u0430\u0441\u044c \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u0437\u0430\u043f\u0440\u043e\u0441\u0430. \u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441."
 
 // Reserve is inside the mounted tool budget, not additional work. Small
 // profiles still permit model-selected research before finalization.
@@ -69,24 +78,8 @@ func toolFinalizationRefusal() workspacetools.Result {
 	return workspacetools.Result{IsError: true, Text: `{"error":"FINALIZATION_REQUIRED","advice":"Finish with submit_answer using the evidence already read and state its scope and limitations. No further knowledge-tool calls are available."}`}
 }
 
-func toolLoopNoDataFallback(record *ToolLoopRecord, hasSuccessfulComparison bool) string {
-	if hasSuccessfulComparison || record == nil {
-		return noWorkspaceData
-	}
-	refused := false
-	for _, call := range record.Calls {
-		if call.Name == trustedMetricToolName && call.Outcome == "REFUSED" {
-			return refusedMetricComparison
-		}
-		if call.Outcome == "REFUSED" {
-			refused = true
-		}
-	}
-	if refused {
-		return unreadableWorkspaceData
-	}
-	return noWorkspaceData
-}
+// The no-data fallback itself lives in tool_loop_language.go
+// (toolLoopNoDataFallback), where the question's language selects the wording.
 
 // Catalog performs the existing live workspace admission and revision check.
 // Keep the original run context: this is a provider boundary, not persistence.
@@ -120,19 +113,37 @@ type ToolCallRecord struct {
 // artifact. Existing run/conversation disclosure and physical purge own it.
 // No prompt, argument or tool result is added to a plaintext database column.
 type ToolLoopRecord struct {
-	ModelProfile      *ModelProfile                `json:"model_profile,omitempty"`
-	Profile           modelgateway.ToolLoopProfile `json:"profile"`
-	Model             string                       `json:"model"`
-	Calls             []ToolCallRecord             `json:"calls"`
-	Messages          []modelgateway.Message       `json:"messages"`
-	Usage             modelgateway.TokenUsage      `json:"usage"`
-	StopReason        string                       `json:"stop_reason"`
-	FormatDiagnostics []toolFormatDiagnostic       `json:"format_diagnostics,omitempty"`
+	ModelProfile *ModelProfile                `json:"model_profile,omitempty"`
+	Profile      modelgateway.ToolLoopProfile `json:"profile"`
+	Model        string                       `json:"model"`
+	Calls        []ToolCallRecord             `json:"calls"`
+	Messages     []modelgateway.Message       `json:"messages"`
+	Usage        modelgateway.TokenUsage      `json:"usage"`
+	StopReason   string                       `json:"stop_reason"`
+	// ModelTurns is how many provider turns this run actually spent. It can
+	// exceed Profile.MaxTurns by exactly one: the forced final turn card D-5
+	// adds when the loop ended without a submitted answer. It is recorded so the
+	// overrun is visible in the trace instead of hidden.
+	ModelTurns        int                    `json:"model_turns,omitempty"`
+	FormatDiagnostics []toolFormatDiagnostic `json:"format_diagnostics,omitempty"`
 	// AllClaimsBound records that each claim passed runtime evidence checks.
 	// ClaimEvidence v1 binds the claim text to exact document citation numbers
 	// and live-table result receipts; it does not prove semantic entailment or
 	// make model prose a byte-exact database value.
-	AllClaimsBound         bool                `json:"all_claims_bound"`
+	AllClaimsBound bool `json:"all_claims_bound"`
+	// UnconfirmedClaims lists the zero-based index of each SUBMITTED claim whose
+	// citation set was reduced because at least one citation could not be
+	// verified (card D-5 requirement 2). The answer itself never presents a
+	// dropped citation as evidence; this makes the removal visible in the run
+	// trace instead of silent.
+	UnconfirmedClaims []int `json:"unconfirmed_claims,omitempty"`
+	// VerifiedClaims lists the zero-based index, in the submitted claim list, of
+	// each claim that was kept in the answer. A submitted claim absent from this
+	// list was not shown at all because no citation of it verified. The list is
+	// ordered, and ClaimEvidence[i] describes the answer claim at
+	// VerifiedClaims[i]. A v1 record written before card D-5 omits it and is
+	// read as the identity mapping.
+	VerifiedClaims         []int               `json:"verified_claims,omitempty"`
 	ClaimEvidenceVersion   string              `json:"claim_evidence_version,omitempty"`
 	ClaimEvidence          []ToolClaimEvidence `json:"claim_evidence,omitempty"`
 	PresentationVersion    *string             `json:"presentation_version,omitempty"`
@@ -533,9 +544,12 @@ func toolLoopWorkspaceContextBudget(maxInputBytes int) int {
 // Any of these three cases leaves the system message byte-identical to a
 // build with no workspace-context support at all, and ToolLoopRecord carries
 // no workspace_context field -- the regression contract card B must hold.
-func (service *Service) resolveToolLoopWorkspaceContext(ctx context.Context, access database.AccessContext, workspaceID, questionText string, maxInputBytes int) (suffix string, record *ToolLoopWorkspaceContext, present bool) {
+// description is the pinned Document's own Description, returned so card D-5's
+// compact overview can show the "workspace context summary" line from the SAME
+// pinned version the WORKSPACE_CONTEXT block rendered, without a second read.
+func (service *Service) resolveToolLoopWorkspaceContext(ctx context.Context, access database.AccessContext, workspaceID, questionText string, maxInputBytes int) (suffix string, record *ToolLoopWorkspaceContext, present bool, description string) {
 	if service == nil || service.workspaceContext == nil {
-		return "", nil, false
+		return "", nil, false, ""
 	}
 	version, err := service.workspaceContext.Current(ctx, workspacecontext.Access{
 		OrganizationID: access.OrganizationID,
@@ -543,7 +557,7 @@ func (service *Service) resolveToolLoopWorkspaceContext(ctx context.Context, acc
 		RequestID:      access.RequestID,
 	}, workspaceID)
 	if err != nil || version.Number == 0 {
-		return "", nil, false
+		return "", nil, false, ""
 	}
 	budget := toolLoopWorkspaceContextBudget(maxInputBytes)
 	rendered, trace := workspacecontext.Render(version.Document, version.Number, questionText, budget)
@@ -558,7 +572,7 @@ func (service *Service) resolveToolLoopWorkspaceContext(ctx context.Context, acc
 	}
 	suffix = "\n\n" + toolLoopWorkspaceContextSentence + "\n" + rendered
 	record = &ToolLoopWorkspaceContext{Version: version.Number, ContentHash: version.ContentHash, Truncated: trace.Truncated, Terms: terms}
-	return suffix, record, true
+	return suffix, record, true, version.Document.Description
 }
 
 // toolLoopWorkspaceContextLocations projects one glossary term's own
@@ -778,12 +792,34 @@ func validateToolLoopClaimEvidenceV1(questionRunID, answerMarkdown string, recor
 	if record.ClaimEvidenceVersion == "" {
 		return len(record.ClaimEvidence) == 0
 	}
-	if record.ClaimEvidenceVersion != "v1" || !record.AllClaimsBound || len(record.ClaimEvidence) == 0 || len(record.ClaimEvidence) > submitAnswerMaxClaims {
+	if record.ClaimEvidenceVersion != "v1" || len(record.ClaimEvidence) == 0 || len(record.ClaimEvidence) > submitAnswerMaxClaims {
 		return false
 	}
 	answer, ok := finalToolAnswerFromRecord(record)
-	if !ok || answer.NoData || answer.Clarification != "" || len(answer.Claims) != len(record.ClaimEvidence) {
+	if !ok || answer.NoData || answer.Clarification != "" {
 		return false
+	}
+	// A v1 record written before card D-5 kept every claim it recorded, so an
+	// absent VerifiedClaims is read as the identity mapping over the evidence.
+	verifiedClaims := record.VerifiedClaims
+	if len(verifiedClaims) == 0 {
+		verifiedClaims = make([]int, len(record.ClaimEvidence))
+		for index := range verifiedClaims {
+			verifiedClaims[index] = index
+		}
+	}
+	if len(verifiedClaims) != len(record.ClaimEvidence) || len(answer.Claims) < len(record.ClaimEvidence) {
+		return false
+	}
+	seenVerified := make(map[int]struct{}, len(verifiedClaims))
+	for _, index := range verifiedClaims {
+		if index < 0 || index >= len(answer.Claims) {
+			return false
+		}
+		if _, duplicate := seenVerified[index]; duplicate {
+			return false
+		}
+		seenVerified[index] = struct{}{}
 	}
 	executions, _, valid := governedQueryToolExecutions(questionRunID, dependencies, record)
 	if !valid {
@@ -800,8 +836,8 @@ func validateToolLoopClaimEvidenceV1(questionRunID, answerMarkdown string, recor
 		citationNumbers[citation.Number] = struct{}{}
 	}
 	var expected strings.Builder
-	for index, claim := range answer.Claims {
-		evidence := record.ClaimEvidence[index]
+	for index, evidence := range record.ClaimEvidence {
+		claim := answer.Claims[verifiedClaims[index]]
 		if evidence.TextHash != canon.Hash([]byte(claim.Text)) || len(evidence.CitationNumbers) > len(claim.Citations) {
 			return false
 		}
@@ -862,6 +898,47 @@ func finalToolAnswerFromRecord(record *ToolLoopRecord) (toolAnswer, bool) {
 
 func toolAnswerHasCompleteSupport(verifiedDocumentCitationCount int, liveResultAvailable, allClaimsBound bool) bool {
 	return allClaimsBound && (verifiedDocumentCitationCount > 0 || liveResultAvailable)
+}
+
+// toolLoopVerifiedEvidenceIDs lists the evidence of the citations that did
+// verify, in citation order and already unit. It is what the
+// UNVERIFIED_CITATIONS uncertainty points at: the answer part that survived,
+// never the claims that were dropped.
+func toolLoopVerifiedEvidenceIDs(selected []candidate) []string {
+	if len(selected) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(selected))
+	ids := make([]string, 0, len(selected))
+	for _, item := range selected {
+		if !validOpaque(item.ID) {
+			continue
+		}
+		if _, duplicate := seen[item.ID]; duplicate {
+			continue
+		}
+		seen[item.ID] = struct{}{}
+		ids = append(ids, item.ID)
+		if len(ids) == maxSignalEvidence {
+			break
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
+}
+
+// toolLoopForcedFinalTurnAllowed decides whether the one forced submit-only
+// turn is spent. Card D-5 requirement 1: the loop must always end with either a
+// submitted answer or an honest failure text, and the forced turn is the last
+// chance to turn a non-answer stop -- a tool-call or step budget, a time budget
+// inside the run, repeated format errors, an output-length stop, a model
+// failure -- into a cited answer from what was already gathered. It never runs
+// when the run already has an answer or when the run context is already over,
+// because then there is nothing left to ask.
+func toolLoopForcedFinalTurnAllowed(final *toolAnswer, scopeChanged bool, ctxErr error) bool {
+	return final == nil && !scopeChanged && ctxErr == nil
 }
 
 // containsWorkspaceToolRequest recognizes document/data tool requests only
@@ -1396,19 +1473,54 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		definitions = append(definitions, definition)
 	}
 	definitions = append(definitions, submitAnswerToolDefinition())
-	workspaceContextSuffix, workspaceContextRecord, workspaceContextPresent := service.resolveToolLoopWorkspaceContext(ctx, access, run.WorkspaceID, questionText, profile.MaxInputBytes)
-	messages, persistedMessages := initialToolLoopMessages(questionText, history, profile.MaxInputBytes, workspaceContextSuffix)
-	record.Messages = append(record.Messages, persistedMessages...)
-	if workspaceContextPresent {
-		record.WorkspaceContext = workspaceContextRecord
-	}
+	language := questionLanguage(questionText)
+	// The workspace context is read exactly once (S2-MODEL-CONTEXT-DESIGN.md
+	// "The context version is pinned once per run"). The overview below reuses
+	// that same pinned version's description instead of reading the context a
+	// second time, so the overview can never show a different version than the
+	// WORKSPACE_CONTEXT block.
+	workspaceContextSuffix, workspaceContextRecord, workspaceContextPresent, workspaceContextDescription := service.resolveToolLoopWorkspaceContext(ctx, access, run.WorkspaceID, questionText, profile.MaxInputBytes)
 	observed := make(map[string]bool)
 	citationObservations := &citationObservationIndex{}
 	readPages := make(map[string]string)
 	pageFragments := make(map[string][]string)
 	packing := &toolContextPacking{Representatives: make(map[readPageKey]*contextRepresentative)}
-	traceBytes := 0
+	// Card D-5 requirement 3: an overview or greeting question gets its
+	// workspace overview in the first turn, without a tool call, and can answer
+	// from it. Ordinary data questions keep the full tool loop untouched.
+	overviewResearchToolCalls := profile.MaxToolCalls
 	scopeChanged := false
+	var overviewMessage *modelgateway.Message
+	if toolLoopOverviewQuestion(questionText) {
+		built, overviewErr := service.buildToolLoopOverview(ctx, scope, record, language, workspaceContextDescription)
+		if overviewErr != nil {
+			if errors.Is(overviewErr, workspacetools.ErrScopeChanged) {
+				record.StopReason = toolScopeChangedStopReason
+				scopeChanged = true
+			} else {
+				return &Error{code: CodeDenied, cause: overviewErr}
+			}
+		} else if built != nil {
+			overviewResearchToolCalls = min(profile.MaxToolCalls, toolLoopOverviewResearchToolCalls)
+			observeToolLoopOverview(record, observed, citationObservations, readPages, pageFragments)
+			// The overview carries untrusted document bytes, so it is delivered
+			// as its own user message, never appended to the system message
+			// (which stays the trusted instruction block plus the untrusted-
+			// framed WORKSPACE_CONTEXT block).
+			message := modelgateway.Message{Role: "user", Content: built.Text}
+			overviewMessage = &message
+		}
+	}
+	messages, persistedMessages := initialToolLoopMessages(questionText, history, profile.MaxInputBytes, workspaceContextSuffix)
+	if overviewMessage != nil {
+		messages = append(messages, *overviewMessage)
+		record.Messages = append(record.Messages, *overviewMessage)
+	}
+	record.Messages = append(record.Messages, persistedMessages...)
+	if workspaceContextPresent {
+		record.WorkspaceContext = workspaceContextRecord
+	}
+	traceBytes := 0
 	workspaceToolRequested := false
 	var retainedAnalyticScalarPair *analyticScalarPair
 	var liveDataState liveDataRunState
@@ -1531,13 +1643,34 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	var final *toolAnswer
 	finalizing := false
 	finalizationAnnounced := false
-	researchCallLimit := toolLoopResearchCallLimit(profile.MaxToolCalls)
+	researchCallLimit := min(toolLoopResearchCallLimit(profile.MaxToolCalls), overviewResearchToolCalls)
 	repairs := 0
-	requestFormatRepair := func() bool {
+	// Card D-5 requirement 1: the loop is never allowed to end without an
+	// answer. One final submit-only turn is appended after the mounted turn
+	// budget (toolLoopForcedFinalTurnAllowed) for a stop that is not itself an
+	// answer, so a budget, limit or repeated format failure still yields a cited
+	// answer instead of a failure text.
+	naturalTurnLimit := profile.MaxTurns
+	record.ModelTurns = 0
+	// The forced final turn is one model call beyond the mounted turn budget. It
+	// is only spent when the loop ended without a submitted answer; the
+	// persisted record names both the mounted limit and the turns actually taken
+	// (ModelTurns) so the overrun is visible.
+	//
+	// It is reached from every normal turn that does not produce an answer -- a
+	// tool-call/step budget, a time budget, a context or output limit, a provider
+	// failure or a repeated format error -- because inside a normal turn every
+	// ending continues the loop instead of returning. Only the forced turn itself
+	// reaching an ending breaks out with the honest failure text.
+	repairExhaustedTurn := -1
+	requestFormatRepair := func(turn int) {
 		repairs++
 		if repairs > 1 {
 			record.StopReason = "FORMAT_INVALID"
-			return false
+			// The promotion below compares the NEXT turn's index, so the failing
+			// turn is recorded as the one after it.
+			repairExhaustedTurn = turn + 1
+			return
 		}
 		repair := modelgateway.Message{Role: "user", Content: "The response does not match the format. Return no_data/claims JSON: at most 20 items, 3 document citations, and 3 live_reads per claim. Set each live_reads.result_id to the matching live tool output's exact attempt_id and copy its receipt_digest exactly. Cite every source used by each claim. Do not add other fields. Alternatively, call the required tool using an actual tool call."}
 		if finalizing {
@@ -1545,9 +1678,19 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 		messages = append(messages, repair)
 		record.Messages = append(record.Messages, repair)
-		return true
 	}
-	for turn := 0; turn < profile.MaxTurns; turn++ {
+	forcedFinalSpent := false
+	// modelTurnBudget is the number of model calls this run may spend, not a
+	// loop bound: every normal turn consumes one and the forced final turn
+	// consumes exactly one more. `turn` is the zero-based index of the model
+	// call about to be made.
+	modelTurnBudget := 0
+	for !forcedFinalSpent {
+		turn := modelTurnBudget
+		// TRACE_LIMIT is a hard stop: the encrypted trace has already exceeded
+		// its own byte budget, so the run ends with the failure text (which
+		// names the limit that was really hit) rather than spending the forced
+		// turn on a trace the run must not keep growing.
 		if scopeChanged || record.StopReason == "TRACE_LIMIT" {
 			break
 		}
@@ -1555,7 +1698,32 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			record.StopReason = toolLoopContextStopReason(ctx)
 			break
 		}
-		finalizing = finalizing || turn == profile.MaxTurns-1 || len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx)
+		forcedFinalTurn := turn >= naturalTurnLimit
+		if !forcedFinalTurn && turn == repairExhaustedTurn {
+			// The just-finished turn already used its one format repair and
+			// failed again. That is exactly the "repeated format errors"
+			// condition card D-5 forces a final turn for: promote this turn to
+			// the forced final turn instead of ending the run.
+			forcedFinalTurn = true
+		}
+		if forcedFinalTurn {
+			// Card D-5 requirement 1: the model gets exactly one final turn that
+			// can only submit an answer from what was already gathered. It is
+			// not research: every tool call in it is refused below, and a
+			// provider failure only means the honest failure text is used. It
+			// gets a fresh format repair, so an exhausted repair budget cannot
+			// consume it.
+			if !toolLoopForcedFinalTurnAllowed(final, scopeChanged, ctx.Err()) {
+				break
+			}
+			forcedFinalSpent = true
+			finalizing = true
+			repairs = 0
+			repairExhaustedTurn = -1
+			finalizationAnnounced = true
+		}
+		modelTurnBudget++
+		finalizing = finalizing || turn == naturalTurnLimit-1 || len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx)
 		turnDefinitions := definitions
 		if finalizing {
 			var finalizationErr error
@@ -1582,8 +1750,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		collapseExactReadDuplicates(messages, record.Calls, packing)
 		if !fitToolContextWithPacking(messages, turnDefinitions, profile.MaxInputBytes, packing) {
 			record.StopReason = "CONTEXT_LIMIT"
-			break
+			// Card D-5 requirement 1: a normal turn that cannot fit its own
+			// context hands the run to the forced submit-only turn, which has a
+			// much smaller tool set to fit. If even that cannot fit, the loop
+			// ends with the honest failure text below.
+			continue
 		}
+		record.ModelTurns = turn + 1
 		started := service.now()
 		modelCtx := toolLoopOperationContext(ctx, researchCtx, finalizing)
 		response, attempt, converseErr := converseWithActionObserver(modelCtx, func() (modelgateway.ConverseResult, modelgateway.AttemptResult, error) {
@@ -1612,6 +1785,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				continue
 			}
 			record.StopReason = toolLoopModelFailureStopReason(ctx, attempt)
+			// Card D-5 requirement 1: a provider failure on a normal turn still
+			// earns the one forced final turn, which can answer from the data
+			// already read. On the forced turn itself the run is over and the
+			// honest failure text below records exactly what happened.
+			if !forcedFinalTurn {
+				continue
+			}
 			break
 		}
 		record.Usage.Input += response.Usage.Input
@@ -1622,6 +1802,9 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		workspaceToolRequested = workspaceToolRequested || containsWorkspaceToolRequest(response.Message.ToolCalls, workspaceToolNames)
 		if response.FinishReason == "length" {
 			record.StopReason = "OUTPUT_LIMIT"
+			if !forcedFinalTurn {
+				continue
+			}
 			break
 		}
 		if len(response.Message.ToolCalls) > 0 {
@@ -1630,9 +1813,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				for _, call := range response.Message.ToolCalls {
 					appendResult(call, submitAnswerProtocolError("SUBMIT_ANSWER_MUST_BE_SOLE_CALL"), nil)
 				}
-				if !requestFormatRepair() {
-					break
-				}
+				requestFormatRepair(turn)
 				continue
 			}
 			if containsSubmitAnswerCall(response.Message.ToolCalls) {
@@ -1645,9 +1826,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				}
 				appendToolFormatDiagnostic(record, turn+1, toolFormatChannelSubmitAnswer, code)
 				appendResult(call, submitAnswerProtocolError("SUBMIT_ANSWER_INVALID_ARGUMENTS"), nil)
-				if !requestFormatRepair() {
-					break
-				}
+				requestFormatRepair(turn)
 				continue
 			}
 			if finalizing {
@@ -1657,17 +1836,18 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 					appendResult(call, toolFinalizationRefusal(), nil)
 				}
 				record.StopReason = "FORMAT_INVALID"
-				if !requestFormatRepair() {
-					break
-				}
+				requestFormatRepair(turn)
 				continue
 			}
 			if len(record.Calls) >= profile.MaxToolCalls {
 				record.StopReason = "TOOL_LIMIT"
-				break
+				continue
 			}
 			for _, call := range response.Message.ToolCalls {
 				if err := ctx.Err(); err != nil {
+					if forcedFinalTurn {
+						break
+					}
 					return err
 				}
 				if len(record.Calls) >= researchCallLimit || toolLoopResearchExpired(ctx, researchCtx) {
@@ -1695,25 +1875,35 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			break
 		}
 		appendToolFormatDiagnostic(record, turn+1, toolFormatChannelContent, formatCode)
-		if !requestFormatRepair() {
-			break
-		}
+		requestFormatRepair(turn)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	answer, citations, selected := noWorkspaceData, []Citation{}, []candidate{}
+	uncertainties := []Uncertainty{}
 	if !scopeChanged && final != nil && !final.NoData && final.Clarification == "" {
 		var body strings.Builder
 		citationNumbers := make(map[struct{ address, quote string }]int64)
 		claimEvidence := make([]ToolClaimEvidence, 0, len(final.Claims))
-		record.AllClaimsBound = true
-		for _, claim := range final.Claims {
+		// Card D-5 requirement 2: a claim whose every citation failed is
+		// dropped from the answer and never presented as cited; the claims that
+		// did verify are kept. verifiedClaims and unconfirmedClaims make both
+		// decisions visible in the run trace.
+		unconfirmedClaims := []int{}
+		verifiedClaims := []int{}
+		allClaimsBound := true
+		for claimIndex, claim := range final.Claims {
 			if scopeChanged {
 				break
 			}
-			bound := true
+			// claimVerifiedCount counts only the citations of THIS claim that
+			// verified; a claim with at least one of them stays supported, a
+			// claim whose every citation failed is dropped.
+			claimVerifiedCount := 0
+			droppedCitation := false
 			refs := []int64{}
+			claimRefSeen := make(map[int64]struct{})
 			for _, reference := range claim.Citations {
 				if scopeChanged {
 					break
@@ -1731,7 +1921,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 						}
 					}
 					if resolution.Status != citationResolutionUnique {
-						bound = false
+						droppedCitation = true
 						continue
 					}
 					reference.Address = resolution.Address
@@ -1747,7 +1937,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				}
 				selector, parseErr := address.Parse(reference.Address)
 				if parseErr != nil || !observed[reference.Address] {
-					bound = false
+					droppedCitation = true
 					continue
 				}
 				page, read := readPages[reference.Address]
@@ -1758,7 +1948,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 						break
 					}
 					if readErr != nil || result.IsError {
-						bound = false
+						droppedCitation = true
 						continue
 					}
 					var projection struct {
@@ -1769,13 +1959,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				}
 				if reference.Quote != "" {
 					if _, ok := sourceQuote(page, reference.Quote); !ok {
-						bound = false
+						droppedCitation = true
 						continue
 					}
 				}
 				fragment, readErr := service.evidence.Read(ctx, access, run.WorkspaceID, selector.Object)
 				if readErr != nil || len(fragment.Text) == 0 {
-					bound = false
+					droppedCitation = true
 					continue
 				}
 				// An address alone cites the original fragment. A supplied quote
@@ -1785,15 +1975,17 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 					var exact bool
 					actualQuote, exact = sourceQuote(actualQuote, reference.Quote)
 					if !exact {
-						bound = false
+						droppedCitation = true
 						continue
 					}
 				}
 				reference.Quote = actualQuote
 				citationKey := struct{ address, quote string }{reference.Address, actualQuote}
 				if number, exists := citationNumbers[citationKey]; exists {
-					if !slices.Contains(refs, number) {
+					if _, counted := claimRefSeen[number]; !counted {
+						claimRefSeen[number] = struct{}{}
 						refs = append(refs, number)
+						claimVerifiedCount++
 					}
 					continue
 				}
@@ -1801,24 +1993,29 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				citationNumbers[citationKey] = number
 				citations = append(citations, Citation{Number: number, Address: reference.Address, EvidenceFragment: fragment.FragmentID, Excerpt: reference.Quote, Anchor: string(fragment.Anchor), DeepLink: "/api/v1/workspaces/" + run.WorkspaceID + "/evidence/" + fragment.FragmentID, SourceVersionID: fragment.SourceVersionID, ExtractionID: fragment.ExtractionID, SourceObjectID: fragment.SourceObjectID, EvidenceTextHash: fragment.EvidenceTextHash, ExcerptHash: canon.Hash([]byte(reference.Quote))})
 				selected = append(selected, candidate{ID: fragment.FragmentID, SourceObjectID: fragment.SourceObjectID, SourceVersionID: fragment.SourceVersionID, ExtractionID: fragment.ExtractionID, ObjectType: fragment.ObjectType, CanonicalFormat: fragment.CanonicalFormat, ParserProfileRevision: fragment.ParserProfileRevision, TextHash: fragment.EvidenceTextHash, AnchorHash: fragment.AnchorHash, ContentHash: fragment.ContentHash, Ordinal: fragment.Ordinal, Text: fragment.Text, Anchor: fragment.Anchor})
+				claimRefSeen[number] = struct{}{}
 				refs = append(refs, number)
+				claimVerifiedCount++
 			}
 			liveReferences, liveOrdinals, liveReferencesBound := bindToolLiveReadReferences(run.ID, claim.LiveReads, liveDataState.executions)
 			claimSupported := toolClaimHasExplicitSupport(
-				len(claim.Citations) > 0, len(refs), bound, len(liveReferences) > 0, liveReferencesBound, false,
+				len(claim.Citations) > 0, claimVerifiedCount, true, len(liveReferences) > 0, liveReferencesBound, false,
 			)
+			if !claimSupported {
+				allClaimsBound = false
+				continue
+			}
+			if droppedCitation {
+				unconfirmedClaims = append(unconfirmedClaims, claimIndex)
+			}
+			verifiedClaims = append(verifiedClaims, claimIndex)
 			if body.Len() > 0 {
 				body.WriteString("\n\n")
 			}
-			if !claimSupported {
-				record.AllClaimsBound = false
-				body.WriteString("**Unverified.** ")
-			} else {
-				claimEvidence = append(claimEvidence, ToolClaimEvidence{
-					TextHash: canon.Hash([]byte(claim.Text)), CitationNumbers: append([]int64(nil), refs...),
-					LiveReads: liveReferences,
-				})
-			}
+			claimEvidence = append(claimEvidence, ToolClaimEvidence{
+				TextHash: canon.Hash([]byte(claim.Text)), CitationNumbers: append([]int64(nil), refs...),
+				LiveReads: liveReferences,
+			})
 			body.WriteString(claim.Text)
 			for _, number := range refs {
 				fmt.Fprintf(&body, " [%d]", number)
@@ -1827,26 +2024,45 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				fmt.Fprintf(&body, " [Live result %d]", ordinal)
 			}
 		}
-		if record.AllClaimsBound && record.StopReason == "ANSWER" {
+		record.AllClaimsBound = allClaimsBound
+		record.UnconfirmedClaims = unconfirmedClaims
+		record.VerifiedClaims = verifiedClaims
+		if len(final.Claims) == 0 {
+			// No claim at all is the no_data variant; the existing fallback below
+			// owns that answer.
+			answer = noWorkspaceData
+		} else if len(claimEvidence) > 0 && record.StopReason == "ANSWER" {
+			// Card D-5 requirement 2: the verified claims are kept and the run
+			// completes. A dropped citation or an unverified sibling claim is
+			// recorded as an uncertainty instead of discarding the verified
+			// content.
+			answer = body.String()
 			record.ClaimEvidenceVersion = "v1"
 			record.ClaimEvidence = claimEvidence
+			if !allClaimsBound || len(unconfirmedClaims) > 0 {
+				uncertainties = append(uncertainties, Uncertainty{
+					Code: UncertaintyUnverifiedCitations, EvidenceIDs: toolLoopVerifiedEvidenceIDs(selected),
+				})
+			}
 		} else {
-			// Do not persist a partial v1 proof beside a generic insufficiency
-			// response. Legacy-shaped traces remain readable, while the
-			// incomplete claim details stay only in the encrypted tool transcript.
+			// Nothing verifiable remains. The answer says so plainly, and the
+			// existing INSUFFICIENT_EVIDENCE signal records that this run showed
+			// nothing. The database contract forbids reusing one Evidence ID
+			// across two uncertainty records, so this branch emits exactly one
+			// record, and it carries the run's own selected evidence (sorted,
+			// deduplicated, bounded by signalEvidenceIDs).
 			record.ClaimEvidenceVersion = ""
 			record.ClaimEvidence = nil
-		}
-		if toolAnswerHasCompleteSupport(len(citations), liveDataState.retained != nil, record.AllClaimsBound) {
-			answer = body.String()
-		} else {
 			record.StopReason = "CITATIONS_UNVERIFIED"
-			answer = "The answer citations could not be verified against their sources. Please try again."
+			answer = toolLoopUnverifiedAnswer(language)
+			uncertainties = append(uncertainties, Uncertainty{
+				Code: UncertaintyInsufficientEvidence, EvidenceIDs: signalEvidenceIDs(selected),
+			})
 		}
 	}
 	status := "COMPLETED"
 	if scopeChanged {
-		answer = toolScopeChangedAnswer
+		answer = localizedText(language, toolScopeChangedAnswerRussian, toolScopeChangedAnswer)
 		status = "INSUFFICIENT_EVIDENCE"
 		record.AllClaimsBound = false
 		citations = []Citation{}
@@ -1856,7 +2072,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		record.StopReason = "CLARIFICATION"
 	}
 	if !scopeChanged && answer == noWorkspaceData {
-		answer = toolLoopNoDataFallback(record, liveDataState.retained != nil)
+		answer = toolLoopNoDataFallback(record, liveDataState.retained != nil, language)
 		status = "INSUFFICIENT_EVIDENCE"
 		record.AllClaimsBound = false
 	}
@@ -1864,7 +2080,19 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		status = "INSUFFICIENT_EVIDENCE"
 	}
 	if !scopeChanged && record.StopReason != "ANSWER" && record.StopReason != "CLARIFICATION" && record.StopReason != "CITATIONS_UNVERIFIED" {
-		answer = "The answer could not be completed within the configured profile limits. Refine the question or try again."
+		// Card D-5 requirement 1: the loop already spent its forced final turn
+		// and the model still submitted nothing usable. Say honestly what
+		// happened and what was consulted; a genuinely hit limit is reported as
+		// a limit instead.
+		answer = toolLoopIncompleteAnswer(language, record)
+		if record.StopReason == "TURN_LIMIT" || record.StopReason == "TOOL_LIMIT" || record.StopReason == "TRACE_LIMIT" {
+			answer = localizedText(language,
+				"\u0414\u043e\u0441\u0442\u0438\u0433\u043d\u0443\u0442 \u043b\u0438\u043c\u0438\u0442 \u0448\u0430\u0433\u043e\u0432 \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u043f\u0440\u043e\u0444\u0438\u043b\u044f. \u041e\u0442\u0432\u0435\u0442 \u043d\u0435 \u043f\u043e\u043b\u0443\u0447\u0435\u043d. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0432\u043e\u043f\u0440\u043e\u0441 \u0438\u043b\u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441.",
+				"The step limit for this profile was reached and no answer was submitted. Refine the question or try again.")
+		}
+		// The run showed nothing it could verify; record that as the existing
+		// INSUFFICIENT_EVIDENCE signal, once, with this run's selected evidence.
+		uncertainties = append(uncertainties, Uncertainty{Code: UncertaintyInsufficientEvidence, EvidenceIDs: signalEvidenceIDs(selected)})
 		status = "INSUFFICIENT_EVIDENCE"
 	}
 	var answerResult *AnswerResult
@@ -1881,7 +2109,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				status = "COMPLETED"
 				record.StopReason = "ANSWER"
 			} else {
-				answer = "The answer citations could not be verified against their sources. Please try again."
+				answer = toolLoopUnverifiedCitationsText(language)
 				answerResult = nil
 				status = "INSUFFICIENT_EVIDENCE"
 				record.StopReason = "CITATIONS_UNVERIFIED"
@@ -1902,7 +2130,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	}
 	if !scopeChanged && liveDataState.retained != nil && final != nil && !final.NoData && final.Clarification == "" {
 		if !toolAnswerHasCompleteSupport(len(citations), liveDataState.retained != nil, record.AllClaimsBound) || record.StopReason != "ANSWER" {
-			answer = "The answer citations could not be verified against their sources. Please try again."
+			answer = toolLoopUnverifiedCitationsText(language)
 			answerResult = nil
 			status = "INSUFFICIENT_EVIDENCE"
 			record.StopReason = "CITATIONS_UNVERIFIED"
@@ -1932,7 +2160,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 			if presentationErr != nil {
 				// A metric result that cannot be authenticated must never fall back
 				// to the model's numerical prose.
-				answer = "The comparison could not be verified. Please try again."
+				answer = toolLoopUnverifiedComparisonText(language)
 				answerResult = nil
 				status = "INSUFFICIENT_EVIDENCE"
 				record.StopReason = "CITATIONS_UNVERIFIED"
@@ -1953,7 +2181,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	if retainedAnalyticScalarPair != nil && !scopeChanged {
 		scalarPair = retainedAnalyticScalarPair
 	}
-	persistErr := service.persistTerminalRunWithStructuredDependencyList(finishCtx, access, run.ID, run.WorkspaceID, answer, citations, selected, status, run.CorpusStatus != "COMPLETE", []Uncertainty{}, []Conflict{}, answerResult, scalarPair, governedDependencies)
+	persistErr := service.persistTerminalRunWithStructuredDependencyList(finishCtx, access, run.ID, run.WorkspaceID, answer, citations, selected, status, run.CorpusStatus != "COMPLETE", uncertainties, []Conflict{}, answerResult, scalarPair, governedDependencies)
 	service.observeWorkspaceContextRun(finishCtx, access, run, questionText, record, persistErr)
 	return persistErr
 }

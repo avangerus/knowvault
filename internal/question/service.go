@@ -306,6 +306,12 @@ const (
 	// persistAmbiguousStructuredSourceRefusal for the answer text, which
 	// names every candidate source (this code alone never does).
 	UncertaintyAmbiguousStructuredSource = "AMBIGUOUS_STRUCTURED_SOURCE"
+	// UncertaintyUnverifiedCitations is card D-5's run-level record that some
+	// of the model's claims could not be verified against their sources. The
+	// verified claims are still shown and the run still completes; this signal
+	// is what makes that completion honest instead of silent. It carries only
+	// the Evidence IDs of the citations that did verify, never source text.
+	UncertaintyUnverifiedCitations = "UNVERIFIED_CITATIONS"
 )
 
 const (
@@ -1665,6 +1671,11 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 			result.Question = string(plain)
 			clear(plain)
 		}
+		// Card D-5 requirement 4: the uncertainty and conflict messages follow
+		// the run's own question language, so they are attached only now, after
+		// the question text above was decrypted.
+		result.Uncertainties = attachUncertaintyMessagesForLanguage(result.Uncertainties, result.Question)
+		result.Conflicts = attachConflictMessagesForLanguage(result.Conflicts, result.Question)
 		if answerArtifact.Valid {
 			owner, envelope, fetchErr := service.artifacts.Fetch(txCtx, tx, access, artifactcrypto.AnswerMarkdown, runID)
 			if fetchErr != nil {
@@ -1998,7 +2009,10 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 				GroundingStatus: GroundingUnconfirmed,
 				PlanningStatus:  planningStatus, PlanningOperation: planningOperation,
 				PlanningConfidence: planningConfidence, PlanHash: planHash.String, Clarification: planningClarification.String,
-				Uncertainties: attachUncertaintyMessages(uncertainties), Conflicts: attachConflictMessages(conflicts),
+				// The messages are attached below, once this run's question text
+				// has been decrypted, so they follow the question's own language
+				// (card D-5 requirement 4). Only the closed codes are set here.
+				Uncertainties: uncertainties, Conflicts: conflicts,
 			}
 			refsByRun[runID] = refs
 			order = append(order, runID)
@@ -2075,6 +2089,12 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 				run.Question = string(plain)
 				clear(plain)
 			}
+			// Card D-5 requirement 4: the uncertainty and conflict messages
+			// follow this run's own question language, so they are attached
+			// after the question text is decrypted -- and only for a run that
+			// survived the readability gate above.
+			run.Uncertainties = attachUncertaintyMessagesForLanguage(run.Uncertainties, run.Question)
+			run.Conflicts = attachConflictMessagesForLanguage(run.Conflicts, run.Question)
 			if refs.answerArtifact.Valid {
 				plain, fetchErr := fetchAndOpenArtifact(txCtx, tx, service, access, artifactcrypto.AnswerMarkdown, runID)
 				if fetchErr != nil {
