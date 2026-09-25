@@ -18,6 +18,12 @@
 //                approved references and the report names every one that changed.
 // An ordinary run never writes inside the reference directory.
 //
+// Card U-3, return 1: the clock the stand's freshly built data displays rolls
+// over at midnight and used to fail screens that had not changed. Every
+// screenshot now has its rendered clock readings pinned to one fixed value
+// (clock.mjs) before it is taken, so two runs of unchanged code on two different
+// days pass.
+//
 // Card U-4 adds the interface review. After a step's screenshot is taken it is
 // judged by a vision model against the rules of docs/UI-PRINCIPLES.md; the
 // remarks are reported per screen with their rule number and place, and the
@@ -51,6 +57,12 @@
 //   KNOWVAULT_WALKTHROUGH_REVIEW_BASE_URL  OpenAI-compatible endpoint
 //   KNOWVAULT_WALKTHROUGH_REVIEW_MODEL  vision model name
 //   KNOWVAULT_WALKTHROUGH_REVIEW_MAX_COST_USD  review cost ceiling
+//   KNOWVAULT_WALKTHROUGH_TIMEZONE      IANA zone the browser renders local
+//                                       times in (default: the machine's own);
+//                                       it lets a run prove that a screen does
+//                                       not change on another calendar day
+//                                       without waiting for one (card U-3
+//                                       return 1)
 //
 // It exits 0 only when every step passed. The password from the credentials
 // file and the review model's key never reach the report, the logs or a
@@ -198,10 +210,16 @@ async function run() {
   await mkdir(screenshotsDir, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
+  // The browser's own clock is the machine's, except when the operator pins a
+  // zone to prove the comparison does not depend on the calendar day the run
+  // happens on (card U-3 return 1). The zone changes how a stored timestamp is
+  // printed, never which request is made.
+  const timeZone = (process.env.KNOWVAULT_WALKTHROUGH_TIMEZONE ?? "").trim();
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     ignoreHTTPSErrors: true,
     locale: "ru-RU",
+    ...(timeZone === "" ? {} : { timezoneId: timeZone }),
   });
   const page = await context.newPage();
   // The product asks for explicit consent before a confirmation and before a

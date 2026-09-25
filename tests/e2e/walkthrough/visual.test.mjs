@@ -1,10 +1,11 @@
 // Card U-3 proof for the screen comparison.
 //
-// The unit tests cover the decoder, the encoder and the difference rule on
-// hand-built pictures. The end-to-end tests drive the real Walkthrough, the
-// real report writer and a real headless browser against the dummy stand, and
-// move one control with a stylesheet injected inside the test — never in
-// web/src/. They prove:
+// The unit tests cover the decoder, the encoder, the difference rule on
+// hand-built pictures, and the clock normalization that keeps a wall-clock
+// reading from being mistaken for a screen change. The end-to-end tests drive
+// the real Walkthrough, the real report writer and a real headless browser
+// against the dummy stand, and move one control with a stylesheet injected
+// inside the test — never in web/src/. They prove:
 //   - a run whose screens match the approved references passes and reports the
 //     difference per step, and leaves every reference byte-identical;
 //   - a deliberately moved control fails exactly its own step, produces a
@@ -12,7 +13,10 @@
 //     while the approved references are still byte-identical;
 //   - the update command replaces the references and its report names the
 //     replaced one, after which an ordinary run passes again;
-//   - the read-only (stand) mode reports the same difference without failing.
+//   - the read-only (stand) mode reports the same difference without failing;
+//   - two runs of unchanged code on two different calendar days both pass,
+//     because the wall-clock reading on the screen is pinned before the
+//     screenshot (card U-3 return 1).
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -23,6 +27,7 @@ import test from "node:test";
 
 import { chromium } from "playwright";
 
+import { CLOCK_TEXT_PLACEHOLDER, CLOCK_TIMESTAMP_PLACEHOLDER, normaliseClockText } from "./clock.mjs";
 import { decodePng, encodePng } from "./png.mjs";
 import { buildReport, Walkthrough, writeReport } from "./report.mjs";
 import { signIn } from "./signin.mjs";
@@ -120,6 +125,20 @@ test("a picture of a different size is beyond any threshold", () => {
   assert.notEqual(result.diff, null);
 });
 
+test("the same screen on two different days normalises to the same clock text", () => {
+  // The two shapes the product renders, on two different calendar days.
+  const dayOne = "Last successful update: Sep 25, 11:58 PM · observed 2026-09-25T21:58:00Z";
+  const dayTwo = "Last successful update: Sep 26, 12:04 AM · observed 2026-09-26T10:04:31+03:00";
+  const normalised = normaliseClockText(dayOne);
+  assert.equal(normalised, `Last successful update: ${CLOCK_TEXT_PLACEHOLDER} · observed ${CLOCK_TIMESTAMP_PLACEHOLDER}`);
+  assert.equal(normaliseClockText(dayTwo), normalised);
+  // Normalising an already normalised screen changes nothing.
+  assert.equal(normaliseClockText(normalised), normalised);
+  // A date without a time of day is content, not a clock reading.
+  assert.equal(normaliseClockText("signed on 2025-01-15"), "signed on 2025-01-15");
+  assert.equal(normaliseClockText("nothing time-shaped here"), "nothing time-shaped here");
+});
+
 // hashTree returns one sha256 per file under a directory, keyed by its relative
 // path, so "the references did not change" is checked on the bytes.
 async function hashTree(directory) {
@@ -135,12 +154,33 @@ async function hashTree(directory) {
 
 // runStubScenario walks four screens of the dummy stand with the real
 // recorder. `move` injects a stylesheet that moves one control on the Sources
-// screen; only the test does that, and only for the run that wants it.
-async function runStubScenario({ stand, credentials, reportDir, referenceDir, visualMode, move = false }) {
+// screen; only the test does that, and only for the run that wants it. `clock`
+// pins the browser's clock to one moment, so two calls can play the same stand
+// on two different calendar days (card U-3 return 1).
+async function runStubScenario({ stand, credentials, reportDir, referenceDir, visualMode, move = false, clock = null }) {
   await mkdir(reportDir, { recursive: true });
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({ viewport: { width: 1000, height: 720 }, locale: "ru-RU" });
+    if (typeof clock === "string") {
+      // Keep every date-parsing path real; only "now" is pinned.
+      await context.addInitScript(({ fixed }) => {
+        const RealDate = Date;
+        const fixedMilliseconds = RealDate.parse(fixed);
+        class FixedDate extends RealDate {
+          constructor(...args) {
+            if (args.length === 0) super(fixedMilliseconds);
+            else super(...args);
+          }
+          static now() {
+            return fixedMilliseconds;
+          }
+        }
+        FixedDate.parse = RealDate.parse;
+        FixedDate.UTC = RealDate.UTC;
+        globalThis.Date = FixedDate;
+      }, { fixed: clock });
+    }
     const page = await context.newPage();
     page.on("dialog", (dialog) => void dialog.accept());
     const walk = new Walkthrough(page, {
@@ -234,6 +274,45 @@ test("two runs of unchanged code both pass and leave the approved references byt
     assert.equal(second.passed, true, JSON.stringify(second.failed_steps));
     assert.equal(second.visual.differing_step_count, 0);
     assert.deepEqual(await hashTree(referenceDir), referencesAfterApproval);
+  });
+});
+
+test("two runs of unchanged code on two different calendar days both pass", async (t) => {
+  const root = await testRoot(t, "different-days");
+  const referenceDir = path.join(root, "references");
+  await withStubStand(async (stand) => {
+    // Day one approves the references; the dummy stand renders the browser's own
+    // clock, so the two runs show the differently dated text the real stand
+    // shows on two days.
+    const dayOne = await runStubScenario({
+      stand,
+      credentials: CREDENTIALS,
+      reportDir: path.join(root, "day-one"),
+      referenceDir,
+      visualMode: "update",
+      clock: "2026-01-01T12:00:00Z",
+    });
+    assert.equal(dayOne.passed, true);
+    assert.equal(dayOne.visual.references_changed_count, 4);
+    const approved = await hashTree(referenceDir);
+
+    const dayTwo = await runStubScenario({
+      stand,
+      credentials: CREDENTIALS,
+      reportDir: path.join(root, "day-two"),
+      referenceDir,
+      visualMode: "enforce",
+      clock: "2026-06-15T12:00:00Z",
+    });
+    assert.equal(dayTwo.passed, true, JSON.stringify(dayTwo.failed_steps));
+    assert.equal(dayTwo.visual.compared_step_count, 4);
+    assert.equal(dayTwo.visual.differing_step_count, 0);
+    for (const step of dayTwo.steps) {
+      assert.equal(step.visual.status, "same", `${step.name}: ${JSON.stringify(step.visual)}`);
+      assert.ok(step.visual.difference_ratio <= dayTwo.visual.difference_threshold);
+    }
+    // Result 4: the second day's ordinary run left the references byte-identical.
+    assert.deepEqual(await hashTree(referenceDir), approved);
   });
 });
 

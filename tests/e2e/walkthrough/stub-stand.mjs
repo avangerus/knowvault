@@ -17,6 +17,10 @@ function appHTML() {
 <html lang="ru">
 <head><meta charset="utf-8"><title>Stub stand</title></head>
 <body>
+<header id="stand-header">
+  <span id="stand-clock"></span>
+  <span id="stand-observed" class="mono"></span>
+</header>
 <nav class="rail">
   <button aria-label="Sources" id="nav-sources" type="button">Sources</button>
   <button aria-label="Settings" id="nav-settings" type="button">Settings</button>
@@ -50,6 +54,15 @@ function appHTML() {
   </section>
 </main>
 <script>
+  // Card U-3 return 1: the same two shapes of wall-clock reading the real
+  // product renders — its one date formatter and a raw ISO timestamp. They are
+  // produced in the page from the browser's own clock, so a test can run this
+  // stand on two different days by pinning the browser clock.
+  function standFormatClock(date) {
+    return date.toLocaleString("en-US", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  document.getElementById("stand-clock").textContent = standFormatClock(new Date());
+  document.getElementById("stand-observed").textContent = new Date().toISOString();
   const views = { sources: document.getElementById("view-sources"), settings: document.getElementById("view-settings"), search: document.getElementById("view-search") };
   function show(name) { for (const [key, node] of Object.entries(views)) node.hidden = key !== name; }
   document.getElementById("nav-sources").addEventListener("click", () => show("sources"));

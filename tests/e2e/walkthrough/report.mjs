@@ -19,6 +19,12 @@
 // report lists which references changed. An ordinary run never writes to the
 // reference directory.
 //
+// Card U-3 return 1: a wall-clock reading the product renders is not a screen
+// change. The local stand stamps its data with the moment it is built, so the
+// date part of those stamps rolls over at midnight; before the screenshot the
+// rendered clock readings are pinned to one fixed value (clock.mjs), so two
+// runs of unchanged code on two different days compare equal.
+//
 // Card U-4 adds the interface review to the same report shape: after its
 // screenshot every step is judged by a vision model against the numbered rules
 // of docs/UI-PRINCIPLES.md, and the report states, per screen, the remarks with
@@ -41,6 +47,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { comparePngs, DEFAULT_DIFFERENCE_THRESHOLD, DEFAULT_PIXEL_TOLERANCE } from "./visual.mjs";
+import { stabiliseClockText } from "./clock.mjs";
 import { pngDimensions } from "./png.mjs";
 import { summariseReview } from "./review.mjs";
 
@@ -215,6 +222,11 @@ export class Walkthrough {
       try {
         await this.waitForQuiet();
         if (this.beforeScreenshot !== null) await this.beforeScreenshot(this.page, step);
+        // The wall-clock reading on the screen is not part of the screen: pin it
+        // to one fixed value so a run on the next day is not a difference (card
+        // U-3 return 1). This runs after the step's own action, so the step
+        // still reads the real text while it works.
+        await stabiliseClockText(this.page);
         // `caret: "hide"` keeps the blinking text cursor out of the picture, so
         // a focused field cannot fail a step on its own.
         picture = await this.page.screenshot({

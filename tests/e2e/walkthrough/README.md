@@ -9,7 +9,9 @@ screenshots, and removes everything it started.
 Since card U-3 the robot also compares every step's screenshot with the
 approved reference picture of that step, so a screen that silently changed (a
 button moved, a panel vanished, a layout broke) fails the run instead of
-waiting for a person to notice the picture.
+waiting for a person to notice the picture. The wall-clock reading on a screen
+is pinned before the picture is taken, so the same code passes on any calendar
+day.
 
 Since card U-4 a vision model also looks at every screenshot and judges it
 against the numbered interface rules of `docs/UI-PRINCIPLES.md`, so an
@@ -64,13 +66,34 @@ enforce the threshold — such a step is failed and the run is failed. The share
 is the count of differing pixels over the whole picture, so the number is
 "how much of the screen changed" and nothing else.
 
-The threshold is measured, not guessed. Across six consecutive full local runs
-of unchanged code (one update run and five enforcing runs) the largest
-per-step difference was 0.0194% of the 1440x900 screen, and it was always the
-clock text the evidence panel or the conversation list renders; no other step
-passed 0.012%. The default threshold is **0.05%**
-(`DEFAULT_DIFFERENCE_THRESHOLD = 0.0005`), about two and a half times that noise
-floor.
+### The clock on a screen is not a screen change
+
+The local synthetic stand stamps its data with the moment it is built, so every
+reference and every run carries the date of the day it happened. A reference
+approved on 25 September shows "Sep 25, 11:58 PM"; a run on the next day builds
+a fresh stand and shows "Sep 26, 12:04 AM". Before the comparison learned this,
+that rolled-over date failed 6 of the 11 steps of an unchanged run.
+
+Before every screenshot the walkthrough therefore pins the wall-clock readings
+the product has rendered (`clock.mjs`). The product has exactly two shapes of
+such a reading: the `formatTime` shape ("Sep 25, 11:58 PM") and a raw ISO-8601
+timestamp the evidence panel prints as stored ("2026-09-25T21:58:00Z"). Both
+become one fixed placeholder (`Jan 01, 00:00 AM` and `1970-01-01T00:00:00Z`), so
+two runs of unchanged code on two different days render the same picture. Only
+text is rewritten, after the step's action and immediately before the
+screenshot; no action, request or allowed write changes. A date that is content
+rather than a clock reading — the synthetic contract date `2025-01-15`, which
+has no time of day — is left alone, and a moved control, a vanished panel or a
+changed label is still a difference.
+
+The threshold is measured, not guessed. With the clock pinned, an update run and
+five consecutive enforcing runs of unchanged code (one of them with
+`KNOWVAULT_WALKTHROUGH_TIMEZONE` set to a zone that rendered the previous
+calendar day) differed in **0.000%** of the 1440x900 screen on every step.
+Before the pinning the whole difference was the clock text, up to 0.0194%, and
+the next calendar day failed 6 of the 11 steps. The default threshold stays
+**0.05%** (`DEFAULT_DIFFERENCE_THRESHOLD = 0.0005`), the value the card's
+results 1, 2, 4 and 5 were accepted with.
 A per-pixel tolerance of 16 (of 255) on every colour channel absorbs
 anti-aliasing; the screenshot is taken with the text caret hidden, after the
 page stopped fetching and after toasts, webfonts and CSS animations settled, so
@@ -265,11 +288,12 @@ a deliberately broken local endpoint. `node --test
 tests/e2e/walkthrough/credentials.test.mjs` proves the credentials-file run and
 the redaction gate against a dummy stand. `node --test
 tests/e2e/walkthrough/visual.test.mjs` proves the screen comparison: the PNG
-codec, the difference rule, two unchanged runs passing with byte-identical
-references, a control deliberately moved by the test (never by `web/src/`)
-failing exactly its own step with a difference picture, the replace command
-naming the replaced reference before the next run passes, and the read-only
-mode reporting a difference without failing. `node --test
+codec, the difference rule, the clock normalization, two unchanged runs passing
+with byte-identical references, two runs of the same code on two different
+calendar days both passing, a control deliberately moved by the test (never by
+`web/src/`) failing exactly its own step with a difference picture, the replace
+command naming the replaced reference before the next run passes, and the
+read-only mode reporting a difference without failing. `node --test
 tests/e2e/walkthrough/review.test.mjs` proves the interface review: the rule
 checklist, the price arithmetic, the answer parser, the image bytes the model
 receives, one review per step with a cost above zero, a screen with no remarks,
@@ -298,6 +322,7 @@ screenshot instead of a temporary directory that is removed.
 | `KNOWVAULT_WALKTHROUGH_REVIEW_MODEL` | vision model name (default `deepseek-flash`) |
 | `KNOWVAULT_WALKTHROUGH_REVIEW_MAX_COST_USD` | review cost ceiling for one run (default `0.05`) |
 | `KNOWVAULT_WALKTHROUGH_INSTANCE` | `1..9`: run next to another local walkthrough |
+| `KNOWVAULT_WALKTHROUGH_TIMEZONE` | IANA zone the browser renders local times in (default: the machine's own); pins a second calendar day for a run without waiting for one |
 | `KNOWVAULT_PLAYWRIGHT_MODULE` | module name/path of the Playwright package |
 | `KNOWVAULT_WALKTHROUGH_QUESTION` | chat question, `local` scenario (default «что ты знаешь?») |
 
