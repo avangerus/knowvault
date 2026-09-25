@@ -28,9 +28,14 @@ func TestToolLoopOverviewQuestionClassRecognizesRecency(t *testing.T) {
 		"какие изменения в регламенте?",
 		"что поменялось в документах?",
 		"что обновилось в материалах?",
+		"есть ли обновления в регламенте?",
+		"обновился ли регламент?",
 		"what's new in the regulation?",
 		"what changed in the materials?",
 		"any updates in the documents?",
+		"is there anything new in the regulation?",
+		"any changes in the regulation?",
+		"has the regulation changed?",
 	} {
 		if got := toolLoopOverviewQuestionClass(question); got != toolLoopOverviewClassRecency {
 			t.Fatalf("question %q classified %v, want recency", question, got)
@@ -58,9 +63,12 @@ func TestToolLoopOverviewQuestionClassRecognizesCounterfactual(t *testing.T) {
 	for _, question := range []string{
 		"что было бы написано в базе, если бы мы занимались не МНО, а пирогами?",
 		"что было бы в базе, если бы мы продавали пироги?",
+		"если б мы занимались пирогами, что было бы в базе?",
 		"допустим, мы занимаемся пирогами, что тогда в базе?",
+		"представь, что мы занимаемся пирогами, что тогда в базе?",
 		"what would be in the database if we sold pies?",
 		"if we did pies, what would the database hold?",
+		"what if we sold pies instead?",
 	} {
 		if got := toolLoopOverviewQuestionClass(question); got != toolLoopOverviewClassCounterfactual {
 			t.Fatalf("question %q classified %v, want counterfactual", question, got)
@@ -69,6 +77,7 @@ func TestToolLoopOverviewQuestionClassRecognizesCounterfactual(t *testing.T) {
 	for _, question := range []string{
 		"что было бы, если бы договор № 47 закрыли?",
 		"сколько МНО было бы, если бы договор 47 закрыли?",
+		"представь данные",
 	} {
 		if got := toolLoopOverviewQuestionClass(question); got != toolLoopOverviewClassNone {
 			t.Fatalf("hypothetical naming a concrete subject %q classified %v, want the ordinary full tool loop", question, got)

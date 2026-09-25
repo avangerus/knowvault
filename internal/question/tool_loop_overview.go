@@ -64,12 +64,14 @@ var overviewQuestionPattern = regexp.MustCompile(`(?i)(?:^|[^а-яёa-z])(?:чт
 // overviewCounterfactualCue marks a hypothetical or counterfactual question
 // ("что было бы в базе, если бы...", "what would be there if..."): it asks
 // the model to reason about a different, imagined workspace, not to describe
-// this one, so it always keeps the full tool loop regardless of any source or
-// database word it also contains. Card D-7: this keeps a question like "what
-// would be in the database if we did pies instead" out of the new source and
-// database-overview classes below.
-var overviewCounterfactualCue = regexp.MustCompile(`(?i)если\s+бы|было\s+бы|предположим|допустим|` +
-	`would\s+(?:be|have)|if\s+we\s+(?:were|had|did|do|are|didn'?t|don'?t)`)
+// this one. Card D-7 used it to keep such a question out of the source and
+// database-overview classes (a passage about a different workspace is not a
+// statement about this one); card D-8 gives it its own short counterfactual
+// class instead, recognized after the concrete-subject cue so a hypothetical
+// that names a real number or subject still keeps the full tool loop.
+var overviewCounterfactualCue = regexp.MustCompile(`(?i)` +
+	`если\s+бы|если\s+б\s|было\s+бы|бы\s+было|что\s+бы\s+было|предположим|допустим|представь\s*,?\s*что|вообрази|` +
+	`what\s+if|would\s+(?:be|have)|if\s+we\s+(?:were|had|did|do|are|sold|ran|made|used|use|didn'?t|don'?t)`)
 
 // overviewChangeCue names a question about what changed or what is new in the
 // workspace's materials -- "что нового", "что изменилось", "какие изменения",
@@ -79,8 +81,11 @@ var overviewCounterfactualCue = regexp.MustCompile(`(?i)если\s+бы|было
 // adjective "новый": "сколько новых договоров?" is a data question and keeps
 // the ordinary full tool loop.
 var overviewChangeCue = regexp.MustCompile(`(?i)` +
-	`что\s+нов|что\s+изменил|что\s+поменял|что\s+обновил|какие\s+изменени|какие\s+новост|есть\s+ли\s+новост|` +
-	`what'?s\s+new|what\s+is\s+new|what\s+(?:has\s+)?changed|which\s+changes|recent\s+(?:changes|updates)|any\s+updates`)
+	`что\s+нов|что[-\s]?то\s+изменил|что\s+изменил|что\s+поменял|что\s+обновил|` +
+	`(?:изменил|поменял|обновил)[а-яё]{0,4}\s+ли|` +
+	`какие\s+изменени|какие\s+новост|есть\s+ли\s+(?:новост|обновлени|изменени)|` +
+	`what'?s\s+new|what\s+is\s+new|anything\s+new|something\s+new|what\s+(?:has\s+)?changed|has\s+(?:\w+\s+){0,4}changed|` +
+	`which\s+changes|any\s+changes|anything\s+chang|recent\s+(?:changes|updates)|any\s+updates`)
 
 // overviewSourceWord names the workspace's registered sources themselves --
 // "источник"/"source" -- as opposed to a source's content. Card D-7
@@ -180,9 +185,10 @@ var overviewShapePhrases = []string{
 // toolLoopOverviewQuestionClass classifies a question into one of the compact
 // answer shapes above, or classNone for the ordinary full tool loop. It is
 // deliberately narrow: a question that names a concrete subject -- a date, a
-// number, a document or a field -- or a hypothetical about a different
-// workspace keeps the ordinary full tool loop, so this never turns a data
-// question into a one-turn guess.
+// number, a document or a field -- keeps the ordinary full tool loop, so this
+// never turns a data question into a one-turn guess. Card D-8 adds two shapes
+// that are themselves honest short answers: a hypothetical that names no
+// concrete subject, and a change question whose materials have one version.
 func toolLoopOverviewQuestionClass(question string) toolLoopOverviewClass {
 	normalized := strings.ToLower(strings.TrimSpace(question))
 	trimmed := strings.Trim(normalized, " \t\r\n?!.,;:«»\"'")
