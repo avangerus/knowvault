@@ -4550,6 +4550,16 @@ components:
             type: integer
             minimum: 1
             maximum: 256
+        mode:
+          type: string
+          enum: [INDEXED, QUERY_ONLY]
+          description: >-
+            The immutable registration mode (S3 card 4). INDEXED (the default when absent) copies
+            the relation's rows into search; QUERY_ONLY registers the relation only for
+            knowvault_source_sql, so the sync worker never copies its rows and search never
+            returns its fragments. The mode is part of the registered contract, never a per-call
+            flag; re-registering an indexed relation as QUERY_ONLY supersedes the indexed
+            registration and removes its fragments.
     SourceConnectionDraftList:
       type: object
       additionalProperties: false
@@ -5313,6 +5323,13 @@ components:
             ADR-0097: whether this connection revision carries the separate read-only query credential,
             so knowvault_source_sql can run for its enabled sources. False means SQL not configured and
             the tool answers SOURCE_SQL_NOT_CONFIGURED. A display fact, never an authorization.
+        query_only:
+          type: boolean
+          description: >-
+            S3 card 4: whether this relation is registered only for SQL queries (not indexed). True
+            means the sync worker never copies its rows and search never returns its fragments; the
+            Sources card shows the state "только SQL" and no sync freshness. False for every
+            non-PostgreSQL source.
         sync_status:
           type: string
           nullable: true

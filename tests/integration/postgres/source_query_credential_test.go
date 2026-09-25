@@ -121,7 +121,7 @@ func seedOwnerControlledSource(t *testing.T, ctx context.Context, admin *pgxpool
 	if err != nil {
 		t.Fatalf("select view: %v", err)
 	}
-	registered, err := service.RegisterDiscoveredView(ctx, regOwnerAccess("req_cred_register"), selected, nil)
+	registered, err := service.RegisterDiscoveredView(ctx, regOwnerAccess("req_cred_register"), selected, nil, "")
 	if err != nil {
 		t.Fatalf("register view: %v (code=%s)", err, registration.CodeOf(err))
 	}

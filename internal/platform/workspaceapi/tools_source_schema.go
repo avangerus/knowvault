@@ -161,7 +161,8 @@ func sourceSchemaProjection(schema workspacerepository.SourceSchema, offset int,
 		}
 		tables = append(tables, map[string]any{
 			"schema": table.Schema, "name": table.Name, "kind": table.Kind,
-			"row_estimate": table.RowEstimate, "note": tableNote, "columns": columns,
+			"row_estimate": table.RowEstimate, "query_only": table.QueryOnly,
+			"note": tableNote, "columns": columns,
 		})
 	}
 	nextOffset := 0

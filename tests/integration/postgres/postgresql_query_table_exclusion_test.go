@@ -191,7 +191,7 @@ func TestPostgreSQLTableSourceExcludedColumnNeverPublished(t *testing.T) {
 		t.Fatalf("select table view: %v", err)
 	}
 
-	registered, err := service.RegisterDiscoveredView(ctx, regOwnerAccess("req_tbl_register"), selected, []int{phoneOrdinal})
+	registered, err := service.RegisterDiscoveredView(ctx, regOwnerAccess("req_tbl_register"), selected, []int{phoneOrdinal}, "")
 	if err != nil {
 		t.Fatalf("register table with excluded column: %v (code=%s)", err, registration.CodeOf(err))
 	}

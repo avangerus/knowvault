@@ -35,15 +35,24 @@ const tableDiscoveredDefaultMaxRows = 50_000
 // a new ContractHash/LineageID (ADR-0097): a table registered with different
 // exclusions is a distinct immutable lineage, not a mutation of an existing
 // one.
+//
+// mode is postgresqlquery.ProjectionModeIndexed (or the empty default) for the
+// ordinary search-indexed registration, or ProjectionModeQueryOnly for the S3
+// card 4 "only for SQL queries" registration. The mode is part of the
+// immutable contract: a query-only projection carries its own
+// ContractHash/LineageID, the worker never copies its rows, and registering a
+// relation query-only supersedes and closes any earlier indexed registration
+// of the same relation so its fragments leave search and readback.
 func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.AccessContext,
-	selected discovery.SelectedView, excludedColumnOrdinals []int) (RegisterResult, error) {
+	selected discovery.SelectedView, excludedColumnOrdinals []int, mode string) (RegisterResult, error) {
 	projection := selected.Projection
 	if s == nil || s.database == nil || s.audit == nil || s.codec == nil || access.Validate() != nil ||
 		selected.RequestID == "" || selected.ResultID == "" || selected.Selector == "" ||
 		selected.ConnectionRevision < 1 || selected.ConnectionID != projection.ConnectionID ||
-		projection.Validate() != nil {
+		projection.Validate() != nil || !postgresqlquery.ValidProjectionMode(mode) {
 		return RegisterResult{}, &Error{code: CodeRequestInvalid}
 	}
+	queryOnly := mode == postgresqlquery.ProjectionModeQueryOnly
 	if len(excludedColumnOrdinals) > 0 {
 		if projection.RelationKind != "TABLE" && projection.RelationKind != "PARTITIONED_TABLE" {
 			return RegisterResult{}, &Error{code: CodeRequestInvalid}
@@ -58,6 +67,11 @@ func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.Ac
 		}
 		projection = narrowed
 	}
+	modeProjection, err := postgresqlquery.WithQueryOnly(projection, queryOnly)
+	if err != nil {
+		return RegisterResult{}, &Error{code: CodeRequestInvalid, cause: err}
+	}
+	projection = modeProjection
 	columnsJSON, err := postgresqlColumnsJSON(projection.Columns)
 	if err != nil {
 		return RegisterResult{}, &Error{code: CodeRequestInvalid, cause: err}
@@ -182,11 +196,11 @@ func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.Ac
 			return err
 		}
 		if _, err := tx.Exec(ctx, `SELECT app.postgresql_query_projection_register(
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18)`,
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19)`,
 			scopeID, int64(1), projection.ConnectionID, projection.DatabaseIdentity,
 			projection.LineageID, projection.Revision, projection.ContractHash,
 			projection.SchemaName, projection.RelationName, projection.RelationKind,
-			string(columnsJSON), projection.EmptySnapshotPolicy, limits.maxRows,
+			string(columnsJSON), projection.EmptySnapshotPolicy, projection.QueryOnly, limits.maxRows,
 			limits.maxColumns, limits.maxFieldBytes, limits.maxRowBytes,
 			limits.maxTotalBytes, limits.statementTimeoutMS); err != nil {
 			return err
@@ -199,6 +213,16 @@ func (s *Service) RegisterDiscoveredView(ctx context.Context, access database.Ac
 			scopeID, int64(1), projection.ConnectionID, truncateCatalogComment(selected.RelationComment),
 			selected.ApproxRowCount, string(catalogJSON)); err != nil {
 			return err
+		}
+		if projection.QueryOnly {
+			// Switching this relation to query-only supersedes any earlier
+			// indexed registration of the same connection and relation: its
+			// fragments must leave search and readback, while every other
+			// relation of the connection keeps its own ACTIVE objects.
+			if _, err := tx.Exec(ctx, `SELECT app.postgresql_query_relation_supersede($1,$2,$3,$4)`,
+				projection.ConnectionID, projection.SchemaName, projection.RelationName, scopeID); err != nil {
+				return err
+			}
 		}
 		eventID, err := s.newID("aud")
 		if err != nil {

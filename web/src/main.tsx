@@ -568,6 +568,11 @@ export type SourceStatus = {
   // run for its enabled sources. False means "SQL not configured" and the tool
   // answers SOURCE_SQL_NOT_CONFIGURED. It is a display fact, never a grant.
   sql_available?: boolean;
+  // S3 card 4's registration mode of this table: true means "only for SQL
+  // queries (not indexed)". The Sources card renders it as "только SQL" and
+  // shows no sync freshness for the table. A missing field (an older server)
+  // reads as indexed, which is the previous behaviour.
+  query_only?: boolean;
 };
 
 // ADR-0087 §1-§2 operator-visible read: everything needed to build a
@@ -6557,6 +6562,10 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
 function sourceHeadline(source: SourceStatus): string {
   if (!source.enabled) return "Disabled";
   if (source.confirmation_state !== "ACTIVE") return confirmationStateLabel(source.confirmation_state);
+  // S3 card 4: a query-only relation is registered for SQL only. It has no
+  // sync run and therefore no freshness to report, so its state is the mode
+  // itself rather than a sync label.
+  if (source.query_only === true) return "только SQL";
   if (source.job_status === "PENDING") return (source.job_attempt_count ?? 0) > 0 ? "Waiting to retry" : "Queued";
   if (source.job_status === "RUNNING") return "Updating";
   if (source.job_status === "DEAD") return "Update failed";
@@ -6584,6 +6593,9 @@ function sourceLabel(source: SourceStatus): string {
 function sourceCardVariant(source: SourceStatus): "ready" | "attention" | "updating" | "disconnected" {
   if (!source.enabled) return "disconnected";
   if (source.confirmation_state !== "ACTIVE") return "attention";
+  // A query-only table never syncs, so it carries no sync failure or
+  // freshness: its registration mode is the whole state.
+  if (source.query_only === true) return "ready";
   if (source.job_status === "DEAD" || source.sync_status === "FAILED" || source.sync_error_code
     || (source.quarantined ?? 0) > 0 || (source.job_last_error_code && source.job_status !== "SUCCEEDED")
     || source.freshness_state === "STALE") return "attention";
@@ -6611,6 +6623,14 @@ export type SourceConnectionGroup = {
 // published fragments (an empty table legitimately publishes none).
 export function sourceTableIndexed(source: SourceStatus): boolean {
   return source.last_successful_sync_at !== null && source.last_successful_sync_at !== undefined;
+}
+
+// S3 card 4: a query-only table is registered "only for SQL queries (not
+// indexed)". It is enabled and usable, but it never runs a sync and never
+// publishes a fragment, so the Sources surface must not claim freshness for
+// it.
+export function sourceTableQueryOnly(source: SourceStatus): boolean {
+  return source.query_only === true;
 }
 
 export type SourceConnectionState = "disabled" | "awaiting_confirmation" | "failed" | "updating" | "active";
@@ -6642,10 +6662,16 @@ export function sourceConnectionState(group: SourceConnectionGroup): SourceConne
 export function sourceConnectionFreshnessState(group: SourceConnectionGroup): string {
   if (group.tables.length === 0) return "UNKNOWN";
   let unknown = false;
+  let indexed = 0;
   for (const table of group.tables) {
+    // S3 card 4: a query-only table has no sync run at all, so it must not
+    // drag the connection's freshness down (nor up).
+    if (sourceTableQueryOnly(table)) continue;
+    indexed += 1;
     if (table.freshness_state === "STALE") return "STALE";
     if (table.freshness_state !== "FRESH") unknown = true;
   }
+  if (indexed === 0) return "UNKNOWN";
   return unknown ? "UNKNOWN" : "FRESH";
 }
 
@@ -6679,6 +6705,12 @@ export type SourceConnectionSummary = {
   // carries. A missing field (an older server) reads as "not configured",
   // which fails closed.
   sql_available: boolean;
+  // S3 card 4: the connection's query-only roll-up. query_only_count is the
+  // number of registered tables that are SQL-only; query_only is true only
+  // when every table is SQL-only, in which case the card shows no sync
+  // freshness at all.
+  query_only_count: number;
+  query_only: boolean;
 };
 
 const sourceConnectionStateLabels: Record<SourceConnectionState, string> = {
@@ -6695,13 +6727,19 @@ const sourceConnectionStateLabels: Record<SourceConnectionState, string> = {
 export function sourceConnectionSummary(group: SourceConnectionGroup): SourceConnectionSummary {
   const state = sourceConnectionState(group);
   const freshness = sourceConnectionFreshnessState(group);
-  const variant = state === "active" && freshness !== "FRESH" ? "attention"
-    : state === "disabled" ? "disconnected"
-      : state === "updating" ? "updating"
-        : state === "active" ? "ready" : "attention";
-  const stateLabel = state === "active" && freshness !== "FRESH"
-    ? (freshness === "STALE" ? "Data is stale" : "Status unconfirmed")
-    : sourceConnectionStateLabels[state];
+  const queryOnlyCount = group.tables.filter(sourceTableQueryOnly).length;
+  const allQueryOnly = group.tables.length > 0 && queryOnlyCount === group.tables.length;
+  // A connection whose tables are all SQL-only has no sync run to report: its
+  // state is the registration mode, never "status unconfirmed".
+  const variant = allQueryOnly && state === "active" ? "ready"
+    : state === "active" && freshness !== "FRESH" ? "attention"
+      : state === "disabled" ? "disconnected"
+        : state === "updating" ? "updating"
+          : state === "active" ? "ready" : "attention";
+  const stateLabel = allQueryOnly && state === "active" ? "только SQL"
+    : state === "active" && freshness !== "FRESH"
+      ? (freshness === "STALE" ? "Data is stale" : "Status unconfirmed")
+      : sourceConnectionStateLabels[state];
   return {
     connection_id: group.connection_id,
     connection_name: group.connection_name,
@@ -6715,6 +6753,8 @@ export function sourceConnectionSummary(group: SourceConnectionGroup): SourceCon
     state_label: stateLabel,
     variant,
     sql_available: group.tables.some((table) => table.sql_available === true),
+    query_only_count: queryOnlyCount,
+    query_only: allQueryOnly,
   };
 }
 
@@ -6930,11 +6970,15 @@ export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL 
           <b>{summary.connection_name}</b>
           <span className={`state-chip ${summary.variant}`}><span aria-hidden="true" />{summary.state_label}</span>
         </div>
-        <p className="source-type">PostgreSQL · {summary.table_count} table{summary.table_count === 1 ? "" : "s"} · {summary.indexed_count} indexed</p>
-        <p className="source-note source-success-time">
-          Last successful update: {summary.last_successful_sync_at ? formatTime(summary.last_successful_sync_at) : "no information"}
-          {" · "}Freshness: {freshnessStateLabel(summary.freshness_state)}
-        </p>
+        <p className="source-type">PostgreSQL · {summary.table_count} table{summary.table_count === 1 ? "" : "s"} · {summary.indexed_count} indexed{summary.query_only_count > 0 ? ` · ${summary.query_only_count} only SQL` : ""}</p>
+        {summary.query_only ? (
+          <p className="source-note source-success-time">No sync freshness: registered only for SQL queries.</p>
+        ) : (
+          <p className="source-note source-success-time">
+            Last successful update: {summary.last_successful_sync_at ? formatTime(summary.last_successful_sync_at) : "no information"}
+            {" · "}Freshness: {freshnessStateLabel(summary.freshness_state)}
+          </p>
+        )}
         <p className="source-note source-sql-availability">
           {summary.sql_available ? "SQL available" : "SQL not configured"}
         </p>
@@ -6950,9 +6994,14 @@ export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL 
                     <b>{sourceTableLabel(table)}</b>
                     <span className={`state-chip ${sourceCardVariant(table)}`}><span aria-hidden="true" />{sourceHeadline(table)}</span>
                   </div>
-                  <p className="source-note source-success-time">
-                    Last successful update: {table.last_successful_sync_at ? formatTime(table.last_successful_sync_at) : "no information"}
-                  </p>
+                  {table.query_only !== true && (
+                    <p className="source-note source-success-time">
+                      Last successful update: {table.last_successful_sync_at ? formatTime(table.last_successful_sync_at) : "no information"}
+                    </p>
+                  )}
+                  {table.query_only === true && (
+                    <p className="source-note source-success-time">Registered only for SQL queries; rows are not indexed.</p>
+                  )}
                   {error && <p className="source-processing-warning" role="status">{error}</p>}
                   {renderTableExtra?.(table)}
                 </li>
@@ -8089,8 +8138,10 @@ type SourceDiscoveryResponse = {
 // ADR-0097: the register route accepts an optional narrowing body naming
 // EVIDENCE-role ordinals to exclude, valid only for a TABLE/PARTITIONED_TABLE
 // selection. Sending no exclusions (undefined body) registers the table
-// unnarrowed, exactly like the original view flow.
-export type SourceDiscoveryRegisterInput = { excluded_columns?: number[] };
+// unnarrowed, exactly like the original view flow. S3 card 4 adds the optional
+// mode: INDEXED (the default, omitted) or QUERY_ONLY ("only for SQL queries,
+// not indexed").
+export type SourceDiscoveryRegisterInput = { excluded_columns?: number[]; mode?: string };
 
 type PostgreSQLOnboardingPhase =
   | "connection"
@@ -8235,6 +8286,15 @@ const postgresOnboardingLocale = {
     bytes: "bytes",
     noComment: "No comment.",
     noActionHint: "This table or view cannot be connected automatically.",
+    // S3 card 4: the registration mode. A partitioned table or a relation with
+    // more than 1,000,000 estimated rows is offered query-only by default.
+    modeQueryOnly: "Only for SQL queries (not indexed)",
+    modeQueryOnlyHint: "Rows are not copied into search; the table stays available to SQL queries.",
+    modeIndexedHint: "Rows are copied into search and can be cited.",
+    modeBulkQueryOnly: "Only SQL for selected",
+    modeBulkIndexed: "Index selected",
+    selectSchemaLabel: "Select a schema",
+    selectSchemaPlaceholder: "All schemas",
     back: "Edit connection",
   },
   completion: {
@@ -8272,6 +8332,38 @@ function postgresApproxRowCountLabel(approxRowCount: number): string {
 // the original five-column VIEW/MATERIALIZED_VIEW contract is server-fixed.
 function postgresSupportsColumnExclusion(relationKind: string): boolean {
   return relationKind === "TABLE" || relationKind === "PARTITIONED_TABLE";
+}
+
+// S3 card 4: the row estimate above which a relation is offered query-only by
+// default. It matches the server-side product rule (1,000,000 rows).
+export const POSTGRES_QUERY_ONLY_ROW_THRESHOLD = 1_000_000;
+
+// A partitioned table, or a relation whose pg_class row estimate is above the
+// threshold, is offered "only for SQL queries (not indexed)" by default; every
+// other relation is offered indexed. The administrator can switch either way.
+export function postgresDefaultRegistrationMode(view: SourceDiscoveryView): string {
+  if (view.relation_kind === "PARTITIONED_TABLE") return "QUERY_ONLY";
+  return view.approx_row_count > POSTGRES_QUERY_ONLY_ROW_THRESHOLD ? "QUERY_ONLY" : "INDEXED";
+}
+
+// The effective mode of one table: the administrator's explicit choice when
+// present, otherwise the server-consistent default for its kind and size.
+export function postgresEffectiveRegistrationMode(
+  view: SourceDiscoveryView,
+  modeByView: ReadonlyMap<string, string>,
+): string {
+  return modeByView.get(view.view_id) ?? postgresDefaultRegistrationMode(view);
+}
+
+// The distinct schemas that contain at least one ready relation, so a large
+// catalog can be registered one schema at a time from the same server-issued
+// page without a second network call.
+export function postgresSelectableSchemas(views: readonly SourceDiscoveryView[]): string[] {
+  const schemas = new Set<string>();
+  for (const view of views) {
+    if (view.status === "PREPARED") schemas.add(view.schema_name);
+  }
+  return [...schemas].sort((left, right) => left.localeCompare(right));
 }
 
 export function postgresIsColumnExcludable(column: SourceDiscoveryColumn): boolean {
@@ -8317,20 +8409,26 @@ export function postgresFilterAndSortViews(
 export type PostgresRegistrationRequest = { view: SourceDiscoveryView; body: SourceDiscoveryRegisterInput | undefined };
 
 // One register call per ticked table, each carrying only that table's own
-// excluded ordinals (sorted for a stable, testable request body); a table
-// with no exclusions gets an empty body, exactly like the original
-// single-view flow. Anything not PREPARED or not ticked is silently dropped,
-// so a stale selection can never reach the network layer.
+// excluded ordinals (sorted for a stable, testable request body) and its
+// registration mode. A table with neither exclusions nor a query-only mode
+// gets an empty body, exactly like the original single-view flow; a query-only
+// table sends mode=QUERY_ONLY. Anything not PREPARED or not ticked is silently
+// dropped, so a stale selection can never reach the network layer.
 export function postgresRegistrationPlan(
   views: readonly SourceDiscoveryView[],
   selected: ReadonlySet<string>,
   excludedColumnsByView: ReadonlyMap<string, readonly number[]>,
+  modeByView: ReadonlyMap<string, string> = new Map(),
 ): PostgresRegistrationRequest[] {
   return views
     .filter((view) => view.status === "PREPARED" && selected.has(view.view_id))
     .map((view) => {
       const excluded = [...(excludedColumnsByView.get(view.view_id) ?? [])].sort((left, right) => left - right);
-      return { view, body: excluded.length > 0 ? { excluded_columns: excluded } : undefined };
+      const mode = postgresEffectiveRegistrationMode(view, modeByView);
+      const body: SourceDiscoveryRegisterInput = {};
+      if (excluded.length > 0) body.excluded_columns = excluded;
+      if (mode === "QUERY_ONLY") body.mode = "QUERY_ONLY";
+      return { view, body: Object.keys(body).length > 0 ? body : undefined };
     });
 }
 
@@ -8477,13 +8575,18 @@ export function PostgreSQLDiscoveredColumn({ view, column, excluded, onToggleExc
   );
 }
 
-export function PostgreSQLDiscoveredViewCard({ view, selected, disabled, onToggleSelected, excludedColumns, onToggleColumn }: {
+export function PostgreSQLDiscoveredViewCard({ view, selected, disabled, onToggleSelected, excludedColumns, onToggleColumn, mode, onToggleMode }: {
   view: SourceDiscoveryView;
   selected: boolean;
   disabled: boolean;
   onToggleSelected: (view: SourceDiscoveryView) => void;
   excludedColumns: readonly number[];
   onToggleColumn: (view: SourceDiscoveryView, column: SourceDiscoveryColumn) => void;
+  // S3 card 4: the effective registration mode ("INDEXED" or "QUERY_ONLY")
+  // and the administrator's toggle. Both are optional so existing callers that
+  // only render the catalog keep working; a missing mode is simply not shown.
+  mode?: string;
+  onToggleMode?: (view: SourceDiscoveryView) => void;
 }) {
   const prepared = view.status === "PREPARED";
   return (
@@ -8511,6 +8614,21 @@ export function PostgreSQLDiscoveredViewCard({ view, selected, disabled, onToggl
           </span>
         </div>
       </header>
+
+      {prepared && mode !== undefined && (
+        <label className="postgres-view-mode">
+          <input
+            checked={mode === "QUERY_ONLY"}
+            disabled={disabled || !onToggleMode}
+            onChange={() => onToggleMode?.(view)}
+            type="checkbox"
+          />
+          <span>
+            <strong>{postgresOnboardingLocale.discovery.modeQueryOnly}</strong>
+            <small>{mode === "QUERY_ONLY" ? postgresOnboardingLocale.discovery.modeQueryOnlyHint : postgresOnboardingLocale.discovery.modeIndexedHint}</small>
+          </span>
+        </label>
+      )}
 
       {!prepared && (
         <p className="postgres-view-interpretation">
@@ -8582,6 +8700,7 @@ export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBac
   const [sortKey, setSortKey] = useState<PostgresViewSortKey>("name");
   const [selectedViewIDs, setSelectedViewIDs] = useState<ReadonlySet<string>>(new Set());
   const [excludedColumnsByView, setExcludedColumnsByView] = useState<ReadonlyMap<string, readonly number[]>>(new Map());
+  const [modeByView, setModeByView] = useState<ReadonlyMap<string, string>>(new Map());
   const [registrationResults, setRegistrationResults] = useState<PostgresRegistrationOutcome[]>([]);
   const [result, setResult] = useState<ApiResult<unknown> | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -8655,6 +8774,7 @@ export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBac
     setSortKey("name");
     setSelectedViewIDs(new Set());
     setExcludedColumnsByView(new Map());
+    setModeByView(new Map());
     setRegistrationResults([]);
     setPhase("discovering");
     const request = await apiAction<SourceDiscoveryRequestResponse>(
@@ -8761,6 +8881,35 @@ export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBac
     setSelectedViewIDs(new Set(discovery.views.filter((view) => view.status === "PREPARED").map((view) => view.view_id)));
   }
 
+  function selectSchemaViews(schema: string) {
+    if (!discovery || busy || !schema) return;
+    setSelectedViewIDs(new Set(discovery.views
+      .filter((view) => view.status === "PREPARED" && view.schema_name === schema)
+      .map((view) => view.view_id)));
+  }
+
+  function toggleViewMode(view: SourceDiscoveryView) {
+    if (busy) return;
+    setModeByView((current) => {
+      const next = new Map(current);
+      next.set(view.view_id, postgresEffectiveRegistrationMode(view, current) === "QUERY_ONLY" ? "INDEXED" : "QUERY_ONLY");
+      return next;
+    });
+  }
+
+  // Bulk mode applies to the current selection, so "select all ready" or one
+  // schema followed by one click registers the whole batch in query-only mode.
+  function applyModeToSelection(mode: string) {
+    if (!discovery || busy) return;
+    setModeByView((current) => {
+      const next = new Map(current);
+      for (const view of discovery.views) {
+        if (view.status === "PREPARED" && selectedViewIDs.has(view.view_id)) next.set(view.view_id, mode);
+      }
+      return next;
+    });
+  }
+
   function clearViewSelection() {
     if (busy) return;
     setSelectedViewIDs(new Set());
@@ -8768,7 +8917,7 @@ export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBac
 
   async function confirmRegistration() {
     if (!discovery || !discoveryRequestID || busy || phase !== "catalog") return;
-    const plan = postgresRegistrationPlan(discovery.views, selectedViewIDs, excludedColumnsByView);
+    const plan = postgresRegistrationPlan(discovery.views, selectedViewIDs, excludedColumnsByView, modeByView);
     if (plan.length === 0) {
       setFormError(postgresOnboardingLocale.discovery.noSelection);
       return;
@@ -8994,6 +9143,17 @@ export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBac
                   <div className="postgres-selection-controls">
                     <span>{postgresOnboardingLocale.discovery.selectedCount(selectedViewIDs.size)}</span>
                     <button className="link-button" disabled={busy} onClick={selectAllReadyViews} type="button">{postgresOnboardingLocale.discovery.selectAll}</button>
+                    <label className="postgres-schema-field">
+                      <span>{postgresOnboardingLocale.discovery.selectSchemaLabel}</span>
+                      <select disabled={busy} onChange={(event) => selectSchemaViews(event.target.value)} value="">
+                        <option value="">{postgresOnboardingLocale.discovery.selectSchemaPlaceholder}</option>
+                        {postgresSelectableSchemas(discovery.views).map((schema) => (
+                          <option key={schema} value={schema}>{schema}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={() => applyModeToSelection("QUERY_ONLY")} type="button">{postgresOnboardingLocale.discovery.modeBulkQueryOnly}</button>
+                    <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={() => applyModeToSelection("INDEXED")} type="button">{postgresOnboardingLocale.discovery.modeBulkIndexed}</button>
                     <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={clearViewSelection} type="button">{postgresOnboardingLocale.discovery.clearSelection}</button>
                   </div>
                 </div>
@@ -9004,7 +9164,9 @@ export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBac
                       disabled={busy}
                       excludedColumns={excludedColumnsByView.get(view.view_id) ?? []}
                       key={view.view_id}
+                      mode={postgresEffectiveRegistrationMode(view, modeByView)}
                       onToggleColumn={toggleColumnExcluded}
+                      onToggleMode={toggleViewMode}
                       onToggleSelected={toggleViewSelected}
                       selected={selectedViewIDs.has(view.view_id)}
                       view={view}

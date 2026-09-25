@@ -215,9 +215,10 @@ type SourceDiscovery interface {
 // selector. No projection metadata is accepted from the HTTP request; the
 // only caller-supplied content is the optional excluded-column-ordinal list
 // (ADR-0097), narrowing a base/partitioned-table projection the server
-// already discovered.
+// already discovered, and the optional registration mode (S3 card 4):
+// INDEXED (the default) or QUERY_ONLY ("only for SQL queries, not indexed").
 type SourceDiscoveryRegistration interface {
-	RegisterDiscoveredView(context.Context, database.AccessContext, string, string, []int) (registration.RegisterResult, error)
+	RegisterDiscoveredView(context.Context, database.AccessContext, string, string, []int, string) (registration.RegisterResult, error)
 }
 
 // SourceSchemaProvider is ADR-0097's optional, read-only source schema
@@ -2865,12 +2866,16 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		writeValidationError(writer, request, requestID, code, nil)
 		return
 	}
+	if !postgresqlquery.ValidProjectionMode(body.Mode) {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"mode"})
+		return
+	}
 	provider, ok := handler.sources.(SourceDiscoveryRegistration)
 	if !ok {
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return
 	}
-	result, err := provider.RegisterDiscoveredView(request.Context(), access, discoveryRequestID, viewID, body.ExcludedColumns)
+	result, err := provider.RegisterDiscoveredView(request.Context(), access, discoveryRequestID, viewID, body.ExcludedColumns, body.Mode)
 	if err != nil {
 		switch sourcediscovery.CodeOf(err) {
 		case sourcediscovery.CodeInvalid:
@@ -3692,6 +3697,7 @@ func (handler *Handler) listSources(writer http.ResponseWriter, request *http.Re
 			),
 			CanVerifyConnectionTrust: confirmation.CanVerifyConnectionTrust && !status.ViewerVerifyConflict,
 			SQLAvailable:             status.SQLAvailable,
+			QueryOnly:                status.QueryOnly,
 		}
 	}
 	response := map[string]any{"sources": items, "confirmation_context": confirmationContextResponseFrom(confirmation)}
@@ -4328,9 +4334,12 @@ type conversationTurnResponse struct {
 // sourceDiscoveryRegisterBody is the only caller-supplied content the
 // discovered-view register route accepts. excluded_columns are ordinals from
 // the sealed discovery result (ADR-0097); every other projection field stays
-// server-owned. An empty or absent body registers the table unnarrowed.
+// server-owned. An empty or absent body registers the table unnarrowed. mode
+// (S3 card 4) is INDEXED when absent and QUERY_ONLY for the "only for SQL
+// queries, not indexed" registration; any other value is refused.
 type sourceDiscoveryRegisterBody struct {
-	ExcludedColumns []int `json:"excluded_columns"`
+	ExcludedColumns []int  `json:"excluded_columns"`
+	Mode            string `json:"mode"`
 }
 
 type sourceRegisterBody struct {
@@ -4734,6 +4743,10 @@ type sourceStatusResponse struct {
 	// means "SQL not configured" and the tool answers
 	// SOURCE_SQL_NOT_CONFIGURED. It is a display fact, never an authorization.
 	SQLAvailable bool `json:"sql_available"`
+	// QueryOnly is S3 card 4's registration mode of the bound relation: true
+	// means "only for SQL queries (not indexed)". The Sources card renders it
+	// as "только SQL" and shows no sync freshness for the source.
+	QueryOnly bool `json:"query_only"`
 }
 
 // confirmationStateFor derives the ADR-0087 operator-visible pending state of

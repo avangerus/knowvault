@@ -65,6 +65,24 @@ func (h *Handler) HandlePostgreSQLQuery(ctx context.Context, access database.Acc
 	if err := h.heartbeat(runCtx, access, claimed); err != nil {
 		return h.failPostgreSQLSync(ctx, access, claimed, scopeID, revision, syncRunID, "PG_QUERY_HEARTBEAT", err)
 	}
+	if projection.QueryOnly {
+		// S3 card 4: a query-only relation is registered for
+		// knowvault_source_sql only. The worker never copies its rows: it
+		// completes the activation with an empty, coverage-complete sync and
+		// leaves the search index and evidence catalog untouched for this
+		// scope. The completion transaction takes the same job-row lock an
+		// indexed publication does, so the outer heartbeat is drained first.
+		if err := stopHeartbeat(); err != nil {
+			return h.failPostgreSQLSync(ctx, access, claimed, scopeID, revision, syncRunID, "PG_QUERY_HEARTBEAT", err)
+		}
+		if err := h.completeQueryOnlySync(ctx, access, claimed, scopeID, revision, syncRunID, projection); err != nil {
+			return h.failPostgreSQLSync(ctx, access, claimed, scopeID, revision, syncRunID, postgresqlFailureCode(err), err)
+		}
+		if err := h.queue.Complete(ctx, access, claimed.ID, h.workerID, claimed.LeaseEpoch); err != nil {
+			return failure("PG_QUERY_COMPLETE", err)
+		}
+		return nil
+	}
 	snapshot, err := h.postgresqlQuery.ReadProjection(runCtx, projection.ConnectionID, credentialReference, projection, limits)
 	if err != nil {
 		return h.failPostgreSQLSync(ctx, access, claimed, scopeID, revision, syncRunID, postgresqlFailureCode(err), err)
@@ -113,6 +131,73 @@ func postgresqlFailureCode(err error) string {
 	return "PG_QUERY_FAILED"
 }
 
+// completeQueryOnlySync finishes one query-only scope activation without
+// reading the external relation: the sync run is recorded as an empty,
+// coverage-complete FULL scan and the scope advances exactly like an indexed
+// one, so the relation is a normal enabled source that knowvault_source_sql
+// can address while producing no Evidence fragment and no search document.
+func (h *Handler) completeQueryOnlySync(ctx context.Context, access database.AccessContext, claimed jobs.ClaimedJob, scopeID string, revision int64, syncRunID string, projection postgresqlquery.Projection) error {
+	if !projection.QueryOnly {
+		return errors.New("query-only completion requires a query-only projection")
+	}
+	return h.db.Write(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
+		if _, err := tx.Exec(txCtx, `SELECT app.lock_job_lease($1,$2,$3)`, claimed.ID, h.workerID, claimed.LeaseEpoch); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(txCtx, `SELECT app.assert_scope_revision_syncing($1,$2)`, scopeID, revision); err != nil {
+			return err
+		}
+		if err := h.verifyPostgreSQLProjection(txCtx, tx, access.OrganizationID, PostgreSQLSnapshotRequest{
+			ScopeID: scopeID, ScopeRevision: revision, SyncRunID: syncRunID, Projection: projection, Claimed: claimed,
+		}); err != nil {
+			return err
+		}
+		updated, err := tx.Exec(txCtx, `UPDATE public.sync_run SET objects_seen=0, objects_ingested=0, versions_created=0, evidence_published=0, quarantined=0, status='SUCCEEDED', completed_at=now(), coverage_complete=true, error_code=NULL WHERE organization_id=$1 AND id=$2 AND status='RUNNING'`, access.OrganizationID, syncRunID)
+		if err != nil {
+			return err
+		}
+		if updated.RowsAffected() != 1 {
+			return failure("PG_QUERY_SYNC_RUN_NOT_RUNNING", nil)
+		}
+		rows, err := tx.Query(txCtx, `SELECT outcome, closed_object_id FROM app.source_scope_activate_revision($1,$2,$3,$4,$5,$6)`, scopeID, revision, syncRunID, claimed.ID, h.workerID, claimed.LeaseEpoch)
+		if err != nil {
+			return err
+		}
+		var outcome string
+		var closed []string
+		for rows.Next() {
+			var rowOutcome string
+			var objectID *string
+			if err := rows.Scan(&rowOutcome, &objectID); err != nil {
+				rows.Close()
+				return err
+			}
+			outcome = rowOutcome
+			if objectID != nil {
+				closed = append(closed, *objectID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if outcome == "CUTOVER" {
+			if err := h.auditScopeActivated(txCtx, access, tx, scopeID, revision, syncRunID); err != nil {
+				return err
+			}
+		} else if err := h.auditSync(txCtx, access, tx, scopeID, syncRunID); err != nil {
+			return err
+		}
+		for _, objectID := range closed {
+			if err := h.auditObjectClosure(txCtx, tx, access, objectID, syncRunID, claimed.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (h *Handler) failPostgreSQLSync(ctx context.Context, access database.AccessContext, claimed jobs.ClaimedJob, scopeID string, revision int64, syncRunID, code string, cause error) error {
 	if h != nil && h.db != nil {
 		_ = h.db.Write(ctx, access, func(ctx context.Context, tx database.Transaction) error {
@@ -146,6 +231,7 @@ func readPostgreSQLTarget(ctx context.Context, tx database.Transaction, organiza
 		maxColumns, timeoutMS                                                    int
 		credentialReference                                                      string
 		connectionRevision                                                       int64
+		queryOnly                                                                bool
 	)
 	if err := tx.QueryRow(ctx, `SELECT connection_id,connection_revision,credential_reference FROM app.postgresql_query_connection_target($1,$2)`, scopeID, revision).Scan(&connectionID, &connectionRevision, &credentialReference); err != nil {
 		return postgresqlquery.Projection{}, postgresqlquery.Limits{}, "", err
@@ -153,7 +239,7 @@ func readPostgreSQLTarget(ctx context.Context, tx database.Transaction, organiza
 	if connectionRevision < 1 || credentialReference == "" {
 		return postgresqlquery.Projection{}, postgresqlquery.Limits{}, "", errors.New("postgresql query connection target is invalid")
 	}
-	if err := tx.QueryRow(ctx, `SELECT database_identity,lineage_id,projection_revision,contract_version,contract_hash,schema_name,relation_name,relation_kind,columns_json,empty_snapshot_policy,max_rows,max_columns,max_field_bytes,max_row_bytes,max_total_bytes,statement_timeout_ms FROM public.postgresql_query_projection WHERE organization_id=$1 AND source_scope_id=$2 AND source_scope_revision=$3`, organizationID, scopeID, revision).Scan(&databaseIdentity, &lineageID, &projectionRevision, &contractVersion, &contractHash, &schemaName, &relationName, &relationKind, &columnsRaw, &emptyPolicy, &maxRows, &maxColumns, &maxFieldBytes, &maxRowBytes, &maxTotalBytes, &timeoutMS); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT database_identity,lineage_id,projection_revision,contract_version,contract_hash,schema_name,relation_name,relation_kind,columns_json,empty_snapshot_policy,query_only,max_rows,max_columns,max_field_bytes,max_row_bytes,max_total_bytes,statement_timeout_ms FROM public.postgresql_query_projection WHERE organization_id=$1 AND source_scope_id=$2 AND source_scope_revision=$3`, organizationID, scopeID, revision).Scan(&databaseIdentity, &lineageID, &projectionRevision, &contractVersion, &contractHash, &schemaName, &relationName, &relationKind, &columnsRaw, &emptyPolicy, &queryOnly, &maxRows, &maxColumns, &maxFieldBytes, &maxRowBytes, &maxTotalBytes, &timeoutMS); err != nil {
 		return postgresqlquery.Projection{}, postgresqlquery.Limits{}, "", err
 	}
 	if contractVersion != postgresqlquery.ValueContractVersion {
@@ -167,7 +253,7 @@ func readPostgreSQLTarget(ctx context.Context, tx database.Transaction, organiza
 	for i, column := range columns {
 		projectionColumns[i] = postgresqlquery.Column{Ordinal: column.Ordinal, Name: column.Name, TypeFingerprint: column.TypeFingerprint, LogicalType: column.LogicalType, Roles: column.Roles, Nullable: column.Nullable, Precision: column.Precision, Scale: column.Scale, MaxBytes: column.MaxBytes}
 	}
-	projection := postgresqlquery.Projection{ConnectionID: connectionID, DatabaseIdentity: databaseIdentity, LineageID: lineageID, Revision: projectionRevision, ContractHash: contractHash, SchemaName: schemaName, RelationName: relationName, RelationKind: relationKind, Columns: projectionColumns, EmptySnapshotPolicy: emptyPolicy}
+	projection := postgresqlquery.Projection{ConnectionID: connectionID, DatabaseIdentity: databaseIdentity, LineageID: lineageID, Revision: projectionRevision, ContractHash: contractHash, SchemaName: schemaName, RelationName: relationName, RelationKind: relationKind, Columns: projectionColumns, EmptySnapshotPolicy: emptyPolicy, QueryOnly: queryOnly}
 	if err := projection.Validate(); err != nil {
 		return postgresqlquery.Projection{}, postgresqlquery.Limits{}, "", err
 	}

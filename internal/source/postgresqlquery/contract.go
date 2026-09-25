@@ -103,6 +103,13 @@ type Column struct {
 // is VIEW, MATERIALIZED_VIEW, TABLE or PARTITIONED_TABLE (ADR-0097) and
 // SelectSQL is generated from these fields; no SQL text is stored or
 // accepted.
+//
+// QueryOnly (S3 card 4) is the registration mode: a query-only relation is a
+// registered, SQL-addressable contract whose rows are never copied into the
+// search index. It is part of the immutable contract, not a per-call flag: a
+// query-only projection carries its own ContractHash and LineageID (see
+// WithQueryOnly), so switching a relation between indexed and query-only is a
+// distinct immutable lineage exactly like a column exclusion.
 type Projection struct {
 	ConnectionID        string
 	DatabaseIdentity    string
@@ -114,6 +121,7 @@ type Projection struct {
 	RelationKind        string
 	Columns             []Column
 	EmptySnapshotPolicy string
+	QueryOnly           bool
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)

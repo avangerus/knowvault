@@ -63,6 +63,10 @@ type SourceSchemaTable struct {
 	RowEstimate int64
 	Note        string
 	Columns     []SourceSchemaColumn
+	// QueryOnly is S3 card 4's registration mode: true means the relation is
+	// registered only for SQL queries (knowvault_source_sql) and is never
+	// copied into the search index. The mode is part of the immutable contract.
+	QueryOnly bool
 }
 
 // SourceSchema is one page of a source's relations. DatabaseIdentity is the
@@ -194,7 +198,7 @@ func (store *Store) sourceSchema(ctx context.Context, access database.AccessCont
 		rows, queryErr := transaction.Query(transactionContext, `
 			SELECT projection.schema_name, projection.relation_name, projection.relation_kind,
 			       projection.columns_json, catalog.relation_comment,
-			       catalog.approx_row_count, catalog.columns_catalog
+			       catalog.approx_row_count, catalog.columns_catalog, projection.query_only
 			FROM app.workspace_source_status_v3($1) AS status
 			JOIN public.source_scope_revision AS scope_revision
 			  ON scope_revision.organization_id = $2
@@ -230,7 +234,7 @@ func (store *Store) sourceSchema(ctx context.Context, access database.AccessCont
 			var approxRowCount *int64
 			var columnsCatalog []byte
 			if scanErr := rows.Scan(&relation.Schema, &relation.Name, &relation.Kind,
-				&columnsRaw, &relationComment, &approxRowCount, &columnsCatalog); scanErr != nil {
+				&columnsRaw, &relationComment, &approxRowCount, &columnsCatalog, &relation.QueryOnly); scanErr != nil {
 				return scanErr
 			}
 			relation.RowEstimate = -1

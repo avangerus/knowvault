@@ -71,6 +71,11 @@ type SourceStatus struct {
 	// behind the Sources card's "SQL available" / "SQL not configured" state;
 	// it is never derived from the ingestion credential.
 	SQLAvailable bool
+	// QueryOnly is S3 card 4's registration mode of the bound relation: true
+	// means the relation is registered only for SQL queries and is never
+	// copied into the search index, so the Sources card shows "только SQL" and
+	// no sync freshness. False for every non-PostgreSQL source.
+	QueryOnly bool
 }
 
 // SelfConfirmationGrant is the caller's own live, unrevoked, unexpired
@@ -179,7 +184,8 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 			              -- row with a NULL reference, so the connection keeps its
 			              -- monotonic revision but must not advertise SQL.
 			              AND query_credential.credential_reference IS NOT NULL
-			       ) AS sql_available
+			       ) AS sql_available,
+			       COALESCE(projection.query_only, false) AS query_only
 			FROM app.workspace_source_status_v3($1) AS status
 			JOIN public.source_scope_revision AS scope_revision
 			  ON scope_revision.organization_id = $2
@@ -208,7 +214,7 @@ func (store *Store) listSources(ctx context.Context, access database.AccessConte
 				&status.JobLeaseExpiresAt, &status.JobLastErrorCode, &status.ContentFreshnessSLASeconds,
 				&status.LastSuccessfulSyncAt, &status.FreshnessState, &status.SyncIntervalSeconds,
 				&status.SourceType, &status.PostgreSQLSchemaName, &status.PostgreSQLRelationName,
-				&status.Confirmed, &status.ViewerVerifyConflict, &status.SQLAvailable,
+				&status.Confirmed, &status.ViewerVerifyConflict, &status.SQLAvailable, &status.QueryOnly,
 			); scanErr != nil {
 				return scanErr
 			}

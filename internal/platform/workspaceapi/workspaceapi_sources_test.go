@@ -43,6 +43,7 @@ type fakeSourceService struct {
 	discoveryRegisterRequestID string
 	discoveryRegisterViewID    string
 	discoveryRegisterExcluded  []int
+	discoveryRegisterMode      string
 	discoveryRegisterResult    registration.RegisterResult
 	discoveryRegisterErr       error
 	activateRequest            registration.ActivateRequest
@@ -166,10 +167,11 @@ func (service *fakeSourceService) GetDiscovery(_ context.Context, access databas
 	return service.discoveryRead, service.save("get_discovery", access)
 }
 
-func (service *fakeSourceService) RegisterDiscoveredView(_ context.Context, access database.AccessContext, requestID, viewID string, excludedColumns []int) (registration.RegisterResult, error) {
+func (service *fakeSourceService) RegisterDiscoveredView(_ context.Context, access database.AccessContext, requestID, viewID string, excludedColumns []int, mode string) (registration.RegisterResult, error) {
 	service.discoveryRegisterRequestID = requestID
 	service.discoveryRegisterViewID = viewID
 	service.discoveryRegisterExcluded = excludedColumns
+	service.discoveryRegisterMode = mode
 	if service.discoveryRegisterErr != nil {
 		return registration.RegisterResult{}, service.discoveryRegisterErr
 	}

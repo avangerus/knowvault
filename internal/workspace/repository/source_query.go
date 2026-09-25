@@ -40,11 +40,14 @@ import (
 const sourceSQLRead = "SOURCE_SQL"
 
 // SourceQueryRelation is one registered relation of the source scope plus the
-// projected columns the agent may name.
+// projected columns the agent may name. QueryOnly marks S3 card 4's query-only
+// registration: the relation is addressable by SQL but its rows are never
+// indexed.
 type SourceQueryRelation struct {
-	Schema  string
-	Table   string
-	Columns []string
+	Schema    string
+	Table     string
+	Columns   []string
+	QueryOnly bool
 }
 
 // SourceQueryVerification is the stored least-privilege proof for one source
@@ -154,7 +157,8 @@ func readSourceQueryRelations(ctx context.Context, transaction database.Transact
 		       connection_revision.credential_reference,
 		       query_credential.credential_reference, query_credential.revision,
 		       verification.connection_revision, verification.credential_revision,
-		       verification.scope_hash, verification.role_digest
+		       verification.scope_hash, verification.role_digest,
+		       projection.query_only
 		FROM app.workspace_source_status_v3($1) AS status
 		JOIN public.source_scope_revision AS scope_revision
 		  ON scope_revision.organization_id = $2
@@ -200,7 +204,7 @@ func readSourceQueryRelations(ctx context.Context, transaction database.Transact
 			&result.IngestionCredentialReference,
 			&credentialReference, &credentialRevision,
 			&verifiedConnectionRevision, &verifiedCredentialRevision,
-			&verifiedScopeHash, &verifiedRoleDigest); scanErr != nil {
+			&verifiedScopeHash, &verifiedRoleDigest, &relation.QueryOnly); scanErr != nil {
 			return SourceQuerySource{}, false, scanErr
 		}
 		// Every row of one call must share one scope, one revision and one

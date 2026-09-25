@@ -721,7 +721,7 @@ func mcpToolCatalog(access database.AccessContext) []any {
 			}},
 		},
 		map[string]any{
-			"name": mcpToolSourceSchema, "description": "Read the schema of one PostgreSQL source enabled in this workspace (ADR-0097): its tables, columns, native types, primary keys and pg_class row estimates, plus the workspace model context notes for the source, its tables and columns. Columns excluded at registration are never returned. Read-only and served from stored projections and discovery metadata; it opens no source database and runs no SQL. Without source_id it lists the workspace's PostgreSQL sources (id, name, table_count); with source_id it returns one page of tables, optionally narrowed to one schema.name table.",
+			"name": mcpToolSourceSchema, "description": "Read the schema of one PostgreSQL source enabled in this workspace (ADR-0097): its tables, columns, native types, primary keys and pg_class row estimates, plus the workspace model context notes for the source, its tables and columns. Columns excluded at registration are never returned. Every table carries query_only: true means the relation is registered only for knowvault_source_sql and is not copied into the search index, so document search never returns its rows. Read-only and served from stored projections and discovery metadata; it opens no source database and runs no SQL. Without source_id it lists the workspace's PostgreSQL sources (id, name, table_count); with source_id it returns one page of tables, optionally narrowed to one schema.name table.",
 			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id"}, "properties": map[string]any{
 				"workspace_id": map[string]any{"type": "string"},
 				"source_id":    map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "The source connection id returned by knowvault_sources. Omit it to list the workspace's PostgreSQL sources."},
@@ -2269,6 +2269,7 @@ func mcpSourcesListItems(statuses []workspacerepository.SourceStatus, confirmati
 			),
 			CanVerifyConnectionTrust: confirmation.CanVerifyConnectionTrust && !status.ViewerVerifyConflict,
 			SQLAvailable:             status.SQLAvailable,
+			QueryOnly:                status.QueryOnly,
 		}
 	}
 	return items

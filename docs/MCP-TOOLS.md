@@ -935,7 +935,10 @@ registration already stored -- the immutable, exclusion-narrowed
 `postgresql_query_projection` rows and their `postgresql_query_relation_catalog`
 companion -- so it opens no source database, composes no SQL and runs no
 statement. A column the administrator excluded at registration was never
-written into the projection and is therefore never returned.
+written into the projection and is therefore never returned. Each table also
+carries `query_only`: true means the relation is registered only for
+`knowvault_source_sql` and is not copied into the search index (S3 card 4), so
+document search never returns its rows.
 
 Without `source_id` the tool lists the workspace's enabled PostgreSQL sources:
 id (the source connection id `knowvault_sources` returns), display name and the
@@ -996,6 +999,7 @@ provider is touched.
       "name": "contract",
       "kind": "TABLE",
       "row_estimate": 17030,
+      "query_only": false,
       "note": "Договоры",
       "columns": [
         { "name": "id", "type": "uuid", "nullable": false, "primary_key": true, "note": "surrogate key" },

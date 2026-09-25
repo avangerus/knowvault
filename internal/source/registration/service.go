@@ -490,7 +490,7 @@ func (s *Service) registerPostgreSQLQuery(ctx context.Context, access database.A
 		if err := bind(`SELECT app.source_discovered_scope_display_bind($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, append([]any{access.OrganizationID, discoveredID, displayArtifactID, discoveredID}, envelopeArgs(displayEnvelope)...)...); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT app.postgresql_query_projection_register($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18)`, scopeID, int64(1), connID, request.DatabaseIdentity, request.LineageID, request.ProjectionRevision, request.ContractHash, request.SchemaName, request.RelationName, request.RelationKind, string(columnsJSON), request.EmptySnapshotPolicy, limits.maxRows, limits.maxColumns, limits.maxFieldBytes, limits.maxRowBytes, limits.maxTotalBytes, limits.statementTimeoutMS); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT app.postgresql_query_projection_register($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19)`, scopeID, int64(1), connID, request.DatabaseIdentity, request.LineageID, request.ProjectionRevision, request.ContractHash, request.SchemaName, request.RelationName, request.RelationKind, string(columnsJSON), request.EmptySnapshotPolicy, false, limits.maxRows, limits.maxColumns, limits.maxFieldBytes, limits.maxRowBytes, limits.maxTotalBytes, limits.statementTimeoutMS); err != nil {
 			return err
 		}
 		eventID, err := s.newID("aud")
