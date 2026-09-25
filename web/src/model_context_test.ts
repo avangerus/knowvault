@@ -169,7 +169,7 @@ async function main(): Promise<void> {
   check(put !== undefined, "the save sent a PUT");
   if (put !== undefined) {
     check(put.path === "/api/v1/workspaces/ws_1/model-context", `the save path is the workspace model-context route (got ${put.path})`);
-    check(put.headers["If-Match"] === "sha256:livehash", `If-Match is the current content hash (got ${put.headers["If-Match"]})`);
+    check(put.headers["If-Match"] === "\"sha256:livehash\"", `If-Match is the current content hash as a quoted entity-tag (got ${put.headers["If-Match"]})`);
     check(/^[A-Za-z0-9_-]{43}$/.test(put.headers["Idempotency-Key"] ?? ""), `a fresh base64url Idempotency-Key is sent (got ${put.headers["Idempotency-Key"]})`);
     check(put.headers["X-KnowVault-CSRF"] === "csrf_probe", "the mutation carries the session CSRF token");
     checkEqual(put.body, {
@@ -190,7 +190,7 @@ async function main(): Promise<void> {
     emptyStub.restore();
   }
   const emptyPut = emptyStub.calls.find((call) => call.method === "PUT");
-  check(emptyPut?.headers["If-Match"] === "sha256:empty", `a version-0 save sends If-Match: sha256:empty (got ${emptyPut?.headers["If-Match"]})`);
+  check(emptyPut?.headers["If-Match"] === "\"sha256:empty\"", `a version-0 save sends the quoted If-Match: "sha256:empty" (got ${emptyPut?.headers["If-Match"]})`);
 
   // --- 3. Read-only mode ---------------------------------------------------
   const readOnlyContext: ModelContext = { ...contextV3, editable: false };
@@ -251,7 +251,7 @@ async function main(): Promise<void> {
   check(accept !== undefined, "the accept sent a POST");
   if (accept !== undefined) {
     check(accept.path === "/api/v1/workspaces/ws_1/model-context/proposals/prop_1:accept", `the accept path addresses the proposal (got ${accept.path})`);
-    check(accept.headers["If-Match"] === "sha256:livehash", `the accept sends If-Match on the current hash (got ${accept.headers["If-Match"]})`);
+    check(accept.headers["If-Match"] === "\"sha256:livehash\"", `the accept sends a quoted If-Match on the current hash (got ${accept.headers["If-Match"]})`);
     check(/^[A-Za-z0-9_-]{43}$/.test(accept.headers["Idempotency-Key"] ?? ""), "the accept sends a fresh Idempotency-Key");
     checkEqual(accept.body, { term: "МНО", synonyms: ["mno"], definition: "Monthly net orders." }, "the accept body carries only the inline edits");
   }
