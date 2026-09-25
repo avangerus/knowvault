@@ -24,6 +24,8 @@
     {"question": "в каком месяце подписан договор № 58?", "kind": "full"},
     {"question": "перечисли адреса всех площадок из таблицы container_group", "kind": "full"},
     {"question": "на сколько выросла сумма договора № 47 по сравнению с прошлым годом?", "kind": "full"},
-    {"question": "how many active contracts are there for client Granit?", "kind": "full"}
+    {"question": "how many active contracts are there for client Granit?", "kind": "full"},
+    {"question": "сколько мно?", "kind": "full"},
+    {"question": "приведи пункты регламента", "kind": "full"}
   ]
 }

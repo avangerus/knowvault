@@ -110,7 +110,7 @@ const kindRecognitionToolName = "submit_question_kind"
 const kindRecognitionInstructions = `You name the kind of one question about a workspace. The question is in the next message. Do not answer the question; only name its kind.
 
 Choose exactly one kind from this closed list:
-- full: the request needs reading a specific document or record, or querying, counting, listing or comparing data. It is always full when it names or refers to a document, record, table, field, dataset or subject, or asks for a count, total, list, comparison, or the contents, parts or clauses of something, whatever its grammatical mood, including a short command to bring or list them.
+- full: the request needs reading a specific document or record, or querying, counting, listing or comparing data. It is full whenever it asks for a count, number, total or amount, or names or refers to a document, record, table, field, dataset or subject, or asks for a list, comparison, or the contents, parts or clauses of something, whatever its grammatical mood, including a short command to bring or list them. An unfamiliar or abbreviated subject does not change that: a request for a count is full even when you do not know what the counted thing is.
 - change: the question asks whether a document or material changed, was updated, or is still current.
 - hypothetical: the question asks what the workspace's data would show if the business were different.
 - plain_overview: the question asks to describe, in plain, simple or business words, what kind of information the workspace holds, about a subject or about the data as a whole. A request to explain the subject matter of the data belongs here even when it names the database or the workspace in general, and it is not about the content of one named document or record.
@@ -118,9 +118,11 @@ Choose exactly one kind from this closed list:
 - sources_overview: the question asks which sources are connected.
 - greeting: a greeting or thanks with no question.
 - off_topic: a question unrelated to the workspace's subject.
-- vague: a request too unclear to act on: it asks nothing answerable and names nothing to work on, no document, record, table, field, subject, count, list or comparison. It applies only to a bare request to show or output something that names none of these, or that names only the data in general without saying which part. A request that names a document or a subject, or asks for a list or for the contents of something, is full, not vague.
+- vague: a request too unclear to act on: it asks nothing answerable and names nothing to work on, no document, record, table, field, subject, count, number, total, list or comparison. It applies only to a bare request to show or output something that names none of these, or that names only the data in general without saying which part. A request that names a document or a subject, asks for a list or the contents of something, or asks how many or how much, is full, not vague.
 
-Answer with exactly one kind from the list. If the question could be several kinds, or you are in doubt, answer full.`
+Answer with exactly one kind from the list. If the question could be several kinds, or you are in doubt, answer full.
+
+Two tests override the list above. First, a request that asks how many or how much, or for a number, total or amount, is full, even when the thing counted is a word or abbreviation you do not recognise. Second, a request that names a document, record, table, field, dataset or subject, or asks for a list, comparison or the contents of something, is full. Only if neither test holds do the short kinds above apply.`
 
 // KindRecognition is the outcome of one recognition step. Usage is always the
 // cost of the call that ran, Valid is true only when the model named a listed

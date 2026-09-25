@@ -962,7 +962,7 @@
     "tests/e2e/questions/README.md": "759f83b27eed3d1c7349b477c62cad6c01a7318e1ab9ed6387ebff82ec03f968",
     "tests/e2e/questions/baseline/report.json": "45981e100d02384afd2b96b9ffa3e27966f4c93b2e40fc22b76cde102e2ea325",
     "tests/e2e/questions/baseline/report.md": "ba9cc33aaa19d6bf000307615fafaa438a973a82df18785c0d01839819c8ac1a",
-    "tests/e2e/questions/kind-phrasings.json": "e30767f60773d022db6363b963b5349eda70b61a048d2e82b498c292d9acd825",
+    "tests/e2e/questions/kind-phrasings.json": "3c3257b29855847226c1c3d511a3927016b4a3684a5c64e2b5b500a98812e222",
     "tests/e2e/questions/kind_report_test.go": "5be251c9080ea7ea9387993164693d8e555ec17148efd4aa77c918b3bd72c269",
     "tests/e2e/questions/kindmeasure/main.go": "78fbe95d6d04e34f4b1242e1b003887622c89a1644413690313c51f5ac256b7e",
     "tests/e2e/questions/kindmeasure/main_test.go": "c94107d7e614737a7ccdae67edba4317be4292020d3e57cd56f7b179443d8fe9",
