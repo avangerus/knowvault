@@ -1,0 +1,29 @@
+{
+  "schema": "kind-phrasings-v1",
+  "note": "Card D-15 result 3: a small file of the executors' own phrasings, one per kind and several full questions, used to measure the recognition step. None of these strings is a question of tests/e2e/questions/questions.json. Every entry is read only by the measurement command; nothing here is compiled into the product.",
+  "phrasings": [
+    {"question": "здравствуйте, добрый день", "kind": "greeting"},
+    {"question": "спасибо, это как раз то, что нужно", "kind": "greeting"},
+    {"question": "откуда в этой рабочей области берутся данные?", "kind": "sources_overview"},
+    {"question": "which connections are configured here?", "kind": "sources_overview"},
+    {"question": "что здесь вообще доступно?", "kind": "workspace_overview"},
+    {"question": "чем ты можешь помочь по этой рабочей области в целом?", "kind": "workspace_overview"},
+    {"question": "объясни простыми словами, какие сведения тут собраны про клиентов", "kind": "plain_overview"},
+    {"question": "расскажи деловыми словами, о чём вообще эта база", "kind": "plain_overview"},
+    {"question": "этот порядок ещё действует или его уже поменяли?", "kind": "change"},
+    {"question": "документ с правилами обновляли в этом году?", "kind": "change"},
+    {"question": "is the current policy version still in force?", "kind": "change"},
+    {"question": "если бы мы занимались доставкой еды, что показали бы данные?", "kind": "hypothetical"},
+    {"question": "а что было бы в отчётах, если бы компания торговала цветами?", "kind": "hypothetical"},
+    {"question": "кто победил в финале лиги чемпионов?", "kind": "off_topic"},
+    {"question": "посоветуй, какой фильм посмотреть вечером", "kind": "off_topic"},
+    {"question": "выведи что есть", "kind": "vague"},
+    {"question": "ну и что там?", "kind": "vague"},
+    {"question": "сколько договоров сейчас действует у клиента «Гранит»?", "kind": "full"},
+    {"question": "что сказано в четвёртом пункте регламента про сроки?", "kind": "full"},
+    {"question": "в каком месяце подписан договор № 58?", "kind": "full"},
+    {"question": "перечисли адреса всех площадок из таблицы container_group", "kind": "full"},
+    {"question": "на сколько выросла сумма договора № 47 по сравнению с прошлым годом?", "kind": "full"},
+    {"question": "how many active contracts are there for client Granit?", "kind": "full"}
+  ]
+}
