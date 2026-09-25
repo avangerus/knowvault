@@ -53,6 +53,24 @@ const CHANNELS_BY_COLOR_TYPE = new Map([
   [6, 4],
 ]);
 
+// pngDimensions reads width and height from the PNG header without decoding the
+// pixels. The interface review states the screenshot's own size in its prompt,
+// so the size rules are judged on the image; decoding the whole picture only to
+// learn two integers would be wasted work.
+export function pngDimensions(input) {
+  const buffer = Buffer.isBuffer(input) ? input : Buffer.from(input);
+  if (buffer.length < 24 || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    throw new Error("not a PNG file");
+  }
+  if (buffer.toString("latin1", 12, 16) !== "IHDR") {
+    throw new Error("PNG without a header chunk");
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (width <= 0 || height <= 0) throw new Error("PNG with an empty canvas");
+  return { width, height };
+}
+
 // decodePng returns { width, height, data } with one RGBA byte per channel,
 // four bytes per pixel, row-major from the top-left corner.
 export function decodePng(input) {

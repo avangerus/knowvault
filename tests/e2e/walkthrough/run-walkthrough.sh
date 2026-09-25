@@ -19,6 +19,15 @@
 # and its report names every reference that changed. An ordinary run never
 # writes inside the reference directory.
 #
+# Card U-4: every step's screenshot is also judged by a vision model against
+# the numbered rules of docs/UI-PRINCIPLES.md. The remarks are reported per
+# screen with the rule number and the place on the screen, and they never fail
+# a step. The review needs a key file and is skipped, with a reason in the
+# report, when there is none or the model cannot be reached.
+#
+#   KNOWVAULT_WALKTHROUGH_REVIEW_KEY_FILE=<file> \
+#     bash tests/e2e/walkthrough/run-walkthrough.sh
+#
 #   KNOWVAULT_WALKTHROUGH_TARGET      local (default) | stand
 #   KNOWVAULT_WALKTHROUGH_BASE_URL    stand origin; required for target=stand
 #   KNOWVAULT_WALKTHROUGH_CREDENTIALS credentials file path; required for
@@ -40,6 +49,19 @@
 #                                     1 replaces the approved references
 #   KNOWVAULT_WALKTHROUGH_DIFFERENCE_THRESHOLD
 #                                     share of the screen that may differ
+#   KNOWVAULT_WALKTHROUGH_REVIEW_KEY_FILE
+#                                     file holding the vision model's key, read
+#                                     at run time and never written anywhere;
+#                                     without it the interface review is skipped
+#   KNOWVAULT_WALKTHROUGH_REVIEW      `0` switches the interface review off;
+#                                     `1` enables it for target=stand, whose
+#                                     screenshots otherwise stay on the stand
+#   KNOWVAULT_WALKTHROUGH_REVIEW_BASE_URL
+#                                     OpenAI-compatible model endpoint
+#   KNOWVAULT_WALKTHROUGH_REVIEW_MODEL
+#                                     vision model name
+#   KNOWVAULT_WALKTHROUGH_REVIEW_MAX_COST_USD
+#                                     review cost ceiling for one run (default 0.05)
 #   KNOWVAULT_PLAYWRIGHT_MODULE       module name/path of the Playwright package
 #                                     (default: playwright)
 #

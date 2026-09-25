@@ -18,6 +18,13 @@
 //                approved references and the report names every one that changed.
 // An ordinary run never writes inside the reference directory.
 //
+// Card U-4 adds the interface review. After a step's screenshot is taken it is
+// judged by a vision model against the rules of docs/UI-PRINCIPLES.md; the
+// remarks are reported per screen with their rule number and place, and the
+// review never fails a step. Without a key file, without a reachable model or
+// with a refused key the run still passes and the report says the review did
+// not happen and why.
+//
 // Environment:
 //   KNOWVAULT_WALKTHROUGH_BASE_URL      stand origin (required)
 //   KNOWVAULT_WALKTHROUGH_REPORT_DIR    output directory (default: ./baseline)
@@ -34,9 +41,20 @@
 //                                       when a stand run replaces references
 //   KNOWVAULT_WALKTHROUGH_UPDATE_REFERENCES  1 replaces the approved references
 //                                       with this run's screenshots
+//   KNOWVAULT_WALKTHROUGH_REVIEW_KEY_FILE  file holding the review model's key,
+//                                       read at run time and never written
+//                                       anywhere; without it the review is
+//                                       skipped
+//   KNOWVAULT_WALKTHROUGH_REVIEW        `0` switches the review off; `1`
+//                                       enables it for the stand target, whose
+//                                       screenshots otherwise stay on the stand
+//   KNOWVAULT_WALKTHROUGH_REVIEW_BASE_URL  OpenAI-compatible endpoint
+//   KNOWVAULT_WALKTHROUGH_REVIEW_MODEL  vision model name
+//   KNOWVAULT_WALKTHROUGH_REVIEW_MAX_COST_USD  review cost ceiling
 //
 // It exits 0 only when every step passed. The password from the credentials
-// file never reaches the report, the logs or a screenshot.
+// file and the review model's key never reach the report, the logs or a
+// screenshot.
 
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -44,6 +62,7 @@ import { fileURLToPath } from "node:url";
 
 import { readCredentials, redactSecrets } from "./credentials.mjs";
 import { buildReport, formatPercent, Walkthrough, writeReport } from "./report.mjs";
+import { createReviewFromEnvironment } from "./review.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 import { DEFAULT_DIFFERENCE_THRESHOLD, DEFAULT_PIXEL_TOLERANCE } from "./visual.mjs";
 
@@ -127,7 +146,25 @@ if (credentialsPath !== "") {
     throw new Error("set KNOWVAULT_WALKTHROUGH_USER or put a username in the credentials file");
   }
 }
-const secrets = credentials === null ? [] : [credentials.password];
+
+// Card U-4: the interface review is set up before the redactor so the key read
+// from its file is one of the strings every recorded line is scrubbed of. On a
+// stand the review is off unless it is asked for explicitly: a stand screenshot
+// holds owner data, and sending it to a model is the operator's decision.
+const reviewSetup =
+  target === "stand" && (process.env.KNOWVAULT_WALKTHROUGH_REVIEW ?? "").trim() !== "1"
+    ? {
+        reviewer: null,
+        reason:
+          "the interface review is off for the stand target; set KNOWVAULT_WALKTHROUGH_REVIEW=1 to send stand screenshots to the review model",
+        key: null,
+      }
+    : await createReviewFromEnvironment(process.env, { root: repositoryRoot });
+const reviewer = reviewSetup.reviewer;
+const reviewDisabledReason = reviewSetup.reason;
+const secrets = [];
+if (credentials !== null) secrets.push(credentials.password);
+if (typeof reviewSetup.key === "string" && reviewSetup.key !== "") secrets.push(reviewSetup.key);
 const redact = (value) => redactSecrets(value, secrets);
 
 // How long a toast lives into the next step depends on how fast that step ran,
@@ -181,6 +218,8 @@ async function run() {
     differenceThreshold,
     pixelTolerance: DEFAULT_PIXEL_TOLERANCE,
     beforeScreenshot: settleScreen,
+    reviewer,
+    reviewDisabledReason,
   });
   const startedAt = new Date();
 
@@ -205,6 +244,7 @@ async function run() {
       pixelTolerance: DEFAULT_PIXEL_TOLERANCE,
       referenceLabel,
     },
+    review: { reviewer, disabledReason: reviewDisabledReason },
   });
   const { markdownPath, jsonPath } = await writeReport(reportDir, report);
   console.log(`walkthrough ${report.passed ? "PASS" : "FAIL"}: ${report.step_count} steps, ${report.failed_step_count} failed`);
@@ -218,6 +258,15 @@ async function run() {
   for (const update of report.visual.references_updated) {
     const measured = typeof update.difference_ratio === "number" ? ` (was ${formatPercent(update.difference_ratio)} different)` : "";
     console.log(`reference ${update.change}: ${update.reference}${measured}`);
+  }
+  if (report.review.status === "not_reviewed") {
+    console.log(`interface review did not happen: ${report.review.reason}`);
+  } else {
+    const cost = typeof report.review.cost_usd === "number" ? `$${report.review.cost_usd.toFixed(4)}` : "unknown";
+    console.log(
+      `interface review ${report.review.status}: ${report.review.reviewed_step_count} screens, ` +
+        `${report.review.remark_count} remarks, ${report.review.no_remark_step_count} without remarks, cost ${cost}`,
+    );
   }
   console.log(`report ${markdownPath}`);
   console.log(`report ${jsonPath}`);

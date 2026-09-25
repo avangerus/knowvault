@@ -1,15 +1,47 @@
 {
-  "schema_version": "walkthrough-report-v2",
+  "schema_version": "walkthrough-report-v4",
   "command": "bash tests/e2e/walkthrough/run-walkthrough.sh",
   "scenario": "local",
-  "base_url": "https://127.0.0.1:55479",
-  "started_at": "2026-09-25T19:36:12.534Z",
-  "finished_at": "2026-09-25T19:36:19.700Z",
-  "total_seconds": 7.166,
+  "base_url": "https://127.0.0.1:55476",
+  "started_at": "2026-09-25T20:58:55.226Z",
+  "finished_at": "2026-09-25T20:59:57.923Z",
+  "total_seconds": 62.697,
   "passed": true,
   "step_count": 11,
   "failed_step_count": 0,
   "failed_steps": [],
+  "visual": {
+    "mode": "enforce",
+    "difference_threshold": 0.0005,
+    "pixel_tolerance": 16,
+    "reference_dir": "tests/e2e/walkthrough/references/local",
+    "compared_step_count": 11,
+    "differing_step_count": 0,
+    "failed_step_count": 0,
+    "missing_reference_count": 0,
+    "unreadable_reference_count": 0,
+    "max_difference_ratio": 0.0003464506172839506,
+    "references_updated": [],
+    "references_changed_count": 0,
+    "references_unchanged_count": 0
+  },
+  "review": {
+    "status": "reviewed",
+    "reason": null,
+    "model": "deepseek-flash",
+    "endpoint": "https://api.deepseek.com",
+    "rules_source": "docs/UI-PRINCIPLES.md",
+    "rule_count": 15,
+    "price_window": "off_peak",
+    "cost_usd": 0.005044,
+    "cost_limit_usd": 0.05,
+    "reviewed_step_count": 11,
+    "not_reviewed_step_count": 0,
+    "failed_step_count": 0,
+    "skipped_step_count": 0,
+    "remark_count": 81,
+    "no_remark_step_count": 0
+  },
   "answers": [
     {
       "step": "ask the question in the chat and get an answer",
@@ -21,8 +53,8 @@
     {
       "name": "the interface shows the running server revision",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:12.534Z",
-      "seconds": 0.1322269,
+      "started_at": "2026-09-25T20:58:55.226Z",
+      "seconds": 0.114405,
       "screenshot": "screenshots/01-the-interface-shows-the-running-server-revision.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -31,7 +63,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_TODgdLMIkJdyMnWvZnCRQQ\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_EZ1brdZlIeJcuR2L4SEyUw\"}}"
         }
       ],
       "consoleErrors": [
@@ -41,13 +73,57 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/01-the-interface-shows-the-running-server-revision.png",
+        "difference_ratio": 0,
+        "different_pixels": 0,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": null,
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 5,
+            "rule_title": "Не больше 7 элементов управления в одной группе",
+            "where": "верхний правый угол шапки",
+            "note": "Рядом с кнопкой «Sign in» стоит технический код «9c1f4a7» — это отдельный элемент управления/служебный текст в одной группе с кнопкой входа."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "верхний правый угол шапки",
+            "note": "Хеш/идентификатор «9c1f4a7» показан на первом экране; такие технические данные должны быть скрыты за «Подробнее»."
+          }
+        ],
+        "remark_count": 2,
+        "cost_usd": 0.00012115800000000001,
+        "usage": {
+          "prompt_tokens": 1681,
+          "completion_tokens": 158,
+          "total_tokens": 1839,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 145
+        }
+      }
     },
     {
       "name": "sign in as the test user",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:12.689Z",
-      "seconds": 0.0892861,
+      "started_at": "2026-09-25T20:58:58.936Z",
+      "seconds": 0.1237329,
       "screenshot": "screenshots/02-sign-in-as-the-test-user.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -56,7 +132,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_b72UMKQMSk_290m78kqkRA\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_x_BuO_2Q-YwqGzwvPhn66w\"}}"
         }
       ],
       "consoleErrors": [
@@ -66,13 +142,110 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/02-sign-in-as-the-test-user.png",
+        "difference_ratio": 0.00006558641975308642,
+        "different_pixels": 85,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 129,
+          "y": 249,
+          "right": 141,
+          "bottom": 257
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "шапка страницы, справа — рядом с «Server available»",
+            "note": "Технический идентификатор «9c1f4a7» (хеш/ID) показан на первом экране; его нужно убрать за «Подробнее»."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "левый нижний угол — подпись «Model»",
+            "note": "Техническое имя модели «u1-walkthrough-stub · local» (stub, local) выставлено на первый экран вместо человеческого названия."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "левая панель, под «Search conversations…»",
+            "note": "В списке беседы видно «Sep 25, 11:58 PM · 1 turn» — служебные метаданные (turn) на первом экране."
+          },
+          {
+            "rule": 5,
+            "rule_title": "Не больше 7 элементов управления в одной группе",
+            "where": "нижняя область ввода, под полем вопроса",
+            "note": "Под полем ввода сгруппированы поле, селектор модели, подсказка «Enter to ask · Shift + Enter for a new line» и круглая кнопка отправки — группа перегружена, часть служебного стоит спрятать."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "шапка страницы, справа — «Server available»",
+            "note": "Системное сообщение на английском; нужна человеческая формулировка на русском."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "левый нижний угол, подпись «Model»",
+            "note": "Технический слаг «u1-walkthrough-stub · local» вместо понятного названия модели."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "правая часть шапки панели — «Sources: 4 · need attention: 3»",
+            "note": "Подпись на английском и в служебной форме, вместо «Источник обновлён…» по-русски."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "нижняя область ввода",
+            "note": "Подсказка «Enter to ask · Shift + Enter for a new line» дана на английском, а не на языке пользователя."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "верхняя часть экрана, заголовок страницы",
+            "note": "Заголовок «Ask» не отражает рабочее пространство «ws_registration»; версия продукта нигде не показана."
+          },
+          {
+            "rule": 11,
+            "rule_title": "Сетка и выравнивание",
+            "where": "центральная область и правая часть",
+            "note": "Кнопка «Sources: 4 · need attention: 3» стоит на другой вертикали, чем «Show evidence», — края и отступы не сходятся по общей сетке."
+          }
+        ],
+        "remark_count": 10,
+        "cost_usd": 0.00058092,
+        "usage": {
+          "prompt_tokens": 1680,
+          "completion_tokens": 705,
+          "total_tokens": 2385,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1040
+        }
+      }
     },
     {
       "name": "open Sources and confirm the synthetic database tables",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:12.803Z",
-      "seconds": 1.1018144,
+      "started_at": "2026-09-25T20:59:04.166Z",
+      "seconds": 1.0931445,
       "screenshot": "screenshots/03-open-sources-and-confirm-the-synthetic-database-tables.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -94,13 +267,92 @@
       ],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/03-open-sources-and-confirm-the-synthetic-database-tables.png",
+        "difference_ratio": 0.00021682098765432099,
+        "different_pixels": 281,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 326,
+          "y": 311,
+          "right": 499,
+          "bottom": 371
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "карточки источников «Клиенты» и «Договоры», строки состояния",
+            "note": "Технические англоязычные подписи вместо человеческих: «Status unconfirmed», «Freshness: unknown», «SQL not configured», «Document folder», «Latest run · completed», «1 table · 0 indexed», «Query credential reference», «cred_…», «Discovered/Processed/New versions/Fragments published/Quarantined» — интерфейс не по-русски и не по делу."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "верхняя панель, центр и справа",
+            "note": "Технические детали на первом экране: «9c1f4a7 Server available», «model: on premises», «Query credential reference» с полем cred_… — должны быть за «Подробнее»."
+          },
+          {
+            "rule": 2,
+            "rule_title": "Ничего дважды",
+            "where": "карточки «Клиенты» и «Договоры»",
+            "note": "Две одинаковые карточки с одинаковым набором элементов (счётчики, поле cred_…, кнопка Save, «Tables (1)») и одинаковым статусом — дублирование одного и того же блока действий."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "шапка страницы, слева",
+            "note": "Виден workspace «WS_REGISTRATION», но нет названия экрана вместе с номером версии — номер версии нигде не отображается."
+          },
+          {
+            "rule": 13,
+            "rule_title": "Спокойная палитра",
+            "where": "карточка «Регламенты и договоры», бейдж статуса",
+            "note": "Бейдж «Data is up to date» выполнен зелёным — зелёный использован как второй акцент рядом с основным синим, что размывает единственный акцентный цвет."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "нижние карточки источников, поля и кнопки",
+            "note": "Поле «cred_…» и кнопки «Save» выглядят ниже 36 px по высоте (порядка 28–32 px) при масштабе 1:1."
+          },
+          {
+            "rule": 11,
+            "rule_title": "Сетка и выравнивание",
+            "where": "карточки источников, правый край",
+            "note": "Кнопка «Refresh» и ссылка «Disable» в первой карточке смещены вправо относительно кнопки «Connect source», левые края карточек не совпадают с блоком заголовка «Sources 4»."
+          }
+        ],
+        "remark_count": 7,
+        "cost_usd": 0.0005278199999999999,
+        "usage": {
+          "prompt_tokens": 1682,
+          "completion_tokens": 616,
+          "total_tokens": 2298,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1042
+        }
+      }
     },
     {
       "name": "open the model settings and save a change",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:13.942Z",
-      "seconds": 0.2582162,
+      "started_at": "2026-09-25T20:59:14.770Z",
+      "seconds": 0.1964259,
       "screenshot": "screenshots/04-open-the-model-settings-and-save-a-change.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -114,13 +366,81 @@
       ],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/04-open-the-model-settings-and-save-a-change.png",
+        "difference_ratio": 0,
+        "different_pixels": 0,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": null,
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 2,
+            "rule_title": "Ничего дважды",
+            "where": "основная область: «Save all» справа и «Save» под полем описания",
+            "note": "Две кнопки сохранения на одном экране — неясно, чем они отличаются; одно действие должно быть представлено одним элементом."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "шапка страницы и заголовок блока",
+            "note": "Название экрана и версия показаны только по-английски («Settings», «MODEL CONTEXT», «Version 2 · usr_reg_owner»), хотя интерфейс должен быть на русском."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "верхняя панель справа и строка «Version 2 · usr_reg_owner»",
+            "note": "Технические данные (хеш 9c1f4a7, id воркспейса ws_registration, usr_reg_owner, «model: on premises») выставлены на первом плане вместо «Подробнее»."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "весь экран",
+            "note": "Подписи и названия вкладок даны по-английски и техническими терминами («MODEL CONTEXT», «Proposals (0)», «stale»-подобные id) вместо понятных русских формулировок."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "верхняя панель: хеш, «Server available», «Owner»",
+            "note": "Вспомогательный текст в шапке заметно мельче основного (порядка 11–12 px при 14 px основного), что ниже читаемого минимума."
+          },
+          {
+            "rule": 14,
+            "rule_title": "Формы как документ, а не как анкета",
+            "where": "блок «Description» под вкладками",
+            "note": "Одиночное большое поле без пояснения под ним; вкладки «Instructions / Glossary / Sources» выглядят как анкета, а не как связный документ настроек."
+          }
+        ],
+        "remark_count": 6,
+        "cost_usd": 0.00045161999999999996,
+        "usage": {
+          "prompt_tokens": 1682,
+          "completion_tokens": 489,
+          "total_tokens": 2171,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1042
+        }
+      }
     },
     {
       "name": "ask the question in the chat and get an answer",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:14.224Z",
-      "seconds": 4.457108,
+      "started_at": "2026-09-25T20:59:24.763Z",
+      "seconds": 0.9556557,
       "screenshot": "screenshots/05-ask-the-question-in-the-chat-and-get-an-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -139,13 +459,68 @@
         }
       ],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/05-ask-the-question-in-the-chat-and-get-an-answer.png",
+        "difference_ratio": 0.0002044753086419753,
+        "different_pixels": 265,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 129,
+          "y": 249,
+          "right": 1393,
+          "bottom": 313
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "шапка страницы, вверху справа",
+            "note": "Показаны технические данные: идентификатор воркспейса «9c1f4a7», состояние «Server available» и внутренний идентификатор модели «u1-walkthrough-stub · local» внизу у поля ввода — это техника на первом экране, её нужно убрать за «Подробнее»."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "панель над полем ответа и подпись у поля ввода",
+            "note": "Подписи на английском и в системных терминах: «Sources: 4 · need attention: 3», «Hide conversations», «Show evidence», «Archive», а также «Model», «Enter to ask · Shift + Enter for a new line» вместо понятных русских формулировок."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "заголовок страницы и шапка",
+            "note": "Название экрана «Ask» не по-русски, а номер версии/сборки продукта нигде не виден."
+          }
+        ],
+        "remark_count": 3,
+        "cost_usd": 0.00032772,
+        "usage": {
+          "prompt_tokens": 1684,
+          "completion_tokens": 282,
+          "total_tokens": 1966,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1044
+        }
+      }
     },
     {
       "name": "collapse the conversation list",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:18.721Z",
-      "seconds": 0.0503154,
+      "started_at": "2026-09-25T20:59:29.205Z",
+      "seconds": 0.033265,
       "screenshot": "screenshots/06-collapse-the-conversation-list.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -154,13 +529,86 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/06-collapse-the-conversation-list.png",
+        "difference_ratio": 0.00007021604938271605,
+        "different_pixels": 91,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 1380,
+          "y": 251,
+          "right": 1393,
+          "bottom": 259
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "нижний левый угол панели, подписи кнопок",
+            "note": "Интерфейсные подписи на английском: «Show conversations», «Show evidence», «Archive», «Ask as you would ask a colleague», «Sign out», «Model», «Server available», «Owner», «Enter to ask» — должны быть на русском."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "шапка страницы, справа",
+            "note": "Видны технические данные: «9c1f4a7» и «Server available» — это служебная информация, ей место за «Подробнее»."
+          },
+          {
+            "rule": 2,
+            "rule_title": "Ничего дважды",
+            "where": "верхняя часть страницы и низ панели",
+            "note": "Призыв «ЧТО ТЫ ЗНАЕШЬ?» дублируется: и как заголовок, и как метка «QUESTION» над ответом."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "шапка страницы, по центру",
+            "note": "Нет номера версии документа/ответа в постоянном виде — видно только дату «Sep 25, 11:59 PM» без версии."
+          },
+          {
+            "rule": 13,
+            "rule_title": "Спокойная палитра",
+            "where": "левая вертикальная панель, верхняя иконка",
+            "note": "Активная иконка залита плотным тёмно-синим — это второй сильный акцент помимо главной кнопки отправки; ослабьте до нейтрального состояния."
+          },
+          {
+            "rule": 15,
+            "rule_title": "Ничего не обрезано и не наезжает",
+            "where": "нижний левый угол, подпись «Model» с выпадающим списком",
+            "note": "Строка «Model u1-walkthrough-stub · local» упирается в нижнюю кромку и почти соприкасается с подсказкой «Enter to ask» — тесно на границе окна."
+          }
+        ],
+        "remark_count": 6,
+        "cost_usd": 0.00044381999999999994,
+        "usage": {
+          "prompt_tokens": 1678,
+          "completion_tokens": 477,
+          "total_tokens": 2155,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1038
+        }
+      }
     },
     {
       "name": "expand the conversation list again",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:18.818Z",
-      "seconds": 0.0528516,
+      "started_at": "2026-09-25T20:59:33.692Z",
+      "seconds": 0.0301851,
       "screenshot": "screenshots/07-expand-the-conversation-list-again.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -169,13 +617,128 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/07-expand-the-conversation-list-again.png",
+        "difference_ratio": 0.0002044753086419753,
+        "different_pixels": 265,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 129,
+          "y": 249,
+          "right": 1393,
+          "bottom": 313
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "шапка страницы, справа вверху",
+            "note": "Технический идентификатор «9c1f4a7» и служебный статус «Server available» показаны на первом экране, хотя это техника."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "под полем вопроса, слева",
+            "note": "Идентификатор модели «u1-walkthrough-stub · local» выведен на первом экране как техническая строка."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "поле Workspace, вверху слева",
+            "note": "Служебное имя рабочего пространства «ws_registration» показано в шапке."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "шапка страницы, справа вверху",
+            "note": "Подпись «Server available» и «9c1f4a7» — системная техническая формулировка вместо человеческой."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "под полем вопроса, слева",
+            "note": "Название модели «u1-walkthrough-stub · local» — нечеловеческая системная строка."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "кнопка под заголовком вопроса, справа вверху",
+            "note": "Подпись «Sources: 4 · need attention: 3» на английском и с технической формулировкой."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "панель чатов слева",
+            "note": "Подписи интерфейса на английском: CONVERSATIONS, Search conversations, Hide conversations, Show evidence, Archive, QUESTION, New conversation."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "шапка страницы, вверху слева",
+            "note": "Не видно названия экрана и номера версии — есть только логотип и имя рабочего пространства."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "нижний левый угол панели чатов",
+            "note": "Кнопка «+ New conversation» по высоте около 32 px — ниже требуемых 36 px."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "панель чатов слева, поле поиска",
+            "note": "Поле «Search conversations» по высоте около 32 px — ниже требуемых 36 px."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "шапка страницы, справа вверху",
+            "note": "Небольшие служебные подписи «9c1f4a7» и «Server available» набраны мелким шрифтом меньше 14 px."
+          },
+          {
+            "rule": 15,
+            "rule_title": "Ничего не обрезано и не наезжает",
+            "where": "шапка страницы, вверху слева",
+            "note": "Название рабочего пространства «ws_registration» и «Workspace» прижаты к краю и рискуют обрезаться при меньшей ширине окна."
+          },
+          {
+            "rule": 1,
+            "rule_title": "Одна главная задача на экран",
+            "where": "весь экран",
+            "note": "На экране одновременно видны и список чатов, и лента вопроса, и панель с кнопками источников и доказательств — главное действие не выделено однозначно."
+          }
+        ],
+        "remark_count": 13,
+        "cost_usd": 0.00064077,
+        "usage": {
+          "prompt_tokens": 1679,
+          "completion_tokens": 805,
+          "total_tokens": 2484,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1039
+        }
+      }
     },
     {
       "name": "open the evidence panel with the screen control",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:18.920Z",
-      "seconds": 0.0513796,
+      "started_at": "2026-09-25T20:59:38.827Z",
+      "seconds": 0.0491592,
       "screenshot": "screenshots/08-open-the-evidence-panel-with-the-screen-control.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -184,13 +747,92 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/08-open-the-evidence-panel-with-the-screen-control.png",
+        "difference_ratio": 0.0002044753086419753,
+        "different_pixels": 265,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 129,
+          "y": 249,
+          "right": 1047,
+          "bottom": 313
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "шапка страницы, справа вверху",
+            "note": "Показаны технические идентификаторы «9c1f4a7» и статус «Server available» — системный жаргон на первом экране."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "правая панель, список CONNECTED SOURCES",
+            "note": "Видны технические имена вида «Клиенты · public.client», «Договоры · public.contract», «МНО · public.container_group» — схемы и таблицы данных вместо человеческих названий."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "правая панель, статусы источников",
+            "note": "Статусы «Data is up to date» и «Status unconfirmed» — английский и системный текст вместо человеческих формулировок на русском."
+          },
+          {
+            "rule": 13,
+            "rule_title": "Спокойная палитра",
+            "where": "правая панель, точки слева от источников",
+            "note": "Оранжевые/янтарные индикаторы статуса выглядят как предупреждение, хотя непонятно, есть ли ошибка; акцент размывается."
+          },
+          {
+            "rule": 2,
+            "rule_title": "Ничего дважды",
+            "where": "левая панель и основная область",
+            "note": "В списке чатов и в блоке вопроса дублируются «что ты знаешь?» — один и тот же текст в двух местах без различия ролей."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "основная область, заголовок",
+            "note": "Заголовок экрана «Ask» без номера версии/сборки продукта; версия нигде не видна."
+          },
+          {
+            "rule": 15,
+            "rule_title": "Ничего не обрезано и не наезжает",
+            "where": "нижняя часть основной области, блок Model",
+            "note": "Селект «u1-walkthrough-stub · local» с длинным техническим значением при 1280–1366 px рискует обрезаться и наезжать на поле ввода."
+          }
+        ],
+        "remark_count": 7,
+        "cost_usd": 0.00045702,
+        "usage": {
+          "prompt_tokens": 1682,
+          "completion_tokens": 498,
+          "total_tokens": 2180,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1042
+        }
+      }
     },
     {
       "name": "close the evidence panel with one action",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:19.023Z",
-      "seconds": 0.0506307,
+      "started_at": "2026-09-25T20:59:43.151Z",
+      "seconds": 0.0364331,
       "screenshot": "screenshots/09-close-the-evidence-panel-with-one-action.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -199,13 +841,92 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/09-close-the-evidence-panel-with-one-action.png",
+        "difference_ratio": 0.0002044753086419753,
+        "different_pixels": 265,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 129,
+          "y": 249,
+          "right": 1393,
+          "bottom": 313
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "верхняя шапка, под названием воркспейса",
+            "note": "Технический идентификатор «9c1f4a7» показан на первом экране без «Подробнее»."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "под полем вопроса, слева",
+            "note": "Идентификатор модели «u1-walkthrough-stub · local» — техника на первом экране."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "строка вопроса, справа вверху",
+            "note": "Метка «QUESTION  Что ты знаешь?» и служебное «How the answer was found · 7» занимают первый экран служебной информацией."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "под полем вопроса и в шапке",
+            "note": "Английские подписи: «Ask as you would ask a colleague», «Hide conversations», «Show evidence», «Server available», «Ask», «Sources». Интерфейс заявлен по-русски."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "строка под вопросом",
+            "note": "Формулировка «How the answer was found · 7» — машинный текст вместо понятной подписи."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "текст ответа и подписи",
+            "note": "Текст ответа и мелкие подписи выглядят мельче 14 px — основной текст должен быть не меньше 14 px."
+          },
+          {
+            "rule": 15,
+            "rule_title": "Ничего не обрезано и не наезжает",
+            "where": "шапка страницы, справа",
+            "note": "Плашка «Sources · 4 · need attention: 3» и строка идентификатора находятся у самого края и могут обрезаться при ширине 1280–1366 px."
+          }
+        ],
+        "remark_count": 7,
+        "cost_usd": 0.00043587,
+        "usage": {
+          "prompt_tokens": 1681,
+          "completion_tokens": 463,
+          "total_tokens": 2144,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1041
+        }
+      }
     },
     {
       "name": "open the evidence of that answer",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:19.121Z",
-      "seconds": 0.2446689,
+      "started_at": "2026-09-25T20:59:47.215Z",
+      "seconds": 0.1315281,
       "screenshot": "screenshots/10-open-the-evidence-of-that-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -214,13 +935,110 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/10-open-the-evidence-of-that-answer.png",
+        "difference_ratio": 0.0003464506172839506,
+        "different_pixels": 449,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": {
+          "x": 129,
+          "y": 244,
+          "right": 1227,
+          "bottom": 329
+        },
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "верхняя панель справа; карточка доказательства справа",
+            "note": "Технические строки на английском и системные идентификаторы: «Server available», «Owner», «ws_registration», «Evidence 1», «extracted text · observed», «Source path projects/alpha/waste-removal-regulation.txt», «turn Sep 25, 11:59 PM»."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "кнопки на панели доказательства справа",
+            "note": "Подписи действий на английском: «Open separately», «Copy link», «Full screen», «Hide evidence»."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "панель доказательства справа, блок «Source path»",
+            "note": "Путь к файлу и внутренний идентификатор проекта показаны на первом экране, а не спрятаны за «Подробнее»."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "верхняя панель, рядом с «Workspace»",
+            "note": "Технический код «9c1f4a7» виден без раскрытия."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "заголовок чата над полем ввода",
+            "note": "Название экрана и номер версии ответа нигде явно не показаны — «Ask» в шапке не описывает текущий экран, номер версии отсутствует."
+          },
+          {
+            "rule": 8,
+            "rule_title": "Текст свёрстан",
+            "where": "блок ответа в чате и карточка доказательства",
+            "note": "Текст показан сплошной строкой без структуры заголовков и списков."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "левая панель «CONVERSATIONS» и второстепенные подписи",
+            "note": "Служебные подписи заметно мельче 14 px — ниже минимального читаемого размера."
+          },
+          {
+            "rule": 13,
+            "rule_title": "Спокойная палитра",
+            "where": "иконка citation 1 в ответе и активный пункт чата слева",
+            "note": "Синий акцент используется в нескольких разных местах (иконка цитаты, активный чат, фокус поля), из-за чего неясно, какое действие главное."
+          },
+          {
+            "rule": 1,
+            "rule_title": "Одна главная задача на экран",
+            "where": "правый верхний угол и панель доказательства",
+            "note": "Одновременно показаны чат, список доказательства и служебные панели; главное действие (задать вопрос) не выделено среди второстепенных."
+          },
+          {
+            "rule": 15,
+            "rule_title": "Ничего не обрезано и не наезжает",
+            "where": "нижняя часть панели доказательства и правая колонка при 1280–1366 px",
+            "note": "Правая колонка с доказательством занимает почти треть ширины поверх контента; при сужении окна текст ответа и панели будут сжаты и вероятно обрезаны."
+          }
+        ],
+        "remark_count": 10,
+        "cost_usd": 0.0005935199999999999,
+        "usage": {
+          "prompt_tokens": 1680,
+          "completion_tokens": 726,
+          "total_tokens": 2406,
+          "prompt_tokens_details": {
+            "cached_tokens": 640
+          },
+          "prompt_cache_hit_tokens": 640,
+          "prompt_cache_miss_tokens": 1040
+        }
+      }
     },
     {
       "name": "open the source page of that answer",
       "status": "passed",
-      "started_at": "2026-09-25T19:36:19.406Z",
-      "seconds": 0.2066544,
+      "started_at": "2026-09-25T20:59:52.580Z",
+      "seconds": 0.1991468,
       "screenshot": "screenshots/11-open-the-source-page-of-that-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -229,7 +1047,99 @@
       "writes": [],
       "answers": [],
       "error": null,
-      "page_excerpt": null
+      "page_excerpt": null,
+      "visual": {
+        "status": "same",
+        "reference": "tests/e2e/walkthrough/references/local/11-open-the-source-page-of-that-answer.png",
+        "difference_ratio": 0,
+        "different_pixels": 0,
+        "total_pixels": 1296000,
+        "size_mismatch": false,
+        "difference_box": null,
+        "threshold": 0.0005,
+        "pixel_tolerance": 16,
+        "diff_image": null
+      },
+      "visual_failed": false,
+      "reference_update": null,
+      "review": {
+        "status": "reviewed",
+        "reason": null,
+        "remarks": [
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "шапка, слева под заголовком («Source path projects/alpha/waste-removal-regulation.txt») и шапка справа (хеш «9c1f4a7»)",
+            "note": "Путь к файлу и хеш/идентификатор вынесены на первый экран; техническую информацию следует спрятать под «Подробнее»."
+          },
+          {
+            "rule": 3,
+            "rule_title": "Служебное — по запросу",
+            "where": "верхний левый угол над заголовком («WS_REGISTRATION»)",
+            "note": "Технический код раздела показан как основной заголовок; пользователю нужнее человеческое название страницы."
+          },
+          {
+            "rule": 6,
+            "rule_title": "Слова человека, не системы",
+            "where": "шапка страницы и верхний левый угол",
+            "note": "Английские системные подписи «WS_REGISTRATION», «Source path», «Server available», «Sign out», «Back to search» вместо русского интерфейса."
+          },
+          {
+            "rule": 9,
+            "rule_title": "Видно, где я и что за версия",
+            "where": "верхняя часть страницы, заголовок",
+            "note": "Нет явного названия экрана и номера версии документа; «редакция 2026 года» указана в тексте, но не в шапке."
+          },
+          {
+            "rule": 1,
+            "rule_title": "Одна главная задача на экран",
+            "where": "весь экран",
+            "note": "Непонятно главное действие: функций кроме чтения и ухода назад нет, экран выглядит как тупик без понятного следующего шага."
+          },
+          {
+            "rule": 4,
+            "rule_title": "Вспомогательные панели убираются",
+            "where": "под блоком текста, слева («▸ Details»)",
+            "note": "Скрытый блок «Details» дублирует уже показанный путь и данные; назначение панели из подписи неясно."
+          },
+          {
+            "rule": 14,
+            "rule_title": "Формы как документ, а не как анкета",
+            "where": "центральная область с текстом",
+            "note": "Текст документа завёрнут в узкий блок с рамкой шириной около половины экрана вместо колонки во всю ширину."
+          },
+          {
+            "rule": 11,
+            "rule_title": "Сетка и выравнивание",
+            "where": "заголовок и путь слева против кнопки «Back to search» справа",
+            "note": "Левый край заголовка и поля «Source path», а также отступы слева от блока текста не совпадают — единая сетка не выдержана."
+          },
+          {
+            "rule": 15,
+            "rule_title": "Ничего не обрезано и не наезжает",
+            "where": "блок с текстом документа",
+            "note": "Контент занимает малую часть ширины окна 1440 px, справа остаётся большое пустое поле; при 1280–1366 px остаются крупные незаполненные области."
+          },
+          {
+            "rule": 12,
+            "rule_title": "Читаемый размер",
+            "where": "текст документа и ссылка «Details»",
+            "note": "Вспомогательные подписи («Source path», «Details», верхняя строка) выглядят мельче 14 px и хуже читаются, чем нужно."
+          }
+        ],
+        "remark_count": 10,
+        "cost_usd": 0.000463758,
+        "usage": {
+          "prompt_tokens": 1681,
+          "completion_tokens": 729,
+          "total_tokens": 2410,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 145
+        }
+      }
     }
   ]
 }
