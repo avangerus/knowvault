@@ -956,7 +956,7 @@
     "tests/e2e/questions/README.md": "e5e54d8754f7ba565e3ed17c172c16a563f18cf334097a41d10428feeee93633",
     "tests/e2e/questions/baseline/report.json": "45981e100d02384afd2b96b9ffa3e27966f4c93b2e40fc22b76cde102e2ea325",
     "tests/e2e/questions/baseline/report.md": "ba9cc33aaa19d6bf000307615fafaa438a973a82df18785c0d01839819c8ac1a",
-    "tests/e2e/questions/questions.json": "3f73ee9ac1534e82feb76cf86c526d5177657d9fffd4af528fe2048ddaf9b374",
+    "tests/e2e/questions/questions.json": "c9cb740bb7b65d5cd6948a5313a2cdfcbb7cc5b12f83ff12de000047425d6236",
     "tests/e2e/questions/report.go": "5ffc0cdf5416d6b738f6a9df20d65638b44b54839731d7ede7767a095a5083a7",
     "tests/e2e/questions/rules.go": "6baa925524d8ad346fee9a5ed9b625a29624e29f2713b556665823969f0f03a2",
     "tests/e2e/questions/rules_test.go": "e2a7f097bdf4b7ec4419229e6dc9f488def0e0bdb5107db27609c3b5d8cf97ea",
