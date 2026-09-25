@@ -333,19 +333,24 @@ svg { display: block; }
 .signin-note { margin-top: 14px; color: var(--ink-secondary); font-size: var(--fs-meta); line-height: 1.5; }
 
 /* ---------------------------------------------------------------------------
-   Questions: three-column layout — topics | conversation (talk) | evidence (evi) —
-   matching final.html's .screen.main grid. Only the inner panes scroll; the
-   layout itself fills the content panel without a page-level scrollbar
-   (decision 14: the primary scenario fits a laptop screen).
+   Questions: the chat screen's grid. The base layout is the conversation list
+   and the chat; the evidence column exists only while the person asked for the
+   evidence panel (`.ask-layout-evidence`, card W-8), so reading answers gets
+   the full width. Only the inner panes scroll; the layout itself fills the
+   content panel without a page-level scrollbar (decision 14: the primary
+   scenario fits a laptop screen).
 --------------------------------------------------------------------------- */
-.ask-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr) minmax(300px, 25%); }
-.ask-layout-full { grid-template-columns: 224px minmax(0, 1fr) 0; }
+.ask-layout { position: relative; flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 /* Card W-6: with the conversation list put away its column is gone, so the
-   chat and the answer take that width. The two-class rule is deliberately more
-   specific than .ask-layout-full: a fullscreen evidence layout with the list
-   collapsed renders only two columns, and the chat must not fall into the
-   224px column that no longer has a child. */
-.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) minmax(300px, 25%); }
+   chat and the answer take that width. */
+.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr); }
+/* Card W-8: the evidence panel is open, so its column is part of the grid. */
+.ask-layout-evidence { grid-template-columns: 224px minmax(0, 1fr) minmax(300px, 25%); }
+.ask-layout-evidence.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) minmax(300px, 25%); }
+/* The fullscreen evidence variant covers the whole layout; it is declared after
+   the evidence rules so it wins when both apply, and the two-class rule is more
+   specific than the one-class evidence rule above. */
+.ask-layout-full { grid-template-columns: 224px minmax(0, 1fr) 0; }
 .ask-layout-full.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
 
 .topics { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
@@ -371,6 +376,16 @@ svg { display: block; }
 .conversations-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-secondary); font-size: var(--fs-caption); }
 .conversations-toggle:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
 .conversations-toggle svg { width: 13px; height: 13px; }
+/* Card W-8: the chat screen's one evidence control. Closed, the dock holds
+   only that control and floats at the chat's top-right corner; because it is
+   out of flow it adds no grid column, so the chat keeps the width. Open, the
+   dock is transparent (`display: contents`) and the panel it contains is the
+   grid's evidence column. */
+.evidence-dock { position: absolute; top: 12px; right: 20px; z-index: 6; }
+.evidence-dock-open { position: static; display: contents; }
+.evidence-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-secondary); font-size: var(--fs-caption); }
+.evidence-toggle:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+.evidence-toggle svg { width: 13px; height: 13px; }
 .flow { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding: 20px 26px 8px; }
 .flow-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 .flow-head h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
@@ -655,9 +670,15 @@ ul.answer-keys li:last-child { border-bottom: none; }
 @keyframes kv-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
 @media (max-width: 1180px) {
-  .ask-layout { grid-template-columns: 200px minmax(0, 1fr) 300px; }
+  .ask-layout { grid-template-columns: 200px minmax(0, 1fr); }
   /* Card W-6: a collapsed list still frees its column at this width. */
-  .ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 300px; }
+  .ask-layout-collapsed { grid-template-columns: minmax(0, 1fr); }
+  /* Card W-8: at this width the open evidence panel keeps its 300px column. */
+  .ask-layout-evidence { grid-template-columns: 200px minmax(0, 1fr) 300px; }
+  .ask-layout-evidence.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 300px; }
+  /* The fullscreen variant still covers the layout at this width. */
+  .ask-layout-full { grid-template-columns: 200px minmax(0, 1fr) 0; }
+  .ask-layout-full.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -687,7 +708,15 @@ ul.answer-keys li:last-child { border-bottom: none; }
    Responsive
 --------------------------------------------------------------------------- */
 @media (max-width: 900px) {
-  .ask-layout { grid-template-columns: 1fr; grid-auto-rows: auto; overflow-y: auto; }
+  /* One column whatever the evidence, fullscreen and list state; the
+     two-class evidence rules of the base layout must not win here, so the
+     whole variant set is named explicitly (card W-8). */
+  .ask-layout,
+  .ask-layout-collapsed,
+  .ask-layout-evidence,
+  .ask-layout-evidence.ask-layout-collapsed,
+  .ask-layout-full,
+  .ask-layout-full.ask-layout-collapsed { grid-template-columns: 1fr; grid-auto-rows: auto; overflow-y: auto; }
   .content-panel-ask { overflow-y: auto; }
   .topics { border-right: 0; border-bottom: 1px solid var(--line); max-height: 220px; }
   .evi { border-left: 0; border-top: 1px solid var(--line); min-height: 320px; }

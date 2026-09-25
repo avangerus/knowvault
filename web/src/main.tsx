@@ -876,7 +876,7 @@ type QuestionRun = {
 // question) and a turn count from turns[] itself; conversationGet and
 // conversationArchive both answer with this object directly, with no
 // wrapper key.
-type ConversationTurn = {
+export type ConversationTurn = {
   turn_id: string;
   question_run_id: string;
   turn_index: number;
@@ -5058,7 +5058,7 @@ export function EvidenceSourceView({ evidence, highlight = null, detailsOpen = f
   );
 }
 
-export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onOpenEvidence, onSelectCitation }: {
+export type EvidencePanelProps = {
   workspaceID: string | null;
   target: PanelTarget;
   turnsByID: Map<string, ConversationTurn>;
@@ -5068,7 +5068,41 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
   onToggleFullscreen: () => void;
   onOpenEvidence: (hash: string) => void;
   onSelectCitation: (turnID: string, citationID: string) => void;
-}) {
+  // Card W-8: closing the panel is one action. When the chat screen hands the
+  // panel this callback it also renders the control that closes it; the
+  // standalone render (and the search surface's own read) simply passes none.
+  onClose?: () => void;
+};
+
+// Card W-8: the evidence region of the chat screen behind one control. Closed,
+// it renders only the control that opens the panel, so the panel takes no
+// column. Open, it renders the panel itself with the same control in its
+// header, so one action closes it. The static render of this component is the
+// chat screen's two evidence states.
+export function AnswerEvidence({ open, onToggle, ...panel }: EvidencePanelProps & { open: boolean; onToggle: () => void }) {
+  if (!open) {
+    return (
+      <div className="evidence-dock">
+        <button
+          aria-expanded={false}
+          className="evidence-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <IconExpand />
+          <span>Show evidence</span>
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="evidence-dock evidence-dock-open">
+      <EvidencePanel {...panel} onClose={onToggle} />
+    </div>
+  );
+}
+
+export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onOpenEvidence, onSelectCitation, onClose }: EvidencePanelProps) {
   const turn = target && "turnId" in target ? turnsByID.get(target.turnId) ?? null : null;
   const citations = turn?.question_run?.citations ?? [];
   const activeCitationID = target && "citationId" in target ? target.citationId : null;
@@ -5160,7 +5194,21 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
 
   if (target === null) {
     return (
-      <aside aria-label="Answer evidence" className="evi">
+      <aside aria-label="Answer evidence" className="evi" id="answer-evidence">
+        <header className="evi-h">
+          <div className="t">
+            <b>Answer evidence</b>
+            <span>The sources behind an answer appear here.</span>
+          </div>
+          <div className="evi-actions">
+            {onClose && (
+              <button aria-controls="answer-evidence" aria-expanded={true} className="evidence-toggle" onClick={onClose} type="button">
+                <IconCollapse />
+                <span>Hide evidence</span>
+              </button>
+            )}
+          </div>
+        </header>
         <div className="evi-idle">
           <p>Ask a question to view the source text behind the answer here. Select a previous turn to return to its evidence, or select a citation to open that fragment.</p>
           {allSources.some((source) => source.enabled) && (
@@ -5181,7 +5229,7 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
   }
 
   return (
-    <aside aria-label="Answer evidence" className={fullscreen ? "evi evi-full" : "evi"}>
+    <aside aria-label="Answer evidence" className={fullscreen ? "evi evi-full" : "evi"} id="answer-evidence">
       <header className="evi-h">
         <div className="t">
           <b>{evidence?.kind === "ok" ? evidenceSourceFilename(evidence.value.source_path) ?? provenanceName : fragmentID ? "Checking source…" : liveResultRun ? "Live database evidence" : "Evidence unavailable"}</b>
@@ -5194,20 +5242,29 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
               document prose. */}
           <span>{evidence?.kind === "ok" ? `${isRowLike ? "snapshot row" : "extracted text"} · observed ${formatTime(evidence.value.provenance.observed_at)}` : ""}</span>
         </div>
-        {evidence?.kind === "ok" && (
-          <div className="evi-actions">
-            {evidencePageURL && <a className="lnk" href={evidencePageURL} onClick={(event) => {
-              if (!shouldHandleInAppEvidenceClick(event)) return;
-              event.preventDefault();
-              onOpenEvidence(new URL(evidencePageURL).hash);
-            }}>Open separately</a>}
-            {evidencePageURL && <button className="lnk" onClick={() => void copyEvidencePageLink()} type="button">Copy link</button>}
+        <div className="evi-actions">
+          {evidence?.kind === "ok" && evidencePageURL && <a className="lnk" href={evidencePageURL} onClick={(event) => {
+            if (!shouldHandleInAppEvidenceClick(event)) return;
+            event.preventDefault();
+            onOpenEvidence(new URL(evidencePageURL).hash);
+          }}>Open separately</a>}
+          {evidence?.kind === "ok" && evidencePageURL && <button className="lnk" onClick={() => void copyEvidencePageLink()} type="button">Copy link</button>}
+          {evidence?.kind === "ok" && (
             <button aria-expanded={fullscreen} className="lnk" onClick={onToggleFullscreen} ref={expandButtonRef} type="button">
               {fullscreen ? <IconCollapse /> : <IconExpand />}
               {fullscreen ? "Collapse" : "Full screen"}
             </button>
-          </div>
-        )}
+          )}
+          {/* Card W-8: the close control is in the header whether or not the
+              fragment has loaded, so an open panel can always be put away in
+              one action. */}
+          {onClose && (
+            <button aria-controls="answer-evidence" aria-expanded={true} className="evidence-toggle" onClick={onClose} type="button">
+              <IconCollapse />
+              <span>Hide evidence</span>
+            </button>
+          )}
+        </div>
       </header>
       {copyLinkStatus && <p aria-live="polite" className="evi-action-status" role="status">{copyLinkStatus}</p>}
 
@@ -5808,6 +5865,11 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   );
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  // Card W-8: the evidence panel of the chat screen is not shown until the
+  // person asks for it. `evidenceOpen` is that ask: the screen's own control
+  // sets it, and opening an answer's evidence link sets it too. While it is
+  // false the panel is not in the tree at all, so the chat takes its width.
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const flowRef = useRef<HTMLDivElement | null>(null);
   // Every workspace switch, logout or first-page refresh bumps the generation,
@@ -5909,6 +5971,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     setConversation(null);
     setLocalTurns([]);
     setPanelTarget(null);
+    setFullscreen(false);
+    setEvidenceOpen(false);
   }, [initialConversationID]);
 
   // First page of the topics list. Server pagination replaces the old
@@ -6069,6 +6133,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
       setLastFailure(null);
       setPendingQuestion(null);
       setPanelTarget(null);
+      setFullscreen(false);
+      setEvidenceOpen(false);
       setTopicsCursor(null);
       setTopicsContinuation("idle");
       setSubmitting(false);
@@ -6156,6 +6222,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     setLastFailure(null);
     setPendingQuestion(null);
     setPanelTarget(null);
+    setFullscreen(false);
+    setEvidenceOpen(false);
     setSubmitting(false);
     setArchiving(false);
     setQuestion("");
@@ -6252,6 +6320,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         setLastFailure(null);
         setPendingQuestion(null);
         setPanelTarget(null);
+        setFullscreen(false);
+        setEvidenceOpen(false);
         setTopicsCursor(null);
         setTopicsContinuation("idle");
         setSubmitting(false);
@@ -6332,6 +6402,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     if (conversation?.kind !== "ok" || conversation.value.turns.length === 0) return;
     setPanelTarget(null);
     setFullscreen(false);
+    setEvidenceOpen(false);
   }, [conversation]);
 
   const remoteTurns = conversation?.kind === "ok" ? conversation.value.turns : [];
@@ -6358,10 +6429,25 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     dismissFootnoteTooltip();
     setPanelTarget({ turnId: turn.turn_id, citationId: firstAnswerCitation(turn.question_run) });
     setFullscreen(false);
+    setEvidenceOpen(true);
   }
 
   function selectCitation(turn: ConversationTurn, citationID: string) {
     setPanelTarget({ turnId: turn.turn_id, citationId: citationID });
+    setEvidenceOpen(true);
+  }
+
+  // Card W-8: the chat screen's one evidence control both opens the panel and,
+  // once it is open, closes it. Closing also drops the fullscreen variant, so
+  // the chat takes the freed width back in the same action.
+  function closeEvidence() {
+    setEvidenceOpen(false);
+    setFullscreen(false);
+  }
+
+  function toggleEvidence() {
+    if (evidenceOpen) closeEvidence();
+    else setEvidenceOpen(true);
   }
 
   async function submitQuestion(event: FormEvent) {
@@ -6426,6 +6512,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
       setLocalTurns((current) => [...current, turn]);
       setPanelTarget(null);
       setFullscreen(false);
+      setEvidenceOpen(false);
       if (result.value.conversation_id && result.value.conversation_id !== selectedConversationID) {
         setSelectedConversationID(result.value.conversation_id);
         routedConversationRef.current = result.value.conversation_id;
@@ -6477,6 +6564,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     setQuestion("");
     setPanelTarget(null);
     setFullscreen(false);
+    setEvidenceOpen(false);
     focusComposer();
   }
 
@@ -6546,7 +6634,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const currentTitle = selectedConversationID !== null && conversation?.kind === "ok" ? conversationTitle(conversation.value) : null;
 
   return (
-    <div className={askLayoutClass(fullscreen, conversationsCollapsed)}>
+    <div className={`${askLayoutClass(fullscreen && evidenceOpen, conversationsCollapsed)}${evidenceOpen ? " ask-layout-evidence" : ""}`}>
       {/* Card W-6: the conversation list is dropped from the tree when the
           person put it away, so the freed column really goes to the chat and
           its answer and no stale list stays reachable behind a hidden node. */}
@@ -6762,7 +6850,11 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
       </section>
 
-      <EvidencePanel
+      {/* Card W-8: the chat screen's one evidence control. Closed, it is the
+          only evidence affordance on the screen and the panel is not in the
+          tree at all; open, the same control sits in the panel header and
+          closes it, so the chat takes the freed width in one action. */}
+      <AnswerEvidence
         allSources={allSources}
         fullscreen={fullscreen}
         onOpenEvidence={onOpenEvidence}
@@ -6770,7 +6862,9 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
           const turn = turnsByID.get(turnID);
           if (turn) selectCitation(turn, citationID);
         }}
+        onToggle={toggleEvidence}
         onToggleFullscreen={() => setFullscreen((value) => !value)}
+        open={evidenceOpen}
         sourceNameByConnection={sourceNameByConnection}
         target={panelTarget}
         turnsByID={turnsByID}

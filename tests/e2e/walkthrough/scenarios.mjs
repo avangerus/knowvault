@@ -155,7 +155,24 @@ function conversationToggle(page, label) {
   return page.locator("button.conversations-toggle").filter({ hasText: label });
 }
 
-// runLocalScenario is the card U-1 walkthrough, unchanged in what it does.
+// evidencePanel is the chat screen's evidence panel, found by its own
+// accessible name. Card W-8: it is not in the page at all while the person has
+// not asked for it, so "closed" means the locator matches nothing.
+function evidencePanel(page) {
+  return page.locator('aside[aria-label="Answer evidence"]');
+}
+
+// evidenceToggle is the chat screen's one evidence control, found by the label
+// it shows in the wanted state: "Show evidence" while the panel is closed,
+// "Hide evidence" while it is open.
+function evidenceToggle(page, label) {
+  return page.locator("button.evidence-toggle").filter({ hasText: label });
+}
+
+// runLocalScenario is the card U-1 walkthrough plus the later cards' local
+// steps: card W-6 collapses the conversation list, card W-8 opens the evidence
+// panel with the screen control, closes it again, and then opens the same
+// answer's evidence link. What it does to the stand is unchanged.
 export async function runLocalScenario(page, walk, options = {}) {
   const question = options.question ?? "что ты знаешь?";
 
@@ -268,9 +285,50 @@ export async function runLocalScenario(page, walk, options = {}) {
     console.log(`walkthrough chat column px: collapsed=${collapsedChatWidth} expanded-again=${expandedChatWidth}`);
   });
 
+  // Card W-8: the evidence panel is not shown until the person asks for it.
+  // The chat screen's own control opens it, one action closes it again, and
+  // the chat column takes the freed width. The screenshots of these two steps
+  // are the closed and the open evidence panel.
+  let closedEvidenceChatWidth = 0;
+  let openEvidenceChatWidth = 0;
+  await walk.step("open the evidence panel with the screen control", async () => {
+    if ((await evidencePanel(page).count()) !== 0) {
+      throw new Error("the evidence panel is on screen before the person asked for it");
+    }
+    const control = evidenceToggle(page, "Show evidence");
+    await control.waitFor({ state: "visible", timeout: 30_000 });
+    closedEvidenceChatWidth = await chatColumnWidth(page);
+    await control.click();
+    await evidencePanel(page).waitFor({ state: "visible", timeout: 30_000 });
+    await evidenceToggle(page, "Hide evidence").waitFor({ state: "visible", timeout: 30_000 });
+    openEvidenceChatWidth = await chatColumnWidth(page);
+    if (!(closedEvidenceChatWidth > openEvidenceChatWidth)) {
+      throw new Error(
+        `the chat column is ${closedEvidenceChatWidth} px wide with the evidence panel closed and ${openEvidenceChatWidth} px with it open`,
+      );
+    }
+    console.log(`walkthrough chat column px: evidence-closed=${closedEvidenceChatWidth} evidence-open=${openEvidenceChatWidth}`);
+  });
+
+  await walk.step("close the evidence panel with one action", async () => {
+    await evidenceToggle(page, "Hide evidence").click();
+    await evidencePanel(page).waitFor({ state: "detached", timeout: 30_000 });
+    await evidenceToggle(page, "Show evidence").waitFor({ state: "visible", timeout: 30_000 });
+    const closedAgainChatWidth = await chatColumnWidth(page);
+    if (!(closedAgainChatWidth > openEvidenceChatWidth)) {
+      throw new Error(
+        `the chat column is ${closedAgainChatWidth} px wide after closing the evidence panel, the open one ${openEvidenceChatWidth} px`,
+      );
+    }
+    console.log(`walkthrough chat column px: evidence-closed-again=${closedAgainChatWidth}`);
+  });
+
   await walk.step("open the evidence of that answer", async () => {
     const turn = page.locator("article.turn").last();
     await openEvidence(page, turn);
+    // The panel was closed by the step above; following the answer's own
+    // evidence link is what opened it again, with this answer's source.
+    await evidenceToggle(page, "Hide evidence").waitFor({ state: "visible", timeout: 30_000 });
   });
 
   // Card W-7: the source of an answer opens as a document. The evidence panel
