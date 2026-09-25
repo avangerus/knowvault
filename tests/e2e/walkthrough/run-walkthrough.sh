@@ -8,6 +8,17 @@
 # the robot at another address and signs in with a login read from a
 # credentials file. No code change is needed to switch stands.
 #
+# Card U-3: every step's screenshot is compared with the approved reference
+# picture of that step; the report shows the difference per step and a picture
+# that highlights it. A local step beyond the threshold fails. The one command
+# that replaces the approved references after an intended screen change is
+#
+#   KNOWVAULT_WALKTHROUGH_UPDATE_REFERENCES=1 \
+#     bash tests/e2e/walkthrough/run-walkthrough.sh
+#
+# and its report names every reference that changed. An ordinary run never
+# writes inside the reference directory.
+#
 #   KNOWVAULT_WALKTHROUGH_TARGET      local (default) | stand
 #   KNOWVAULT_WALKTHROUGH_BASE_URL    stand origin; required for target=stand
 #   KNOWVAULT_WALKTHROUGH_CREDENTIALS credentials file path; required for
@@ -21,6 +32,14 @@
 #                                     to read-only
 #   KNOWVAULT_WALKTHROUGH_INSTANCE    1..9: run next to another local walkthrough
 #                                     (container suffix -N, host ports +N)
+#   KNOWVAULT_WALKTHROUGH_REFERENCE_DIR
+#                                     approved reference pictures (default:
+#                                     tests/e2e/walkthrough/references/<scenario>);
+#                                     a stand update needs one outside the repo
+#   KNOWVAULT_WALKTHROUGH_UPDATE_REFERENCES
+#                                     1 replaces the approved references
+#   KNOWVAULT_WALKTHROUGH_DIFFERENCE_THRESHOLD
+#                                     share of the screen that may differ
 #   KNOWVAULT_PLAYWRIGHT_MODULE       module name/path of the Playwright package
 #                                     (default: playwright)
 #
