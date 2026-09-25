@@ -167,6 +167,14 @@ type ToolLoopRecord struct {
 	VerifiedClaims         []int               `json:"verified_claims,omitempty"`
 	ClaimEvidenceVersion   string              `json:"claim_evidence_version,omitempty"`
 	ClaimEvidence          []ToolClaimEvidence `json:"claim_evidence,omitempty"`
+	// PresentedClaims, when set, is the presentation-cleaned claim list the
+	// answer was actually displayed from (card D-6a). The model's own
+	// submission stays in Messages; a reader re-derives the shown claims from
+	// here, so the answer bytes the user saw and the persisted claim evidence
+	// can never disagree after a form-rejected final answer was cleaned instead
+	// of being thrown away. It is absent on every record written before card
+	// D-6a, which keeps those answers bound to their raw submitted claims.
+	PresentedClaims        []toolClaim         `json:"presented_claims,omitempty"`
 	PresentationVersion    *string             `json:"presentation_version,omitempty"`
 	PresentationLanguage   *string             `json:"presentation_language,omitempty"`
 	PresentationAnswerHash *string             `json:"presentation_answer_hash,omitempty"`
@@ -550,7 +558,7 @@ A broad list must not be reduced to one narrow section or the first search resul
 Before the final answer, check its completeness against the question. When defining a term or object, provide its full name, meaning, and purpose from the documents; expanding an abbreviation alone may be insufficient. In a list, do not omit relevant items explicitly named in the sources you read; distinguish the main list from related processes and explanations. For a subsystem or component, find evidence of the system it belongs to: an organization's name alone does not establish that relationship. If the relationship has not been found, check general information or purpose; do not construct it from nearby abbreviations. Preserve the exact modality of numbers and normative requirements: possibility, obligation, and actual state differ; retain a short verbatim source phrase when paraphrasing risks changing a condition. A question may name several terms without commas or conjunctions: explain each separately using the sources. Limit conclusions to data actually checked. For every item, verify that its own attached fragment supports every material part; a suitable source attached to another item does not replace this.
 Preserve the source's list structure: include constituent and supporting elements with their status if the question covers them. Do not exclude an element merely because it belongs to another. Version status CURRENT means the latest observed version of that particular indexed object, not proven applicability of its requirements to the question. Distinguish an existing system description, a future implementation plan, and a document template. Matching component names do not make their conditions interchangeable. If answering requires information from different stages, explicitly name the stages and the evidence for each; do not supplement established characteristics with conditions from another stage without explanation.
 Carry numbers from tables together with their row and column headings, units, and conditions. Do not turn a nearby classification into additional columns or invent missing numerical sequences. Before answering, check every number against its cell and headings, including repeated values. If heading placement is ambiguous, read the continuation or another representation of the document; do not resolve ambiguity by inventing values.
-Answer presentation: write the answer in the language of the user's question (an English question gets an English answer, a Russian question a Russian answer). Keep the answer under about 1000 characters and at most 8 lines unless the question explicitly asks for a long or complete list. Never use a colon anywhere in the answer text: a colon after a short phrase at the start of a sentence or line (openings such as "Границы обзора:", "Границы:", "Для полноты:", "Документы:", "Источники:", "Что именно показать:", "По глоссарию:") is a hard formatting failure. Write a dash or start a new sentence instead. A request that would change workspace data cannot be carried out here: refuse it plainly, in your own words, in one or two sentences without a colon, and submit that refusal as the clarification variant with an empty claims list and no citations. Never write the words verified, verification, проверен, проверено, проверенный, проверенная, проверенных, проверка, проверять or проверялся in the answer text: write "в прочитанных материалах" or "в просмотренных материалах" instead, and state what is supported and what its boundaries are in plain words. Never put internal identifiers such as conn_..., rule_..., term_..., binding_..., observed_at or paraphrase in the answer text; connection and rule identifiers belong only in tool arguments. Name a workspace source by its human name when the answer mentions it. Use plain text only, with no markdown emphasis, headings or labels. Write the whole answer, including any rule or quotation taken from a source, in the language of the question; do not copy a source sentence in another language. In a Russian answer, keep Latin identifiers rare and never prefix a relation with its schema, but a registered relation or column name is written exactly as the query result shows it. When the question asks which tables, columns or fields exist, name the exact registered relation without a schema prefix and its registered column names once each, in one list, and explain in the question's language what the relation stores without repeating an identifier; do not list sample rows or their values. For a count or numeric answer, state the number and the rule in the language of the question, name the data source by its human name, and do not write the raw relation name or list other categories or values. The WORKSPACE_CONTEXT block is already part of this request: call knowvault_workspace_context or knowvault_sources only when the source connection id or a rule you need is still missing, and then spend the remaining steps on the live read. A question about database records, values, tables, columns, fields or counts is not finished until you have run knowvault_source_sql in this request and cited its output through live_reads; an answer built only from knowvault_sources, knowvault_source_schema or documents will be discarded. Each PostgreSQL source is a separate connection: one knowvault_source_sql statement may reference only tables of the source named by source_id, and a join across two sources is always refused. For a question that needs two tables from two sources, read the rows or keys from each source with its own statement and combine them in the answer. A statement that only refuses an action or describes your own read-only limits carries no workspace evidence: submit it as the clarification variant with an empty claims list, in at most two sentences. Rule, term and source identifiers inside a WORKSPACE_CONTEXT block (rule_..., term_..., binding_...) are names, not evidence addresses, and can never be cited. A question that is not about this workspace at all is answered in one or two plain sentences without calling any tool. A subject-less request that does not say what to show or which criterion to use — a bare request to show, list, display or output something — is never answered by dumping rows or listing every relation: answer it with one short clarifying question that ends in exactly one question mark, submitted as the clarification variant, also without calling any tool.
+Answer presentation: write the answer in the language of the user's question (an English question gets an English answer, a Russian question a Russian answer). Keep the answer under about 1000 characters and at most 8 lines unless the question explicitly asks for a long or complete list. Never use a colon anywhere in the answer text: a colon after a short phrase at the start of a sentence or line (openings such as "Границы обзора:", "Границы:", "Для полноты:", "Документы:", "Источники:", "Что именно показать:", "По глоссарию:") is a hard formatting failure. Write a dash or start a new sentence instead. A request that would change workspace data cannot be carried out here: refuse it plainly, in your own words, in one or two sentences without a colon, and submit that refusal as the clarification variant with an empty claims list and no citations. Never write the words verified, verification, проверен, проверено, проверенный, проверенная, проверенных, проверка, проверять or проверялся in the answer text: write "в прочитанных материалах" or "в просмотренных материалах" instead, and state what is supported and what its boundaries are in plain words. Never put internal identifiers such as conn_..., rule_..., term_..., binding_..., observed_at or paraphrase in the answer text; connection and rule identifiers belong only in tool arguments. Name a workspace source by its human name when the answer mentions it. Use plain text only, with no markdown emphasis, headings or labels. Write the whole answer, including any rule or quotation taken from a source, in the language of the question; do not copy a source sentence in another language. In a Russian answer, keep Latin identifiers rare. Name a registered relation or column exactly as the query result shows it only when the question asks which data, tables, columns or fields exist. For every other question, name the source by its human name and use business words instead of a raw relation or column name; the citations carry the technical location. In that case, name the exact registered relation without a schema prefix and its registered column names once each, in one list, and explain in the question's language what the relation stores without repeating an identifier; do not list sample rows or their values. For a count or numeric answer, state the number and the rule in the language of the question, name the data source by its human name, and do not write the raw relation name or list other categories or values. The WORKSPACE_CONTEXT block is already part of this request: call knowvault_workspace_context or knowvault_sources only when the source connection id or a rule you need is still missing, and then spend the remaining steps on the live read. A question about database records, values, tables, columns, fields or counts is not finished until you have run knowvault_source_sql in this request and cited its output through live_reads; an answer built only from knowvault_sources, knowvault_source_schema or documents will be discarded. Each PostgreSQL source is a separate connection: one knowvault_source_sql statement may reference only tables of the source named by source_id, and a join across two sources is always refused. For a question that needs two tables from two sources, read the rows or keys from each source with its own statement and combine them in the answer. A statement that only refuses an action or describes your own read-only limits carries no workspace evidence: submit it as the clarification variant with an empty claims list, in at most two sentences. Rule, term and source identifiers inside a WORKSPACE_CONTEXT block (rule_..., term_..., binding_...) are names, not evidence addresses, and can never be cited. A question that is not about this workspace at all is answered in one or two plain sentences without calling any tool. A subject-less request that does not say what to show or which criterion to use — a bare request to show, list, display or output something — is never answered by dumping rows or listing every relation: answer it with one short clarifying question that ends in exactly one question mark, submitted as the clarification variant, also without calling any tool.
 For no data: {"no_data":true,"claims":[]}. Consider only the question and explicitly supplied context; do not reconstruct conversation history that was not supplied. For an ambiguous question whose meaning cannot be selected from the context and sources, ask a brief clarification as a plain question that ends in exactly one question mark and never contains a colon: {"no_data":false,"claims":[],"clarification":"What needs to be clarified?"}. Imprecise wording of an understandable workspace-content question does not require clarification. If the subject is genuinely unclear, clarify it; do not suggest arbitrary chapters from search results as the user's possible choices. A workspace may contain documents from different projects. If the user did not name a project and a question about the customer, dates, or conditions fits several, clarify the project or explicitly name the document and the conditions under which the answer applies. The first document found does not by itself establish user intent. Conversational wording, typos, and incomplete names alone are not reasons to refuse: answer when the meaning is clear. Check the question's premise; do not agree with a false assertion. Do not replace missing conditions with a guess. Every submitted claim must carry at least one document citation or live_reads reference: a claim with neither cannot be shown, and a submission whose every claim is unsupported shows the user nothing, so attach the exact evidence to each claim or leave the caveat out entirely. Evidence must support the exact claim.
 Final check before submit_answer: the answer is in the language of the question; it is under 1000 characters; it contains no colon at all (openings like "Границы обзора:", "Для полноты:", "Документы:", "Источники:", "Что именно показать:" are forbidden); no sentence contains the words verified, проверено, проверенный, проверка or проверялся; and a database question cites a live read.`
 
@@ -968,6 +976,12 @@ func validateToolLoopClaimEvidenceV1(questionRunID, answerMarkdown string, recor
 func finalToolAnswerFromRecord(record *ToolLoopRecord) (toolAnswer, bool) {
 	if record == nil {
 		return toolAnswer{}, false
+	}
+	// Card D-6a: a form-rejected final answer that was cleaned for display is
+	// read from its presented claims, never from the raw submission, so the
+	// displayed bytes still match the persisted claim evidence.
+	if record.PresentedClaims != nil {
+		return toolAnswer{Claims: record.PresentedClaims}, true
 	}
 	for index := len(record.Messages) - 1; index >= 0; index-- {
 		message := record.Messages[index]
@@ -1581,6 +1595,10 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	definitions = append(definitions, submitAnswerToolDefinition())
 	language := questionLanguage(questionText)
 	record.AnswerLanguage = language
+	// Card D-6a: a question about the data structure itself keeps the exact
+	// registered relation and column names in its answer; every other answer
+	// uses business words and leaves the technical location to the citations.
+	schemaQuestion := toolLoopSchemaQuestion(questionText)
 	// The workspace context is read exactly once (S2-MODEL-CONTEXT-DESIGN.md
 	// "The context version is pinned once per run"). The overview below reuses
 	// that same pinned version's description instead of reading the context a
@@ -1811,13 +1829,37 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if marker := toolLoopAnswerInternalMarkerInText(text); marker != "" {
 			return "SUBMIT_ANSWER_INTERNAL_MARKER", toolLoopInternalMarkerRepairInstruction(language)
 		}
+		if marker := toolLoopAnswerPartMarker(text); marker != "" {
+			return "SUBMIT_ANSWER_INTERNAL_MARKER", toolLoopInternalMarkerRepairInstruction(language)
+		}
 		if wording := toolLoopAnswerVerificationProse(text); wording != "" {
 			return "SUBMIT_ANSWER_VERIFICATION_PROSE", toolLoopVerificationProseRepairInstruction(language)
 		}
 		if toolLoopAnswerLanguageMismatch(*answer, language) {
 			return "SUBMIT_ANSWER_WRONG_LANGUAGE", toolLoopLanguageRepairInstruction(language)
 		}
+		// Card D-6a: a self-label or a raw relation/column name is presentation,
+		// not content. A question about the data structure keeps its relation
+		// and column names; every other question gets the business wording.
+		pattern := toolLoopTechnicalNamePattern(toolLoopTechnicalVocabulary(record))
+		if issue := toolLoopAnswerPresentationIssue(text, pattern, schemaQuestion); issue != "" {
+			return issue, toolLoopPresentationRepairInstruction(language)
+		}
 		return "", ""
+	}
+	// toolLoopPresentedFinalAnswer is card D-6a's last resort: when the forced
+	// final turn's submission is rejected for presentation, the gathered answer
+	// is cleaned and shown instead of being replaced by the failure text. It
+	// reports whether a presentable answer survived.
+	toolLoopPresentedFinalAnswer := func(answer toolAnswer) (toolAnswer, bool) {
+		presented, changed := toolLoopPresentAnswer(answer, toolLoopTechnicalVocabulary(record), schemaQuestion)
+		if !changed || (len(presented.Claims) == 0 && strings.TrimSpace(presented.Clarification) == "") {
+			return toolAnswer{}, false
+		}
+		if presented.Clarification == "" {
+			record.PresentedClaims = presented.Claims
+		}
+		return presented, true
 	}
 	appendUserHint := func(content string) {
 		hint := modelgateway.Message{Role: "user", Content: content}
@@ -1966,6 +2008,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				answer, ok, code := parseSubmitAnswerArgumentsDetailed(json.RawMessage(call.Function.Arguments))
 				if ok {
 					if rejection, hint := rejectAnswer(&answer); rejection != "" {
+						if forcedFinalTurn {
+							if presented, presentable := toolLoopPresentedFinalAnswer(answer); presentable {
+								final = &presented
+								record.StopReason = "ANSWER"
+								break
+							}
+						}
 						appendResult(call, submitAnswerProtocolError(rejection), nil)
 						appendUserHint(hint)
 						continue
@@ -2021,6 +2070,13 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		answer, formatCode := parseToolAnswerDetailed(response.Message.Content)
 		if formatCode == "" {
 			if _, hint := rejectAnswer(&answer); hint != "" {
+				if forcedFinalTurn {
+					if presented, presentable := toolLoopPresentedFinalAnswer(answer); presentable {
+						final = &presented
+						record.StopReason = "ANSWER"
+						break
+					}
+				}
 				appendUserHint(hint)
 				continue
 			}
