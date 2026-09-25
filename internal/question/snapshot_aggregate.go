@@ -149,6 +149,10 @@ type snapshotAggregate struct {
 	// up to two other columns from a row that carried them. Populated only
 	// for function == "LIST".
 	keys []AnswerKey
+	// language is the language of the run's own question (questionLanguage) for
+	// the answer, explanation and label text the product composes here; empty
+	// keeps the historical English spelling for callers that carry no question.
+	language string
 }
 
 // structuredSnapshotRows is the small part of pgx.Rows used by the snapshot
@@ -1318,28 +1322,32 @@ func buildAnswerResult(result snapshotAggregate, identity ...answerResultIdentit
 		Kind: "CALCULATION", Operation: result.function, Timezone: result.timeZone,
 		Snapshot: AnswerSnapshot{ID: result.sourceScopeID, RowCount: result.rowsInSnapshot},
 	}
+	language := result.language
 	switch result.function {
 	case "LIST":
 		answerResult.Value = strconv.Itoa(result.count)
 		answerResult.Keys = result.keys
 		if result.valueColumn != "" {
-			answerResult.Rule = "distinct values in column «" + result.valueColumn + "»"
+			answerResult.Rule = localizedText(language, "\u0440\u0430\u0437\u043b\u0438\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u043a\u043e\u043b\u043e\u043d\u043a\u0438 \u00ab", "distinct values in column \u00ab") +
+				result.valueColumn + "\u00bb"
 		} else {
-			answerResult.Rule = "distinct values in the snapshot"
+			answerResult.Rule = localizedText(language, "\u0440\u0430\u0437\u043b\u0438\u0447\u043d\u044b\u0435 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432 \u0441\u043d\u0438\u043c\u043a\u0435", "distinct values in the snapshot")
 		}
 	case "SUM":
 		answerResult.Value = result.numericTotal
 		if result.metricColumn != "" {
-			answerResult.Rule = "sum of column «" + result.metricColumn + "»"
+			answerResult.Rule = localizedText(language, "\u0441\u0443\u043c\u043c\u0430 \u043a\u043e\u043b\u043e\u043d\u043a\u0438 \u00ab", "sum of column \u00ab") +
+				result.metricColumn + "\u00bb"
 		} else {
-			answerResult.Rule = "sum over the snapshot"
+			answerResult.Rule = localizedText(language, "\u0441\u0443\u043c\u043c\u0430 \u043f\u043e \u0441\u043d\u0438\u043c\u043a\u0443", "sum over the snapshot")
 		}
 	default: // COUNT
 		answerResult.Value = strconv.Itoa(result.count)
 		if result.valueColumn != "" {
-			answerResult.Rule = "count of distinct values in column «" + result.valueColumn + "»"
+			answerResult.Rule = localizedText(language, "\u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e \u0440\u0430\u0437\u043b\u0438\u0447\u043d\u044b\u0445 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0439 \u0432 \u043a\u043e\u043b\u043e\u043d\u043a\u0435 \u00ab", "count of distinct values in column \u00ab") +
+				result.valueColumn + "\u00bb"
 		} else {
-			answerResult.Rule = "count of snapshot rows satisfying the condition"
+			answerResult.Rule = localizedText(language, "\u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e \u0441\u0442\u0440\u043e\u043a \u0441\u043d\u0438\u043c\u043a\u0430, \u0443\u0434\u043e\u0432\u043b\u0435\u0442\u0432\u043e\u0440\u044f\u044e\u0449\u0438\u0445 \u0443\u0441\u043b\u043e\u0432\u0438\u044e", "count of snapshot rows satisfying the condition")
 		}
 	}
 	for _, filter := range result.equality {
@@ -1348,11 +1356,13 @@ func buildAnswerResult(result snapshotAggregate, identity ...answerResultIdentit
 	if result.overdueCondition {
 		answerResult.Filters = append(answerResult.Filters, AnswerFilter{Name: "condition", Value: "overdue"})
 		if result.overdueStatusApplied {
-			answerResult.Rule += "; overdue condition: column «" + result.temporalColumn +
-				"» is before the current date and the status is not closed"
+			answerResult.Rule += localizedText(language,
+				"; \u0443\u0441\u043b\u043e\u0432\u0438\u0435 \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u043a\u0438: \u043a\u043e\u043b\u043e\u043d\u043a\u0430 \u00ab"+result.temporalColumn+"\u00bb \u0440\u0430\u043d\u044c\u0448\u0435 \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u0434\u0430\u0442\u044b \u0438 \u0441\u0442\u0430\u0442\u0443\u0441 \u043d\u0435 \u0437\u0430\u043a\u0440\u044b\u0442",
+				"; overdue condition: column \u00ab"+result.temporalColumn+"\u00bb is before the current date and the status is not closed")
 		} else {
-			answerResult.Rule += "; overdue condition: due date only (column «" + result.temporalColumn +
-				"»); no status column is declared, so status is not considered"
+			answerResult.Rule += localizedText(language,
+				"; \u0443\u0441\u043b\u043e\u0432\u0438\u0435 \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u043a\u0438: \u0442\u043e\u043b\u044c\u043a\u043e \u0441\u0440\u043e\u043a (\u043a\u043e\u043b\u043e\u043d\u043a\u0430 \u00ab"+result.temporalColumn+"\u00bb); \u043a\u043e\u043b\u043e\u043d\u043a\u0430 \u0441\u0442\u0430\u0442\u0443\u0441\u0430 \u043d\u0435 \u043e\u0431\u044a\u044f\u0432\u043b\u0435\u043d\u0430, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0441\u0442\u0430\u0442\u0443\u0441 \u043d\u0435 \u0443\u0447\u0438\u0442\u044b\u0432\u0430\u0435\u0442\u0441\u044f",
+				"; overdue condition: due date only (column \u00ab"+result.temporalColumn+"\u00bb); no status column is declared, so status is not considered")
 		}
 	}
 	if result.windowScoped {
@@ -1501,74 +1511,84 @@ func snapshotWitnesses(rows []snapshotRow, temporalColumn string) []string {
 // and under what calendar. A reader can disagree with the question's reading
 // without having to guess what the number counted.
 func renderSnapshotAnswer(result snapshotAggregate, citations []Citation) string {
+	language := result.language
 	var answer strings.Builder
 	switch result.function {
 	case "LIST":
 		if len(result.values) == 0 {
-			answer.WriteString("Answer: no matching records in the snapshot (0).")
+			answer.WriteString(localizedText(language,
+				"\u041e\u0442\u0432\u0435\u0442: \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0438\u0445 \u0437\u0430\u043f\u0438\u0441\u0435\u0439 \u0432 \u0441\u043d\u0438\u043c\u043a\u0435 \u043d\u0435\u0442 (0).",
+				"Answer: no matching records in the snapshot (0)."))
 		} else {
-			answer.WriteString("Answer: ")
+			answer.WriteString(localizedText(language, "\u041e\u0442\u0432\u0435\u0442: ", "Answer: "))
 			answer.WriteString(strings.Join(result.values, ", "))
-			answer.WriteString(" — total ")
+			answer.WriteString(localizedText(language, " \u2014 \u0432\u0441\u0435\u0433\u043e ", " \u2014 total "))
 			answer.WriteString(strconv.Itoa(len(result.values)))
 			answer.WriteString(".")
 		}
 	case "SUM":
-		answer.WriteString("Answer: ")
+		answer.WriteString(localizedText(language, "\u041e\u0442\u0432\u0435\u0442: ", "Answer: "))
 		answer.WriteString(result.numericTotal)
 		answer.WriteString(".")
 	default:
-		answer.WriteString("Answer: ")
+		answer.WriteString(localizedText(language, "\u041e\u0442\u0432\u0435\u0442: ", "Answer: "))
 		answer.WriteString(strconv.Itoa(result.count))
 		answer.WriteString(".")
 	}
-	answer.WriteString("\n\nCalculated deterministically from the complete current structured-source snapshot: ")
-	answer.WriteString("rows in snapshot — ")
+	answer.WriteString(localizedText(language,
+		"\n\n\u0420\u0430\u0441\u0447\u0451\u0442 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u0435\u0442\u0435\u0440\u043c\u0438\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e \u043f\u043e \u043f\u043e\u043b\u043d\u043e\u043c\u0443 \u0442\u0435\u043a\u0443\u0449\u0435\u043c\u0443 \u0441\u043d\u0438\u043c\u043a\u0443 \u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u043d\u043e\u0433\u043e \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430: \u0441\u0442\u0440\u043e\u043a \u0432 \u0441\u043d\u0438\u043c\u043a\u0435 \u2014 ",
+		"\n\nCalculated deterministically from the complete current structured-source snapshot: rows in snapshot \u2014 "))
 	answer.WriteString(strconv.Itoa(result.rowsInSnapshot))
-	answer.WriteString(", matching the condition — ")
+	answer.WriteString(localizedText(language,
+		", \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0438\u0445 \u043f\u043e\u0434 \u0443\u0441\u043b\u043e\u0432\u0438\u0435 \u2014 ",
+		", matching the condition \u2014 "))
 	answer.WriteString(strconv.Itoa(result.rowsMatched))
 	answer.WriteString(".")
 	if result.windowScoped {
-		answer.WriteString(" Period by column ")
+		answer.WriteString(localizedText(language, " \u041f\u0435\u0440\u0438\u043e\u0434 \u043f\u043e \u043a\u043e\u043b\u043e\u043d\u043a\u0435 ", " Period by column "))
 		answer.WriteString(result.temporalColumn)
-		answer.WriteString(": from ")
+		answer.WriteString(localizedText(language, ": \u0441 ", ": from "))
 		answer.WriteString(result.windowStart.Format("2006-01-02"))
-		answer.WriteString(" through ")
+		answer.WriteString(localizedText(language, " \u043f\u043e ", " through "))
 		answer.WriteString(result.windowEnd.AddDate(0, 0, -1).Format("2006-01-02"))
-		answer.WriteString(" inclusive, tenant time zone ")
+		answer.WriteString(localizedText(language, " \u0432\u043a\u043b\u044e\u0447\u0438\u0442\u0435\u043b\u044c\u043d\u043e, \u0447\u0430\u0441\u043e\u0432\u043e\u0439 \u043f\u043e\u044f\u0441 ", " inclusive, tenant time zone "))
 		answer.WriteString(result.timeZone)
 		answer.WriteString(".")
 	}
 	for _, filter := range result.equality {
-		answer.WriteString(" Selection: ")
+		answer.WriteString(localizedText(language, " \u041e\u0442\u0431\u043e\u0440: ", " Selection: "))
 		answer.WriteString(filter.Name)
 		answer.WriteString(" = ")
 		answer.WriteString(filter.Value)
 		answer.WriteString(".")
 	}
 	if result.overdueCondition {
-		answer.WriteString(" Selection: overdue — column ")
+		answer.WriteString(localizedText(language, " \u041e\u0442\u0431\u043e\u0440: \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d\u043e \u2014 \u043a\u043e\u043b\u043e\u043d\u043a\u0430 ", " Selection: overdue \u2014 column "))
 		answer.WriteString(result.temporalColumn)
-		answer.WriteString(" before ")
+		answer.WriteString(localizedText(language, " \u0440\u0430\u043d\u044c\u0448\u0435 ", " before "))
 		answer.WriteString(result.overdueAsOf.Format("2006-01-02"))
 		answer.WriteString(".")
 		if result.overdueStatusApplied {
-			answer.WriteString(" Status considered: closed statuses excluded.")
+			answer.WriteString(localizedText(language,
+				" \u0421\u0442\u0430\u0442\u0443\u0441 \u0443\u0447\u0442\u0451\u043d: \u0437\u0430\u043a\u0440\u044b\u0442\u044b\u0435 \u0441\u0442\u0430\u0442\u0443\u0441\u044b \u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u044b.",
+				" Status considered: closed statuses excluded."))
 		} else {
-			answer.WriteString(" Status not considered: no status column is declared (as received — due date only).")
+			answer.WriteString(localizedText(language,
+				" \u0421\u0442\u0430\u0442\u0443\u0441 \u043d\u0435 \u0443\u0447\u0442\u0451\u043d: \u043a\u043e\u043b\u043e\u043d\u043a\u0430 \u0441\u0442\u0430\u0442\u0443\u0441\u0430 \u043d\u0435 \u043e\u0431\u044a\u044f\u0432\u043b\u0435\u043d\u0430 (\u043a\u0430\u043a \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u043e \u2014 \u0442\u043e\u043b\u044c\u043a\u043e \u0441\u0440\u043e\u043a).",
+				" Status not considered: no status column is declared (as received \u2014 due date only)."))
 		}
 	}
 	if len(citations) > 0 {
-		answer.WriteString(" Row cards:")
+		answer.WriteString(localizedText(language, " \u041a\u0430\u0440\u0442\u043e\u0447\u043a\u0438 \u0441\u0442\u0440\u043e\u043a:", " Row cards:"))
 		for _, citation := range citations {
 			answer.WriteString(" [")
 			answer.WriteString(strconv.Itoa(int(citation.Number)))
 			answer.WriteString("]")
 		}
 		if len(citations) < result.rowsMatched {
-			answer.WriteString(" (showing the first ")
+			answer.WriteString(localizedText(language, " (\u043f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043f\u0435\u0440\u0432\u044b\u0435 ", " (showing the first "))
 			answer.WriteString(strconv.Itoa(len(citations)))
-			answer.WriteString(" of ")
+			answer.WriteString(localizedText(language, " \u0438\u0437 ", " of "))
 			answer.WriteString(strconv.Itoa(result.rowsMatched))
 			answer.WriteString(").")
 		}
@@ -1584,40 +1604,38 @@ func renderSnapshotAnswer(result snapshotAggregate, citations []Citation) string
 // whose answer text says WHY and names every candidate source, because a
 // caller cannot act on a generic "no evidence" here the way they could on a
 // genuine coverage gap.
-func (service *Service) persistAmbiguousStructuredSourceRefusal(ctx context.Context, access database.AccessContext, runID, workspaceID string, ambiguous *ambiguousStructuredSource) error {
-	var answer strings.Builder
-	answer.WriteString("The question does not uniquely identify one of the enabled structured sources: ")
-	for index, name := range ambiguous.names {
-		if index > 0 {
-			answer.WriteString(", ")
-		}
-		answer.WriteString("«")
-		answer.WriteString(name)
-		answer.WriteString("»")
-	}
-	answer.WriteString(". Add a term specific to one source, or ask with only that source enabled.")
+func (service *Service) persistAmbiguousStructuredSourceRefusal(ctx context.Context, access database.AccessContext, runID, workspaceID string, ambiguous *ambiguousStructuredSource, language string) error {
+	answer := ambiguousStructuredSourceAnswer(language, ambiguous.names)
 	uncertainties, conflicts, signalErr := normalizeSignals([]Uncertainty{{Code: UncertaintyAmbiguousStructuredSource}}, nil)
 	if signalErr != nil {
 		return &Error{code: CodeUnavailable, cause: signalErr}
 	}
-	return service.persistTerminalRun(ctx, access, runID, workspaceID, answer.String(), nil, nil, "INSUFFICIENT_EVIDENCE", false, uncertainties, conflicts, nil)
+	return service.persistTerminalRun(ctx, access, runID, workspaceID, answer, nil, nil, "INSUFFICIENT_EVIDENCE", false, uncertainties, conflicts, nil)
 }
 
-func (service *Service) persistUnresolvedStructuredMetricRefusal(ctx context.Context, access database.AccessContext, runID, workspaceID string, partial bool) error {
+// persistUnresolvedStructuredMetricRefusal is the terminal typed refusal for a
+// caller that carried a sealed validated intent: the intent named the measure,
+// so a snapshot that cannot resolve it has no ordinary fallback to defer to and
+// must fail closed rather than publish a number the reducer refused to prove.
+func (service *Service) persistUnresolvedStructuredMetricRefusal(ctx context.Context, access database.AccessContext, runID, workspaceID string, partial bool, language string) error {
 	uncertainties, conflicts, signalErr := normalizeSignals([]Uncertainty{{Code: UncertaintyInsufficientEvidence}}, nil)
 	if signalErr != nil {
 		return &Error{code: CodeUnavailable, cause: signalErr}
 	}
 	return service.persistTerminalRun(ctx, access, runID, workspaceID,
-		"Insufficient evidence in the connected sources.", nil, nil,
+		insufficientEvidenceAnswer(language), nil, nil,
 		"INSUFFICIENT_EVIDENCE", partial, uncertainties, conflicts, nil)
 }
 
 // answerStructuredAggregate is the whole AGG-1 path for one run: reduce the
 // snapshot, re-read and re-authorize the witness fragments, persist the answer
-// with its citations. A loaded snapshot that proves an unresolved metric is a
-// terminal typed refusal; other non-answerable plans leave the caller's
-// ordinary retrieval path untouched.
+// with its citations. A snapshot that cannot resolve the requested metric, and
+// a plan more than one source could resolve, never publish a number the
+// snapshot itself refused to prove. A caller carrying a sealed validated intent
+// gets that typed refusal as its terminal answer; every other caller declines
+// so the ordinary retrieval/evidence path decides (it reduces only over the
+// evidence the question actually retrieved, or fails closed), which is also
+// the one place the named multi-source clarification is published.
 func (service *Service) answerStructuredAggregate(ctx context.Context, access database.AccessContext,
 	runID, workspaceID, questionText string, planned planner.Plan, identity ...answerResultIdentity) (bool, error) {
 	if service == nil || service.db == nil || service.evidence == nil || service.retrievalStore == nil {
@@ -1626,6 +1644,7 @@ func (service *Service) answerStructuredAggregate(ctx context.Context, access da
 	if planned.Validate() != nil || planned.Status != planner.Ready || planned.Operation != planner.Aggregate {
 		return false, nil
 	}
+	language := questionLanguage(questionText)
 	// The producing run's persisted corpus_status is the single source of this
 	// structured run's partiality; it is carried on the identity the callers
 	// pass, never inferred from the reduction (which only refuses a snapshot it
@@ -1638,20 +1657,28 @@ func (service *Service) answerStructuredAggregate(ctx context.Context, access da
 	}
 	result, ok, ambiguous := service.resolveStructuredSnapshotGroup(ctx, access, runID, workspaceID, questionText, rows, planned, today, zone)
 	if !ok {
-		if result.refusal == snapshotAggregateRefusalUnresolvedMetric {
-			if err := service.persistUnresolvedStructuredMetricRefusal(ctx, access, runID, workspaceID, structuredPartial); err != nil {
+		// A snapshot whose SUM metric cannot be resolved to one of its own
+		// declared numeric columns is not answered by guessing which column the
+		// question meant. A caller that carried a sealed validated intent has no
+		// ordinary fallback, so its typed refusal is terminal here. Every other
+		// caller declines and lets the ordinary evidence path make the decision,
+		// because only that path can reduce against the evidence the question
+		// actually retrieved instead of the whole snapshot.
+		if result.refusal == snapshotAggregateRefusalUnresolvedMetric && len(identity) > 0 && identity[0].Intent != nil {
+			if err := service.persistUnresolvedStructuredMetricRefusal(ctx, access, runID, workspaceID, structuredPartial, language); err != nil {
 				return false, err
 			}
 			return true, nil
 		}
 		if ambiguous != nil {
-			if err := service.persistAmbiguousStructuredSourceRefusal(ctx, access, runID, workspaceID, ambiguous); err != nil {
+			if err := service.persistAmbiguousStructuredSourceRefusal(ctx, access, runID, workspaceID, ambiguous, language); err != nil {
 				return false, err
 			}
 			return true, nil
 		}
 		return false, nil
 	}
+	result.language = language
 	selected := make([]candidate, 0, len(result.witnesses))
 	for _, fragmentID := range result.witnesses {
 		fragment, readErr := service.evidence.Read(ctx, access, workspaceID, fragmentID)

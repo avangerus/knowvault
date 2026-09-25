@@ -3052,7 +3052,7 @@ func (service *Service) complete(ctx context.Context, access database.AccessCont
 		// the answer there meant a workspace stopped answering at all the
 		// moment a second, larger source was connected. corpus_status=PARTIAL
 		// and the CORPUS_PARTIAL uncertainty below carry that fact intact.
-		answer = "Insufficient evidence in the connected sources."
+		answer = insufficientEvidenceAnswer(questionLanguage(questionText))
 		citations = nil
 	}
 	// R1: bind each disclosed citation to an exact span of its authorized
@@ -5236,12 +5236,13 @@ func renderAnswerPlanAtWithReceiptContext(ctx context.Context, workspaceID, ques
 	}
 	citations := make([]Citation, 0, len(selected))
 	var toolReceipt *analytic.Receipt
+	language := questionLanguage(questionText)
 	if planned.Operation == planner.Aggregate {
 		// Every aggregate, including an ungrouped SUM, goes through the same
 		// typed Evidence adapter. There is intentionally no legacy regex
 		// shortcut: the adapter emits a sealed receipt and the caller persists
 		// the exact generic plan/tool provenance for every analytic result.
-		if aggregate, ok := renderAnalyticAggregateContext(ctx, workspaceID, planned, selected, &citations, &toolReceipt); ok {
+		if aggregate, ok := renderAnalyticAggregateContext(ctx, workspaceID, planned, selected, &citations, &toolReceipt, language); ok {
 			return aggregate, citations, toolReceipt
 		}
 		// A ready aggregate is a typed analytic request, not permission to fall
@@ -5325,7 +5326,7 @@ func candidatesHaveNumericEvidence(candidates []candidate) bool {
 	return false
 }
 
-func renderNumericAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, now time.Time) (string, bool) {
+func renderNumericAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, now time.Time, language string) (string, bool) {
 	if planned.Validate() != nil || planned.Status != planner.Ready || planned.Operation != planner.Aggregate || len(selected) == 0 || len(selected) > maxCandidates {
 		return "", false
 	}
@@ -5346,7 +5347,7 @@ func renderNumericAggregate(workspaceID string, planned planner.Plan, selected [
 		// non-sum operations. If the row/column contract cannot be resolved,
 		// return false so renderAnswer emits bounded evidence snippets instead
 		// of silently collapsing the request to a total.
-		return renderAnalyticAggregate(workspaceID, planned, selected, citations, receiptOut)
+		return renderAnalyticAggregate(workspaceID, planned, selected, citations, receiptOut, language)
 	}
 	total := new(big.Rat)
 	maxScale := 0
@@ -5457,11 +5458,11 @@ func renderNumericAggregate(workspaceID string, planned planner.Plan, selected [
 // adapter.  The adapter receives only post-authorized cells; it cannot see SQL
 // text, choose evidence, or manufacture a citation.  Citation material is
 // assembled locally and committed only after the complete result validates.
-func renderAnalyticAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt) (string, bool) {
-	return renderAnalyticAggregateContext(context.Background(), workspaceID, planned, selected, citations, receiptOut)
+func renderAnalyticAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, language string) (string, bool) {
+	return renderAnalyticAggregateContext(context.Background(), workspaceID, planned, selected, citations, receiptOut, language)
 }
 
-func renderAnalyticAggregateContext(ctx context.Context, workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt) (string, bool) {
+func renderAnalyticAggregateContext(ctx context.Context, workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, language string) (string, bool) {
 	if ctx == nil || ctx.Err() != nil {
 		return "", false
 	}
@@ -5549,7 +5550,7 @@ func renderAnalyticAggregateContext(ctx context.Context, workspaceID string, pla
 			answer.WriteString("\n")
 		}
 		if len(result.GroupBy) == 0 {
-			answer.WriteString(aggregateLabel(result.Function) + ": " + bucket.Value)
+			answer.WriteString(aggregateLabel(result.Function, language) + ": " + bucket.Value)
 		} else {
 			answer.WriteString(fmt.Sprintf("%d. %s: %s", index+1, bucket.Key, bucket.Value))
 		}
@@ -5596,7 +5597,7 @@ type aggregateBucket struct {
 	Numbers     []candidate
 }
 
-func renderStructuredAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation) (string, bool) {
+func renderStructuredAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, language string) (string, bool) {
 	spec := planned.Aggregate
 	if spec == nil || len(selected) == 0 {
 		return "", false
@@ -5776,7 +5777,7 @@ func renderStructuredAggregate(workspaceID string, planned planner.Plan, selecte
 		bucket := buckets[orderedBuckets[index]]
 		value := bucket.Value.FloatString(bucket.Scale)
 		if len(groupColumns) == 0 {
-			answer.WriteString(aggregateLabel(spec.Function) + ": " + value)
+			answer.WriteString(aggregateLabel(spec.Function, language) + ": " + value)
 		} else {
 			answer.WriteString(fmt.Sprintf("%d. %s: %s", index+1, bucket.Key, value))
 		}
@@ -5899,18 +5900,18 @@ func temporalColumn(column string) bool {
 		strings.HasSuffix(lower, "_at") || strings.HasSuffix(lower, "_on")
 }
 
-func aggregateLabel(function string) string {
+func aggregateLabel(function string, language string) string {
 	switch function {
 	case "COUNT":
-		return "Count"
+		return localizedText(language, "\u041a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e", "Count")
 	case "AVG":
-		return "Average"
+		return localizedText(language, "\u0421\u0440\u0435\u0434\u043d\u0435\u0435", "Average")
 	case "MIN":
-		return "Minimum"
+		return localizedText(language, "\u041c\u0438\u043d\u0438\u043c\u0443\u043c", "Minimum")
 	case "MAX":
-		return "Maximum"
+		return localizedText(language, "\u041c\u0430\u043a\u0441\u0438\u043c\u0443\u043c", "Maximum")
 	default:
-		return "Total"
+		return localizedText(language, "\u0418\u0442\u043e\u0433\u043e", "Total")
 	}
 }
 

@@ -43,7 +43,7 @@ func TestSelectCandidatesExpandsDateScopedAggregateWithinRows(t *testing.T) {
 	}
 	selected := selectCandidatesAt(candidates, question, now)
 	answer, citations := renderAnswerPlanAt("ws_demo", question, planned, selected, now)
-	if answer != "Total: 19.470" || len(citations) != 2 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 19.470" || len(citations) != 2 {
 		t.Fatalf("answer=%q citations=%d selected=%d", answer, len(citations), len(selected))
 	}
 	for _, citation := range citations {
@@ -73,7 +73,7 @@ func TestSelectCandidatesExpandsCurrentMonthAndExcludesPriorMonth(t *testing.T) 
 	}
 	selected := selectCandidatesAt(candidates, question, now)
 	answer, citations := renderAnswerPlanAt("ws_demo", question, planned, selected, now)
-	if answer != "Total: 19.470" || len(citations) != 2 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 19.470" || len(citations) != 2 {
 		t.Fatalf("answer=%q citations=%d selected=%d", answer, len(citations), len(selected))
 	}
 	for _, citation := range citations {
@@ -100,8 +100,8 @@ func TestSelectCandidatesHonorsExplicitAndRelativeDateRanges(t *testing.T) {
 		question string
 		want     string
 	}{
-		{question: "\u0421\u043a\u043e\u043b\u044c\u043a\u043e requests \u0441 2026-08-02 \u043f\u043e 2026-08-15?", want: "Total: 4.000"},
-		{question: "\u0421\u043a\u043e\u043b\u044c\u043a\u043e requests \u0437\u0430 \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 30 \u0434\u043d\u0435\u0439?", want: "Total: 10.000"},
+		{question: "\u0421\u043a\u043e\u043b\u044c\u043a\u043e requests \u0441 2026-08-02 \u043f\u043e 2026-08-15?", want: "\u0418\u0442\u043e\u0433\u043e: 4.000"},
+		{question: "\u0421\u043a\u043e\u043b\u044c\u043a\u043e requests \u0437\u0430 \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 30 \u0434\u043d\u0435\u0439?", want: "\u0418\u0442\u043e\u0433\u043e: 10.000"},
 	} {
 		planned, err := planner.Default().Plan(tc.question)
 		if err != nil {
@@ -109,7 +109,7 @@ func TestSelectCandidatesHonorsExplicitAndRelativeDateRanges(t *testing.T) {
 		}
 		selected := selectCandidatesAt(candidates, tc.question, now)
 		answer, citations := renderAnswerPlanAt("ws_demo", tc.question, planned, selected, now)
-		if answer != tc.want || len(citations) != 1 && tc.want == "Total: 4.000" || len(citations) != 2 && tc.want == "Total: 10.000" {
+		if answer != tc.want || len(citations) != 1 && tc.want == "\u0418\u0442\u043e\u0433\u043e: 4.000" || len(citations) != 2 && tc.want == "\u0418\u0442\u043e\u0433\u043e: 10.000" {
 			t.Fatalf("%q answer=%q citations=%d selected=%d", tc.question, answer, len(citations), len(selected))
 		}
 		for _, citation := range citations {
@@ -135,7 +135,7 @@ func TestSelectCandidatesHonorsGenericEqualityFilter(t *testing.T) {
 	}
 	selected := selectCandidatesAt(candidates, question, now)
 	answer, citations := renderAnswerPlanAt("ws_demo", question, planned, selected, now)
-	if answer != "Total: 4.000" || len(citations) != 2 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 4.000" || len(citations) != 2 {
 		t.Fatalf("answer=%q citations=%d selected=%d planned=%+v", answer, len(citations), len(selected), planned)
 	}
 	for _, citation := range citations {
@@ -180,7 +180,7 @@ func TestSelectCandidatesAggregateRequiresConjunctiveEqualityWitnesses(t *testin
 		t.Fatalf("aggregate dropped sibling metric from the row satisfying every equality predicate: %+v", selected)
 	}
 	answer, citations := renderAnswerPlanAt("ws_demo", question, planned, selected, now)
-	if answer != "Total: 4.000" || len(citations) == 0 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 4.000" || len(citations) == 0 {
 		t.Fatalf("answer=%q citations=%d selected=%d", answer, len(citations), len(selected))
 	}
 }
@@ -373,7 +373,7 @@ func TestSelectCandidatesDoesNotAggregateAmbiguousMetricColumns(t *testing.T) {
 	}
 	selected := selectCandidatesAt(candidates, question, now)
 	answer, _ := renderAnswerPlanAt("ws_demo", question, planned, selected, now)
-	if answer == "Total: 19.470" || answer == "Total: 12.345" || answer == "Total: 7.125" {
+	if answer == "\u0418\u0442\u043e\u0433\u043e: 19.470" || answer == "\u0418\u0442\u043e\u0433\u043e: 12.345" || answer == "\u0418\u0442\u043e\u0433\u043e: 7.125" {
 		t.Fatalf("ambiguous metric was aggregated: %q", answer)
 	}
 }

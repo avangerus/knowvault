@@ -46,7 +46,7 @@ func TestCompleteCorpusPublishesTheExactAggregate(t *testing.T) {
 		t.Fatal("a complete corpus must not withhold its aggregate")
 	}
 	answer, citations, _ := renderAnswerPlanAtWithReceipt("ws_demo", "\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043e\u0442\u0445\u043e\u0434\u043e\u0432?", planned, selected, time.Unix(1, 0).UTC())
-	if answer != "Total: 19.470" || len(citations) != 2 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 19.470" || len(citations) != 2 {
 		t.Fatalf("expected the exact total with its citations, got answer=%q citations=%d", answer, len(citations))
 	}
 }
