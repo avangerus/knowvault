@@ -1402,13 +1402,6 @@ function relativeTimeFromNow(value: string | null): string | null {
   return `${days} d ago`;
 }
 
-const corpusStatusWarnings: Record<string, string> = {
-  PARTIAL: "This answer uses an incomplete dataset. Check the evidence and source status before relying on it.",
-};
-function corpusStatusWarning(status: string): string | null {
-  return corpusStatusWarnings[status] ?? null;
-}
-
 // FIX-2 #4: closed processing_mode vocabulary (question.ProcessingMode*).
 const processingModeLabels: Record<string, string> = {
   INTERNAL: "model: on premises",
@@ -3452,6 +3445,32 @@ function answerCompletenessIsPartial(completeness: string | undefined | null): b
   return typeof completeness === "string" && completeness.trim() === "PARTIAL";
 }
 
+// Card W-3: the one incomplete-data warning. It appears only when the answer
+// itself rests on incomplete data -- the server's structured AnswerResult
+// completeness says the numbers do not cover the whole source -- so a
+// whole-corpus flag that does not touch this answer (a workspace with one
+// unsynced source while the answer quotes a healthy one) no longer paints a
+// caveat under a complete answer. The text follows the question's language:
+// a Russian question never gets the English sentence.
+const incompleteDataWarningRussian = "Ответ основан на неполных данных. Проверьте доказательства и состояние источников, прежде чем опираться на него.";
+const incompleteDataWarningEnglish = "This answer uses an incomplete dataset. Check the evidence and source status before relying on it.";
+
+// questionIsRussian is the same one-signal language rule the server uses
+// (questionLanguage/containsCyrillic in internal/question/tool_loop_language.go):
+// the question text is the only language signal the answer view has.
+function questionIsRussian(question: string | undefined | null): boolean {
+  return typeof question === "string" && /[\u0400-\u04FF]/.test(question);
+}
+
+// incompleteDataWarning returns the warning this answer must carry, or null.
+// The answer's own completeness is the only trigger; the run's corpus_status
+// is deliberately not consulted, because a PARTIAL corpus belongs to the
+// workspace, not to an answer that read complete data.
+export function incompleteDataWarning(run: Pick<QuestionRun, "question" | "answer_result">): string | null {
+  if (!answerCompletenessIsPartial(run.answer_result?.completeness)) return null;
+  return questionIsRussian(run.question) ? incompleteDataWarningRussian : incompleteDataWarningEnglish;
+}
+
 function answerObservationWindowText(window: AnswerObservationWindow): string {
   const parts: string[] = [];
   if (window.basis) parts.push(window.basis);
@@ -3616,9 +3635,11 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
           : "a server calculation using the snapshot"}</p>
       </div>
       <UnifiedAnswerRows result={result} />
-      {answerCompletenessIsPartial(result.completeness) && (
-        <p className="msg-warning">This answer uses an incomplete snapshot. The calculation does not cover the entire source.</p>
-      )}
+      {/* Card W-3: the incomplete-data caveat is rendered once by the answer
+          view (TurnAnswer/QuestionRunAnswer), where the question is known, so
+          it can follow the question's language. Keeping a second hardcoded
+          English line here made a Russian answer carry two English/duplicate
+          caveats; the completeness itself stays visible as a panel row. */}
       {result.keys && result.keys.length > 0 && (
         <ul className="answer-keys">
           {result.keys.map((item) => (
@@ -4329,7 +4350,9 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   onSelectCitation: (citationID: string) => void;
 }) {
   const statusMessage = questionStatusMessage(run);
-  const corpusWarning = corpusStatusWarning(run.corpus_status);
+  // Card W-3: the answer's own completeness decides the caveat, not the
+  // workspace-wide corpus flag (see incompleteDataWarning).
+  const incompleteWarning = incompleteDataWarning(run);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
   const showGenericHow = run.status === "COMPLETED" && run.planning_operation === "AGGREGATE" && !run.answer_result;
   // R2 Outcome 3: a structured answer is an aggregate reduction (the rowset
@@ -4391,7 +4414,6 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
             </blockquote>
           ) : (
             <div className="answer-body">
-              <span className="badge badge-tell">paraphrase</span>
               <AnswerBody citations={run.citations} onSelectCitation={onSelectCitation} panelTurnId={panelTurnId} selectedCitationId={selectedCitationId} text={run.answer} turnId={turnId} />
             </div>
           ))}
@@ -4406,11 +4428,11 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
           {hasLiveReceipt && run.answer_result?.kind === "LIVE_TABLE" && (
             <LiveTableEvidenceList result={run.answer_result} run={run} />
           )}
-          {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
+          {incompleteWarning && <p className="msg-warning">{incompleteWarning}</p>}
           {run.conflicts.map((item) => (
             <p className="msg-warning" key={item.code}>{item.message ?? "Sources disagree on this question — check the evidence below."}</p>
           ))}
-          {run.uncertainties.filter((item) => !(corpusWarning && item.code === "CORPUS_PARTIAL")).map((item) => (
+          {run.uncertainties.filter((item) => item.code !== "CORPUS_PARTIAL").map((item) => (
             <p className="msg-note" key={item.code}>{item.message ?? item.code}</p>
           ))}
           {run.citations.length === 0 && !hasLiveReceipt ? (
@@ -5176,7 +5198,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   workspaceID: string;
 }) {
   const statusMessage = questionStatusMessage(run);
-  const corpusWarning = corpusStatusWarning(run.corpus_status);
+  const incompleteWarning = incompleteDataWarning(run);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
   const text = run.answer ?? run.clarification;
   const liveResult = run.answer_result;
@@ -5253,7 +5275,6 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           </blockquote>
         ) : (
           <div className="answer-body">
-            <span className="badge badge-tell">paraphrase</span>
             <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
           </div>
         )
@@ -5270,9 +5291,9 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
         </div>
       )}
       {text && (!hasLiveReceipt || hasDocumentGroundedContext) && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
-      {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
+      {incompleteWarning && <p className="msg-warning">{incompleteWarning}</p>}
       {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
-      {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
+      {run.uncertainties.filter((item) => item.code !== "CORPUS_PARTIAL").map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
       {run.citations.length > 0 && (
         <ul aria-label="Answer sources" className="search-pilot-citations">
           {run.citations.map((citation) => {
