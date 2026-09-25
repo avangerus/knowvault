@@ -19,6 +19,15 @@
 // report lists which references changed. An ordinary run never writes to the
 // reference directory.
 //
+// Card U-4 adds the interface review to the same report shape: after its
+// screenshot every step is judged by a vision model against the numbered rules
+// of docs/UI-PRINCIPLES.md, and the report states, per screen, the remarks with
+// their rule number and their place on the screen. A screen the model finds
+// nothing wrong with is recorded as having no remarks, and a review that did
+// not happen — no key file, an unreachable model, a refused key — is recorded
+// with its reason without failing the run. The review is information, never a
+// pass/fail gate.
+//
 // The recorder is transport-agnostic: a step fails when its own action threw,
 // when any request it caused answered 5xx (with the request path), when the
 // browser raised an uncaught error while it was the active step, or when its
@@ -32,8 +41,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { comparePngs, DEFAULT_DIFFERENCE_THRESHOLD, DEFAULT_PIXEL_TOLERANCE } from "./visual.mjs";
+import { pngDimensions } from "./png.mjs";
+import { summariseReview } from "./review.mjs";
 
-export const REPORT_SCHEMA_VERSION = "walkthrough-report-v3";
+export const REPORT_SCHEMA_VERSION = "walkthrough-report-v4";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -101,6 +112,10 @@ export class Walkthrough {
     // uses it to let a transient result toast go away, so a picture never
     // depends on how fast the previous action's notification faded.
     this.beforeScreenshot = typeof options.beforeScreenshot === "function" ? options.beforeScreenshot : null;
+    // Card U-4: the optional interface reviewer. When it is null every step
+    // records that the review did not happen and why, and the run is unaffected.
+    this.reviewer = options.reviewer ?? null;
+    this.reviewDisabledReason = options.reviewDisabledReason ?? null;
     // In-flight HTTP requests. The screen is only photographed once the page
     // has stopped fetching, so a picture cannot catch the application halfway
     // through loading its workspace.
@@ -182,6 +197,7 @@ export class Walkthrough {
       visual: null,
       visual_failed: false,
       reference_update: null,
+      review: null,
     };
     this.current = step;
     const started = process.hrtime.bigint();
@@ -195,12 +211,13 @@ export class Walkthrough {
     }
     if (this.screenshotDir !== null) {
       const file = `${String(this.steps.length + 1).padStart(2, "0")}-${slug(name)}.png`;
+      let picture = null;
       try {
         await this.waitForQuiet();
         if (this.beforeScreenshot !== null) await this.beforeScreenshot(this.page, step);
         // `caret: "hide"` keeps the blinking text cursor out of the picture, so
         // a focused field cannot fail a step on its own.
-        const picture = await this.page.screenshot({
+        picture = await this.page.screenshot({
           path: path.join(this.screenshotDir, file),
           fullPage: true,
           caret: "hide",
@@ -210,6 +227,19 @@ export class Walkthrough {
       } catch (error) {
         step.screenshotError = this.redact(error instanceof Error ? error.message : String(error));
       }
+      // Card U-4: the screenshot is the review's input. It runs after the
+      // screen comparison so a review problem can never be mistaken for a
+      // comparison problem, and it never changes the step's status.
+      await this.reviewScreenshot(step, picture);
+    } else {
+      step.review = {
+        status: "not_run",
+        reason: this.reviewDisabledReason ?? "the walkthrough records no screenshots",
+        remarks: [],
+        remark_count: 0,
+        cost_usd: null,
+        usage: null,
+      };
     }
     step.status = stepFailed(step) ? "failed" : "passed";
     if (step.status === "failed") {
@@ -349,6 +379,61 @@ export class Walkthrough {
     return path.posix.join("differences", file);
   }
 
+  // reviewScreenshot is the card U-4 rule for one step: send this step's own
+  // screenshot bytes to the vision model and store what it saw. No configuration
+  // and no model failure changes the step's status; the record explains itself.
+  async reviewScreenshot(step, picture) {
+    if (this.reviewer === null) {
+      step.review = {
+        status: "not_run",
+        reason: this.reviewDisabledReason ?? "the interface review is not configured",
+        remarks: [],
+        remark_count: 0,
+        cost_usd: null,
+        usage: null,
+      };
+      return;
+    }
+    if (picture === null || picture === undefined) {
+      step.review = {
+        status: "skipped",
+        reason: this.redact(step.screenshotError ?? "no screenshot for this step"),
+        remarks: [],
+        remark_count: 0,
+        cost_usd: null,
+        usage: null,
+      };
+      return;
+    }
+    try {
+      const { width, height } = pngDimensions(picture);
+      const result = await this.reviewer.review({ step: step.name, screenshot: picture, width, height });
+      const remarks = Array.isArray(result.remarks) ? result.remarks : [];
+      step.review = {
+        status: result.status,
+        reason: result.reason === null || result.reason === undefined ? null : this.redact(String(result.reason)),
+        remarks: remarks.map((remark) => ({
+          rule: remark.rule,
+          rule_title: this.redact(String(remark.rule_title ?? "")),
+          where: this.redact(String(remark.where ?? "")),
+          note: this.redact(String(remark.note ?? "")),
+        })),
+        remark_count: remarks.length,
+        cost_usd: typeof result.cost_usd === "number" ? result.cost_usd : null,
+        usage: result.usage ?? null,
+      };
+    } catch (error) {
+      step.review = {
+        status: "failed",
+        reason: this.redact(error instanceof Error ? error.message : String(error)),
+        remarks: [],
+        remark_count: 0,
+        cost_usd: null,
+        usage: null,
+      };
+    }
+  }
+
   // waitForQuiet blocks until no request has been in flight for a short window,
   // so the screenshot is of a screen that finished loading. A request that
   // never finishes cannot hang the walkthrough: the wait is bounded.
@@ -458,7 +543,7 @@ function summariseVisual(steps, options = {}) {
   };
 }
 
-export function buildReport({ baseURL, command, scenario, startedAt, finishedAt, steps, redact, visual }) {
+export function buildReport({ baseURL, command, scenario, startedAt, finishedAt, steps, redact, visual, review }) {
   const redactor = typeof redact === "function" ? redact : (value) => value;
   const redactedSteps = redactValue(steps, redactor);
   const failed = redactedSteps.filter((step) => step.status === "failed");
@@ -481,9 +566,74 @@ export function buildReport({ baseURL, command, scenario, startedAt, finishedAt,
     failed_step_count: failed.length,
     failed_steps: failed.map((step) => step.name),
     visual: summariseVisual(redactedSteps, visual),
+    review: summariseReview(redactedSteps, review),
     answers,
     steps: redactedSteps,
   };
+}
+
+// formatUsd renders a dollar amount for a person, or "unknown" when the review
+// did not report enough to compute one.
+function formatUsd(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  return `$${value.toFixed(4)}`;
+}
+
+function oneLine(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function remarkLines(remarks) {
+  const lines = [];
+  for (const remark of remarks) {
+    const title = oneLine(remark.rule_title) === "" ? "" : ` (${oneLine(remark.rule_title)})`;
+    const where = oneLine(remark.where) === "" ? "place not stated" : oneLine(remark.where);
+    lines.push(`- **Rule ${remark.rule}**${title} — ${where}: ${oneLine(remark.note)}\n`);
+  }
+  return lines;
+}
+
+// renderReviewSection writes the card U-4 report section: what the vision model
+// saw on every screen, and, when the review did not happen, why.
+function renderReviewSection(review, steps) {
+  const lines = ["## Interface review (vision model)\n\n"];
+  if (review === null) {
+    lines.push("Review did not happen: the report holds no review record.\n\n");
+    return lines;
+  }
+  if (review.status === "not_reviewed") {
+    lines.push(`Review did not happen: ${oneLine(review.reason) || "no reason recorded"}.\n\n`);
+    return lines;
+  }
+  if (review.model !== null) {
+    const endpoint = review.endpoint === null ? "" : ` at \`${review.endpoint}\``;
+    lines.push(`- Model: \`${review.model}\`${endpoint}\n`);
+  }
+  lines.push(`- Rules: \`${review.rules_source}\`${review.rule_count === null ? "" : ` (${review.rule_count} rules)`}\n`);
+  lines.push(`- Screens reviewed: ${review.reviewed_step_count} (${review.not_reviewed_step_count} not reviewed)\n`);
+  lines.push(`- Screens with no remarks: ${review.no_remark_step_count}\n`);
+  lines.push(`- Remarks: ${review.remark_count}\n`);
+  lines.push(`- Review cost: ${formatUsd(review.cost_usd)} (ceiling ${formatUsd(review.cost_limit_usd)}${review.price_window === null ? "" : `, ${review.price_window} prices`})\n`);
+  if (review.status === "partial") {
+    lines.push(`- Some screens were not reviewed: ${oneLine(review.reason)}\n`);
+  }
+  lines.push("\n");
+  steps.forEach((step, index) => {
+    lines.push(`### ${index + 1}. ${step.name}\n\n`);
+    const stepReview = step.review ?? null;
+    if (stepReview === null || stepReview.status !== "reviewed") {
+      lines.push(`Review did not happen: ${oneLine(stepReview?.reason) || "no reason recorded"}.\n\n`);
+      return;
+    }
+    if (stepReview.remark_count === 0) {
+      lines.push("No remarks.\n\n");
+      return;
+    }
+    lines.push(`Remarks (${stepReview.remark_count}):\n\n`);
+    lines.push(...remarkLines(stepReview.remarks));
+    lines.push("\n");
+  });
+  return lines;
 }
 
 export function renderMarkdown(report) {
@@ -523,6 +673,7 @@ export function renderMarkdown(report) {
       lines.push(`Unchanged references: ${visual.references_unchanged_count}\n\n`);
     }
   }
+  lines.push(...renderReviewSection(report.review ?? null, report.steps));
   lines.push(`## Answers (${report.answers.length})\n\n`);
   if (report.answers.length === 0) {
     lines.push("- none\n\n");
@@ -560,6 +711,16 @@ export function renderMarkdown(report) {
       const update = step.reference_update;
       const measured = typeof update.difference_ratio === "number" ? ` (was ${formatPercent(update.difference_ratio)} different)` : "";
       lines.push(`Reference ${update.change}: \`${update.reference}\`${measured}\n\n`);
+    }
+    if (step.review !== null && step.review !== undefined) {
+      if (step.review.status === "reviewed") {
+        const summary = step.review.remark_count === 0 ? "no remarks" : `${step.review.remark_count} remarks`;
+        lines.push(`Interface review: ${summary} (${formatUsd(step.review.cost_usd)})\n`);
+        lines.push(...remarkLines(step.review.remarks));
+        lines.push("\n");
+      } else {
+        lines.push(`Interface review: did not happen — ${oneLine(step.review.reason) || "no reason recorded"}\n\n`);
+      }
     }
     if (step.answers.length > 0) {
       lines.push(`Answer texts (${step.answers.length}):\n\n`);

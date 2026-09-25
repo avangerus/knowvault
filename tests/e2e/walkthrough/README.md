@@ -1,4 +1,4 @@
-# Screen walkthrough (cards U-1, U-2, U-3)
+# Screen walkthrough (cards U-1, U-2, U-3, U-4)
 
 The question set checks answers through the API. This directory adds the robot
 that walks the product's screens before the owner does: one command starts a
@@ -10,6 +10,11 @@ Since card U-3 the robot also compares every step's screenshot with the
 approved reference picture of that step, so a screen that silently changed (a
 button moved, a panel vanished, a layout broke) fails the run instead of
 waiting for a person to notice the picture.
+
+Since card U-4 a vision model also looks at every screenshot and judges it
+against the numbered interface rules of `docs/UI-PRINCIPLES.md`, so an
+overloaded screen, a duplicated control, a tiny control or cut-off text reaches
+the report as a remark instead of reaching the owner.
 
 The same command, pointed at another address, walks an owner-facing stand in
 read-only mode first, so the owner only meets screens and answers that already
@@ -91,7 +96,88 @@ leaves the ones that do, and its report names every reference that changed
 run never writes inside the reference directory, so a passing run, a failing
 run and a deliberate break all leave every reference byte-identical.
 
-## A stand the robot did not start
+## The vision review of every screen
+
+```text
+KNOWVAULT_WALKTHROUGH_REVIEW_KEY_FILE=<file holding the model's key> \
+  bash tests/e2e/walkthrough/run-walkthrough.sh
+```
+
+After a step's screenshot is taken it is sent, together with the 15 numbered
+rules of `docs/UI-PRINCIPLES.md` read from the repository as a checklist and the
+picture's own pixel size, to a vision model (`deepseek-flash` at
+`https://api.deepseek.com` by default). The model answers with a list of
+remarks; each remark carries the rule number, the place on the screen and what
+is wrong. The report lists them per screen, and a screen the model finds
+nothing wrong with says **No remarks.** An answer that is not a list of usable
+remarks is recorded as a failed review of that screen.
+
+**Remarks inform; they never fail the run.** A step is failed by its action, a
+5xx response, a browser console error or (in `enforce` mode) a screen that
+differs from its approved reference — never by a remark from the model. A run
+whose every screen gets remarks still passes with every step passed.
+
+### The cost of one run
+
+The review is billed by the model provider. The report states what the run's
+review cost, computed from the token usage the provider returns and the
+published DeepSeek Flash prices, using the cache-hit and cache-miss input
+counts separately and the peak/off-peak window of the moment (`$0.30`/`$0.15`
+per million input tokens, `$1.20`/`$0.60` per million output tokens). Before
+every call the reviewer reserves the most expensive call it could make
+(`REVIEW_MAX_INPUT_TOKENS` plus `max_tokens` at peak prices) and stops calling
+the model when that reservation would cross the ceiling, so one run's review
+costs at most **$0.05** (`REVIEW_COST_LIMIT_USD`; override with
+`KNOWVAULT_WALKTHROUGH_REVIEW_MAX_COST_USD`). Screens the ceiling skipped say
+so in the report.
+
+### When the review does not happen
+
+The review is optional infrastructure. The run still passes, and the report
+says the review did not happen and why, when
+
+- no key file is given (`KNOWVAULT_WALKTHROUGH_REVIEW_KEY_FILE`), the file is
+  missing, or it is empty;
+- the model is unreachable (a connection failure is retried once, then
+  recorded);
+- the model refuses the key or answers with a server error or a body that
+  cannot be read;
+- the review is switched off with `KNOWVAULT_WALKTHROUGH_REVIEW=0`;
+- the target is `stand`: stand screenshots hold owner data, so sending them to
+  a model needs the explicit `KNOWVAULT_WALKTHROUGH_REVIEW=1`.
+
+The key is read from its file at run time, kept in memory, and passed to no
+other channel. It is never put in the prompt, the report, a log line or a
+screenshot, and it is added to the same redaction gate as the credentials
+password. `node --test tests/e2e/walkthrough/review.test.mjs` proves that: it
+runs a walkthrough with no key file, with a dummy key and with a model address
+where nothing listens, and checks on the bytes that no part of the key file's
+content reached the report, or any file tracked by git.
+
+### Proving the review sees the picture
+
+The same test proves the review is a real look at the image, not a scripted
+answer:
+
+- against a local fake OpenAI-compatible endpoint it shows that the image the
+  model receives is **the bytes of that step's own screenshot**, that a full
+  run makes exactly one review per step and that the reported cost is above
+  zero;
+- with the fake model answering no remarks for one screen and remarks for the
+  others, it shows the report says **No remarks.** for that screen and the run
+  still passes with every step passed;
+- two `live` tests call the real model (and are skipped without a key file):
+  one reviews the chat screenshot from the commit **before** the duplicated
+  «Sources» control was removed, found in the git history of the walkthrough
+  baseline and kept byte-identical as
+  `review-fixtures/chat-before-sources-dedup.png` (the blob is
+  `0b51347c29567a967b02be168c9fa83c91454409`, the version at
+  `1b660eef2^`), and requires a rule 2 remark that names the duplication and
+  its place; the other renders the dummy stand with its controls shrunk far
+  below the readable size (a stylesheet injected inside the test, never in
+  `web/src/`) and requires a rule 12 remark with its place.
+
+### A stand the robot did not start
 
 ```text
 KNOWVAULT_WALKTHROUGH_TARGET=stand \
@@ -169,8 +255,10 @@ duration, the mutating requests it made, every HTTP response with status >= 500
 step was active. A step is failed when its action threw, any request it caused
 answered 5xx, the browser logged an error during it, or its screen differed
 beyond the comparison threshold in `enforce` mode. The report also holds the
-text of every answer the robot waited for and, per step, the screen comparison
-against the approved reference (see above).
+text of every answer the robot waited for, per step the screen comparison
+against the approved reference, and the interface review: per screen the
+remarks with their rule number and place, or **No remarks.**, or — when the
+review did not happen — the reason (see above).
 
 `node --test tests/e2e/walkthrough/report.test.mjs` proves the 5xx rule against
 a deliberately broken local endpoint. `node --test
@@ -181,10 +269,15 @@ codec, the difference rule, two unchanged runs passing with byte-identical
 references, a control deliberately moved by the test (never by `web/src/`)
 failing exactly its own step with a difference picture, the replace command
 naming the replaced reference before the next run passes, and the read-only
-mode reporting a difference without failing. Set
+mode reporting a difference without failing. `node --test
+tests/e2e/walkthrough/review.test.mjs` proves the interface review: the rule
+checklist, the price arithmetic, the answer parser, the image bytes the model
+receives, one review per step with a cost above zero, a screen with no remarks,
+a run full of remarks still passing, and the three no-review runs with no key
+file, a dummy key and an address where nothing listens. Set
 `KNOWVAULT_WALKTHROUGH_TEST_ARTIFACTS=<directory>` to keep that run's
-screenshots, references and difference pictures instead of a temporary
-directory that is removed.
+screenshots, references, difference pictures and the deliberately bad
+screenshot instead of a temporary directory that is removed.
 
 ## Environment
 
@@ -199,6 +292,11 @@ directory that is removed.
 | `KNOWVAULT_WALKTHROUGH_REFERENCE_DIR` | approved reference pictures (default `tests/e2e/walkthrough/references/<scenario>`); a stand update needs one outside the repository |
 | `KNOWVAULT_WALKTHROUGH_UPDATE_REFERENCES` | `1` replaces the approved references with this run's screenshots and reports which changed |
 | `KNOWVAULT_WALKTHROUGH_DIFFERENCE_THRESHOLD` | share of the screen that may differ (default `0.0005`) |
+| `KNOWVAULT_WALKTHROUGH_REVIEW_KEY_FILE` | file holding the review model's key, read at run time; without it the interface review is skipped |
+| `KNOWVAULT_WALKTHROUGH_REVIEW` | `0` switches the review off; `1` enables it for `stand`, whose screenshots otherwise stay on the stand |
+| `KNOWVAULT_WALKTHROUGH_REVIEW_BASE_URL` | OpenAI-compatible model endpoint (default `https://api.deepseek.com`) |
+| `KNOWVAULT_WALKTHROUGH_REVIEW_MODEL` | vision model name (default `deepseek-flash`) |
+| `KNOWVAULT_WALKTHROUGH_REVIEW_MAX_COST_USD` | review cost ceiling for one run (default `0.05`) |
 | `KNOWVAULT_WALKTHROUGH_INSTANCE` | `1..9`: run next to another local walkthrough |
 | `KNOWVAULT_PLAYWRIGHT_MODULE` | module name/path of the Playwright package |
 | `KNOWVAULT_WALKTHROUGH_QUESTION` | chat question, `local` scenario (default «что ты знаешь?») |
