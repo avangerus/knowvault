@@ -2,6 +2,7 @@ package question
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -27,13 +28,16 @@ func presentationVocabRecord() *ToolLoopRecord {
 			Name: sourceSQLToolName, Outcome: "SUCCEEDED",
 			Arguments: json.RawMessage(`{"source_id":"conn_01H9ABCDEFGHJKMNPQRSTVWXYZ","sql":"SELECT count(*) AS active_contracts FROM public.contract WHERE status = 'active'"}`),
 			Result:    workspacetools.Result{Structured: json.RawMessage(`{"row_count":1}`)},
+		}, {
+			Name: "knowvault_source_schema", Outcome: "SUCCEEDED",
+			Result: workspacetools.Result{Structured: json.RawMessage(`{"tables":[{"name":"contract","columns":[{"name":"id"},{"name":"number"},{"name":"client_id"},{"name":"status"},{"name":"signed_on"},{"name":"amount"}]}]}`)},
 		}},
 	}
 }
 
 func TestToolLoopPresentationVocabularyComesFromTheRun(t *testing.T) {
 	names := toolLoopTechnicalVocabulary(presentationVocabRecord())
-	for _, want := range []string{"container_group", "code", "contract", "status"} {
+	for _, want := range []string{"container_group", "code", "contract", "status", "id", "client_id", "signed_on", "amount"} {
 		if _, ok := names[want]; !ok {
 			t.Fatalf("technical vocabulary misses %q: %v", want, names)
 		}
@@ -69,6 +73,7 @@ func TestToolLoopAnswerSelfLabelAndInternalMarkers(t *testing.T) {
 	for _, text := range []string{
 		"Источник conn_01H9ABCDEFGHJKMNPQRSTVWXYZ содержит пять записей.",
 		"Прочитан файл projects/alpha/waste-removal-regulation.txt.",
+		"Прочитан файл waste-removal-regulation.txt и глоссарий glossary.txt.",
 		"Наблюдение сделано 2026-09-25T06:43:05Z.",
 		"Эта метка paraphrase не для пользователя.",
 	} {
@@ -83,7 +88,7 @@ func TestToolLoopAnswerSelfLabelAndInternalMarkers(t *testing.T) {
 	if label := toolLoopAnswerSelfLabel("Сколько чего нужно узнать: массу отходов или число рейсов?"); label != "" {
 		t.Fatalf("a clarifying question was mistaken for a self-label: %q", label)
 	}
-	if issue := toolLoopAnswerPresentationIssue("Сколько чего нужно узнать: массу отходов или число рейсов?", nil, false); issue != "" {
+	if issue := toolLoopAnswerPresentationIssue("Сколько чего нужно узнать: массу отходов или число рейсов?", nil); issue != "" {
 		t.Fatalf("a clarifying question was rejected with %q", issue)
 	}
 }
@@ -101,7 +106,7 @@ func TestToolLoopAnswerPresentationRejectsRawNames(t *testing.T) {
 		"Its status field equals active.",
 		"Ответ: в рабочей области пять МНО.",
 	} {
-		if issue := toolLoopAnswerPresentationIssue(text, pattern, false); issue == "" {
+		if issue := toolLoopAnswerPresentationIssue(text, pattern); issue == "" {
 			t.Fatalf("presentation issue not found in %q", text)
 		}
 	}
@@ -111,16 +116,22 @@ func TestToolLoopAnswerPresentationRejectsRawNames(t *testing.T) {
 		"There are 3 active contracts.",
 		"There are 42 registered contracts.",
 		"Договор № 47 действует с 12.03.2025.",
+		"Стоимость услуг 1 250 000 рублей в год.",
 	} {
-		if issue := toolLoopAnswerPresentationIssue(text, pattern, false); issue != "" {
+		if issue := toolLoopAnswerPresentationIssue(text, pattern); issue != "" {
 			t.Fatalf("clean answer %q matched %q", text, issue)
 		}
 	}
-	// A question about the data structure keeps its relation and column names.
-	if issue := toolLoopAnswerPresentationIssue(
+	// A question about the data structure is not an exception: the raw relation
+	// and column names are presentation there too, and the answer must use
+	// business words. This is the acceptance remark of card D-6a.
+	for _, text := range []string{
 		"В базе про договоры есть таблица public.contract со столбцами id, number, client_id, status, signed_on и amount.",
-		pattern, true); issue != "" {
-		t.Fatalf("a schema answer was rejected with %q", issue)
+		"В базе по договорам есть одна таблица contract с полями id, number, client_id, status, signed_on и amount.",
+	} {
+		if issue := toolLoopAnswerPresentationIssue(text, pattern); issue == "" {
+			t.Fatalf("a schema answer was presented as-is: %q", text)
+		}
 	}
 }
 
@@ -133,7 +144,7 @@ func TestToolLoopPresentAnswerKeepsTheGatheredAnswer(t *testing.T) {
 		Text:      "Ответ: в рабочей области пять МНО. Данные о них хранятся в поле code таблицы container_group. Файл projects/alpha/waste-removal-regulation.txt прочитан.",
 		Citations: []toolCitation{{Address: "kv1:object#span"}},
 	}}}
-	presented, changed := toolLoopPresentAnswer(answer, toolLoopTechnicalVocabulary(record), false)
+	presented, changed := toolLoopPresentAnswer(answer, toolLoopTechnicalVocabulary(record))
 	if !changed {
 		t.Fatal("a form-rejected answer was not cleaned")
 	}
@@ -151,6 +162,40 @@ func TestToolLoopPresentAnswerKeepsTheGatheredAnswer(t *testing.T) {
 	}
 	if len(presented.Claims[0].Citations) != 1 || presented.Claims[0].Citations[0].Address != "kv1:object#span" {
 		t.Fatalf("presented answer lost its citation binding: %#v", presented.Claims[0].Citations)
+	}
+}
+
+// TestToolLoopPresentAnswerCleansSchemaQuestionNames is the acceptance remark
+// of card D-6a at the unit level: a question about the data structure is not an
+// exception, so a forced-final answer that names the relation and its columns
+// is cleaned to business words instead of being shown as-is, and it is still an
+// answer, not a stub.
+func TestToolLoopPresentAnswerCleansSchemaQuestionNames(t *testing.T) {
+	record := presentationVocabRecord()
+	answer := toolAnswer{Claims: []toolClaim{{
+		Text:      "Ответ: в базе по договорам есть таблица contract с полями id, number, client_id, status, signed_on и amount. Она хранит номер договора, его клиента, статус, дату подписания и сумму.",
+		Citations: []toolCitation{{Address: "kv1:object#span"}},
+	}}}
+	presented, changed := toolLoopPresentAnswer(answer, toolLoopTechnicalVocabulary(record))
+	if !changed {
+		t.Fatal("a schema-question answer was presented as-is")
+	}
+	if len(presented.Claims) != 1 {
+		t.Fatalf("presented claims = %#v", presented.Claims)
+	}
+	text := presented.Claims[0].Text
+	rawName := regexp.MustCompile(`(?i)\b(?:contract|id|number|client_id|status|signed_on|amount)\b`)
+	if match := rawName.FindString(text); match != "" {
+		t.Fatalf("presented schema answer still carries the raw name %q: %q", match, text)
+	}
+	if label := toolLoopAnswerSelfLabel(text); label != "" {
+		t.Fatalf("presented schema answer still carries the self-label %q: %q", label, text)
+	}
+	if !strings.Contains(text, "номер договора") || !strings.Contains(text, "дату подписания") || !strings.Contains(text, "сумму") {
+		t.Fatalf("presented schema answer lost its business content: %q", text)
+	}
+	if len(presented.Claims[0].Citations) != 1 {
+		t.Fatalf("presented schema answer lost its citation binding: %#v", presented.Claims[0].Citations)
 	}
 }
 
