@@ -25,6 +25,14 @@ func TestToolLoopOverviewQuestionIsNarrow(t *testing.T) {
 		"good morning",
 		"what data do you have",
 		"workspace overview",
+		// Card D-5 requirement 3: the class is the question's meaning, not one
+		// fixed sentence, so a paraphrase of the same overview question is
+		// recognized too.
+		"\u0447\u0442\u043e \u0437\u0434\u0435\u0441\u044c \u0435\u0441\u0442\u044c?",
+		"\u0447\u0435\u043c \u0442\u044b \u043c\u043e\u0436\u0435\u0448\u044c \u043f\u043e\u043c\u043e\u0447\u044c?",
+		"\u043a\u0430\u043a\u0438\u0435 \u0441\u0432\u0435\u0434\u0435\u043d\u0438\u044f \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b?",
+		"what can you tell me?",
+		"what is available here?",
 	} {
 		if !toolLoopOverviewQuestion(question) {
 			t.Fatalf("overview question not recognized: %q", question)
@@ -120,3 +128,87 @@ func TestToolLoopUserVisibleTextsFollowQuestionLanguage(t *testing.T) {
 }
 
 const unverifiedAnswerRussianForTest = "\u041d\u0438 \u043e\u0434\u043d\u043e \u0443\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044c \u043f\u043e \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u043d\u0435\u0447\u0435\u0433\u043e. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0432\u043e\u043f\u0440\u043e\u0441 \u0438\u043b\u0438 \u043d\u0430\u0437\u043e\u0432\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0441\u043b\u0435\u0434\u0443\u0435\u0442 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c."
+
+// TestToolLoopAnswerLanguageMismatch covers card D-5 requirement 4's guard: an
+// English question must not receive a Russian answer, while a Russian answer is
+// never churned for the Latin identifiers a schema answer needs.
+func TestToolLoopAnswerLanguageMismatch(t *testing.T) {
+	russian := toolAnswer{Claims: []toolClaim{{Text: "\u041f\u043e \u0434\u0430\u043d\u043d\u044b\u043c \u0442\u0430\u0431\u043b\u0438\u0446\u044b \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u043e\u0432 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0445 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u043e\u0432 3."}}}
+	english := toolAnswer{Claims: []toolClaim{{Text: "There are 3 active contracts."}}}
+	mixed := toolAnswer{Claims: []toolClaim{{Text: "There are 3 active contracts, because \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u043c \u0441\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044f \u0434\u043e\u0433\u043e\u0432\u043e\u0440 \u0441\u043e \u0441\u0442\u0430\u0442\u0443\u0441\u043e\u043c active \u0438 \u0442\u0430\u043a\u0438\u0435 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u044b \u0441\u0447\u0438\u0442\u0430\u044e\u0442\u0441\u044f \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u043c\u0438 \u043f\u043e \u043f\u0440\u0430\u0432\u0438\u043b\u0443."}}}
+	if !toolLoopAnswerLanguageMismatch(russian, questionLanguageEnglish) {
+		t.Fatal("a Russian answer to an English question was accepted")
+	}
+	if toolLoopAnswerLanguageMismatch(english, questionLanguageEnglish) {
+		t.Fatal("an English answer to an English question was rejected")
+	}
+	if !toolLoopAnswerLanguageMismatch(mixed, questionLanguageEnglish) {
+		t.Fatal("a half-Russian answer to an English question was accepted")
+	}
+	if toolLoopAnswerLanguageMismatch(english, questionLanguageRussian) {
+		t.Fatal("a Russian question's answer was rejected by the one-sided guard")
+	}
+	if !strings.Contains(toolLoopLanguageRepairInstruction(questionLanguageEnglish), "English") {
+		t.Fatal("the English language repair instruction is not in English")
+	}
+	if !strings.Contains(toolLoopLanguageRepairInstruction(questionLanguageRussian), "\u0440\u0443\u0441\u0441\u043a\u0438") {
+		t.Fatal("the Russian language repair instruction is not in Russian")
+	}
+	if toolLoopLiveResultMarker(questionLanguageRussian, 1) != " [\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442 1]" ||
+		toolLoopLiveResultMarker(questionLanguageEnglish, 1) != " [Live result 1]" ||
+		toolLoopLiveResultMarker("", 2) != " [Live result 2]" {
+		t.Fatal("live-result marker does not follow the question's language")
+	}
+}
+
+// TestToolLoopAnswerInternalMarker covers the second half of requirement 4's
+// presentation guard: an internal connection/rule/term identifier in the answer
+// text is rejected instead of being shown to the user.
+func TestToolLoopAnswerInternalMarker(t *testing.T) {
+	for _, text := range []string{
+		"\u0412 \u0442\u0430\u0431\u043b\u0438\u0446\u0435 container_group \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 conn_0858ZEMMX17HG65PFQ0E36R58F \u043f\u044f\u0442\u044c \u0437\u0430\u043f\u0438\u0441\u0435\u0439.",
+		"\u041f\u0440\u0430\u0432\u0438\u043b\u043e rule_01ABC says contracts are active.",
+		"The observation field observed_at is not user text.",
+	} {
+		if marker := toolLoopAnswerInternalMarker(toolAnswer{Claims: []toolClaim{{Text: text}}}); marker == "" {
+			t.Fatalf("internal identifier was not found in %q", text)
+		}
+	}
+	for _, text := range []string{
+		"\u0412 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0435 \u00ab\u041c\u041d\u041e\u00bb \u043f\u044f\u0442\u044c \u0437\u0430\u043f\u0438\u0441\u0435\u0439.",
+		"There are 3 active contracts in the contract table.",
+	} {
+		if marker := toolLoopAnswerInternalMarker(toolAnswer{Claims: []toolClaim{{Text: text}}}); marker != "" {
+			t.Fatalf("clean answer %q matched internal marker %q", text, marker)
+		}
+	}
+	if toolLoopInternalMarkerRepairInstruction(questionLanguageRussian) == toolLoopInternalMarkerRepairInstruction(questionLanguageEnglish) {
+		t.Fatal("the internal-marker repair instruction is not localized")
+	}
+}
+
+// TestToolLoopAnswerVerificationProse covers the third presentation guard: the
+// internal verification vocabulary is rejected instead of being shown.
+func TestToolLoopAnswerVerificationProse(t *testing.T) {
+	for _, text := range []string{
+		"The claim was verified against the fragment.",
+		"That needs no verification.",
+		"\u042d\u0442\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043e \u043f\u043e \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u0430\u043c.",
+		"\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u043f\u0440\u043e\u0439\u0434\u0435\u043d\u0430.",
+	} {
+		if wording := toolLoopAnswerVerificationProse(text); wording == "" {
+			t.Fatalf("verification wording was not found in %q", text)
+		}
+	}
+	for _, text := range []string{
+		"\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.",
+		"There are 3 active contracts.",
+	} {
+		if wording := toolLoopAnswerVerificationProse(text); wording != "" {
+			t.Fatalf("clean answer %q matched verification wording %q", text, wording)
+		}
+	}
+	if toolLoopVerificationProseRepairInstruction(questionLanguageRussian) == toolLoopVerificationProseRepairInstruction(questionLanguageEnglish) {
+		t.Fatal("the verification-prose repair instruction is not localized")
+	}
+}

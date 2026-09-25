@@ -192,7 +192,18 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		// model's answer stays identical across scenarios.
 		currentAnswer := func(citations ...any) string {
 			content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{
-				"text":      "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.",
+				"text":      "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.",
+				"citations": citations,
+			}}})
+			return string(content)
+		}
+		// englishAnswer is the same supported claim written in English, for the
+		// English question. Card D-5 requirement 4: an English question gets an
+		// English answer, and the tool loop now rejects a Russian submission for
+		// it instead of showing it.
+		englishAnswer := func(citations ...any) string {
+			content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{
+				"text":      "The read fragment reports 42 tonnes. Other periods were not checked.",
 				"citations": citations,
 			}}})
 			return string(content)
@@ -201,7 +212,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 			scenario == "address_only" || scenario == "fragment_reference" ||
 			scenario == "edited_quote" || scenario == "scope_changed"
 		if isCardD5Scenario(scenario) {
-			content, calls, cardFinish := cardD5ScriptedAnswer(t, scenario, input, lastMessage, emittedAddress, currentAnswer, &forcedCalls)
+			content, calls, cardFinish := cardD5ScriptedAnswer(t, scenario, input, lastMessage, emittedAddress, currentAnswer, englishAnswer, &forcedCalls)
 			message["content"] = content
 			if len(calls) > 0 {
 				message["tool_calls"] = calls
@@ -262,7 +273,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 							t.Error("bounded batch search returned no readable address")
 						}
 					}
-					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.", "citations": []any{map[string]any{"address": citeAddress}}}}})
+					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.", "citations": []any{map[string]any{"address": citeAddress}}}}})
 					message["content"] = string(content)
 				}
 			}
@@ -533,7 +544,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					bindingReads++
 				}
 			}
-			if bindingReads != example.bindingReads || run.Citations[0].Address != emittedAddress || run.Citations[0].Excerpt != string(fragment.Text) || !strings.Contains(run.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.") {
+			if bindingReads != example.bindingReads || run.Citations[0].Address != emittedAddress || run.Citations[0].Excerpt != string(fragment.Text) || !strings.Contains(run.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.") {
 				t.Fatal("finalization bypassed source binding or lost the explicit answer scope")
 			}
 		})
@@ -616,7 +627,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		mixedCitationRun.ToolLoop.StopReason != "ANSWER" || len(mixedCitationRun.Citations) != 1 {
 		t.Fatalf("partial verification discarded the verified content: %v %+v", err, mixedCitationRun)
 	}
-	if !strings.Contains(mixedCitationRun.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b. [1]") ||
+	if !strings.Contains(mixedCitationRun.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c. [1]") ||
 		len(mixedCitationRun.ToolLoop.UnconfirmedClaims) != 1 {
 		t.Fatalf("partial verification did not keep the verified claim and record the dropped citation: %q %+v",
 			mixedCitationRun.Answer, mixedCitationRun.ToolLoop.UnconfirmedClaims)
@@ -692,6 +703,25 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	}
 	if strings.Contains(englishRun.Answer, "\u041e\u0431\u0437\u043e\u0440") || strings.Contains(englishRun.Answer, "\u0412 \u0440\u0430\u0431\u043e\u0447\u0435\u0439") {
 		t.Fatalf("english question received russian text: %q", englishRun.Answer)
+	}
+	// Card D-5 requirement 4: a Russian answer to the English question is
+	// rejected with a language instruction, and the model's next English answer
+	// is shown. The handler's tool-protocol check fails the test if that
+	// instruction was inserted before the rejected submit_answer's tool result,
+	// which a real provider rejects with HTTP 400.
+	scenario = "language_retry"
+	retryKey := make([]byte, 32)
+	retryKey[0] = 90
+	retryRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: "hello", IdempotencyKey: base64.RawURLEncoding.EncodeToString(retryKey)})
+	scenario = "answer"
+	if err != nil || retryRun.ToolLoop == nil || retryRun.ResultStatus != "COMPLETED" || retryRun.ToolLoop.StopReason != "ANSWER" || len(retryRun.Citations) != 1 {
+		t.Fatalf("a rejected Russian answer was not replaced by an English one: %v %+v", err, retryRun)
+	}
+	if !strings.Contains(retryRun.Answer, "42 tonnes") || strings.Contains(retryRun.Answer, "\u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e") {
+		t.Fatalf("the wrong-language answer was shown: %q", retryRun.Answer)
+	}
+	if modelToolCalls(retryRun) != 0 {
+		t.Fatalf("the language retry spent knowledge tool calls: %+v", retryRun.ToolLoop.Calls)
 	}
 	scope := workspacetools.Scope{Access: access, WorkspaceID: s1dWorkspace, Revision: first.WorkspaceRevision}
 	scenario = "mixed_submission"
@@ -1026,7 +1056,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 // own turn plan, which the older scenario chain must not answer for.
 func isCardD5Scenario(scenario string) bool {
 	switch scenario {
-	case "overview", "greeting", "forced_answer", "forced_fail", "mixed_citations", "mixed_claims", "mixed_claims_first", "mixed_submission":
+	case "overview", "greeting", "language_retry", "forced_answer", "forced_fail", "mixed_citations", "mixed_claims", "mixed_claims_first", "mixed_submission":
 		return true
 	default:
 		return false
@@ -1039,13 +1069,14 @@ func isCardD5Scenario(scenario string) bool {
 func cardD5ScriptedAnswer(t *testing.T, scenario string, input struct {
 	Messages []modelgateway.Message        `json:"messages"`
 	Tools    []modelgateway.ToolDefinition `json:"tools"`
-}, lastMessage modelgateway.Message, emittedAddress string, currentAnswer func(...any) string, forcedCalls *int) (string, []any, string) {
+}, lastMessage modelgateway.Message, emittedAddress string, currentAnswer func(...any) string, englishAnswer func(...any) string, forcedCalls *int) (string, []any, string) {
 	t.Helper()
 	finalOnly := len(input.Tools) == 1 && input.Tools[0].Function.Name == "submit_answer"
 	switch scenario {
-	case "overview", "greeting":
+	case "overview", "greeting", "language_retry":
 		// Card D-5 requirement 3: the overview is already in the first request,
-		// with no tool call. The model answers it directly.
+		// with no tool call. The model answers it directly. Card D-5 requirement
+		// 4: the greeting's question is English, so its answer is too.
 		overviewText := ""
 		for _, entry := range input.Messages {
 			if strings.Contains(entry.Content, "Workspace overview") || strings.Contains(entry.Content, "\u041e\u0431\u0437\u043e\u0440 \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u043e\u0431\u043b\u0430\u0441\u0442\u0438") {
@@ -1065,6 +1096,21 @@ func cardD5ScriptedAnswer(t *testing.T, scenario string, input struct {
 		address := regexp.MustCompile(`kv1:[^\s"\\)\]]+`).FindString(overviewText)
 		if address == "" {
 			t.Errorf("overview carried no citable address: %q", overviewText)
+		}
+		if scenario == "greeting" {
+			return englishAnswer(map[string]any{"address": address}), nil, "stop"
+		}
+		if scenario == "language_retry" {
+			// The first submission is Russian and must be rejected with a
+			// language instruction; the next request carries it, so the model
+			// answers in English. The protocol check above fails the test if the
+			// hint was inserted before the rejected call's tool result.
+			for _, entry := range input.Messages {
+				if entry.Role == "user" && strings.Contains(entry.Content, "must be in English") {
+					return englishAnswer(map[string]any{"address": address}), nil, "stop"
+				}
+			}
+			return currentAnswer(map[string]any{"address": address}), nil, "stop"
 		}
 		return currentAnswer(map[string]any{"address": address}), nil, "stop"
 	case "forced_answer":

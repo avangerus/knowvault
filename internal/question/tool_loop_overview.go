@@ -50,6 +50,17 @@ var overviewQuestionCue = regexp.MustCompile(`\d|` +
 	`таблиц|колонк|пол[ея]|строк|запис|метрик|показател|рейс|отход|компан|договор|` +
 	`table|column|field|row|record|metric|report|contract|revenue`)
 
+// overviewQuestionPattern is the paraphrase-tolerant half of the overview
+// class: an interrogative about the workspace itself (что/чем/какие/what) whose
+// predicate is about knowing, having, being able, or being available. It is
+// deliberately paired with overviewQuestionCue, which wins first, so a question
+// that names a concrete subject keeps the ordinary full tool loop no matter how
+// it is worded. The card names the class, not one sentence; a user who asks the
+// same thing in other words must still get the quick overview.
+var overviewQuestionPattern = regexp.MustCompile(`(?i)(?:^|[^а-яёa-z])(?:что|чем|какие|какая|каков|what)(?:[^?]{0,80}?)` +
+	`(?:есть|знаешь|умеешь|можешь|доступн|имеетс|хранитс|расскаж|покаж|обзор|` +
+	`do you|can you|are there|is there|available|there)`)
+
 // toolLoopGreetingQuestion reports whether the question is only a greeting.
 // A greeting is also an overview question (card D-5 requirement 3 gives it the
 // same overview), but it is told to answer with a short reply instead of an
@@ -102,7 +113,7 @@ func toolLoopOverviewQuestion(question string) bool {
 			return true
 		}
 	}
-	return false
+	return overviewQuestionPattern.MatchString(normalized)
 }
 
 // buildToolLoopOverview reads the compact workspace overview. Every read goes

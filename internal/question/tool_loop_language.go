@@ -2,7 +2,10 @@ package question
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Card D-5 requirement 4: every fallback, uncertainty and failure text the
@@ -28,6 +31,138 @@ func localizedText(language, russian, english string) string {
 		return russian
 	}
 	return english
+}
+
+// toolLoopLiveResultMarker renders the inline marker that binds a displayed
+// claim to the live result it cites. It follows the question's language, so a
+// Russian answer carries no English service marker (card D-5 requirement 4).
+// An empty or unknown language keeps the historical English spelling, so a
+// record persisted before AnswerLanguage existed reconstructs the exact answer
+// bytes it was written with.
+func toolLoopLiveResultMarker(language string, ordinal int) string {
+	label := "Live result"
+	if language == questionLanguageRussian {
+		label = "\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442"
+	}
+	return fmt.Sprintf(" [%s %d]", label, ordinal)
+}
+
+// toolLoopEnglishCyrillicMax is the share of Cyrillic letters above which an
+// answer to an English question is no longer an English answer. A short
+// answer that quotes a Russian term stays below it; an answer written in the
+// workspace materials' language does not.
+const toolLoopEnglishCyrillicMax = 0.25
+
+// toolLoopAnswerLanguageMismatch reports whether a submitted answer is written
+// in a language other than the question's. Card D-5 requirement 4: the answer
+// the user reads follows the question's language, so a model that slips into
+// the workspace materials' language is asked to rewrite it instead of having
+// it shown. The guard is deliberately one-sided: an English question must not
+// receive Russian prose, while a Russian answer is allowed to carry the Latin
+// identifiers a schema answer legitimately needs.
+func toolLoopAnswerLanguageMismatch(answer toolAnswer, language string) bool {
+	if language != questionLanguageEnglish {
+		return false
+	}
+	var builder strings.Builder
+	for _, claim := range answer.Claims {
+		builder.WriteString(claim.Text)
+		builder.WriteString("\n")
+	}
+	builder.WriteString(answer.Clarification)
+	cyrillic, letters := 0, 0
+	for _, character := range builder.String() {
+		if !unicode.IsLetter(character) {
+			continue
+		}
+		letters++
+		if unicode.Is(unicode.Cyrillic, character) {
+			cyrillic++
+		}
+	}
+	if letters == 0 {
+		return false
+	}
+	return float64(cyrillic)/float64(letters) > toolLoopEnglishCyrillicMax
+}
+
+// toolLoopLanguageRepairInstruction tells the model, in the question's own
+// language, that the submission was rejected only because of its language.
+func toolLoopLanguageRepairInstruction(language string) string {
+	return localizedText(language,
+		"\u041e\u0442\u0432\u0435\u0442 \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c \u043d\u0430 \u044f\u0437\u044b\u043a\u0435 \u0432\u043e\u043f\u0440\u043e\u0441\u0430. \u041f\u0435\u0440\u0435\u043f\u0438\u0448\u0438\u0442\u0435 \u0432\u0435\u0441\u044c \u043e\u0442\u0432\u0435\u0442 \u043f\u043e-\u0440\u0443\u0441\u0441\u043a\u0438, \u0432\u043a\u043b\u044e\u0447\u0430\u044f \u043f\u0440\u0430\u0432\u0438\u043b\u0430 \u0438 \u0444\u043e\u0440\u043c\u0443\u043b\u0438\u0440\u043e\u0432\u043a\u0438 \u0438\u0437 \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u043e\u0432 \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u043e\u0431\u043b\u0430\u0441\u0442\u0438.",
+		"The question is in English and the answer must be in English. Rewrite the whole answer in English, including any rule or wording taken from the workspace materials; do not answer in Russian.")
+}
+
+// toolLoopAnswerInternalMarkers are the internal identifiers that must never
+// appear in a user-visible answer: a connection, rule, term or binding id, a
+// raw observation field, a paraphrase marker or an inbox path. They are the
+// enforceable half of the presentation rule that tells the model to name a
+// source by its human name.
+var toolLoopAnswerInternalMarkers = []*regexp.Regexp{
+	regexp.MustCompile(`conn_[0-9A-Z]`),
+	regexp.MustCompile(`rule_[0-9A-Z]`),
+	regexp.MustCompile(`term_[0-9A-Z]`),
+	regexp.MustCompile(`binding_[0-9A-Z]`),
+	regexp.MustCompile(`observed_at`),
+	regexp.MustCompile(`paraphrase`),
+	regexp.MustCompile(`inbox/`),
+}
+
+// toolLoopAnswerInternalMarker returns the first internal identifier found in a
+// submitted answer, or the empty string. A model that leaks one is asked to
+// rewrite the answer instead of having it shown to the user.
+func toolLoopAnswerInternalMarker(answer toolAnswer) string {
+	return toolLoopAnswerInternalMarkerInText(toolLoopAnswerText(answer))
+}
+
+// toolLoopAnswerText is the user-visible text of a submitted answer.
+func toolLoopAnswerText(answer toolAnswer) string {
+	var builder strings.Builder
+	for _, claim := range answer.Claims {
+		builder.WriteString(claim.Text)
+		builder.WriteString("\n")
+	}
+	builder.WriteString(answer.Clarification)
+	return builder.String()
+}
+
+// toolLoopAnswerInternalMarkerInText returns the first internal identifier in a
+// user-visible answer text, or the empty string.
+func toolLoopAnswerInternalMarkerInText(text string) string {
+	for _, pattern := range toolLoopAnswerInternalMarkers {
+		if match := pattern.FindString(text); match != "" {
+			return match
+		}
+	}
+	return ""
+}
+
+// toolLoopAnswerForbiddenProse matches the words the presentation rules reserve
+// for the internal verification machinery. "verif" covers verified and
+// verification; "провер" covers проверено, проверенный, проверка and проверять.
+var toolLoopAnswerForbiddenProse = regexp.MustCompile(`(?i)(verif|провер)`)
+
+// toolLoopAnswerVerificationProse returns the forbidden verification wording in
+// a user-visible answer text, or the empty string.
+func toolLoopAnswerVerificationProse(text string) string {
+	return toolLoopAnswerForbiddenProse.FindString(text)
+}
+
+// toolLoopVerificationProseRepairInstruction tells the model, in the question's
+// language, which presentation rule its rejected submission broke.
+func toolLoopVerificationProseRepairInstruction(language string) string {
+	return localizedText(language,
+		"\u0412 \u0442\u0435\u043a\u0441\u0442\u0435 \u043e\u0442\u0432\u0435\u0442\u0430 \u0435\u0441\u0442\u044c \u0441\u043b\u043e\u0432\u043e \u043e \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0435. \u041d\u0435 \u0443\u043f\u043e\u0442\u0440\u0435\u0431\u043b\u044f\u0439\u0442\u0435 \u0441\u043b\u043e\u0432\u0430 \u00ab\u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043e\u00bb, \u00ab\u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u043d\u044b\u0439\u00bb, \u00ab\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u00bb, \u00ab\u043f\u0440\u043e\u0432\u0435\u0440\u044f\u0442\u044c\u00bb; \u043d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u00ab\u0432 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u044b\u0445 \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u0430\u0445\u00bb \u0438\u043b\u0438 \u00ab\u0432 \u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u043d\u043d\u044b\u0445 \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u0430\u0445\u00bb.",
+		"The answer contains verification wording. Do not write verified, verification or similar words; write \"in the materials read\" instead.")
+}
+
+// toolLoopInternalMarkerRepairInstruction tells the model, in the question's
+// language, which presentation rule its rejected submission broke.
+func toolLoopInternalMarkerRepairInstruction(language string) string {
+	return localizedText(language,
+		"\u0412 \u0442\u0435\u043a\u0441\u0442\u0435 \u043e\u0442\u0432\u0435\u0442\u0430 \u0435\u0441\u0442\u044c \u0432\u043d\u0443\u0442\u0440\u0435\u043d\u043d\u0438\u0439 \u0438\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440. \u0423\u0431\u0435\u0440\u0438\u0442\u0435 \u0435\u0433\u043e \u0438 \u043d\u0430\u0437\u043e\u0432\u0438\u0442\u0435 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043f\u043e \u0447\u0435\u043b\u043e\u0432\u0435\u0447\u0435\u0441\u043a\u043e\u043c\u0443 \u0438\u043c\u0435\u043d\u0438; \u0438\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440\u044b \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0439, \u043f\u0440\u0430\u0432\u0438\u043b \u0438 \u0442\u0435\u0440\u043c\u0438\u043d\u043e\u0432 \u0432 \u043e\u0442\u0432\u0435\u0442\u0435 \u043d\u0435\u0434\u043e\u043f\u0443\u0441\u0442\u0438\u043c\u044b.",
+		"The answer text contains an internal identifier. Remove it and name the source by its human name; connection, rule and term identifiers must never appear in the answer.")
 }
 
 // toolLoopNoDataFallback is the answer shown when the model submitted no_data
