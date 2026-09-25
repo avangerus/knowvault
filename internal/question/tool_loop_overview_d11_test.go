@@ -44,19 +44,42 @@ func TestToolLoopOverviewQuestionClassNoLongerSpecialCasesChangeOrHypothetical(t
 // (sent on every question, not conditioned on any word match) tells the
 // model to recognize both kinds by meaning, to verify the version fact with
 // a real tool call for the first, to answer from the real source names for
-// the second, and that this recognition takes priority over a more specific
-// overview framing elsewhere in the same request.
+// the second, and that this recognition defers to a more specific overview
+// framing's own text only for the D-7 source/database overview shapes -- not
+// for the count/value rule or the off-topic rule, which stay in force (return
+// 1, card D-11: an English counting question regressed when the rule's
+// priority was written broadly enough to shadow them too).
 func TestToolLoopInstructionsRecognizeChangeAndHypotheticalByMeaning(t *testing.T) {
 	for _, want := range []string{
 		"recognized by the meaning of the question",
 		"never by matching specific words",
-		"takes priority over any overview or framing instruction",
-		"whether a document or material has changed, was updated, or is still current",
+		"this rule decides instead of that shape",
+		"whether a document or material itself has changed, was updated, or is still current",
 		"knowvault_list_objects with all_versions true",
-		"hypothetical or counterfactual question that imagines a different business",
+		"hypothetical or counterfactual question that explicitly imagines this same workspace doing a different business",
 	} {
 		if !strings.Contains(toolLoopInstructions, want) {
 			t.Fatalf("toolLoopInstructions is missing the meaning-based recognition rule: %q", want)
+		}
+	}
+}
+
+// TestToolLoopInstructionsExcludeCountingAndOffTopicQuestions covers return 1
+// and return 2 (card D-11 RETURN-1.md): a count/value/listing question keeps
+// running the live read (an English "how many active contracts?" must not be
+// pulled toward the recency exception by the word "active" echoing "current"),
+// and a question genuinely unrelated to the workspace's subject keeps the
+// zero-tool-call off-topic answer even when it is phrased hypothetically (a
+// reworded "what's the weather" must not be pulled toward the counterfactual
+// exception and its source-name lookup).
+func TestToolLoopInstructionsExcludeCountingAndOffTopicQuestions(t *testing.T) {
+	for _, want := range []string{
+		"neither ever applies to a question asking for a count, a total, a specific value or a listing of records",
+		"Neither ever applies to a question that is not about this workspace's subject at all either",
+		"an imagined or hypothetical framing alone does not turn an unrelated topic into workspace data",
+	} {
+		if !strings.Contains(toolLoopInstructions, want) {
+			t.Fatalf("toolLoopInstructions is missing the counting/off-topic exclusion: %q", want)
 		}
 	}
 }
