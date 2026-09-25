@@ -798,6 +798,109 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /sources/discovery/{request_id}:register-batch:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^sdrq_[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+    post:
+      operationId: registerDiscoveredPostgreSQLViewsBatch
+      tags: [Sources]
+      summary: "Register a batch of discovered PostgreSQL views (card S3.4b)"
+      description: >-
+        Registers up to 200 server-issued view selectors from one live encrypted discovery result
+        in one request, instead of one request per table. Each selector is registered through the
+        unchanged single-view path and the response reports one closed outcome per view: a relation
+        the discovery worker could not prepare (for example one without a declared primary key)
+        carries its interpretation reason and never blocks the others. No schema, relation, column,
+        role, hash or SQL is accepted; excluded_columns and mode are the same two narrowing choices
+        the single-view route accepts. A request naming more than 200 selectors is refused as a
+        whole.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [view_id]
+                    properties:
+                      view_id:
+                        type: string
+                        pattern: '^sdv_[0-9a-f]{64}$'
+                      excluded_columns:
+                        type: array
+                        maxItems: 255
+                        items:
+                          type: integer
+                      mode:
+                        type: string
+                        enum: [INDEXED, QUERY_ONLY]
+      responses:
+        "200":
+          description: "One closed outcome per named view."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [registered_count, refused_count, results]
+                properties:
+                  registered_count:
+                    type: integer
+                  refused_count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [view_id, outcome]
+                      properties:
+                        view_id:
+                          type: string
+                        outcome:
+                          type: string
+                          enum: [REGISTERED, REFUSED]
+                        reason_code:
+                          type: string
+                        registration:
+                          $ref: "#/components/schemas/SourceRegisterResult"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CreateForbiddenOrCSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SourceConflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /sources/{source_scope_id}:activate:
     parameters:
       - $ref: "#/components/parameters/SourceScopeID"
@@ -2871,6 +2974,115 @@ paths:
             application/json:
               schema:
                 type: object
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/managed-source-confirmations:batch:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: confirmManagedSourcesBatch
+      tags: [Sources]
+      summary: "Confirm many workspace-managed sources at once (card S3.4b)"
+      description: >-
+        Confirms up to 1000 named table bindings in one request. Every table is confirmed
+        through the unchanged individual managed-source confirmation command, so it keeps the
+        identical checks, immutable confirmation record and content-free audit event, including
+        the verifier/confirmer separation of duty. The response reports one closed outcome per
+        table: a refused table never blocks the others. A table that is not a binding of this
+        workspace (another workspace or organization) is never named to the authority runtime
+        and resolves to the same content-free not-found as an individual confirmation. A request
+        naming more than 1000 tables is refused as a whole. Repeating the request with the same
+        Idempotency-Key creates no second confirmation and returns the same per-table outcomes.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace_revision, workspace_configuration_hash, confirmation_actor_grant_id, confirmation_actor_grant_revision, confirmation_actor_grant_hash, warning_contract_hash, expected_policy_revision, tables]
+              properties:
+                workspace_revision:
+                  type: integer
+                workspace_configuration_hash:
+                  type: string
+                confirmation_actor_grant_id:
+                  type: string
+                confirmation_actor_grant_revision:
+                  type: integer
+                confirmation_actor_grant_hash:
+                  type: string
+                warning_contract_hash:
+                  type: string
+                expected_policy_revision:
+                  type: string
+                tables:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [workspace_source_id, source_scope_id, source_scope_revision, scope_config_hash]
+                    properties:
+                      workspace_source_id:
+                        type: string
+                      source_scope_id:
+                        type: string
+                      source_scope_revision:
+                        type: integer
+                      scope_config_hash:
+                        type: string
+      responses:
+        "200":
+          description: "One closed outcome per named table."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [confirmed_count, refused_count, results]
+                properties:
+                  confirmed_count:
+                    type: integer
+                  refused_count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [source_scope_id, outcome]
+                      properties:
+                        source_scope_id:
+                          type: string
+                        outcome:
+                          type: string
+                          enum: [CONFIRMED, REFUSED]
+                        reason_code:
+                          type: string
+                        confirmation_id:
+                          type: string
+                        confirmation_hash:
+                          type: string
         "400":
           $ref: "#/components/responses/RequestInvalid"
         "401":

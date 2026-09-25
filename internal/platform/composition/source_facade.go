@@ -194,6 +194,15 @@ func (facade sourceServiceFacade) RegisterDiscoveredView(ctx context.Context, ac
 	return facade.registration.RegisterDiscoveredView(ctx, access, selected, excludedColumnOrdinals, mode)
 }
 
+// RegisterDiscoveredViews is card S3.4b's bounded batch twin of
+// RegisterDiscoveredView: the batch loop and its per-view outcome live in the
+// registration package, so this facade stays a delegation exactly like the
+// single-view method above and the composition supplies only the one discovery
+// reader the batch resolves its selectors through.
+func (facade sourceServiceFacade) RegisterDiscoveredViews(ctx context.Context, access database.AccessContext, requestID string, items []registration.BatchRegisterItem) (registration.BatchRegisterResult, error) {
+	return registration.RegisterDiscoveredViewBatch(ctx, facade.registration, facade.discovery, access, requestID, items)
+}
+
 func (facade sourceServiceFacade) Register(ctx context.Context, access database.AccessContext, request registration.RegisterRequest) (registration.RegisterResult, error) {
 	return facade.registration.Register(ctx, access, request)
 }

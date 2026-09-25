@@ -36,11 +36,11 @@ type ReadResult struct {
 // View is a browser-safe catalog item. Selector is server-derived and is the
 // only view coordinate a later registration request may return to the server.
 type View struct {
-	Selector       string
-	SchemaName     string
-	RelationName   string
-	RelationKind   string
-	Comment        string
+	Selector     string
+	SchemaName   string
+	RelationName string
+	RelationKind string
+	Comment      string
 	// ApproxRowCount is the server's pg_class.reltuples estimate (-1 when
 	// PostgreSQL has not analyzed the relation). It is display metadata only.
 	ApproxRowCount int64
@@ -185,6 +185,73 @@ func (reader *Reader) Select(ctx context.Context, access database.AccessContext,
 		}, nil
 	}
 	return SelectedView{}, &Error{code: CodeNotFound}
+}
+
+// selectManyReasonNotFound is the content-free per-selector reason a batch
+// registration reports for a selector the live discovery result does not
+// contain. It never carries a schema, relation or any other catalog text.
+const selectManyReasonNotFound = "NOT_FOUND"
+
+// SelectedViewResolution is one selector's outcome from SelectMany: either a
+// registerable projection or the closed reason it cannot cross the
+// registration boundary. A nil Selected with a non-empty Reason is a
+// per-selector refusal, never a whole-request failure.
+type SelectedViewResolution struct {
+	Selector string
+	Selected *SelectedView
+	Reason   string
+}
+
+// SelectMany resolves a bounded list of selectors against one live encrypted
+// discovery result. One authorization and one decryption cover the whole list,
+// so a catalog of hundreds of tables is one read rather than one per table. A
+// selector the live result does not contain resolves to the content-free
+// NOT_FOUND reason; a relation the discovery worker could not prepare resolves
+// to its closed interpretation reason (for example NO_PRIMARY_KEY or
+// UNSUPPORTED_TYPE), so a batch registration can report exactly why one table
+// was refused and still register the others.
+func (reader *Reader) SelectMany(ctx context.Context, access database.AccessContext, requestID string, selectors []string) ([]SelectedViewResolution, error) {
+	if len(selectors) == 0 {
+		return nil, &Error{code: CodeInvalid}
+	}
+	for _, selector := range selectors {
+		if !validViewSelector(selector) {
+			return nil, &Error{code: CodeInvalid}
+		}
+	}
+	result, err := reader.Get(ctx, access, requestID)
+	if err != nil {
+		return nil, err
+	}
+	bySelector := make(map[string]View, len(result.Views))
+	for _, view := range result.Views {
+		bySelector[view.Selector] = view
+	}
+	resolutions := make([]SelectedViewResolution, len(selectors))
+	for index, selector := range selectors {
+		resolution := SelectedViewResolution{Selector: selector}
+		view, found := bySelector[selector]
+		switch {
+		case !found:
+			resolution.Reason = selectManyReasonNotFound
+		case view.Status != postgresqlquery.DiscoveryPrepared || view.projection == nil:
+			resolution.Reason = string(view.Interpretation)
+			if resolution.Reason == "" {
+				resolution.Reason = string(postgresqlquery.DiscoveryNeedsInterpretation)
+			}
+		default:
+			projection := cloneProjection(*view.projection)
+			resolution.Selected = &SelectedView{
+				RequestID: requestID, ResultID: result.ResultID, Selector: selector,
+				ConnectionID:       projection.ConnectionID,
+				ConnectionRevision: result.connectionRevision, Projection: projection,
+				RelationComment: view.Comment, ApproxRowCount: view.ApproxRowCount,
+				CatalogColumns: cloneColumns(view.Columns),
+			}
+		}
+		resolutions[index] = resolution
+	}
+	return resolutions, nil
 }
 
 func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, access database.AccessContext, result *ReadResult) error {

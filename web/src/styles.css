@@ -825,6 +825,14 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .source-sql-control-field { display: grid; gap: 4px; font-size: var(--fs-caption); color: var(--ink-secondary); }
 .source-sql-control-field input { min-width: 260px; font-family: var(--font-mono, monospace); }
 
+/* Card S3.4b: bulk confirmation on the database card. One schema choice and one
+   action confirm every table awaiting confirmation, so a 600-table connection
+   is not 600 clicks. */
+.source-confirm-batch { margin-top: 8px; display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.source-confirm-batch-field { display: grid; gap: 4px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.source-confirm-batch-field select { min-width: 220px; }
+.source-confirm-batch-summary { margin-top: 6px; }
+
 /* ---------------------------------------------------------------------------
    UI-4.3: Access -- a single-screen code issue window (create -> show once
    -> hide), replacing the always-visible inline create/reveal form.

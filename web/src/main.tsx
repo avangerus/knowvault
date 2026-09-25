@@ -6818,6 +6818,105 @@ function sourceBlockedNote(source: SourceStatus, canManage: boolean, confirmatio
   return null;
 }
 
+// Card S3.4b: the tables of one connection that are actually awaiting a
+// confirmation decision. It is exactly the state whose per-table row action is
+// "Confirm" (NEEDS_GRANT or NEEDS_CONFIRMATION), never a table that awaits
+// trust verification, activation or enabling -- so "confirm all" can never name
+// a table the operator would not confirm one at a time. The list is the
+// already-authorized server projection, so the bulk action never reveals
+// another workspace's table.
+export function sourceTablesAwaitingConfirmation(group: SourceConnectionGroup): SourceStatus[] {
+  return group.tables.filter((table) =>
+    table.confirmation_state === "NEEDS_GRANT" || table.confirmation_state === "NEEDS_CONFIRMATION");
+}
+
+// Distinct PostgreSQL schemas of the connection that still have at least one
+// table awaiting confirmation, sorted, so a large catalog can be confirmed one
+// schema at a time from the same card.
+export function sourceSchemasAwaitingConfirmation(group: SourceConnectionGroup): string[] {
+  const schemas = new Set<string>();
+  for (const table of sourceTablesAwaitingConfirmation(group)) {
+    if (table.postgresql_schema_name) schemas.add(table.postgresql_schema_name);
+  }
+  return [...schemas].sort((left, right) => left.localeCompare(right));
+}
+
+// The exact awaiting tables a confirmation action would name: every schema when
+// the empty schema is selected, otherwise only that schema's tables.
+export function sourceTablesAwaitingConfirmationInSchema(group: SourceConnectionGroup, schema: string): SourceStatus[] {
+  const pending = sourceTablesAwaitingConfirmation(group);
+  if (schema === "") return pending;
+  return pending.filter((table) => table.postgresql_schema_name === schema);
+}
+
+export type SourceConfirmBatchTable = {
+  workspace_source_id: string;
+  source_scope_id: string;
+  source_scope_revision: number;
+  scope_config_hash: string;
+};
+
+// The one closed batch-confirmation body: the shared grant/warning/policy tuple
+// plus one exact binding tuple per named table. It carries nothing a single
+// confirmation would not carry.
+export function confirmBatchRequestBody(
+  tables: readonly SourceStatus[],
+  workspaceRevision: number,
+  workspaceConfigurationHash: string,
+  grant: { grant_id: string; grant_revision: number; grant_hash: string },
+  warningContractHash: string,
+  expectedPolicyRevision: string,
+): {
+  workspace_revision: number;
+  workspace_configuration_hash: string;
+  confirmation_actor_grant_id: string;
+  confirmation_actor_grant_revision: number;
+  confirmation_actor_grant_hash: string;
+  warning_contract_hash: string;
+  expected_policy_revision: string;
+  tables: SourceConfirmBatchTable[];
+} {
+  return {
+    workspace_revision: workspaceRevision,
+    workspace_configuration_hash: workspaceConfigurationHash,
+    confirmation_actor_grant_id: grant.grant_id,
+    confirmation_actor_grant_revision: grant.grant_revision,
+    confirmation_actor_grant_hash: grant.grant_hash,
+    warning_contract_hash: warningContractHash,
+    expected_policy_revision: expectedPolicyRevision,
+    tables: tables.map((table) => ({
+      workspace_source_id: table.workspace_source_id,
+      source_scope_id: table.source_scope_id,
+      source_scope_revision: table.source_scope_revision,
+      scope_config_hash: table.scope_config_hash,
+    })),
+  };
+}
+
+export type SourceConfirmBatchOutcome = {
+  confirmed_count: number;
+  refused_count: number;
+  results: Array<{
+    source_scope_id: string;
+    outcome: "CONFIRMED" | "REFUSED" | string;
+    reason_code?: string;
+    confirmation_id?: string;
+    confirmation_hash?: string;
+  }>;
+};
+
+// The one operator-facing sentence the batch action reports: how many tables
+// were confirmed and, for the refused ones, their closed reason codes. A
+// refusal never hides the confirmations that did happen.
+export function confirmBatchOutcomeSummary(outcome: SourceConfirmBatchOutcome): string {
+  const confirmed = Number.isFinite(outcome.confirmed_count) ? outcome.confirmed_count : 0;
+  const refused = outcome.results.filter((row) => row.outcome !== "CONFIRMED");
+  const confirmedLabel = `${confirmed} table${confirmed === 1 ? "" : "s"} confirmed`;
+  if (refused.length === 0) return `${confirmedLabel}.`;
+  const codes = [...new Set(refused.map((row) => row.reason_code ?? "REFUSED"))].sort();
+  return `${confirmedLabel}, ${outcome.refused_count} refused (${codes.join(", ")}).`;
+}
+
 // These are last-run counters, not the size of the retained corpus. Missing
 // measurements remain unknown; a reported zero remains visible as zero.
 function processingCount(value: number | null | undefined): string {
@@ -6955,13 +7054,34 @@ export function SourceQueryCredentialControl({ connectionID, sqlAvailable, busy 
 // the rolled-up freshness; its expansion lists each registered table with its
 // own state, and renderTableExtra keeps the per-table actions reachable, so no
 // operator control is lost by folding the rows into one card.
-export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL = false, sqlControl }: {
+export type SourceConfirmBatchControl = {
+  canConfirm: boolean;
+  busy: boolean;
+  summary: string | null;
+  onConfirm: (tables: SourceStatus[]) => void;
+};
+
+// Card S5.1: the one card a database connection gets in Sources. Its collapsed
+// body carries the connection state, the registered/indexed table counts and
+// the rolled-up freshness; its expansion lists each registered table with its
+// own state, and renderTableExtra keeps the per-table actions reachable, so no
+// operator control is lost by folding the rows into one card.
+//
+// Card S3.4b adds the bulk confirmation control: when the viewer may confirm
+// and the connection still has tables awaiting confirmation, the card offers
+// "all schemas" or one schema and confirms every awaiting table in that choice
+// with one request. Its outcome summary is rendered next to it.
+export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL = false, sqlControl, confirmBatch }: {
   group: SourceConnectionGroup;
   renderTableExtra?: (source: SourceStatus) => ReactNode;
   canConfigureSQL?: boolean;
   sqlControl?: ReactNode;
+  confirmBatch?: SourceConfirmBatchControl;
 }) {
   const summary = sourceConnectionSummary(group);
+  const [confirmSchema, setConfirmSchema] = useState("");
+  const awaiting = sourceTablesAwaitingConfirmation(group);
+  const awaitingInSchema = sourceTablesAwaitingConfirmationInSchema(group, confirmSchema);
   return (
     <li className={`source-row source-row-connection source-row-${summary.variant}`}>
       <span className={`dot dot-${summary.variant}`} aria-hidden="true" />
@@ -6983,6 +7103,36 @@ export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL 
           {summary.sql_available ? "SQL available" : "SQL not configured"}
         </p>
         {canConfigureSQL && sqlControl}
+        {confirmBatch?.canConfirm && awaiting.length > 0 && (
+          <div className="source-confirm-batch" role="group" aria-label="Confirm tables awaiting confirmation">
+            <label className="source-confirm-batch-field">
+              <span>Tables awaiting confirmation</span>
+              <select
+                disabled={confirmBatch.busy}
+                onChange={(event) => setConfirmSchema(event.target.value)}
+                value={confirmSchema}
+              >
+                <option value="">All schemas ({awaiting.length})</option>
+                {sourceSchemasAwaitingConfirmation(group).map((schema) => (
+                  <option key={schema} value={schema}>
+                    {schema} ({sourceTablesAwaitingConfirmationInSchema(group, schema).length})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="primary-button source-confirm-batch-action"
+              disabled={confirmBatch.busy || awaitingInSchema.length === 0}
+              onClick={() => confirmBatch.onConfirm(awaitingInSchema)}
+              type="button"
+            >
+              {confirmBatch.busy ? "Confirming…" : `Confirm all ${awaitingInSchema.length}`}
+            </button>
+          </div>
+        )}
+        {confirmBatch?.summary && (
+          <p className="source-note source-confirm-batch-summary" role="status">{confirmBatch.summary}</p>
+        )}
         <details className="source-connection-tables">
           <summary>Tables ({summary.table_count})</summary>
           <ul className="source-table-rows">
@@ -7098,6 +7248,10 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
   const [draftBusyID, setDraftBusyID] = useState<string | null>(null);
   // Card S3.2b: the connection whose SQL credential control is mid-request.
   const [sqlCredentialBusyID, setSqlCredentialBusyID] = useState<string | null>(null);
+  // Card S3.4b: the connection whose bulk confirmation is mid-request, and the
+  // one outcome summary that connection last reported.
+  const [confirmBatchBusyID, setConfirmBatchBusyID] = useState<string | null>(null);
+  const [confirmBatchSummary, setConfirmBatchSummary] = useState<{ connectionID: string; text: string } | null>(null);
   const [continuedDraft, setContinuedDraft] = useState<SourceConnectionDraft | null>(null);
   const snapshot = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value : null;
   const etag = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.etag : undefined;
@@ -7184,13 +7338,44 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
     }
   }
 
-  // ADR-0087 §1: confirm a pending WORKSPACE_MANAGED binding. If the caller  // already holds a live workspace.source.confirm grant (confirmationContext.
+  // ADR-0087 §1: the caller's live workspace.source.confirm grant, or a freshly
+  // issued self-targeted one when the caller is an organization OWNER/ADMIN.
+  // A freshly issued grant always starts at revision 1 (the repository never
+  // issues any other starting revision), so it can be chained into the confirm
+  // call without a second read. Both confirmation actions -- one table and a
+  // whole batch -- reuse this one grant path, so they cannot diverge.
+  async function ensureConfirmationGrant(): Promise<SelfConfirmationGrant | null> {
+    if (!snapshot || !etag || !confirmationContext) return null;
+    if (confirmationContext.self_grant) return confirmationContext.self_grant;
+    if (!confirmationContext.can_issue_confirmation_grant) {
+      setMutationResult({ kind: "failure", status: 403, code: "CONFIRMATION_GRANT_REQUIRES_ORG_OWNER_OR_ADMIN", requestId: "" });
+      pushToast("error", "Only an organization owner or administrator can issue a confirmation grant.");
+      return null;
+    }
+    const configurationHash = etag.replace(/^"|"$/g, "");
+    const issue = await apiPost<{ result_id: string; result_hash: string }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/confirmation-grants`,
+      {
+        expected_workspace_revision: snapshot.revision,
+        expected_workspace_configuration_hash: configurationHash,
+        target_principal_id: confirmationContext.viewer_principal_id,
+        ttl_seconds: 3600,
+        expected_policy_revision: confirmationContext.expected_policy_revision,
+      },
+      newIdempotencyKey(),
+    );
+    if (issue.kind !== "ok") {
+      setMutationResult(issue);
+      pushToast("error", closedText(issue));
+      return null;
+    }
+    return { grant_id: issue.value.result_id, grant_revision: 1, grant_hash: issue.value.result_hash, valid_until: "" };
+  }
+
+  // ADR-0087 §1: confirm a pending WORKSPACE_MANAGED binding. If the caller
+  // already holds a live workspace.source.confirm grant (confirmationContext.
   // self_grant) it is reused as-is; otherwise, if the caller is an
-  // organization OWNER/ADMIN, a fresh self-targeted grant is issued first. A
-  // freshly issued grant always starts at revision 1 (the repository never
-  // issues any other starting revision), so it can be chained into the
-  // confirm call without a second read. Both calls are the exact REST actions
-  // ADR-0053/0087 already accepted; no new write surface is introduced here.
+  // organization OWNER/ADMIN, a fresh self-targeted grant is issued first.
   async function confirmSource(source: SourceStatus) {
     if (!snapshot || !etag || mutatingSourceID !== null || !confirmationContext) return;
     if (!window.confirm(
@@ -7200,32 +7385,10 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
     setMutatingSourceID(source.source_scope_id);
     setMutationResult(null);
     const configurationHash = etag.replace(/^"|"$/g, "");
-    let grant = confirmationContext.self_grant;
+    const grant = await ensureConfirmationGrant();
     if (!grant) {
-      if (!confirmationContext.can_issue_confirmation_grant) {
-        setMutatingSourceID(null);
-        setMutationResult({ kind: "failure", status: 403, code: "CONFIRMATION_GRANT_REQUIRES_ORG_OWNER_OR_ADMIN", requestId: "" });
-        pushToast("error", "Only an organization owner or administrator can issue a confirmation grant.");
-        return;
-      }
-      const issue = await apiPost<{ result_id: string; result_hash: string }>(
-        `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/confirmation-grants`,
-        {
-          expected_workspace_revision: snapshot.revision,
-          expected_workspace_configuration_hash: configurationHash,
-          target_principal_id: confirmationContext.viewer_principal_id,
-          ttl_seconds: 3600,
-          expected_policy_revision: confirmationContext.expected_policy_revision,
-        },
-        newIdempotencyKey(),
-      );
-      if (issue.kind !== "ok") {
-        setMutatingSourceID(null);
-        setMutationResult(issue);
-        pushToast("error", closedText(issue));
-        return;
-      }
-      grant = { grant_id: issue.value.result_id, grant_revision: 1, grant_hash: issue.value.result_hash, valid_until: "" };
+      setMutatingSourceID(null);
+      return;
     }
     const confirmation = await apiPost<unknown>(
       `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/managed-source-confirmations`,
@@ -7251,6 +7414,45 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
       onChanged();
     } else {
       pushToast("error", closedText(confirmation));
+    }
+  }
+
+  // Card S3.4b: confirm every selected table of one connection in one request.
+  // The server confirms each table through the unchanged individual command and
+  // returns one closed per-table outcome, so a refusal never hides the
+  // confirmations that did happen. One grant is issued for the whole batch.
+  async function confirmTableBatch(connectionID: string, tables: SourceStatus[]) {
+    if (!snapshot || !etag || confirmBatchBusyID !== null || !confirmationContext || tables.length === 0) return;
+    if (!window.confirm(
+      `Confirm access to ${tables.length} table${tables.length === 1 ? "" : "s"}? ` +
+      "Workspace members can then access their fragments without the source's native ACLs (" +
+      confirmationContext.warning_contract.warning_version + "). Continue?",
+    )) return;
+    setConfirmBatchBusyID(connectionID);
+    setMutationResult(null);
+    const configurationHash = etag.replace(/^"|"$/g, "");
+    const grant = await ensureConfirmationGrant();
+    if (!grant) {
+      setConfirmBatchBusyID(null);
+      return;
+    }
+    const result = await apiPost<SourceConfirmBatchOutcome>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/managed-source-confirmations:batch`,
+      confirmBatchRequestBody(
+        tables, snapshot.revision, configurationHash, grant,
+        confirmationContext.warning_contract.warning_contract_hash, confirmationContext.expected_policy_revision,
+      ),
+      newIdempotencyKey(),
+    );
+    setConfirmBatchBusyID(null);
+    setMutationResult(result);
+    if (result.kind === "ok") {
+      const summary = confirmBatchOutcomeSummary(result.value);
+      setConfirmBatchSummary({ connectionID, text: summary });
+      pushToast("success", summary);
+      onChanged();
+    } else {
+      pushToast("error", closedText(result));
     }
   }
 
@@ -7514,6 +7716,12 @@ export function SourcesView({ state, role, onChanged, pushToast }: {
               {cardEntries.map((entry) => entry.kind === "connection" ? (
                 <SourceConnectionCard
                   canConfigureSQL={role === "OWNER"}
+                  confirmBatch={{
+                    canConfirm: Boolean(canManage && snapshot && etag && confirmationContext),
+                    busy: confirmBatchBusyID === entry.group.connection_id,
+                    summary: confirmBatchSummary?.connectionID === entry.group.connection_id ? confirmBatchSummary.text : null,
+                    onConfirm: (tables) => void confirmTableBatch(entry.group.connection_id, tables),
+                  }}
                   group={entry.group}
                   key={entry.key}
                   renderTableExtra={(source) => renderTableExtra(source)}
@@ -8408,12 +8616,12 @@ export function postgresFilterAndSortViews(
 
 export type PostgresRegistrationRequest = { view: SourceDiscoveryView; body: SourceDiscoveryRegisterInput | undefined };
 
-// One register call per ticked table, each carrying only that table's own
-// excluded ordinals (sorted for a stable, testable request body) and its
-// registration mode. A table with neither exclusions nor a query-only mode
-// gets an empty body, exactly like the original single-view flow; a query-only
-// table sends mode=QUERY_ONLY. Anything not PREPARED or not ticked is silently
-// dropped, so a stale selection can never reach the network layer.
+// Card S3.4b: one register call per ticked table, each carrying only that
+// table's own excluded ordinals (sorted for a stable, testable request body)
+// and its registration mode. A table with neither exclusions nor a query-only
+// mode gets an empty body, exactly like the original single-view flow; a
+// query-only table sends mode=QUERY_ONLY. Anything not PREPARED or not ticked
+// is silently dropped, so a stale selection can never reach the network layer.
 export function postgresRegistrationPlan(
   views: readonly SourceDiscoveryView[],
   selected: ReadonlySet<string>,
@@ -8432,14 +8640,48 @@ export function postgresRegistrationPlan(
     });
 }
 
+// Card S3.4b: the server accepts at most this many tables in one register-batch
+// request, so the wizard chunks a larger selection rather than sending one
+// request per table.
+export const POSTGRES_REGISTRATION_BATCH_LIMIT = 200;
+
+export type SourceDiscoveryRegisterBatchResponse = {
+  registered_count: number;
+  refused_count: number;
+  results: Array<{
+    view_id: string;
+    outcome: "REGISTERED" | "REFUSED" | string;
+    reason_code?: string;
+    registration?: SourceRegisterResponse;
+  }>;
+};
+
+// The one server request body for a batch of ticked tables: each item carries
+// only that table's view_id and the same two narrowing choices the single-view
+// route accepted. A table with neither is registered with its default mode.
+export function postgresRegistrationBatchBody(requests: readonly PostgresRegistrationRequest[]): {
+  items: Array<{ view_id: string; excluded_columns?: number[]; mode?: string }>;
+} {
+  return {
+    items: requests.map(({ view, body }) => {
+      const item: { view_id: string; excluded_columns?: number[]; mode?: string } = { view_id: view.view_id };
+      if (body?.excluded_columns) item.excluded_columns = body.excluded_columns;
+      if (body?.mode) item.mode = body.mode;
+      return item;
+    }),
+  };
+}
+
 type PostgresRegistrationOutcome = { view: SourceDiscoveryView; status: "pending" | "success" | "failure"; detail: string };
 
-// Runs the plan sequentially: register, then bind to the workspace. Binding
-// carries the workspace revision forward from one successful bind to the
-// next (each bind advances it), with a single re-fetch-and-retry on a
-// revision conflict -- the same recovery submitConnection's caller used to
-// get from withRevisionRetry, just carried across the whole batch instead of
-// one call.
+// Card S3.4b: registers the plan one bounded batch at a time, then binds each
+// successfully registered scope to the workspace. Binding carries the workspace
+// revision forward from one successful bind to the next (each bind advances
+// it), with a single re-fetch-and-retry on a revision conflict -- the same
+// recovery submitConnection's caller used to get from withRevisionRetry, just
+// carried across the whole batch instead of one call. A refused table (for
+// example one without a declared primary key) reports its reason code and never
+// stops the others.
 async function runPostgresRegistrationPlan(
   discoveryRequestID: string,
   workspaceID: string,
@@ -8451,44 +8693,55 @@ async function runPostgresRegistrationPlan(
   let workspaceEtag = startEtag;
   let workspaceRevision = startRevision;
 
-  for (const { view, body } of plan) {
-    const registration = await apiPostWithoutIdempotency<SourceRegisterResponse>(
-      `/api/v1/sources/discovery/${encodeURIComponent(discoveryRequestID)}/views/${encodeURIComponent(view.view_id)}:register`,
-      body,
+  for (let offset = 0; offset < plan.length; offset += POSTGRES_REGISTRATION_BATCH_LIMIT) {
+    const chunk = plan.slice(offset, offset + POSTGRES_REGISTRATION_BATCH_LIMIT);
+    const batch = await apiPostWithoutIdempotency<SourceDiscoveryRegisterBatchResponse>(
+      `/api/v1/sources/discovery/${encodeURIComponent(discoveryRequestID)}:register-batch`,
+      postgresRegistrationBatchBody(chunk),
     );
-    if (registration.kind !== "ok") {
-      onOutcome({ view, status: "failure", detail: closedText(registration) });
+    if (batch.kind !== "ok") {
+      const detail = closedText(batch);
+      for (const { view } of chunk) onOutcome({ view, status: "failure", detail });
       continue;
     }
+    const byViewID = new Map(batch.value.results.map((row) => [row.view_id, row] as const));
+    for (const { view } of chunk) {
+      const row = byViewID.get(view.view_id);
+      if (!row || row.outcome !== "REGISTERED" || !row.registration) {
+        onOutcome({ view, status: "failure", detail: row?.reason_code ?? "REGISTRATION_REFUSED" });
+        continue;
+      }
+      const registration = row.registration;
 
-    const bindOnce = (workEtag: string, workRevision: number) => apiMutation<WorkspaceSnapshot>(
-      "POST",
-      `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/sources`,
-      {
-        expected_workspace_revision: workRevision,
-        source_scope_id: registration.value.source_scope_id,
-        source_scope_revision: registration.value.revision,
-        scope_config_hash: registration.value.scope_config_hash,
-        access_mode: registration.value.access_mode,
-      },
-      newIdempotencyKey(),
-      workEtag,
-    );
+      const bindOnce = (workEtag: string, workRevision: number) => apiMutation<WorkspaceSnapshot>(
+        "POST",
+        `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/sources`,
+        {
+          expected_workspace_revision: workRevision,
+          source_scope_id: registration.source_scope_id,
+          source_scope_revision: registration.revision,
+          scope_config_hash: registration.scope_config_hash,
+          access_mode: registration.access_mode,
+        },
+        newIdempotencyKey(),
+        workEtag,
+      );
 
-    let binding = await bindOnce(workspaceEtag, workspaceRevision);
-    if (binding.kind === "failure" && (binding.code === "WORKSPACE_REVISION_CONFLICT" || binding.code === "CONFLICT")) {
-      const refreshed = await apiGet<WorkspaceSnapshot>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}`);
-      if (refreshed.kind === "ok" && refreshed.etag) binding = await bindOnce(refreshed.etag, refreshed.value.revision);
+      let binding = await bindOnce(workspaceEtag, workspaceRevision);
+      if (binding.kind === "failure" && (binding.code === "WORKSPACE_REVISION_CONFLICT" || binding.code === "CONFLICT")) {
+        const refreshed = await apiGet<WorkspaceSnapshot>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}`);
+        if (refreshed.kind === "ok" && refreshed.etag) binding = await bindOnce(refreshed.etag, refreshed.value.revision);
+      }
+
+      if (binding.kind !== "ok") {
+        onOutcome({ view, status: "failure", detail: closedText(binding) });
+        continue;
+      }
+
+      workspaceEtag = binding.etag ?? workspaceEtag;
+      workspaceRevision = binding.value.revision;
+      onOutcome({ view, status: "success", detail: "" });
     }
-
-    if (binding.kind !== "ok") {
-      onOutcome({ view, status: "failure", detail: closedText(binding) });
-      continue;
-    }
-
-    workspaceEtag = binding.etag ?? workspaceEtag;
-    workspaceRevision = binding.value.revision;
-    onOutcome({ view, status: "success", detail: "" });
   }
 }
 

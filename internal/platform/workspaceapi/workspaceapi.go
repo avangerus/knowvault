@@ -45,12 +45,17 @@ import (
 )
 
 const (
-	apiPrefix              = "/api/v1"
-	workspacesPath         = apiPrefix + "/workspaces"
-	sourcesPath            = apiPrefix + "/sources"
-	sourceConnectorsPath   = apiPrefix + "/source-connectors"
-	csrfPath               = apiPrefix + "/session/csrf"
-	maxBodyBytes           = 32 << 10
+	apiPrefix            = "/api/v1"
+	workspacesPath       = apiPrefix + "/workspaces"
+	sourcesPath          = apiPrefix + "/sources"
+	sourceConnectorsPath = apiPrefix + "/source-connectors"
+	csrfPath             = apiPrefix + "/session/csrf"
+	maxBodyBytes         = 32 << 10
+	// maxBatchBodyBytes is the body bound of the two card S3.4b batch routes.
+	// One request legitimately carries up to 1000 table tuples or 200 view
+	// selectors, which cannot fit the single-object 32 KiB limit; every other
+	// route keeps that default.
+	maxBatchBodyBytes      = 512 << 10
 	jsonContentType        = "application/json"
 	questionModeExtractive = "EXTRACTIVE"
 	// questionModeGenerative is GEN-1 (ADR-0088): accepted at this transport
@@ -123,6 +128,11 @@ var _ WorkspaceAuditJournalBefore = (*workspacerepository.Store)(nil)
 type WorkspaceAuthority interface {
 	IssueConfirmationGrant(context.Context, database.AccessContext, workspacerepository.IssueGrantRequest) (workspacerepository.AuthorityResult, error)
 	ConfirmManagedSource(context.Context, database.AccessContext, workspacerepository.ConfirmRequest) (workspacerepository.AuthorityResult, error)
+	// ConfirmManagedSourceBatch is card S3.4b's bounded composite of
+	// ConfirmManagedSource: up to workspacerepository.MaxBatchConfirmTables
+	// tables in one request, each one through the unchanged individual command,
+	// with one closed per-table outcome.
+	ConfirmManagedSourceBatch(context.Context, database.AccessContext, workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error)
 	RevokeConfirmationGrant(context.Context, database.AccessContext, workspacerepository.RevokeGrantRequest) (workspacerepository.AuthorityResult, error)
 	RevokeManagedConfirmation(context.Context, database.AccessContext, workspacerepository.RevokeConfirmationRequest) (workspacerepository.AuthorityResult, error)
 }
@@ -219,6 +229,10 @@ type SourceDiscovery interface {
 // INDEXED (the default) or QUERY_ONLY ("only for SQL queries, not indexed").
 type SourceDiscoveryRegistration interface {
 	RegisterDiscoveredView(context.Context, database.AccessContext, string, string, []int, string) (registration.RegisterResult, error)
+	// RegisterDiscoveredViews is card S3.4b's bounded batch: one server request
+	// registers up to registration.MaxBatchRegisterViews selectors with the
+	// same per-table rules and a per-table outcome.
+	RegisterDiscoveredViews(context.Context, database.AccessContext, string, []registration.BatchRegisterItem) (registration.BatchRegisterResult, error)
 }
 
 // SourceSchemaProvider is ADR-0097's optional, read-only source schema
@@ -659,6 +673,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	case endpointSourceDiscoveryRegister:
 		handler.registerSourceDiscoveryView(writer, request, access, requestID,
 			endpoint.discoveryRequestID, endpoint.discoveryViewID)
+	case endpointSourceDiscoveryRegisterBatch:
+		handler.registerSourceDiscoveryViewBatch(writer, request, access, requestID, endpoint.discoveryRequestID)
 	case endpointSourceActivate:
 		handler.activateSource(writer, request, access, requestID, endpoint.sourceScopeID)
 	case endpointSourceSync:
@@ -699,6 +715,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.confirmGrantRevoke(writer, request, access, requestID, endpoint.workspaceID, endpoint.authorityID)
 	case endpointManagedSourceConfirm:
 		handler.managedSourceConfirm(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointManagedSourceConfirmBatch:
+		handler.managedSourceConfirmBatch(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointManagedConfirmationRevoke:
 		handler.managedConfirmationRevoke(writer, request, access, requestID, endpoint.workspaceID, endpoint.authorityID)
 	case endpointSourceConnectionVerifyTrust:
@@ -989,6 +1007,23 @@ const (
 	// After it the tool answers SOURCE_SQL_NOT_CONFIGURED and the Sources card
 	// shows "SQL not configured".
 	endpointSourceQueryCredentialClear
+	// endpointManagedSourceConfirmBatch is card S3.4b's bounded batch of
+	// WORKSPACE_MANAGED_CONFIRM commands
+	// (POST /api/v1/workspaces/{workspace_id}/managed-source-confirmations:batch).
+	// It is a composite of the single confirm route, not a new ADR-0053
+	// operation: the repository confirms each named table through the unchanged
+	// individual command and returns one closed per-table outcome, so every
+	// table keeps the identical decision phase, confirmation document, audit
+	// event and replay receipt. At most MaxBatchConfirmTables tables per
+	// request; a larger request is refused as a whole.
+	endpointManagedSourceConfirmBatch
+	// endpointSourceDiscoveryRegisterBatch is card S3.4b's bounded batch of
+	// discovered-view registrations
+	// (POST /api/v1/sources/discovery/{request_id}:register-batch). It accepts
+	// at most registration.MaxBatchRegisterViews selectors and returns one
+	// per-view outcome, so registering hundreds of discovered tables from the
+	// wizard is one server request per batch instead of one request per table.
+	endpointSourceDiscoveryRegisterBatch
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -1973,6 +2008,19 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 			discoveryPath := strings.TrimPrefix(remainder, discoveryPrefix)
 			const viewMarker = "/views/"
 			const registerSuffix = ":register"
+			// Card S3.4b: one server request registers a whole batch of
+			// discovered tables (.../discovery/{request_id}:register-batch).
+			// It is checked before the plain discovery-read fallback because a
+			// batch id is itself a valid opaque id, so an unordered match would
+			// silently route it to the read.
+			const registerBatchSuffix = ":register-batch"
+			if !strings.Contains(discoveryPath, "/") && strings.HasSuffix(discoveryPath, registerBatchSuffix) {
+				requestID := strings.TrimSuffix(discoveryPath, registerBatchSuffix)
+				if validOpaqueID(requestID) {
+					return endpoint{kind: endpointSourceDiscoveryRegisterBatch, discoveryRequestID: requestID}, ""
+				}
+				return endpoint{}, "NOT_FOUND"
+			}
 			if strings.Contains(discoveryPath, viewMarker) && strings.HasSuffix(discoveryPath, registerSuffix) {
 				parts := strings.SplitN(discoveryPath, viewMarker, 2)
 				viewID := strings.TrimSuffix(parts[1], registerSuffix)
@@ -2268,6 +2316,9 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 			return endpoint{kind: endpointConfirmGrantRevoke, workspaceID: parts[0], authorityID: grantID}, ""
 		}
 	}
+	if len(parts) == 2 && parts[1] == "managed-source-confirmations:batch" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointManagedSourceConfirmBatch, workspaceID: parts[0]}, ""
+	}
 	if len(parts) == 2 && parts[1] == "managed-source-confirmations" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointManagedSourceConfirm, workspaceID: parts[0]}, ""
 	}
@@ -2330,8 +2381,8 @@ func methodAllowed(endpoint endpoint, method string) bool {
 		return method == http.MethodDelete
 	case endpointMCP:
 		return method == http.MethodPost
-	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
-		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
+	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceDiscoveryRegisterBatch, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
+		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedSourceConfirmBatch, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
 		endpointSourceQueryCredentialSet, endpointSourceQueryCredentialClear,
 		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
@@ -2363,8 +2414,8 @@ func allowedMethods(endpoint endpoint) string {
 		return http.MethodDelete
 	case endpointMCP:
 		return http.MethodPost
-	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
-		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
+	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceDiscoveryRegisterBatch, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
+		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedSourceConfirmBatch, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
 		endpointSourceQueryCredentialSet, endpointSourceQueryCredentialClear,
 		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
@@ -2892,6 +2943,110 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		DiscoveredScopeID: result.DiscoveredScopeID, Revision: result.Revision,
 		ScopeConfigHash: result.ScopeConfigHash, AccessMode: result.AccessMode,
 		Created: result.Created,
+	})
+}
+
+// sourceDiscoveryRegisterBatchBody is card S3.4b's batch registration body: a
+// bounded list of server-issued selectors, each with the same two optional
+// narrowing choices the single-view route accepts. No schema, relation, column
+// name, role, hash or SQL is ever accepted.
+type sourceDiscoveryRegisterBatchBody struct {
+	Items []sourceDiscoveryRegisterBatchItem `json:"items"`
+}
+
+type sourceDiscoveryRegisterBatchItem struct {
+	ViewID          string `json:"view_id"`
+	ExcludedColumns []int  `json:"excluded_columns"`
+	Mode            string `json:"mode"`
+}
+
+type sourceDiscoveryRegisterBatchResponse struct {
+	RegisteredCount int                                  `json:"registered_count"`
+	RefusedCount    int                                  `json:"refused_count"`
+	Results         []sourceDiscoveryRegisterBatchResult `json:"results"`
+}
+
+type sourceDiscoveryRegisterBatchResult struct {
+	ViewID       string                  `json:"view_id"`
+	Outcome      string                  `json:"outcome"`
+	ReasonCode   string                  `json:"reason_code,omitempty"`
+	Registration *sourceRegisterResponse `json:"registration,omitempty"`
+}
+
+// registerSourceDiscoveryViewBatch is card S3.4b's one-request-per-batch
+// registration: up to registration.MaxBatchRegisterViews selectors, each
+// registered through the unchanged single-table path, with one per-view
+// outcome. A larger request is refused as a whole before any selector reaches
+// the registration service.
+func (handler *Handler) registerSourceDiscoveryViewBatch(writer http.ResponseWriter, request *http.Request,
+	access database.AccessContext, requestID, discoveryRequestID string) {
+	if headerPresent(request.Header, "Idempotency-Key") || headerPresent(request.Header, "If-Match") {
+		var fields []string
+		if headerPresent(request.Header, "Idempotency-Key") {
+			fields = append(fields, "Idempotency-Key")
+		}
+		if headerPresent(request.Header, "If-Match") {
+			fields = append(fields, "If-Match")
+		}
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", fields)
+		return
+	}
+	var body sourceDiscoveryRegisterBatchBody
+	if code := decodeJSONLimited(writer, request, &body, maxBatchBodyBytes); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if len(body.Items) < 1 || len(body.Items) > registration.MaxBatchRegisterViews {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"items"})
+		return
+	}
+	items := make([]registration.BatchRegisterItem, len(body.Items))
+	for index, item := range body.Items {
+		if item.ViewID == "" || !postgresqlquery.ValidProjectionMode(item.Mode) {
+			writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"items"})
+			return
+		}
+		items[index] = registration.BatchRegisterItem{
+			ViewID: item.ViewID, ExcludedColumnOrdinals: item.ExcludedColumns, Mode: item.Mode,
+		}
+	}
+	provider, ok := handler.sources.(SourceDiscoveryRegistration)
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	result, err := provider.RegisterDiscoveredViews(request.Context(), access, discoveryRequestID, items)
+	if err != nil {
+		switch sourcediscovery.CodeOf(err) {
+		case sourcediscovery.CodeInvalid:
+			writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
+		case sourcediscovery.CodeNotFound, sourcediscovery.CodeExpired, sourcediscovery.CodeTrustStale:
+			writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
+		default:
+			handleSourceServiceError(writer, err, requestID, true)
+		}
+		return
+	}
+	results := make([]sourceDiscoveryRegisterBatchResult, len(result.Outcomes))
+	for index, outcome := range result.Outcomes {
+		result := sourceDiscoveryRegisterBatchResult{ViewID: outcome.ViewID}
+		if outcome.Registered {
+			registered := sourceRegisterResponse{
+				ConnectionID: outcome.Result.ConnectionID, SourceScopeID: outcome.Result.SourceScopeID,
+				DiscoveredScopeID: outcome.Result.DiscoveredScopeID, Revision: outcome.Result.Revision,
+				ScopeConfigHash: outcome.Result.ScopeConfigHash, AccessMode: outcome.Result.AccessMode,
+				Created: outcome.Result.Created,
+			}
+			result.Outcome = "REGISTERED"
+			result.Registration = &registered
+		} else {
+			result.Outcome = "REFUSED"
+			result.ReasonCode = outcome.ReasonCode
+		}
+		results[index] = result
+	}
+	writeJSON(writer, http.StatusOK, sourceDiscoveryRegisterBatchResponse{
+		RegisteredCount: result.RegisteredCount, RefusedCount: result.RefusedCount, Results: results,
 	})
 }
 
@@ -3587,6 +3742,128 @@ func (handler *Handler) managedSourceConfirm(writer http.ResponseWriter, request
 		return
 	}
 	writeJSON(writer, http.StatusOK, authorityResultResponse(result))
+}
+
+// managedSourceConfirmBatchBody is card S3.4b's closed batch confirmation
+// command: the shared grant/warning/policy fields every table of the request
+// confirms under, plus the bounded list of exact binding tuples. The closed
+// access-mode, warning-version and acknowledgement literals stay server
+// constants, exactly as on the single-table route.
+type managedSourceConfirmBatchBody struct {
+	WorkspaceRevision              int64                            `json:"workspace_revision"`
+	WorkspaceConfigurationHash     string                           `json:"workspace_configuration_hash"`
+	ConfirmationActorGrantID       string                           `json:"confirmation_actor_grant_id"`
+	ConfirmationActorGrantRevision int64                            `json:"confirmation_actor_grant_revision"`
+	ConfirmationActorGrantHash     string                           `json:"confirmation_actor_grant_hash"`
+	WarningContractHash            string                           `json:"warning_contract_hash"`
+	ExpectedPolicyRevision         string                           `json:"expected_policy_revision"`
+	Tables                         []managedSourceConfirmBatchTable `json:"tables"`
+}
+
+type managedSourceConfirmBatchTable struct {
+	WorkspaceSourceID   string `json:"workspace_source_id"`
+	SourceScopeID       string `json:"source_scope_id"`
+	SourceScopeRevision int64  `json:"source_scope_revision"`
+	ScopeConfigHash     string `json:"scope_config_hash"`
+}
+
+func (body managedSourceConfirmBatchBody) complete() bool {
+	if body.WorkspaceRevision < 1 || body.WorkspaceConfigurationHash == "" ||
+		body.ConfirmationActorGrantID == "" || body.ConfirmationActorGrantRevision < 1 ||
+		body.ConfirmationActorGrantHash == "" || body.WarningContractHash == "" ||
+		body.ExpectedPolicyRevision == "" ||
+		len(body.Tables) < 1 || len(body.Tables) > workspacerepository.MaxBatchConfirmTables {
+		return false
+	}
+	for _, table := range body.Tables {
+		if table.WorkspaceSourceID == "" || table.SourceScopeID == "" ||
+			table.SourceScopeRevision < 1 || table.ScopeConfigHash == "" {
+			return false
+		}
+	}
+	return true
+}
+
+type managedSourceConfirmBatchResponse struct {
+	ConfirmedCount int                               `json:"confirmed_count"`
+	RefusedCount   int                               `json:"refused_count"`
+	Results        []managedSourceConfirmBatchResult `json:"results"`
+}
+
+type managedSourceConfirmBatchResult struct {
+	SourceScopeID    string `json:"source_scope_id"`
+	Outcome          string `json:"outcome"`
+	ReasonCode       string `json:"reason_code,omitempty"`
+	ConfirmationID   string `json:"confirmation_id,omitempty"`
+	ConfirmationHash string `json:"confirmation_hash,omitempty"`
+}
+
+// managedSourceConfirmBatch exposes card S3.4b's bounded batch of
+// WORKSPACE_MANAGED_CONFIRM commands. The repository confirms each named table
+// through the unchanged individual command, so every table keeps the identical
+// checks, confirmation record and audit event; this handler only projects the
+// closed per-table outcome.
+func (handler *Handler) managedSourceConfirmBatch(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	authority, ok := handler.requireAuthority(writer, requestID)
+	if !ok {
+		return
+	}
+	key, _, code, fields := mutationHeaders(request, false)
+	if code != "" {
+		writeValidationError(writer, request, requestID, code, fields)
+		return
+	}
+	var body managedSourceConfirmBatchBody
+	if code := decodeJSONLimited(writer, request, &body, maxBatchBodyBytes); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if !body.complete() {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"tables"})
+		return
+	}
+	tables := make([]workspacerepository.BatchConfirmTable, len(body.Tables))
+	for index, table := range body.Tables {
+		tables[index] = workspacerepository.BatchConfirmTable{
+			WorkspaceSourceID: table.WorkspaceSourceID, SourceScopeID: table.SourceScopeID,
+			SourceScopeRevision: table.SourceScopeRevision, ScopeConfigHash: table.ScopeConfigHash,
+		}
+	}
+	result, err := authority.ConfirmManagedSourceBatch(request.Context(), access, workspacerepository.BatchConfirmRequest{
+		IdempotencyKey:                 key,
+		OrganizationID:                 access.OrganizationID,
+		WorkspaceID:                    workspaceID,
+		WorkspaceRevision:              body.WorkspaceRevision,
+		WorkspaceConfigurationHash:     body.WorkspaceConfigurationHash,
+		ConfirmationActorGrantID:       body.ConfirmationActorGrantID,
+		ConfirmationActorGrantRevision: body.ConfirmationActorGrantRevision,
+		ConfirmationActorGrantHash:     body.ConfirmationActorGrantHash,
+		WarningVersion:                 managedWarningVersion,
+		WarningContractHash:            body.WarningContractHash,
+		AcknowledgementCode:            managedAcknowledgementCode,
+		ExpectedPolicyRevision:         body.ExpectedPolicyRevision,
+		Tables:                         tables,
+	})
+	if err != nil {
+		handleAuthorityError(writer, err, requestID)
+		return
+	}
+	results := make([]managedSourceConfirmBatchResult, len(result.Outcomes))
+	for index, outcome := range result.Outcomes {
+		item := managedSourceConfirmBatchResult{SourceScopeID: outcome.SourceScopeID}
+		if outcome.Confirmed {
+			item.Outcome = "CONFIRMED"
+			item.ConfirmationID = outcome.ConfirmationID
+			item.ConfirmationHash = outcome.ConfirmationHash
+		} else {
+			item.Outcome = "REFUSED"
+			item.ReasonCode = outcome.ReasonCode
+		}
+		results[index] = item
+	}
+	writeJSON(writer, http.StatusOK, managedSourceConfirmBatchResponse{
+		ConfirmedCount: result.ConfirmedCount, RefusedCount: result.RefusedCount, Results: results,
+	})
 }
 
 type managedConfirmationRevokeBody struct {
@@ -4924,15 +5201,27 @@ func conditionalMutationHeaders(request *http.Request) (string, string, string, 
 // OWN required-field check after a successful decode is where a specific
 // field name is known.
 func decodeJSON(writer http.ResponseWriter, request *http.Request, destination any) string {
+	return decodeJSONLimited(writer, request, destination, maxBodyBytes)
+}
+
+// decodeJSONLimited is decodeJSON with an explicit byte bound. Card S3.4b's two
+// batch routes carry one bounded list (up to 1000 tables or 200 views) in one
+// request, which legitimately exceeds the 32 KiB single-object limit every other
+// route keeps; only those two routes raise their own bound, and an oversized
+// body is refused as a whole before any field is decoded.
+func decodeJSONLimited(writer http.ResponseWriter, request *http.Request, destination any, limit int64) string {
 	if headerPresent(request.Header, "Content-Encoding") {
 		return "REQUEST_INVALID"
+	}
+	if request.ContentLength > limit {
+		return "PAYLOAD_TOO_LARGE"
 	}
 	contentType, ok := exactHeader(request.Header, "Content-Type")
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if !ok || err != nil || mediaType != jsonContentType {
 		return "UNSUPPORTED_MEDIA_TYPE"
 	}
-	body := http.MaxBytesReader(writer, request.Body, maxBodyBytes)
+	body := http.MaxBytesReader(writer, request.Body, limit)
 	raw, err := io.ReadAll(body)
 	if err != nil {
 		var maxBytesError *http.MaxBytesError
