@@ -4,11 +4,11 @@ A robot walked the real web interface of the local synthetic stand.
 
 - Command: `bash tests/e2e/walkthrough/run-walkthrough.sh`
 - Scenario: local
-- Stand: https://127.0.0.1:55471
-- Started: 2026-09-25T15:52:55.281Z
-- Finished: 2026-09-25T15:52:58.861Z
-- Total: 3.58 s
-- Result: **PASS** (5 steps, 0 failed)
+- Stand: https://127.0.0.1:55475
+- Started: 2026-09-25T18:13:16.724Z
+- Finished: 2026-09-25T18:13:19.620Z
+- Total: 2.896 s
+- Result: **PASS** (6 steps, 0 failed)
 
 ## Answers (1)
 
@@ -18,9 +18,9 @@ A robot walked the real web interface of the local synthetic stand.
 
 ## Steps
 
-### 1. sign in as the test user — passed (0.25 s)
+### 1. the interface shows the running server revision — passed (0.13 s)
 
-![sign in as the test user](screenshots/01-sign-in-as-the-test-user.png)
+![the interface shows the running server revision](screenshots/01-the-interface-shows-the-running-server-revision.png)
 
 Mutating requests (0):
 
@@ -38,9 +38,29 @@ HTTP responses 400-499 (1):
 
 - GET /api/v1/workspaces -> 401 (UNAUTHENTICATED)
 
-### 2. open Sources and confirm the synthetic database tables — passed (1.09 s)
+### 2. sign in as the test user — passed (0.09 s)
 
-![open Sources and confirm the synthetic database tables](screenshots/02-open-sources-and-confirm-the-synthetic-database-tables.png)
+![sign in as the test user](screenshots/02-sign-in-as-the-test-user.png)
+
+Mutating requests (0):
+
+- none
+
+HTTP responses >= 500 (0):
+
+- none
+
+Browser console errors (1):
+
+- Failed to load resource: the server responded with a status of 401 (Unauthorized)
+
+HTTP responses 400-499 (1):
+
+- GET /api/v1/workspaces -> 401 (UNAUTHENTICATED)
+
+### 3. open Sources and confirm the synthetic database tables — passed (1.08 s)
+
+![open Sources and confirm the synthetic database tables](screenshots/03-open-sources-and-confirm-the-synthetic-database-tables.png)
 
 Mutating requests (3):
 
@@ -56,9 +76,9 @@ Browser console errors (0):
 
 - none
 
-### 3. open the model settings and save a change — passed (0.14 s)
+### 4. open the model settings and save a change — passed (0.18 s)
 
-![open the model settings and save a change](screenshots/03-open-the-model-settings-and-save-a-change.png)
+![open the model settings and save a change](screenshots/04-open-the-model-settings-and-save-a-change.png)
 
 Mutating requests (1):
 
@@ -72,9 +92,9 @@ Browser console errors (0):
 
 - none
 
-### 4. ask the question in the chat and get an answer — passed (1.51 s)
+### 5. ask the question in the chat and get an answer — passed (0.96 s)
 
-![ask the question in the chat and get an answer](screenshots/04-ask-the-question-in-the-chat-and-get-an-answer.png)
+![ask the question in the chat and get an answer](screenshots/05-ask-the-question-in-the-chat-and-get-an-answer.png)
 
 Answer texts (1):
 
@@ -94,9 +114,9 @@ Browser console errors (0):
 
 - none
 
-### 5. open the evidence of that answer — passed (0.23 s)
+### 6. open the evidence of that answer — passed (0.23 s)
 
-![open the evidence of that answer](screenshots/05-open-the-evidence-of-that-answer.png)
+![open the evidence of that answer](screenshots/06-open-the-evidence-of-that-answer.png)
 
 Mutating requests (0):
 

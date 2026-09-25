@@ -16,6 +16,9 @@
 //   KNOWVAULT_WALKTHROUGH_CREDENTIALS   credentials file read at run time
 //   KNOWVAULT_WALKTHROUGH_USER          test user, if the file has no username
 //   KNOWVAULT_WALKTHROUGH_QUESTION      chat question, local scenario only
+//   KNOWVAULT_WALKTHROUGH_REVISION      commit the local stand was built from;
+//                                       the local scenario asserts its short
+//                                       form is on screen (card W-4)
 //
 // It exits 0 only when every step passed. The password from the credentials
 // file never reaches the report, the logs or a screenshot.
@@ -46,6 +49,7 @@ function required(name) {
 const baseURL = required("KNOWVAULT_WALKTHROUGH_BASE_URL").replace(/\/+$/, "");
 const reportDir = (process.env.KNOWVAULT_WALKTHROUGH_REPORT_DIR ?? path.join(here, "baseline")).trim();
 const question = process.env.KNOWVAULT_WALKTHROUGH_QUESTION ?? "что ты знаешь?";
+const revision = (process.env.KNOWVAULT_WALKTHROUGH_REVISION ?? "").trim();
 const scenarioName = (process.env.KNOWVAULT_WALKTHROUGH_SCENARIO ?? "local").trim();
 const scenario = SCENARIOS[scenarioName];
 if (scenario === undefined) {
@@ -87,7 +91,7 @@ async function run() {
   const startedAt = new Date();
 
   try {
-    await scenario(page, walk, { baseURL, credentials, question });
+    await scenario(page, walk, { baseURL, credentials, question, revision });
   } finally {
     await context.close();
     await browser.close();

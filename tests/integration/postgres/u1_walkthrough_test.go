@@ -61,6 +61,10 @@ const (
 	u1ContainerPrefix    = "kv-card-u-1-"
 	// u1Question is the owner's question from the card.
 	u1Question = "что ты знаешь?"
+	// u1BuildRevision is the commit the synthetic stand claims as its build, so
+	// the interface's revision mark is proven against a known value. Card W-4:
+	// the browser asserts the short form of exactly this revision on screen.
+	u1BuildRevision = "9c1f4a7e2b3d5f6081a2c3d4e5f60718293a4b5c"
 )
 
 // u1ModelStub is a deterministic OpenAI-compatible chat-completions endpoint
@@ -353,7 +357,7 @@ func TestU1Walkthrough(t *testing.T) {
 
 	dispatcher, err := apphttp.New(
 		u1AuthHandler(u1SessionToken()),
-		systemapi.New(buildinfo.Info{}),
+		systemapi.New(buildinfo.Info{Version: "walkthrough", Revision: u1BuildRevision, BuiltAt: "2026-07-14T12:00:00Z"}),
 		env.Handler,
 		u1SPAHandler(filepath.Join(repositoryRoot(t), "web", "dist")),
 	)
@@ -390,6 +394,7 @@ func TestU1Walkthrough(t *testing.T) {
 		"KNOWVAULT_WALKTHROUGH_BASE_URL="+origin,
 		"KNOWVAULT_WALKTHROUGH_REPORT_DIR="+reportDir,
 		"KNOWVAULT_WALKTHROUGH_QUESTION="+u1Question,
+		"KNOWVAULT_WALKTHROUGH_REVISION="+u1BuildRevision,
 	)
 	output, runErr := command.CombinedOutput()
 	fmt.Printf("U1 WALKTHROUGH DRIVER\n%s\n", output)

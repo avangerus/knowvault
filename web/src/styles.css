@@ -64,6 +64,7 @@ svg { display: block; }
 .brand-mark svg { width: 16px; height: 16px; }
 .top-sep { width: 1px; height: 24px; background: var(--line); flex: 0 0 auto; }
 .top-spacer { flex: 1 1 auto; }
+.build-revision { color: var(--ink-tertiary); font-size: var(--fs-caption); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; white-space: nowrap; }
 
 .workspace-switcher-wrap { position: relative; }
 .workspace-switcher { border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-align: left; padding: 6px 10px; border-radius: var(--r-sm); display: flex; align-items: center; gap: 9px; font-size: var(--fs-meta); }

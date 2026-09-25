@@ -44,6 +44,29 @@ async function waitForHeading(page, name) {
   await page.getByRole("heading", { name, exact: true }).first().waitFor({ state: "visible", timeout: 30_000 });
 }
 
+// BUILD_REVISION_SELECTOR is the quiet revision mark the application header
+// shows on every screen (card W-4).
+const BUILD_REVISION_SELECTOR = ".build-revision";
+
+// waitForBuildRevision proves the interface names the running server's
+// revision. When the stand's build is known, exactly its short form is
+// accepted; otherwise the mark must still be present as a neutral mark or a
+// revision, so an older stand cannot pass by showing nothing.
+async function waitForBuildRevision(page, revision, timeoutMs = 30_000) {
+  const expected = String(revision ?? "").trim().slice(0, 7);
+  const mark = page.locator(BUILD_REVISION_SELECTOR);
+  if (expected === "") {
+    await mark.filter({ hasText: /—|[0-9a-fA-F]{4,40}/ }).first().waitFor({ state: "visible", timeout: timeoutMs });
+    return ((await mark.first().textContent()) ?? "").trim();
+  }
+  await mark.filter({ hasText: expected }).first().waitFor({ state: "visible", timeout: timeoutMs });
+  const shown = ((await mark.first().textContent()) ?? "").trim();
+  if (shown !== expected) {
+    throw new Error(`the interface shows revision ${JSON.stringify(shown)}, want ${JSON.stringify(expected)}`);
+  }
+  return shown;
+}
+
 // waitForPageSettled waits out the screen's own "loading" note, then waits for
 // one of the shapes a loaded screen can have.
 async function waitForPageSettled(page, loadedSelector) {
@@ -119,6 +142,12 @@ async function openEvidence(page, turn, timeoutMs = 30_000) {
 // runLocalScenario is the card U-1 walkthrough, unchanged in what it does.
 export async function runLocalScenario(page, walk, options = {}) {
   const question = options.question ?? "что ты знаешь?";
+
+  await walk.step("the interface shows the running server revision", async () => {
+    await page.goto(`${options.baseURL}/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    const shown = await waitForBuildRevision(page, options.revision);
+    console.log(`walkthrough revision mark: ${JSON.stringify(shown)}`);
+  });
 
   await walk.step("sign in as the test user", async () => {
     await signIn(page, { baseURL: options.baseURL });

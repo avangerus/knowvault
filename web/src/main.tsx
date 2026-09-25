@@ -2720,6 +2720,62 @@ const sectionCopy: Record<Section, { label: string; hint: string; icon: Componen
 
 type Session = "checking" | "signedOut" | "signedIn" | "unavailable";
 
+// ---------------------------------------------------------------------------
+// Build revision: the quiet mark in the top bar names the server process that
+// is actually answering. The value is fetched from that server at run time, so
+// a web bundle shipped beside a newer server can never claim its own build as
+// the running revision, and no number is typed into the bundle. A build
+// without a known revision shows the neutral mark instead of a wrong number.
+// ---------------------------------------------------------------------------
+
+export const BUILD_REVISION_NEUTRAL = "—";
+export const BUILD_REVISION_SHORT_LENGTH = 7;
+
+// shortBuildRevision returns the leading characters of a commit, or null when
+// the build has no known revision and the neutral mark must stand in.
+export function shortBuildRevision(revision: string | null | undefined): string | null {
+  const value = (revision ?? "").trim();
+  if (value === "" || value.toLowerCase() === "unknown") return null;
+  return value.slice(0, BUILD_REVISION_SHORT_LENGTH);
+}
+
+// buildRevisionFromInfo reads the running server's build-info payload. An
+// unexpected or absent field is an unknown revision, never a guess.
+export function buildRevisionFromInfo(payload: unknown): string {
+  const value = (payload as { revision?: unknown } | null | undefined)?.revision;
+  return typeof value === "string" ? value : "";
+}
+
+export function BuildRevisionMark({ revision }: { revision: string | null | undefined }) {
+  const short = shortBuildRevision(revision);
+  return (
+    <span className="build-revision" title="Server revision">
+      {short ?? BUILD_REVISION_NEUTRAL}
+    </span>
+  );
+}
+
+function useBuildRevision(): string {
+  const [revision, setRevision] = useState("");
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/v1/system/build-info", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((payload) => {
+        if (alive) setRevision(buildRevisionFromInfo(payload));
+      })
+      .catch(() => {
+        // A server that cannot report its revision is shown as neutral; a
+        // stale or guessed number would be worse than none.
+        if (alive) setRevision("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return revision;
+}
+
 function App() {
   const [section, setSection] = useState<Section>("search");
   const [evidenceTarget, setEvidenceTarget] = useState<EvidenceTarget | null>(() => parseEvidenceHash(window.location.hash));
@@ -2744,6 +2800,7 @@ function App() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutFailure, setLogoutFailure] = useState<string | null>(null);
   const { toasts, push: pushToastRaw, dismiss: dismissToast, clear: clearToasts } = useToasts();
+  const buildRevision = useBuildRevision();
 
   function setSessionState(next: Session) {
     sessionStateRef.current = next;
@@ -2968,6 +3025,7 @@ function App() {
           <span className="mode-chip"><IconShield />{processingModeLabel(data.snapshot.value.processing_mode)}</span>
         )}
         <div className="top-spacer" />
+        <BuildRevisionMark revision={buildRevision} />
         {session === "signedIn" && (
           <div aria-live="polite" className={health === "up" ? "edge-state online" : "edge-state"} title="Local server status">
             <span aria-hidden="true" />
