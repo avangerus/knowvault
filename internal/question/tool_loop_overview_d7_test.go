@@ -56,15 +56,16 @@ func TestToolLoopOverviewQuestionClassRecognizesDatabase(t *testing.T) {
 	}
 }
 
-// TestToolLoopOverviewQuestionClassKeepsConcreteAndHypotheticalQuestionsOut
-// covers the two guards that keep the new classes narrow: a question naming
-// a concrete subject (card D-5's existing cue) and a hypothetical about a
-// different, imagined workspace both keep the ordinary full tool loop, even
-// when they mention "база" or "источник" in passing.
-func TestToolLoopOverviewQuestionClassKeepsConcreteAndHypotheticalQuestionsOut(t *testing.T) {
+// TestToolLoopOverviewQuestionClassKeepsConcreteQuestionsOut covers the two
+// guards that keep the D-7 classes narrow: a question naming a concrete
+// subject (card D-5's existing cue) and a hypothetical about a different,
+// imagined workspace both keep the ordinary full tool loop, even when they
+// mention "база" or "источник" in passing. Card D-8 later gives the
+// hypothetical its own short counterfactual class (see
+// tool_loop_overview_d8_test.go), so the hypothetical is recognized there.
+func TestToolLoopOverviewQuestionClassKeepsConcreteQuestionsOut(t *testing.T) {
 	for _, question := range []string{
 		"какие данные есть в базе про договоры?",
-		"что было бы написано в базе, если бы мы занимались не МНО, а пирогами?",
 		"сколько записей в базе?",
 	} {
 		if got := toolLoopOverviewQuestionClass(question); got != toolLoopOverviewClassNone {
