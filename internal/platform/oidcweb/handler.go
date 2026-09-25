@@ -19,6 +19,7 @@ import (
 	"knowvault.local/verified-workspace/internal/identity"
 	identityrepository "knowvault.local/verified-workspace/internal/identity/repository"
 	"knowvault.local/verified-workspace/internal/platform/browserauth"
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/platform/oidc"
 	"knowvault.local/verified-workspace/internal/platform/oidctransport"
@@ -590,6 +591,12 @@ func writeMethodNotAllowed(writer http.ResponseWriter, method string) {
 }
 
 func writeFailure(writer http.ResponseWriter, requestID string, status int, code string) {
+	if status >= http.StatusInternalServerError {
+		// The browser keeps its one closed code for every auth dependency
+		// failure; the server log names which failure it was through the same
+		// code, without an endpoint, provider body or secret.
+		failurelog.Set(writer, "sign-in: "+code)
+	}
 	setResponseHeaders(writer, requestID)
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(status)
