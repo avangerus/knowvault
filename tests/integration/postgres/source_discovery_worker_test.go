@@ -144,7 +144,7 @@ func (connector *sourceDiscoveryConnector) DiscoverCatalog(_ context.Context, re
 func TestSourceDiscoveryWorkerPersistsEncryptedCatalogResult(t *testing.T) {
 	ctx := context.Background()
 	// The production registration path this test drives now also carries S3
-	// card 4's registration mode (migration 000118), so the database is reset
+	// card 4's registration mode (migration 000120), so the database is reset
 	// at the current migration head.
 	admin := resetStage1Database(t)
 	seedOrganization(t, ctx, admin, discoveryAlphaOrg, discoveryAlphaOwner, "ws_sdr_alpha")

@@ -7,7 +7,7 @@
 -- completes an empty, authoritative sync without reading a row.
 --
 -- The mode is part of the immutable table contract, never a per-call flag:
--- migration 000118 adds the column, and registration mints a distinct
+-- migration 000120 adds the column, and registration mints a distinct
 -- ContractHash/LineageID for a query-only relation (see
 -- postgresqlquery.WithQueryOnly). Switching an indexed relation to query-only
 -- is therefore a distinct lineage, exactly like a column exclusion, and this
