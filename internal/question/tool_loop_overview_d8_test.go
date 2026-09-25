@@ -57,8 +57,10 @@ func TestToolLoopOverviewQuestionClassRecognizesRecency(t *testing.T) {
 
 // TestToolLoopOverviewQuestionClassRecognizesCounterfactual covers
 // requirement 1's hypothetical class: a question about a different, imagined
-// workspace gets the short counterfactual shape, while a hypothetical that
-// names a concrete number or subject keeps the ordinary full tool loop.
+// workspace gets the short counterfactual shape under any wording, even when
+// it names a table or a real contract, because no stored data answers an
+// imagined scenario. A concrete, non-hypothetical question keeps the ordinary
+// full tool loop.
 func TestToolLoopOverviewQuestionClassRecognizesCounterfactual(t *testing.T) {
 	for _, question := range []string{
 		"что было бы написано в базе, если бы мы занимались не МНО, а пирогами?",
@@ -66,6 +68,9 @@ func TestToolLoopOverviewQuestionClassRecognizesCounterfactual(t *testing.T) {
 		"если б мы занимались пирогами, что было бы в базе?",
 		"допустим, мы занимаемся пирогами, что тогда в базе?",
 		"представь, что мы занимаемся пирогами, что тогда в базе?",
+		"какие таблицы были бы в базе, если бы мы продавали пироги?",
+		"что было бы, если бы договор № 47 закрыли?",
+		"сколько МНО было бы, если бы договор 47 закрыли?",
 		"what would be in the database if we sold pies?",
 		"if we did pies, what would the database hold?",
 		"what if we sold pies instead?",
@@ -75,12 +80,11 @@ func TestToolLoopOverviewQuestionClassRecognizesCounterfactual(t *testing.T) {
 		}
 	}
 	for _, question := range []string{
-		"что было бы, если бы договор № 47 закрыли?",
-		"сколько МНО было бы, если бы договор 47 закрыли?",
 		"представь данные",
+		"что известно про договор № 47?",
 	} {
 		if got := toolLoopOverviewQuestionClass(question); got != toolLoopOverviewClassNone {
-			t.Fatalf("hypothetical naming a concrete subject %q classified %v, want the ordinary full tool loop", question, got)
+			t.Fatalf("non-hypothetical question %q classified %v, want the ordinary full tool loop", question, got)
 		}
 	}
 }

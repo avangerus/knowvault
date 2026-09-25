@@ -67,8 +67,8 @@ var overviewQuestionPattern = regexp.MustCompile(`(?i)(?:^|[^а-яёa-z])(?:чт
 // this one. Card D-7 used it to keep such a question out of the source and
 // database-overview classes (a passage about a different workspace is not a
 // statement about this one); card D-8 gives it its own short counterfactual
-// class instead, recognized after the concrete-subject cue so a hypothetical
-// that names a real number or subject still keeps the full tool loop.
+// class instead, recognized before the concrete-subject cue because no stored
+// data can answer an imagined scenario.
 var overviewCounterfactualCue = regexp.MustCompile(`(?i)` +
 	`если\s+бы|если\s+б\s|было\s+бы|бы\s+было|что\s+бы\s+было|предположим|допустим|представь\s*,?\s*что|вообрази|` +
 	`what\s+if|would\s+(?:be|have)|if\s+we\s+(?:were|had|did|do|are|sold|ran|made|used|use|didn'?t|don'?t)`)
@@ -187,8 +187,8 @@ var overviewShapePhrases = []string{
 // deliberately narrow: a question that names a concrete subject -- a date, a
 // number, a document or a field -- keeps the ordinary full tool loop, so this
 // never turns a data question into a one-turn guess. Card D-8 adds two shapes
-// that are themselves honest short answers: a hypothetical that names no
-// concrete subject, and a change question whose materials have one version.
+// that are themselves honest short answers: a hypothetical about an imagined
+// workspace, and a change question whose materials have one version.
 func toolLoopOverviewQuestionClass(question string) toolLoopOverviewClass {
 	normalized := strings.ToLower(strings.TrimSpace(question))
 	trimmed := strings.Trim(normalized, " \t\r\n?!.,;:«»\"'")
@@ -208,15 +208,19 @@ func toolLoopOverviewQuestionClass(question string) toolLoopOverviewClass {
 		!overviewSourceWord.MatchString(normalized) && !overviewDatabaseWord.MatchString(normalized) {
 		return toolLoopOverviewClassRecency
 	}
-	if overviewQuestionCue.MatchString(normalized) {
-		return toolLoopOverviewClassNone
-	}
 	// Card D-8 requirement 1: a hypothetical about a different, imagined
 	// workspace has no data behind it, so it gets the short counterfactual
-	// answer shape. A hypothetical that names a concrete subject or number
-	// stays with the ordinary full tool loop (the cue above wins first).
+	// answer shape. It is recognized before the concrete-subject cue: even a
+	// hypothetical that names a table or a number cannot be answered from
+	// stored data, and the short honest reply must not turn into an inventory
+	// of what happens to exist. A change question is recognized above, and a
+	// request whose subject is genuinely unclear stays with the ordinary loop
+	// because no counterfactual marker is present.
 	if overviewCounterfactualCue.MatchString(normalized) {
 		return toolLoopOverviewClassCounterfactual
+	}
+	if overviewQuestionCue.MatchString(normalized) {
+		return toolLoopOverviewClassNone
 	}
 	// Card D-7 requirement 1: a question built on "источник"/"source" is
 	// about the source list itself, whatever else it also says.
