@@ -54,7 +54,7 @@ func TestToolLoopInstructionsRecognizeChangeAndHypotheticalByMeaning(t *testing.
 		"recognized by the meaning of the question",
 		"never by matching specific words",
 		"this rule decides instead of that shape",
-		"whether a document or material itself has changed, was updated, or is still current",
+		"the question asks, in its own words, whether a document or material itself has changed, was updated, or is still current",
 		"knowvault_list_objects with all_versions true",
 		"hypothetical or counterfactual question that explicitly imagines this same workspace doing a different business",
 	} {
@@ -74,9 +74,8 @@ func TestToolLoopInstructionsRecognizeChangeAndHypotheticalByMeaning(t *testing.
 // exception and its source-name lookup).
 func TestToolLoopInstructionsExcludeCountingAndOffTopicQuestions(t *testing.T) {
 	for _, want := range []string{
-		"neither ever applies to a question asking for a count, a total, a specific value or a listing of records",
-		"Neither ever applies to a question that is not about this workspace's subject at all either",
-		"an imagined or hypothetical framing alone does not turn an unrelated topic into workspace data",
+		"a count, a total, a specific value, or a listing of records is never one of them and keeps the live-read rule above",
+		"a question outside the workspace's subject entirely is never one of them either and keeps the no-tool-call rule above",
 	} {
 		if !strings.Contains(toolLoopInstructions, want) {
 			t.Fatalf("toolLoopInstructions is missing the counting/off-topic exclusion: %q", want)
