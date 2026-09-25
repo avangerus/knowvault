@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
+import { askLayoutClass, conversationSidebarStorage, readConversationsCollapsed, writeConversationsCollapsed } from "./conversation-sidebar";
 import { PendingAction, type PendingActionKind, type PendingActionState, type PendingActionStep } from "./pending-action";
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
@@ -5598,6 +5599,13 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
+  // Card W-6: the conversation list can be put away. The initial value is the
+  // person's remembered choice, read once from local storage; every toggle
+  // writes it back, so a reload shows the list as they left it. A browser with
+  // no local storage reads as the default expanded list.
+  const [conversationsCollapsed, setConversationsCollapsed] = useState(
+    () => readConversationsCollapsed(conversationSidebarStorage()),
+  );
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -6272,6 +6280,15 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     focusComposer();
   }
 
+  // Card W-6: one action hides the conversation list, one action shows it
+  // again. The choice is written to local storage before the state update, so
+  // the rendered screen and the remembered choice can never disagree.
+  function toggleConversations() {
+    const next = !conversationsCollapsed;
+    writeConversationsCollapsed(conversationSidebarStorage(), next);
+    setConversationsCollapsed(next);
+  }
+
   function selectConversation(conversationID: string) {
     if (conversationID === selectedConversationID) return;
     // R3: switching conversations aborts any in-flight question rather than
@@ -6329,8 +6346,12 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const currentTitle = selectedConversationID !== null && conversation?.kind === "ok" ? conversationTitle(conversation.value) : null;
 
   return (
-    <div className={fullscreen ? "ask-layout ask-layout-full" : "ask-layout"}>
-      <section aria-label="Conversations" className="topics">
+    <div className={askLayoutClass(fullscreen, conversationsCollapsed)}>
+      {/* Card W-6: the conversation list is dropped from the tree when the
+          person put it away, so the freed column really goes to the chat and
+          its answer and no stale list stays reachable behind a hidden node. */}
+      {!conversationsCollapsed && (
+      <section aria-label="Conversations" className="topics" id="ask-conversations">
         <h2>Conversations</h2>
         <label className="sidebar-search">
           <span className="sr-only">Search conversations</span>
@@ -6431,8 +6452,25 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
         <button className="topics-new" onClick={startNewConversation} type="button"><IconPlus />New conversation</button>
       </section>
+      )}
 
       <section aria-live="polite" className="talk">
+        {/* Card W-6: one control, always on screen, that hides the conversation
+            list and brings it back. It lives in the chat column so it is
+            reachable in both states; its own visible label is the accessible
+            name and aria-expanded reports which state is showing. */}
+        <div className="conversations-control">
+          <button
+            aria-controls={conversationsCollapsed ? undefined : "ask-conversations"}
+            aria-expanded={!conversationsCollapsed}
+            className="conversations-toggle"
+            onClick={toggleConversations}
+            type="button"
+          >
+            {conversationsCollapsed ? <IconExpand /> : <IconCollapse />}
+            <span>{conversationsCollapsed ? "Show conversations" : "Hide conversations"}</span>
+          </button>
+        </div>
         <div className="flow" ref={flowRef}>
           {currentTitle && (
             <header className="flow-head">

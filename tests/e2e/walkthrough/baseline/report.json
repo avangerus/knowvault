@@ -2,12 +2,12 @@
   "schema_version": "walkthrough-report-v2",
   "command": "bash tests/e2e/walkthrough/run-walkthrough.sh",
   "scenario": "local",
-  "base_url": "https://127.0.0.1:55475",
-  "started_at": "2026-09-25T18:13:16.724Z",
-  "finished_at": "2026-09-25T18:13:19.620Z",
-  "total_seconds": 2.896,
+  "base_url": "https://127.0.0.1:55477",
+  "started_at": "2026-09-25T18:55:22.165Z",
+  "finished_at": "2026-09-25T18:55:24.888Z",
+  "total_seconds": 2.723,
   "passed": true,
-  "step_count": 6,
+  "step_count": 8,
   "failed_step_count": 0,
   "failed_steps": [],
   "answers": [
@@ -21,8 +21,8 @@
     {
       "name": "the interface shows the running server revision",
       "status": "passed",
-      "started_at": "2026-09-25T18:13:16.724Z",
-      "seconds": 0.1272468,
+      "started_at": "2026-09-25T18:55:22.165Z",
+      "seconds": 0.1155056,
       "screenshot": "screenshots/01-the-interface-shows-the-running-server-revision.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -31,7 +31,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_oz7wrwZ-UlmWhDjyV6G6hA\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_DHHkESV94w4D56WfvIV6wg\"}}"
         }
       ],
       "consoleErrors": [
@@ -46,8 +46,8 @@
     {
       "name": "sign in as the test user",
       "status": "passed",
-      "started_at": "2026-09-25T18:13:16.887Z",
-      "seconds": 0.0906035,
+      "started_at": "2026-09-25T18:55:22.304Z",
+      "seconds": 0.0911508,
       "screenshot": "screenshots/02-sign-in-as-the-test-user.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -56,7 +56,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_aW-hgIhDTj56DwEf2Ob5yQ\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_SiVPEBsliqrKHCE9dXs9_A\"}}"
         }
       ],
       "consoleErrors": [
@@ -71,8 +71,8 @@
     {
       "name": "open Sources and confirm the synthetic database tables",
       "status": "passed",
-      "started_at": "2026-09-25T18:13:17.002Z",
-      "seconds": 1.0794691,
+      "started_at": "2026-09-25T18:55:22.419Z",
+      "seconds": 1.0739794,
       "screenshot": "screenshots/03-open-sources-and-confirm-the-synthetic-database-tables.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -99,8 +99,8 @@
     {
       "name": "open the model settings and save a change",
       "status": "passed",
-      "started_at": "2026-09-25T18:13:18.109Z",
-      "seconds": 0.1803103,
+      "started_at": "2026-09-25T18:55:23.525Z",
+      "seconds": 0.2616417,
       "screenshot": "screenshots/04-open-the-model-settings-and-save-a-change.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -119,8 +119,8 @@
     {
       "name": "ask the question in the chat and get an answer",
       "status": "passed",
-      "started_at": "2026-09-25T18:13:18.324Z",
-      "seconds": 0.9569068,
+      "started_at": "2026-09-25T18:55:23.823Z",
+      "seconds": 0.6835663,
       "screenshot": "screenshots/05-ask-the-question-in-the-chat-and-get-an-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -142,11 +142,41 @@
       "page_excerpt": null
     },
     {
+      "name": "collapse the conversation list",
+      "status": "passed",
+      "started_at": "2026-09-25T18:55:24.543Z",
+      "seconds": 0.0366831,
+      "screenshot": "screenshots/06-collapse-the-conversation-list.png",
+      "httpErrors": [],
+      "httpClientErrors": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "writes": [],
+      "answers": [],
+      "error": null,
+      "page_excerpt": null
+    },
+    {
+      "name": "expand the conversation list again",
+      "status": "passed",
+      "started_at": "2026-09-25T18:55:24.610Z",
+      "seconds": 0.0373554,
+      "screenshot": "screenshots/07-expand-the-conversation-list-again.png",
+      "httpErrors": [],
+      "httpClientErrors": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "writes": [],
+      "answers": [],
+      "error": null,
+      "page_excerpt": null
+    },
+    {
       "name": "open the evidence of that answer",
       "status": "passed",
-      "started_at": "2026-09-25T18:13:19.311Z",
-      "seconds": 0.2278885,
-      "screenshot": "screenshots/06-open-the-evidence-of-that-answer.png",
+      "started_at": "2026-09-25T18:55:24.677Z",
+      "seconds": 0.1312975,
+      "screenshot": "screenshots/08-open-the-evidence-of-that-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
       "consoleErrors": [],
