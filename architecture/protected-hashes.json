@@ -1121,7 +1121,7 @@
     "tests/integration/postgres/workspace_source_confirmation_scope_test.go": "8cd03a23dcbe19bacca271d09c2ed526ef9f6f7fd9c21a98c8465e8a13083799",
     "tests/integration/postgres/workspace_source_repository_test.go": "325458916154da703dd36f923c4d0730ac94b467f8890b2d61dd082ef8cb7b82",
     "tests/integration/postgres/workspace_source_snapshot_test.go": "042664fcb6bf40586991aab8a60bbe531dd18d1f2d6322cd685b45c499916fa4",
-    "tests/integration/postgres/workspace_tools_contract_test.go": "141f50b46598a1e5790f780c14644664f52f3e4188a4286f56cc18350052c8e2",
+    "tests/integration/postgres/workspace_tools_contract_test.go": "59da495b00335bdde96ae601a89b09243aa38b4aef0aace33c6b9dffc29f1aad",
     "tests/integration/sandboxdispatch/dispatcher_loopback_test.go": "d45900ca9edf4683f275595c6aeb045875d7b4e4648bf72810f1af3e35748b72",
     "tests/integration/sandboxdispatch/dispatcher_v2_real_linux_test.go": "f119d15e869fbe9275e8d5531c8f73e327a878d8e9e5dff48ddf812ebcd0297e",
     "tests/integration/sandboxdispatch/registration_handshake_test.go": "7d5554487692e96172189f1bcd84cab0e3cc8cb00a8679bd5c40251390d306e9",

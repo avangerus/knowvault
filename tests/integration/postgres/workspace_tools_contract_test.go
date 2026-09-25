@@ -64,7 +64,7 @@ import (
 // MCP surface must advertise, in registry order. R3a-1 fixed the first
 // seven; knowvault_workspace_context is S2's own addition (ADR-0098,
 // S2-CONTRACT.md "MCP") and knowvault_source_schema is S3 card 1's ADR-0097
-// addition -- member-readable knowledge tools exactly like the other seven
+// addition, as is knowvault_source_sql (S3 card 2) -- member-readable knowledge tools exactly like the other seven
 // (Reader.Current's RLS admits OWNER, MANAGER, MEMBER and a scoped SERVICE),
 // so they belong in this same closed advertised set, not a separate
 // administrative one.
@@ -78,6 +78,7 @@ var kvA03CanonicalTools = []string{
 	"knowvault_refresh",
 	"knowvault_workspace_context",
 	"knowvault_source_schema",
+	"knowvault_source_sql",
 }
 
 // kvA03AliasTools are the dispatch-only former names: callable for pinned
@@ -242,7 +243,7 @@ func TestKVA03WorkspaceMCPToolSetContract(t *testing.T) {
 	}
 	token, csrf := kvA03Session(t)
 
-	t.Run("member tools/list advertises exactly the nine canonical knowledge tools", func(t *testing.T) {
+	t.Run("member tools/list advertises exactly the canonical knowledge tools", func(t *testing.T) {
 		names := kvA03ToolsList(t, handler, token, csrf)
 		present := make(map[string]bool, len(names))
 		for _, name := range names {
