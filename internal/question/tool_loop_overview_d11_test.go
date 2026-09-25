@@ -74,8 +74,8 @@ func TestToolLoopInstructionsRecognizeChangeAndHypotheticalByMeaning(t *testing.
 // exception and its source-name lookup).
 func TestToolLoopInstructionsExcludeCountingAndOffTopicQuestions(t *testing.T) {
 	for _, want := range []string{
-		"a count, a total, a specific value, or a listing of records is never one of them and keeps the live-read rule above",
-		"a question outside the workspace's subject entirely is never one of them either and keeps the no-tool-call rule above",
+		"a count, a total, a specific value, or a listing of records is never one of them and keeps the live-read rule below",
+		"a question outside the workspace's subject entirely is never one of them either and keeps the no-tool-call rule below",
 	} {
 		if !strings.Contains(toolLoopInstructions, want) {
 			t.Fatalf("toolLoopInstructions is missing the counting/off-topic exclusion: %q", want)
