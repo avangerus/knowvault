@@ -60,13 +60,13 @@ func e1aDockerQuiet(args ...string) {
 // that removes exactly this harness's container.
 func e1aEnsureContainer(t *testing.T, ctx context.Context, name string, port int, databaseName string) func() {
 	t.Helper()
-	e1aDockerQuiet("rm", "-f", name)
+	e1aDockerQuiet("rm", "-f", "-v", name)
 	e1aDocker(t, "run", "-d", "--name", name,
 		"-e", "POSTGRES_DB="+databaseName,
 		"-e", "POSTGRES_PASSWORD=postgres",
 		"-p", fmt.Sprintf("%d:5432", port),
 		"postgres:18.4")
-	remove := func() { e1aDockerQuiet("rm", "-f", name) }
+	remove := func() { e1aDockerQuiet("rm", "-f", "-v", name) }
 	t.Cleanup(remove)
 	e1aWaitPostgres(t, ctx, fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", port, databaseName))
 	return remove

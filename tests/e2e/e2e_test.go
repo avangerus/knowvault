@@ -513,9 +513,9 @@ func runHarness(t *testing.T, ctx context.Context, certs, corpus, repoRoot, netN
 
 func cleanupDocker(t *testing.T, ctx context.Context, runName, pgName, searchName, netName string) {
 	t.Helper()
-	_ = docker(ctx, "rm", "--force", runName)
-	_ = docker(ctx, "rm", "--force", pgName)
-	_ = docker(ctx, "rm", "--force", searchName)
+	_ = docker(ctx, "rm", "--force", "--volumes", runName)
+	_ = docker(ctx, "rm", "--force", "--volumes", pgName)
+	_ = docker(ctx, "rm", "--force", "--volumes", searchName)
 	_ = docker(ctx, "network", "rm", netName)
 	// The image is rebuilt by every run, so removing it keeps the shared host
 	// free of stale build layers; a concurrent run still using the tag makes
