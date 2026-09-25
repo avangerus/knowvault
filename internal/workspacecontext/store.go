@@ -467,6 +467,7 @@ func (store *Store) Save(ctx context.Context, access database.AccessContext, wor
 		if validateErr != nil {
 			return validateErr
 		}
+		normalized = clearDerivedText(normalized)
 		documentBytes, contentHash, hashErr := canonicalDocumentBytesAndHash(normalized)
 		if hashErr != nil {
 			return hashErr
@@ -748,10 +749,12 @@ func (store *Store) appendDocumentEvent(ctx context.Context, tx database.Transac
 // whether it is well-formed.
 func mintMissingIDs(document Document) (Document, error) {
 	minted := Document{
-		Description: document.Description,
-		Rules:       make([]Rule, len(document.Rules)),
-		Glossary:    make([]Term, len(document.Glossary)),
-		Sources:     document.Sources,
+		Description:  document.Description,
+		Instructions: document.Instructions,
+		GlossaryText: document.GlossaryText,
+		Rules:        make([]Rule, len(document.Rules)),
+		Glossary:     make([]Term, len(document.Glossary)),
+		Sources:      document.Sources,
 	}
 	for index, rule := range document.Rules {
 		if rule.ID == "" {
@@ -797,7 +800,11 @@ func decodeDocument(raw []byte) (Document, error) {
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		return Document{}, &Error{code: CodeStoreUnavailable, cause: err}
 	}
-	document := Document{Description: stored.Description}
+	document := Document{
+		Description:  stored.Description,
+		Instructions: stored.Instructions,
+		GlossaryText: stored.GlossaryText,
+	}
 	document.Rules = make([]Rule, len(stored.Rules))
 	for index, rule := range stored.Rules {
 		document.Rules[index] = Rule{ID: rule.ID, Text: rule.Text}
@@ -886,6 +893,7 @@ func (store *Store) AcceptProposalVersion(ctx context.Context, tx database.Trans
 	if err != nil {
 		return Version{}, err
 	}
+	normalized = clearDerivedText(normalized)
 	documentBytes, contentHash, err := canonicalDocumentBytesAndHash(normalized)
 	if err != nil {
 		return Version{}, err

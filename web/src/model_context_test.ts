@@ -75,6 +75,8 @@ function installFetchStub(replies: StubReply[]): { calls: CapturedRequest[]; res
 
 const rawContextDocument = {
   description: "The monthly reporting workspace.",
+  instructions: "Always cite the source.",
+  glossary_text: "МНО (МНОшка) — Monthly net orders. [public.orders]",
   rules: [{ id: "rule_1", text: "Always cite the source." }],
   glossary: [{
     id: "term_1",
@@ -110,6 +112,8 @@ async function main(): Promise<void> {
   const decoded = requireDecoded(rawContext, "contract GET");
   check(decoded.version === 3 && decoded.content_hash === "sha256:livehash" && decoded.editable, "version/hash/editable survive decoding");
   check(decoded.document.description === rawContextDocument.description, "description survives decoding");
+  check(decoded.document.instructions === rawContextDocument.instructions, "instructions text survives decoding");
+  check(decoded.document.glossary_text === rawContextDocument.glossary_text, "glossary text survives decoding");
   check(decoded.document.rules[0].id === "rule_1" && decoded.document.rules[0].text === "Always cite the source.", "rule survives decoding");
   check(decoded.document.glossary[0].term === "МНО" && decoded.document.glossary[0].synonyms[0] === "МНОшка", "term and synonyms survive decoding");
   check(decoded.document.glossary[0].data_locations[0].column === "", "an explicitly empty location column is preserved, not dropped");
@@ -146,6 +150,8 @@ async function main(): Promise<void> {
   const contextV3 = decoded;
   const draft: ModelContextDocument = {
     description: "Updated description",
+    instructions: "A brand new rule",
+    glossary_text: "МНО — Monthly net orders.",
     rules: [{ id: "", text: "A brand new rule" }],
     glossary: [{
       id: "term_1",
@@ -175,11 +181,13 @@ async function main(): Promise<void> {
     checkEqual(put.body, {
       document: {
         description: "Updated description",
+        instructions: "A brand new rule",
+        glossary_text: "МНО — Monthly net orders.",
         rules: [{ id: "", text: "A brand new rule" }],
         glossary: [{ id: "term_1", term: "МНО", synonyms: ["mno"], definition: "Monthly net orders.", data_locations: [{ source_connection_id: "conn_1", relation: "public.orders" }] }],
         sources: [{ source_connection_id: "conn_1", tables: [{ relation: "public.orders", columns: [{ name: "created_at" }] }] }],
       },
-    }, "the PUT body is {document} with new ids empty and cleared optional members dropped");
+    }, "the PUT body is {document} with the plain-text fields, new ids empty and cleared optional members dropped");
   }
 
   const emptyContext: ModelContext = { version: 0, content_hash: "sha256:ignored", editable: true, document: emptyModelContextDocument() };
@@ -206,16 +214,17 @@ async function main(): Promise<void> {
   check(/<textarea[^>]*disabled/.test(readOnlyDescription), "read-only mode disables the description textarea");
   check(!readOnlyDescription.includes(">Save<"), "read-only mode hides the Save button");
 
-  const readOnlyRules = renderToStaticMarkup(createElement(ModelContextEditorSurface, {
+  const readOnlyInstructions = renderToStaticMarkup(createElement(ModelContextEditorSurface, {
     context: readOnlyContext,
     document: readOnlyContext.document,
     proposals: [],
     versions: [],
     workspaceID: "ws_1",
-    initialTab: "rules",
+    initialTab: "instructions",
     onChange: () => {},
   }));
-  check(/<input[^>]*disabled/.test(readOnlyRules), "read-only mode disables rule inputs");
+  check(/<textarea[^>]*disabled/.test(readOnlyInstructions), "read-only mode disables the instructions textarea");
+  check(readOnlyInstructions.includes("Instructions for the assistant"), "the rules section is the instructions field");
 
   const editableSurface = renderToStaticMarkup(createElement(ModelContextEditorSurface, {
     context: contextV3,
@@ -281,14 +290,11 @@ async function main(): Promise<void> {
   check(workspaceContextUsageLineFromToolLoop({ workspace_context: { version: 1, terms: [{ term: 7 }] } }) === null, "a malformed workspace_context is rejected, not rendered");
 
   // --- 6. No HTML injection ------------------------------------------------
-  const injectionTerm = {
-    id: "term_x",
-    term: "<script>alert(1)</script>",
-    synonyms: ["<img src=x onerror=alert(1)>"],
-    definition: "<b>bold</b>",
-    data_locations: [],
+  const injectionDocument: ModelContextDocument = {
+    ...contextV3.document,
+    instructions: "<script>alert(1)</script>",
+    glossary_text: "<b>bold</b>",
   };
-  const injectionDocument: ModelContextDocument = { ...contextV3.document, glossary: [injectionTerm] };
   const injectionMarkup = renderToStaticMarkup(createElement(ModelContextEditorSurface, {
     context: { ...contextV3, editable: false },
     document: injectionDocument,
@@ -298,10 +304,21 @@ async function main(): Promise<void> {
     initialTab: "glossary",
     onChange: () => {},
   }));
-  check(!injectionMarkup.includes("<script>"), "a glossary term never renders a script element");
-  check(!injectionMarkup.includes("<img"), "a synonym never renders an inline element");
-  check(injectionMarkup.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), "the script-like term is escaped as text");
-  check(injectionMarkup.includes("&lt;b&gt;bold&lt;/b&gt;"), "the definition is escaped as text");
+  check(!injectionMarkup.includes("<script>"), "glossary text never renders a script element");
+  check(!injectionMarkup.includes("<b>bold</b>"), "glossary text never renders inline markup");
+  check(injectionMarkup.includes("&lt;b&gt;bold&lt;/b&gt;"), "the glossary text is escaped as text");
+
+  const injectionInstructions = renderToStaticMarkup(createElement(ModelContextEditorSurface, {
+    context: { ...contextV3, editable: false },
+    document: injectionDocument,
+    proposals: [],
+    versions: [],
+    workspaceID: "ws_1",
+    initialTab: "instructions",
+    onChange: () => {},
+  }));
+  check(!injectionInstructions.includes("<script>"), "instructions text never renders a script element");
+  check(injectionInstructions.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), "the instructions text is escaped as text");
 
   const injectionUsage = renderToStaticMarkup(createElement(WorkspaceContextUsage, {
     toolLoop: { workspace_context: { version: 1, terms: [{ term: "<script>alert(1)</script>", locations: [] }] } },

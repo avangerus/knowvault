@@ -325,6 +325,19 @@
       ]
     },
     {
+      "id": "Q13",
+      "text": "объясни простыми словами, что там с договорами в базе",
+      "language": "ru",
+      "max_steps": 3,
+      "time_limit_s": 30,
+      "max_chars": 700,
+      "expectation": "Деловым языком: что известно о договорах в базе и что можно спросить; без таблиц и полей. Найдено на приёмке T5 25.09.",
+      "checks": [
+        {"id": "q13_lines", "type": "max_nonempty_lines", "hard": true, "max": 6},
+        {"id": "q13_contracts", "type": "mentions_terms", "hard": true, "min": 1, "texts": ["договор"]}
+      ]
+    },
+    {
       "id": "O1",
       "text": "сколько мно?",
       "language": "ru",

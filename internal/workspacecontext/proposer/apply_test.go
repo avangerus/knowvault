@@ -1,6 +1,7 @@
 package proposer
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -174,8 +175,41 @@ func TestApplyProposalDefinitionCorrection(t *testing.T) {
 	}
 }
 
-func TestApplyProposalTargetTermMissing(t *testing.T) {
-	current := workspacecontext.Document{}
+// Card W-2 result 4: accepting a proposed term adds it as one line of the
+// plain-text glossary, appending to the administrator's own text when they
+// wrote one and re-rendering the structured block otherwise.
+func TestApplyProposalNewTermAddsAGlossaryTextLine(t *testing.T) {
+	proposal := workspacecontext.Proposal{
+		Kind: workspacecontext.ProposalKindNewTerm, CandidateTerm: "виджет", SuggestedText: "элемент интерфейса",
+	}
+
+	withText := workspacecontext.Document{
+		GlossaryText: "МНО — площадка.",
+		Glossary:     []workspacecontext.Term{{ID: "term_existing", Term: "МНО", Definition: "площадка"}},
+	}
+	edited, err := applyProposal(withText, proposal, workspacecontext.ProposalEdits{})
+	if err != nil {
+		t.Fatalf("applyProposal: %v", err)
+	}
+	if edited.GlossaryText != "МНО — площадка.\nвиджет — элемент интерфейса" {
+		t.Fatalf("GlossaryText = %q", edited.GlossaryText)
+	}
+
+	withoutText := workspacecontext.Document{
+		Glossary: []workspacecontext.Term{{ID: "term_existing", Term: "МНО", Definition: "площадка"}},
+	}
+	edited, err = applyProposal(withoutText, proposal, workspacecontext.ProposalEdits{})
+	if err != nil {
+		t.Fatalf("applyProposal: %v", err)
+	}
+	for _, want := range []string{"МНО — площадка", "виджет — элемент интерфейса"} {
+		if !strings.Contains(edited.GlossaryText, want) {
+			t.Fatalf("GlossaryText %q missing %q", edited.GlossaryText, want)
+		}
+	}
+}
+
+func TestApplyProposalTargetTermMissing(t *testing.T) {	current := workspacecontext.Document{}
 	for _, kind := range []workspacecontext.ProposalKind{
 		workspacecontext.ProposalKindSynonym, workspacecontext.ProposalKindDefinitionCorrection,
 	} {
