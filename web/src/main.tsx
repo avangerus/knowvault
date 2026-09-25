@@ -8,13 +8,13 @@ import { PendingAction, type PendingActionKind, type PendingActionState, type Pe
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
 import {
-  MODEL_CONTEXT_DESCRIPTION_MAX, MODEL_CONTEXT_RULE_TEXT_MAX, MODEL_CONTEXT_RULES_MAX,
+  MODEL_CONTEXT_DESCRIPTION_MAX, MODEL_CONTEXT_GLOSSARY_TEXT_MAX, MODEL_CONTEXT_INSTRUCTIONS_MAX,
   cloneModelContextDocument, decodeModelContext, decodeModelContextProposals, decodeModelContextVersions,
   fieldErrorsFromServerFields, modelContextAcceptRequest, modelContextPath, modelContextProposalPath,
-  modelContextRestoreRequest, modelContextSaveRequest, newModelContextLocation, newModelContextRule, newModelContextTerm,
+  modelContextRestoreRequest, modelContextSaveRequest,
   workspaceContextUsageLineFromToolLoop,
-  type ModelContext, type ModelContextDataLocation, type ModelContextDocument, type ModelContextProposal,
-  type ModelContextProposalEdits, type ModelContextRule, type ModelContextTerm, type ModelContextVersion,
+  type ModelContext, type ModelContextDocument, type ModelContextProposal,
+  type ModelContextProposalEdits, type ModelContextVersion,
 } from "./model-context";
 
 // ---------------------------------------------------------------------------
@@ -2067,11 +2067,11 @@ function useWorkspaceJournal(
 // React text child, so a term containing markup is escaped, not executed.
 // ---------------------------------------------------------------------------
 
-type ModelContextTab = "description" | "rules" | "glossary" | "sources" | "proposals" | "history";
+type ModelContextTab = "description" | "instructions" | "glossary" | "sources" | "proposals" | "history";
 
 const modelContextTabLabels: Record<ModelContextTab, string> = {
   description: "Description",
-  rules: "Rules",
+  instructions: "Instructions",
   glossary: "Glossary",
   sources: "Sources",
   proposals: "Proposals",
@@ -2111,58 +2111,39 @@ function parseSynonymText(text: string): string[] {
   return text.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
 }
 
-function ModelContextTermForm({ draft, synonymsText, index, editable, fieldErrors, onChange, onSynonymsChange, onSave, onCancel }: {
-  draft: ModelContextTerm;
-  synonymsText: string;
-  index: number;
+// Card W-2: description, instructions and glossary are each one free-text
+// field with its own save action. Nothing about a term's id, its synonyms-as-
+// chips or its data-location block is rendered here any more: a workspace
+// whose structured records predate the card shows them as the readable text
+// the server projects into the field (model-context.ts).
+function ModelContextPlainTextField({ id, label, value, maxLength, editable, error, onChange, onSave }: {
+  id: string;
+  label: string;
+  value: string;
+  maxLength: number;
   editable: boolean;
-  fieldErrors: Record<string, string>;
-  onChange: (next: ModelContextTerm) => void;
-  onSynonymsChange: (text: string) => void;
-  onSave: () => void;
-  onCancel: () => void;
+  error: string | null;
+  onChange: (next: string) => void;
+  onSave?: () => void;
 }) {
-  const termError = modelContextFieldError(fieldErrors, `glossary[${index}].term`);
-  const definitionError = modelContextFieldError(fieldErrors, `glossary[${index}].definition`);
   return (
-    <tr className="model-context-term-editor">
-      <td>
-        <label className="sr-only" htmlFor={`context-term-${index}`}>Term</label>
-        <input disabled={!editable} id={`context-term-${index}`} maxLength={200} onChange={(event) => onChange({ ...draft, term: event.target.value })} value={draft.term} />
-        {termError && <small className="field-error">{termError}</small>}
-      </td>
-      <td>
-        <label className="sr-only" htmlFor={`context-term-synonyms-${index}`}>Synonyms, comma separated</label>
-        <input disabled={!editable} id={`context-term-synonyms-${index}`} onChange={(event) => onSynonymsChange(event.target.value)} placeholder="comma,separated" value={synonymsText} />
-      </td>
-      <td>
-        <label className="sr-only" htmlFor={`context-term-definition-${index}`}>Definition</label>
-        <textarea disabled={!editable} id={`context-term-definition-${index}`} onChange={(event) => onChange({ ...draft, definition: event.target.value })} value={draft.definition} />
-        {definitionError && <small className="field-error">{definitionError}</small>}
-      </td>
-      <td>
-        <ul className="model-context-location-editor">
-          {draft.data_locations.map((location, locationIndex) => (
-            <li key={locationIndex}>
-              <input aria-label={`Source for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, source_connection_id: event.target.value } : item) })} placeholder="source" value={location.source_connection_id} />
-              <input aria-label={`Relation for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, relation: event.target.value } : item) })} placeholder="relation" value={location.relation} />
-              <input aria-label={`Column for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, column: event.target.value } : item) })} placeholder="column (optional)" value={location.column ?? ""} />
-              <input aria-label={`Hint for location ${locationIndex + 1}`} disabled={!editable} onChange={(event) => onChange({ ...draft, data_locations: draft.data_locations.map((item, itemIndex) => itemIndex === locationIndex ? { ...item, hint: event.target.value } : item) })} placeholder="hint" value={location.hint ?? ""} />
-              {editable && <button className="icon-button" onClick={() => onChange({ ...draft, data_locations: draft.data_locations.filter((_, itemIndex) => itemIndex !== locationIndex) })} title="Remove location" type="button">×</button>}
-            </li>
-          ))}
-        </ul>
-        {editable && <button className="link-button" onClick={() => onChange({ ...draft, data_locations: [...draft.data_locations, newModelContextLocation()] })} type="button">Add location</button>}
-      </td>
-      <td>
-        {editable && (
-          <>
-            <button className="secondary-button" onClick={onSave} type="button">Save term</button>
-            <button className="link-button" onClick={onCancel} type="button">Cancel</button>
-          </>
-        )}
-      </td>
-    </tr>
+    <>
+      <label className="field" htmlFor={id}>
+        <span>{label}</span>
+        <textarea
+          disabled={!editable}
+          id={id}
+          maxLength={maxLength}
+          onChange={(event) => onChange(event.target.value)}
+          value={value}
+        />
+        <small>{value.length} / {maxLength} characters</small>
+        {error && <small className="field-error">{error}</small>}
+      </label>
+      {editable && onSave && (
+        <button className="primary-button" onClick={onSave} type="button">Save</button>
+      )}
+    </>
   );
 }
 
@@ -2296,50 +2277,15 @@ export function ModelContextEditorSurface({
 }) {
   const editable = context.editable;
   const [activeTab, setActiveTab] = useState<ModelContextTab>(initialTab ?? "description");
-  const [editingTermIndex, setEditingTermIndex] = useState<number | null>(null);
-  const [termDraft, setTermDraft] = useState<ModelContextTerm | null>(null);
-  const [termSynonymsText, setTermSynonymsText] = useState("");
   const [editingProposalID, setEditingProposalID] = useState<string | null>(null);
   const [proposalDraft, setProposalDraft] = useState<{ term: string; synonyms: string; definition: string } | null>(null);
   const effectiveTab: ModelContextTab = activeTab === "proposals" && !editable ? "description" : activeTab;
   const tabs: ModelContextTab[] = editable
-    ? ["description", "rules", "glossary", "sources", "proposals", "history"]
-    : ["description", "rules", "glossary", "sources", "history"];
+    ? ["description", "instructions", "glossary", "sources", "proposals", "history"]
+    : ["description", "instructions", "glossary", "sources", "history"];
 
   function updateDocument(patch: Partial<ModelContextDocument>) {
     onChange({ ...modelDocument, ...patch });
-  }
-
-  function beginTermEdit(index: number) {
-    const term = modelDocument.glossary[index];
-    if (!term) return;
-    setEditingTermIndex(index);
-    setTermDraft({ ...term, synonyms: [...term.synonyms], data_locations: term.data_locations.map((location) => ({ ...location })) });
-    setTermSynonymsText(term.synonyms.join(", "));
-  }
-
-  function addTerm() {
-    setEditingTermIndex(modelDocument.glossary.length);
-    setTermDraft(newModelContextTerm());
-    setTermSynonymsText("");
-  }
-
-  function saveTerm() {
-    if (editingTermIndex === null || termDraft === null) return;
-    const glossary = modelDocument.glossary.map((term, index) => index === editingTermIndex
-      ? { ...termDraft, synonyms: parseSynonymText(termSynonymsText) }
-      : term);
-    if (editingTermIndex >= modelDocument.glossary.length) glossary.push({ ...termDraft, synonyms: parseSynonymText(termSynonymsText) });
-    updateDocument({ glossary });
-    setEditingTermIndex(null);
-    setTermDraft(null);
-    setTermSynonymsText("");
-  }
-
-  function cancelTermEdit() {
-    setEditingTermIndex(null);
-    setTermDraft(null);
-    setTermSynonymsText("");
   }
 
   function beginProposalEdit(proposal: ModelContextProposal) {
@@ -2361,14 +2307,12 @@ export function ModelContextEditorSurface({
           <h2>{viewedVersion !== null ? `Version ${viewedVersion} (read-only)` : "Workspace model context"}</h2>
           <p className="model-context-meta">
             {context.version === 0 ? "No saved version yet." : `Version ${context.version}`}
-            {" · "}
-            <span className="mono">{context.content_hash}</span>
             {context.updated_by ? ` · ${context.updated_by}` : ""}
           </p>
         </div>
         {editable && onSave && (
           <button className="primary-button" disabled={saving} onClick={onSave} type="button">
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "Save all"}
           </button>
         )}
       </header>
@@ -2421,112 +2365,46 @@ export function ModelContextEditorSurface({
 
       {effectiveTab === "description" && (
         <section aria-labelledby="model-context-tab-description" className="model-context-panel" id="model-context-panel-description" role="tabpanel" tabIndex={0}>
-          <label className="field">
-            <span>Description</span>
-            <textarea
-              disabled={!editable}
-              maxLength={MODEL_CONTEXT_DESCRIPTION_MAX}
-              onChange={(event) => updateDocument({ description: event.target.value })}
-              value={modelDocument.description}
-            />
-            <small>{modelDocument.description.length} / {MODEL_CONTEXT_DESCRIPTION_MAX} characters</small>
-            {modelContextFieldError(fieldErrors, "description") && <small className="field-error">{modelContextFieldError(fieldErrors, "description")}</small>}
-          </label>
+          <ModelContextPlainTextField
+            editable={editable}
+            error={modelContextFieldError(fieldErrors, "description")}
+            id="model-context-description"
+            label="Description"
+            maxLength={MODEL_CONTEXT_DESCRIPTION_MAX}
+            onChange={(value) => updateDocument({ description: value })}
+            onSave={onSave}
+            value={modelDocument.description}
+          />
         </section>
       )}
 
-      {effectiveTab === "rules" && (
-        <section aria-labelledby="model-context-tab-rules" className="model-context-panel" id="model-context-panel-rules" role="tabpanel" tabIndex={0}>
-          <ul className="model-context-rules">
-            {modelDocument.rules.map((rule, index) => (
-              <li key={`${rule.id}-${index}`}>
-                <label className="sr-only" htmlFor={`model-context-rule-${index}`}>Rule {index + 1}</label>
-                <input
-                  disabled={!editable}
-                  id={`model-context-rule-${index}`}
-                  maxLength={MODEL_CONTEXT_RULE_TEXT_MAX}
-                  onChange={(event) => updateDocument({ rules: modelDocument.rules.map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item) })}
-                  value={rule.text}
-                />
-                {editable && <button className="icon-button" onClick={() => updateDocument({ rules: modelDocument.rules.filter((_, itemIndex) => itemIndex !== index) })} title="Remove rule" type="button">×</button>}
-                {modelContextFieldError(fieldErrors, `rules[${index}].text`) && <small className="field-error">{modelContextFieldError(fieldErrors, `rules[${index}].text`)}</small>}
-              </li>
-            ))}
-          </ul>
-          {modelDocument.rules.length === 0 && <p className="evidence-state">No rules yet.</p>}
-          {editable && (
-            <button className="secondary-button" disabled={modelDocument.rules.length >= MODEL_CONTEXT_RULES_MAX} onClick={() => updateDocument({ rules: [...modelDocument.rules, newModelContextRule()] })} type="button">
-              Add rule
-            </button>
-          )}
-          <p className="model-context-hint">{modelDocument.rules.length} / {MODEL_CONTEXT_RULES_MAX} rules.</p>
+      {effectiveTab === "instructions" && (
+        <section aria-labelledby="model-context-tab-instructions" className="model-context-panel" id="model-context-panel-instructions" role="tabpanel" tabIndex={0}>
+          <ModelContextPlainTextField
+            editable={editable}
+            error={modelContextFieldError(fieldErrors, "instructions")}
+            id="model-context-instructions"
+            label="Instructions for the assistant"
+            maxLength={MODEL_CONTEXT_INSTRUCTIONS_MAX}
+            onChange={(value) => updateDocument({ instructions: value })}
+            onSave={onSave}
+            value={modelDocument.instructions}
+          />
         </section>
       )}
 
       {effectiveTab === "glossary" && (
         <section aria-labelledby="model-context-tab-glossary" className="model-context-panel" id="model-context-panel-glossary" role="tabpanel" tabIndex={0}>
-          <table className="model-context-table">
-            <thead>
-              <tr><th scope="col">Term</th><th scope="col">Synonyms</th><th scope="col">Definition</th><th scope="col">Data locations</th><th scope="col"><span className="sr-only">Actions</span></th></tr>
-            </thead>
-            <tbody>
-              {modelDocument.glossary.map((term, index) => editingTermIndex === index && termDraft ? (
-                <ModelContextTermForm
-                  draft={termDraft}
-                  editable={editable}
-                  fieldErrors={fieldErrors}
-                  index={index}
-                  key={`editor-${index}`}
-                  onCancel={cancelTermEdit}
-                  onChange={setTermDraft}
-                  onSave={saveTerm}
-                  onSynonymsChange={setTermSynonymsText}
-                  synonymsText={termSynonymsText}
-                />
-              ) : (
-                <tr key={`${term.id}-${index}`}>
-                  <td>{term.term}</td>
-                  <td>
-                    {term.synonyms.length === 0 ? <span className="model-context-empty">—</span> : term.synonyms.map((synonym, synonymIndex) => <span className="chip" key={`${synonym}-${synonymIndex}`}>{synonym}</span>)}
-                  </td>
-                  <td>{term.definition}</td>
-                  <td>
-                    {term.data_locations.length === 0 ? <span className="model-context-empty">—</span> : (
-                      <ul className="model-context-locations">
-                        {term.data_locations.map((location, locationIndex) => (
-                          <li key={locationIndex}>{location.source_connection_id} · {location.relation}{location.column ? `.${location.column}` : ""}{location.hint ? ` — ${location.hint}` : ""}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </td>
-                  <td>
-                    {editable && (
-                      <>
-                        <button className="link-button" onClick={() => beginTermEdit(index)} type="button">Edit</button>
-                        <button className="icon-button" onClick={() => updateDocument({ glossary: modelDocument.glossary.filter((_, itemIndex) => itemIndex !== index) })} title="Remove term" type="button">×</button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {editingTermIndex === modelDocument.glossary.length && termDraft && (
-                <ModelContextTermForm
-                  draft={termDraft}
-                  editable={editable}
-                  fieldErrors={fieldErrors}
-                  index={editingTermIndex}
-                  key="editor-new"
-                  onCancel={cancelTermEdit}
-                  onChange={setTermDraft}
-                  onSave={saveTerm}
-                  onSynonymsChange={setTermSynonymsText}
-                  synonymsText={termSynonymsText}
-                />
-              )}
-            </tbody>
-          </table>
-          {modelDocument.glossary.length === 0 && <p className="evidence-state">No glossary terms yet.</p>}
-          {editable && <button className="secondary-button" onClick={addTerm} type="button">Add term</button>}
+          <ModelContextPlainTextField
+            editable={editable}
+            error={modelContextFieldError(fieldErrors, "glossary_text")}
+            id="model-context-glossary-text"
+            label="Glossary"
+            maxLength={MODEL_CONTEXT_GLOSSARY_TEXT_MAX}
+            onChange={(value) => updateDocument({ glossary_text: value })}
+            onSave={onSave}
+            value={modelDocument.glossary_text}
+          />
         </section>
       )}
 

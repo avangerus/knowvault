@@ -32,6 +32,8 @@ const documentSchemaVersion = "workspace-model-context-v1"
 // Bounds from S2-MODEL-CONTEXT-DESIGN.md "Document `workspace-model-context-v1`".
 const (
 	maxDescriptionChars       = 4000
+	maxInstructionsChars      = 16000
+	maxGlossaryTextChars      = 64000
 	maxRules                  = 30
 	maxRuleTextChars          = 500
 	maxGlossaryTerms          = 500
@@ -168,11 +170,21 @@ type Source struct {
 // Document is the full workspace-model-context-v1 content. It carries no
 // version, content hash or workspace identity of its own: those are
 // version-row metadata the store (card A) owns, projected here as Version.
+//
+// Description, Instructions and GlossaryText are the three plain-text fields
+// the owner asked for (card W-2): each is one free-text block a workspace
+// administrator writes and saves. Rules and Glossary keep the structured
+// records the product already stored. They are never deleted; they remain the
+// migration source for the plain-text fields (EffectiveInstructions /
+// EffectiveGlossaryText render them when the matching text is empty) and they
+// keep carrying each term's data locations to the model and to term matching.
 type Document struct {
-	Description string
-	Rules       []Rule
-	Glossary    []Term
-	Sources     []Source
+	Description  string
+	Instructions string
+	GlossaryText string
+	Rules        []Rule
+	Glossary     []Term
+	Sources      []Source
 }
 
 // KnownProjection is one relation Validate accepts as a data_locations or
@@ -203,6 +215,12 @@ func Validate(doc Document, knownProjections []KnownProjection) (Document, error
 
 func validateDocument(doc Document, knownProjections []KnownProjection) error {
 	if !validText(doc.Description, 0, maxDescriptionChars) {
+		return &Error{code: CodeInvalidDocument}
+	}
+	if !validText(doc.Instructions, 0, maxInstructionsChars) {
+		return &Error{code: CodeInvalidDocument}
+	}
+	if !validText(doc.GlossaryText, 0, maxGlossaryTextChars) {
 		return &Error{code: CodeInvalidDocument}
 	}
 
@@ -411,7 +429,11 @@ func (index projectionIndex) hasColumn(connectionID, relation, column string) bo
 // and Hash/Render use it directly so a document that only differs in
 // Unicode normalization form hashes and renders identically.
 func normalizeForHash(doc Document) Document {
-	normalized := Document{Description: norm.NFC.String(doc.Description)}
+	normalized := Document{
+		Description:  norm.NFC.String(doc.Description),
+		Instructions: norm.NFC.String(doc.Instructions),
+		GlossaryText: norm.NFC.String(doc.GlossaryText),
+	}
 
 	normalized.Rules = make([]Rule, len(doc.Rules))
 	for i, rule := range doc.Rules {
@@ -481,8 +503,16 @@ func validIdentifier(value string, maxChars int) bool {
 	return validText(value, 1, maxChars) && strings.TrimSpace(value) == value
 }
 
+// hasControl rejects C0 (except the plain-text line breaks and tab the free
+// text fields need) and C1 control characters. The owner's plain-text fields
+// are edited in multi-line textareas, so "\n" (and the "\r"/"\t" a paste may
+// carry) are ordinary content; every other control character stays invalid,
+// exactly like internal/workspace's own hasControl (C0 plus C1).
 func hasControl(value string) bool {
 	return strings.ContainsFunc(value, func(character rune) bool {
+		if character == '\n' || character == '\r' || character == '\t' {
+			return false
+		}
 		return character < 0x20 || (character >= 0x7f && character <= 0x9f)
 	})
 }

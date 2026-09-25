@@ -64,11 +64,13 @@ type renderSource struct {
 }
 
 type renderedDocument struct {
-	Description string         `json:"description,omitempty"`
-	Rules       []renderRule   `json:"rules,omitempty"`
-	Glossary    []renderTerm   `json:"glossary,omitempty"`
-	Sources     []renderSource `json:"sources,omitempty"`
-	Truncated   bool           `json:"truncated,omitempty"`
+	Description  string         `json:"description,omitempty"`
+	Instructions string         `json:"instructions,omitempty"`
+	GlossaryText string         `json:"glossary_text,omitempty"`
+	Rules        []renderRule   `json:"rules,omitempty"`
+	Glossary     []renderTerm   `json:"glossary,omitempty"`
+	Sources      []renderSource `json:"sources,omitempty"`
+	Truncated    bool           `json:"truncated,omitempty"`
 }
 
 // Render produces the exact delimited block S2-MODEL-CONTEXT-DESIGN.md
@@ -91,8 +93,9 @@ type renderedDocument struct {
 // When doc does not fit budgetBytes, content is dropped in the design's
 // exact priority order, least important first: source notes, then
 // non-matched glossary terms (first reduced to bare id/term, then removed),
-// then matched glossary terms, then rules, then finally the description
-// itself (truncated to what remains). The returned JSON then carries
+// then matched glossary terms, then rules, then the plain-text instructions
+// and glossary card W-2 added, then finally the description itself
+// (truncated to what remains). The returned JSON then carries
 // "truncated": true.
 func Render(doc Document, version int64, question string, budgetBytes int) (string, RenderTrace) {
 	doc = normalizeForHash(doc)
@@ -168,6 +171,22 @@ func Render(doc Document, version int64, question string, budgetBytes int) (stri
 		}
 	}
 
+	// 2b. the plain-text fields card W-2 added. They are the administrator's
+	// own words, so they survive longer than the structured records they were
+	// migrated from, but the description still outlives them.
+	if working.Instructions != "" {
+		working.Instructions = ""
+		if rendered, ok := attempt(); ok {
+			return rendered, trace
+		}
+	}
+	if working.GlossaryText != "" {
+		working.GlossaryText = ""
+		if rendered, ok := attempt(); ok {
+			return rendered, trace
+		}
+	}
+
 	// 1. description: binary search the longest rune-prefix that still fits.
 	descriptionRunes := []rune(working.Description)
 	low, high := 0, len(descriptionRunes)
@@ -230,7 +249,10 @@ func buildRenderedDocument(doc Document) renderedDocument {
 			SourceConnectionID: source.SourceConnectionID, Description: source.Description, Tables: tables,
 		}
 	}
-	return renderedDocument{Description: doc.Description, Rules: rules, Glossary: glossary, Sources: sources}
+	return renderedDocument{
+		Description: doc.Description, Instructions: doc.Instructions, GlossaryText: doc.GlossaryText,
+		Rules: rules, Glossary: glossary, Sources: sources,
+	}
 }
 
 func locationStrings(doc Document, termID string) []string {
