@@ -272,6 +272,32 @@ export async function runLocalScenario(page, walk, options = {}) {
     const turn = page.locator("article.turn").last();
     await openEvidence(page, turn);
   });
+
+  // Card W-7: the source of an answer opens as a document. The evidence panel
+  // links to the standalone source page ("Open separately"); that page is the
+  // "opened source" the card's result is measured on, so the local scenario
+  // opens it and the screenshot shows the document, not a debug dump. The
+  // read-only scenario is untouched: it still opens only the evidence panel.
+  await walk.step("open the source page of that answer", async () => {
+    const sourceLink = page
+      .locator('aside[aria-label="Answer evidence"] a.lnk')
+      .filter({ hasText: "Open separately" })
+      .first();
+    await sourceLink.waitFor({ state: "visible", timeout: 30_000 });
+    await sourceLink.click();
+    const sourcePage = page.locator('article[aria-label="Source evidence"]');
+    await sourcePage.waitFor({ state: "visible", timeout: 30_000 });
+    // The document body itself is on screen (plain text, formatted Markdown or
+    // a snapshot table), not the "checking access" note.
+    await sourcePage.locator(".doc-text, .doc-readable, .rowset").first().waitFor({ state: "visible", timeout: 30_000 });
+    // Result 3: one Details control opens the technical fields and closing it
+    // leaves the document first screen clean for the screenshot.
+    const details = sourcePage.locator("details.evi-provenance").first();
+    await details.locator("summary").click();
+    await details.locator("dt", { hasText: "Fragment" }).first().waitFor({ state: "visible", timeout: 10_000 });
+    await details.locator("summary").click();
+    await details.locator("dt").first().waitFor({ state: "detached", timeout: 10_000 });
+  });
 }
 
 // runReadOnlyScenario walks an owner-facing stand without changing it.

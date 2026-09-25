@@ -4797,72 +4797,221 @@ function evidenceAddressDisplay(address: unknown): string | null {
   }
 }
 
-// Source text is never passed through answer typography or citation parsing.
-function EvidenceText({ text, highlight }: { text: string; highlight?: VerifiedEvidenceQuote | null }) {
-  const [raw, setRaw] = useState(false);
-  const readable = evidenceDocumentTitle(text) !== null && !/^\s*(?:```|~~~|\|)|\t/m.test(text);
-  if (highlight) {
-    const runes = Array.from(text);
-    return (
-      <>
-        <p className="evidence-quote-confirmed">The exact quote is highlighted in the verified evidence.</p>
-        <pre className="doc-text evidence-quote-text">
-          {runes.slice(0, highlight.start).join("")}
-          <mark className="evidence-verified-quote">{highlight.text}</mark>
-          {runes.slice(highlight.end).join("")}
-        </pre>
-      </>
-    );
+// ---------------------------------------------------------------------------
+// Card W-7: the source of an answer reads like a document. This is a tiny
+// renderer for the Markdown an extraction stores -- headings, tables, fenced
+// and inline code, lists, quotes. It only ever builds React elements: there is
+// no HTML string and no dangerouslySetInnerHTML, so document text can never
+// become markup.
+// ---------------------------------------------------------------------------
+
+type SourceBlock =
+  | { kind: "heading"; level: number; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "table"; header: string[]; rows: string[][] }
+  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "quote"; text: string }
+  | { kind: "paragraph"; text: string };
+
+const SOURCE_HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+const SOURCE_FENCE = /^[ \t]*(```|~~~)/;
+const SOURCE_TABLE_ROW = /^[ \t]*\|/;
+const SOURCE_BULLET = /^[ \t]*[-*+][ \t]+(.*)$/;
+const SOURCE_ORDERED = /^[ \t]*\d+[.)][ \t]+(.*)$/;
+const SOURCE_QUOTE = /^[ \t]*>[ \t]?(.*)$/;
+const SOURCE_HEADING_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6"] as const;
+
+function sourceTableCells(line: string): string[] {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function sourceTableSeparator(line: string): boolean {
+  if (!SOURCE_TABLE_ROW.test(line)) return false;
+  const cells = sourceTableCells(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
+function startsSourceTable(lines: string[], index: number): boolean {
+  return SOURCE_TABLE_ROW.test(lines[index] ?? "")
+    && index + 1 < lines.length
+    && sourceTableSeparator(lines[index + 1]);
+}
+
+function isMarkdownSource(text: string): boolean {
+  const lines = text.split(/\r\n?|\n/);
+  return lines.some((line, index) => SOURCE_HEADING.test(line) || SOURCE_FENCE.test(line) || startsSourceTable(lines, index)
+    || SOURCE_BULLET.test(line) || SOURCE_ORDERED.test(line) || SOURCE_QUOTE.test(line));
+}
+
+function parseSourceBlocks(text: string): SourceBlock[] {
+  const lines = text.split(/\r\n?|\n/);
+  const blocks: SourceBlock[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (line.trim() === "") { index += 1; continue; }
+    const fence = line.match(SOURCE_FENCE);
+    if (fence) {
+      const marker = fence[1];
+      const body: string[] = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith(marker)) { body.push(lines[index]); index += 1; }
+      if (index < lines.length) index += 1;
+      blocks.push({ kind: "code", text: body.join("\n") });
+      continue;
+    }
+    const heading = line.match(SOURCE_HEADING);
+    if (heading) {
+      blocks.push({ kind: "heading", level: heading[1].length, text: heading[2] });
+      index += 1;
+      continue;
+    }
+    if (startsSourceTable(lines, index)) {
+      const header = sourceTableCells(line);
+      index += 2;
+      const rows: string[][] = [];
+      while (index < lines.length && SOURCE_TABLE_ROW.test(lines[index])) { rows.push(sourceTableCells(lines[index])); index += 1; }
+      blocks.push({ kind: "table", header, rows });
+      continue;
+    }
+    const bullet = line.match(SOURCE_BULLET);
+    const ordered = line.match(SOURCE_ORDERED);
+    if (bullet || ordered) {
+      const orderedList = ordered !== null && bullet === null;
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = lines[index].match(orderedList ? SOURCE_ORDERED : SOURCE_BULLET);
+        if (!item) break;
+        items.push(item[1]);
+        index += 1;
+      }
+      blocks.push({ kind: "list", ordered: orderedList, items });
+      continue;
+    }
+    const quote = line.match(SOURCE_QUOTE);
+    if (quote) {
+      const parts: string[] = [];
+      while (index < lines.length) {
+        const current = lines[index].match(SOURCE_QUOTE);
+        if (!current) break;
+        parts.push(current[1]);
+        index += 1;
+      }
+      blocks.push({ kind: "quote", text: parts.join("\n") });
+      continue;
+    }
+    const paragraph: string[] = [];
+    while (index < lines.length && lines[index].trim() !== "") {
+      const current = lines[index];
+      if (SOURCE_HEADING.test(current) || SOURCE_FENCE.test(current) || startsSourceTable(lines, index)
+        || SOURCE_BULLET.test(current) || SOURCE_ORDERED.test(current) || SOURCE_QUOTE.test(current)) break;
+      paragraph.push(current);
+      index += 1;
+    }
+    blocks.push({ kind: "paragraph", text: paragraph.join(" ") });
   }
+  return blocks;
+}
+
+const SOURCE_INLINE = /(\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|\*[^*\n]+\*|_[^_\n]+_)/g;
+
+function SourceInline({ text }: { text: string }) {
   return (
     <>
-      {readable && <button aria-pressed={raw} className="text-button evidence-text-toggle" onClick={() => setRaw((value) => !value)} type="button">{raw ? "Formatted view" : "Source text"}</button>}
-      {!readable || raw ? <pre className={readable ? "doc-text" : "doc-text doc-code"}>{text}</pre> : (
-        <div className="doc-readable">
-          {text.split(/\r\n?|\n/).map((line, index) => {
-            const heading = line.match(/^#{1,6}[ \t]+(.*)$/);
-            const content = (heading?.[1] ?? line).split(/(\*\*[^*]+\*\*)/g).map((part, partIndex) => part.startsWith("**") && part.endsWith("**") ? <strong key={partIndex}>{part.slice(2, -2)}</strong> : part);
-            return heading ? <h3 key={index}>{content}</h3> : line.length > 0 ? <p key={index}>{content}</p> : null;
-          })}
-        </div>
-      )}
+      {text.split(SOURCE_INLINE).map((part, index) => {
+        if (/^(\*\*|__)[\s\S]+(\*\*|__)$/.test(part) && part.length > 4) return <strong key={index}>{part.slice(2, -2)}</strong>;
+        if (/^`[\s\S]+`$/.test(part)) return <code key={index}>{part.slice(1, -1)}</code>;
+        if (/^(\*|_)[\s\S]+(\*|_)$/.test(part) && part.length > 2) return <em key={index}>{part.slice(1, -1)}</em>;
+        return part;
+      })}
     </>
   );
 }
 
-function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = false }: {
+// Source text is never passed through answer typography or citation parsing.
+// A fragment without Markdown structure stays literal, monospaced text.
+function SourceDocumentBody({ text }: { text: string }) {
+  if (!isMarkdownSource(text)) return <pre className="doc-text">{text}</pre>;
+  return (
+    <div className="doc-readable">
+      {parseSourceBlocks(text).map((block, index) => {
+        if (block.kind === "heading") {
+          const Tag = SOURCE_HEADING_TAGS[Math.min(Math.max(block.level, 1), 6) - 1];
+          return <Tag key={index}><SourceInline text={block.text} /></Tag>;
+        }
+        if (block.kind === "code") return <pre className="doc-code-block" key={index}><code>{block.text}</code></pre>;
+        if (block.kind === "table") {
+          return (
+            <div className="doc-table-scroll" key={index}>
+              <table>
+                <thead><tr>{block.header.map((cell, cellIndex) => <th key={cellIndex}><SourceInline text={cell} /></th>)}</tr></thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {block.header.map((_, cellIndex) => <td key={cellIndex}><SourceInline text={row[cellIndex] ?? ""} /></td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (block.kind === "list") {
+          const items = block.items.map((item, itemIndex) => <li key={itemIndex}><SourceInline text={item} /></li>);
+          return block.ordered ? <ol key={index}>{items}</ol> : <ul key={index}>{items}</ul>;
+        }
+        if (block.kind === "quote") return <blockquote className="doc-quote" key={index}><SourceInline text={block.text} /></blockquote>;
+        return <p key={index}><SourceInline text={block.text} /></p>;
+      })}
+    </div>
+  );
+}
+
+// Card W-7 result 3: every address, id, hash, anchor, JSON and version or
+// extraction field lives behind this one control. The body is only rendered
+// once the control is open, so a static first screen really has none of them.
+function EvidenceDetails({ defaultOpen = false, children }: { defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details className="evi-provenance" open={open}>
+      <summary onClick={(event) => { event.preventDefault(); setOpen((value) => !value); }}>Details</summary>
+      {open && <div className="evi-details-body">{children}</div>}
+    </details>
+  );
+}
+
+export function EvidenceDocument({ evidence, highlight = null, detailsOpen = false, citedAddress }: {
   evidence: EvidenceData;
   highlight?: VerifiedEvidenceQuote | null;
-  provenanceOpen?: boolean;
+  detailsOpen?: boolean;
+  citedAddress?: string;
 }) {
   const technicalFragment = tryParseTechnicalFragment(evidence.text);
   const isRowLike = Boolean(evidence.rowset || technicalFragment);
   const structuredAddress = evidenceAddressDisplay(evidence.address);
   return (
-    <>
-      {evidence.is_current_version === false && <p className="evidence-currentness evidence-version-warning">This version is no longer current</p>}
-      {evidence.is_current_version === true && <p className="evidence-currentness">Current version</p>}
-      <p className="chip chip-ex">{isRowLike ? "snapshot row" : "extracted text"}</p>
-      {evidence.rowset && <RowsetTable rowset={evidence.rowset} />}
-      {technicalFragment ? (
-        <>
-          {highlight
-            ? <EvidenceText key={`${evidence.fragment_id}:${highlight.start}:${highlight.end}`} highlight={highlight} text={evidence.text} />
-            : <p className="doc-text">{summarizeTechnicalFragment(technicalFragment)}</p>}
-          <details className="evi-provenance">
-            <summary>Show technical details</summary>
-            <pre className="mono">{evidence.text}</pre>
-          </details>
-        </>
-      ) : (
-        <EvidenceText key={`${evidence.fragment_id}:${highlight?.start ?? ""}:${highlight?.end ?? ""}`} highlight={highlight} text={evidence.text} />
+    <div className="evidence-document">
+      {highlight && (
+        <figure className="evidence-quote">
+          <figcaption>Quoted fragment</figcaption>
+          <blockquote>{highlight.text}</blockquote>
+        </figure>
       )}
-      <details className="evi-provenance" open={provenanceOpen || undefined}>
-        <summary>Provenance</summary>
+      {evidence.is_current_version === false && (
+        <p className="evidence-currentness evidence-version-warning">This version is no longer current</p>
+      )}
+      {evidence.rowset
+        ? <RowsetTable rowset={evidence.rowset} />
+        : technicalFragment
+          ? <p className="doc-text">{summarizeTechnicalFragment(technicalFragment)}</p>
+          : <SourceDocumentBody text={evidence.text} />}
+      <EvidenceDetails defaultOpen={detailsOpen}>
         <dl>
+          <div><dt>Kind</dt><dd>{isRowLike ? "snapshot row" : "extracted text"}</dd></div>
           <div><dt>Fragment</dt><dd className="mono">{evidence.fragment_id}</dd></div>
           <div><dt>Anchor</dt><dd className="mono">{evidence.anchor}</dd></div>
           {evidence.canonical_address && <div><dt>Canonical address</dt><dd className="mono">{evidence.canonical_address}</dd></div>}
+          {citedAddress && citedAddress !== evidence.canonical_address && <div><dt>Cited address</dt><dd className="mono">{citedAddress}</dd></div>}
           {structuredAddress && <div><dt>Structured address</dt><dd className="mono">{structuredAddress}</dd></div>}
           <div><dt>Source version</dt><dd className="mono">{evidence.provenance.source_version_id}</dd></div>
           <div><dt>External version</dt><dd className="mono">{evidence.provenance.external_version_key}</dd></div>
@@ -4873,8 +5022,39 @@ function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = fa
             <div><dt>Current version</dt><dd>{evidence.is_current_version ? "Yes" : "No"}</dd></div>
           )}
         </dl>
-      </details>
-    </>
+        {technicalFragment && <pre className="mono">{evidence.text}</pre>}
+      </EvidenceDetails>
+    </div>
+  );
+}
+
+// Card W-7: the opened source as the standalone evidence route shows it: the
+// document's name, its path, the quoted fragment that supports the answer and
+// the document text. No technical field is on this first screen.
+export function EvidenceSourceView({ evidence, highlight = null, detailsOpen = false, workspaceName, returnHref, onReturn }: {
+  evidence: EvidenceData;
+  highlight?: VerifiedEvidenceQuote | null;
+  detailsOpen?: boolean;
+  workspaceName: string;
+  returnHref: string;
+  onReturn: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
+}) {
+  return (
+    <article aria-label="Source evidence" className="evidence-source-page">
+      <header className="page-top-bar evidence-source-topbar">
+        <div>
+          <p className="eyebrow">{workspaceName}</p>
+          <h1>{evidenceSourceFilename(evidence.source_path) ?? "Source"}</h1>
+          {evidence.source_path && (
+            <div className="source-address evidence-source-path"><span>Source path</span><code>{evidence.source_path}</code></div>
+          )}
+        </div>
+        <a className="secondary-button evidence-source-return" href={returnHref} onClick={onReturn}>Back to search</a>
+      </header>
+      <div className="evidence-source-body">
+        <EvidenceDocument evidence={evidence} highlight={highlight} detailsOpen={detailsOpen} />
+      </div>
+    </article>
   );
 }
 
@@ -4938,6 +5118,23 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
     });
     return () => { alive = false; };
   }, [requestPath]);
+
+  // Card W-7: the panel shows the quoted fragment that supports the answer,
+  // rechecked against the fetched fragment exactly as the standalone source
+  // page does, so the first screen is the document rather than a debug dump.
+  const quoteSelectorKey = quoteSelector
+    ? `${quoteSelector.start}:${quoteSelector.end}:${quoteSelector.text_hash}:${quoteSelector.source_version_id}:${quoteSelector.extraction_id}:${quoteSelector.anchor}`
+    : "";
+  const [verifiedPanelQuote, setVerifiedPanelQuote] = useState<VerifiedEvidenceQuote | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setVerifiedPanelQuote(null);
+    if (evidence?.kind !== "ok" || !fragmentID || !quoteSelector) return () => { alive = false; };
+    void verifyEvidenceQuoteSelector(evidence.value, fragmentID, quoteSelector).then((verified) => {
+      if (alive) setVerifiedPanelQuote(verified);
+    });
+    return () => { alive = false; };
+  }, [evidence, fragmentID, quoteSelectorKey]);
 
   async function copyEvidencePageLink() {
     if (!evidencePageURL || !navigator.clipboard?.writeText) {
@@ -5024,9 +5221,6 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
       {activeCitation && (
         <p className="msg-note">Evidence {activeCitation.number}: {citationGroundingText(activeCitation.grounding_status)}.</p>
       )}
-      {activeCitation?.address && (
-        <details className="source-address"><summary>Source address</summary><code>{activeCitation.address}</code></details>
-      )}
       {evidence?.kind === "ok" && evidence.value.source_path && (
         <div className="source-address"><span>Source path</span><code>{evidence.value.source_path}</code></div>
       )}
@@ -5074,7 +5268,7 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
           </p>
         )}
         {fragmentID && evidence?.kind === "ok" && (
-          <EvidenceFragmentPresentation evidence={evidence.value} />
+          <EvidenceDocument citedAddress={activeCitation?.address} evidence={evidence.value} highlight={verifiedPanelQuote} />
         )}
       </div>
     </aside>
@@ -5125,16 +5319,23 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
   }, [target, onAccessDenied]);
 
   const evidence = pageState.kind === "ready" ? pageState.evidence : null;
-  const sourceName = evidence ? evidenceSourceFilename(evidence.source_path) ?? "Source" : "Source evidence";
+  if (evidence) {
+    return (
+      <EvidenceSourceView
+        evidence={evidence}
+        highlight={verifiedQuote}
+        onReturn={onReturn}
+        returnHref={returnHref}
+        workspaceName={workspaceName}
+      />
+    );
+  }
   return (
     <article aria-label="Source evidence" className="evidence-source-page">
       <header className="page-top-bar evidence-source-topbar">
         <div>
           <p className="eyebrow">{workspaceName}</p>
-          <h1>{sourceName}</h1>
-          {evidence?.source_path && (
-            <div className="source-address evidence-source-path"><span>Source path</span><code>{evidence.source_path}</code></div>
-          )}
+          <h1>Source evidence</h1>
         </div>
         <a className="secondary-button evidence-source-return" href={returnHref} onClick={onReturn}>Back to search</a>
       </header>
@@ -5144,7 +5345,6 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
           <p className="evi-denied" role="status"><IconInfo />Evidence unavailable.</p>
         )}
         {pageState.kind === "failed" && <p className="evidence-state" role="status">Could not load evidence.</p>}
-        {evidence && <EvidenceFragmentPresentation evidence={evidence} highlight={verifiedQuote} provenanceOpen />}
       </div>
     </article>
   );
