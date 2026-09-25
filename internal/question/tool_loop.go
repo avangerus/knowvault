@@ -1611,12 +1611,15 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	packing := &toolContextPacking{Representatives: make(map[readPageKey]*contextRepresentative)}
 	// Card D-5 requirement 3: an overview or greeting question gets its
 	// workspace overview in the first turn, without a tool call, and can answer
-	// from it. Ordinary data questions keep the full tool loop untouched.
+	// from it. Card D-7 adds two narrower shapes for the same first turn: which
+	// sources exist (requirement 1) and what the database holds in business
+	// words (requirement 2). Ordinary data questions keep the full tool loop
+	// untouched.
 	overviewResearchToolCalls := profile.MaxToolCalls
 	scopeChanged := false
 	var overviewMessage *modelgateway.Message
-	if toolLoopOverviewQuestion(questionText) {
-		built, overviewErr := service.buildToolLoopOverview(ctx, scope, record, language, workspaceContextDescription, toolLoopGreetingQuestion(questionText))
+	if overviewClass := toolLoopOverviewQuestionClass(questionText); overviewClass != toolLoopOverviewClassNone {
+		built, overviewErr := service.buildToolLoopOverview(ctx, scope, record, language, workspaceContextDescription, overviewClass)
 		if overviewErr != nil {
 			if errors.Is(overviewErr, workspacetools.ErrScopeChanged) {
 				record.StopReason = toolScopeChangedStopReason

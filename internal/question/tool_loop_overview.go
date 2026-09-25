@@ -61,6 +61,39 @@ var overviewQuestionPattern = regexp.MustCompile(`(?i)(?:^|[^а-яёa-z])(?:чт
 	`(?:есть|знаешь|умеешь|можешь|доступн|имеетс|хранитс|расскаж|покаж|обзор|` +
 	`do you|can you|are there|is there|available|there)`)
 
+// overviewCounterfactualCue marks a hypothetical or counterfactual question
+// ("что было бы в базе, если бы...", "what would be there if..."): it asks
+// the model to reason about a different, imagined workspace, not to describe
+// this one, so it always keeps the full tool loop regardless of any source or
+// database word it also contains. Card D-7: this keeps a question like "what
+// would be in the database if we did pies instead" out of the new source and
+// database-overview classes below.
+var overviewCounterfactualCue = regexp.MustCompile(`(?i)если\s+бы|было\s+бы|would\s+(?:be|have)|if\s+we\s+(?:were|had)`)
+
+// overviewSourceWord names the workspace's registered sources themselves --
+// "источник"/"source" -- as opposed to a source's content. Card D-7
+// requirement 1: a question built on this word gets the sources' human names
+// alone, never their internal state, type or counts.
+// Go's regexp \b is ASCII-only (RE2), so it never marks a boundary against a
+// Cyrillic letter; the Russian stem below relies on being specific enough as
+// a bare substring instead, matching the rest of this file's convention (see
+// e.g. toolLoopSchemaWord in tool_loop_presentation.go).
+var overviewSourceWord = regexp.MustCompile(`(?i)источник|\bsources?\b`)
+
+// overviewBusinessTermsCue is an explicit request for the business-words
+// answer shape itself, regardless of the sentence's mood: it already names
+// the answer it wants, so it commits to card D-7 requirement 2's class even
+// as an imperative ("расскажи бизнес-терминами...") rather than a question.
+var overviewBusinessTermsCue = regexp.MustCompile(`(?i)бизнес[- ]?терминами|деловыми словами|простыми словами|` +
+	`in business terms|plain (?:business )?words`)
+
+// overviewDatabaseWord names the database as a whole -- "база"/"базе
+// данных"/"database" -- as opposed to a specific table, column or field
+// (already excluded upstream by overviewQuestionCue). Card D-7 requirement 2.
+// See the note on overviewSourceWord above: no \b around the Cyrillic case
+// forms, only around the ASCII word.
+var overviewDatabaseWord = regexp.MustCompile(`(?i)(?:база|базе|базы|базу|базой|базах|базам|базами)|\bdatabase\b`)
+
 // toolLoopGreetingQuestion reports whether the question is only a greeting.
 // A greeting is also an overview question (card D-5 requirement 3 gives it the
 // same overview), but it is told to answer with a short reply instead of an
@@ -82,38 +115,90 @@ func toolLoopGreetingQuestion(question string) bool {
 	return false
 }
 
-// toolLoopOverviewQuestion recognizes a question about the workspace as a
-// whole, or a greeting. It is deliberately narrow: a question that names a
-// concrete subject -- a date, a number, a document or a field -- keeps the
-// ordinary full tool loop, so this never turns a data question into a
-// one-turn guess.
-func toolLoopOverviewQuestion(question string) bool {
+// toolLoopOverviewClass is the compact, no-tool-call answer shape a question
+// calls for. classNone means the ordinary full tool loop answers it.
+type toolLoopOverviewClass int
+
+const (
+	toolLoopOverviewClassNone toolLoopOverviewClass = iota
+	// toolLoopOverviewClassGreeting is card D-5 requirement 3's greeting: one
+	// short reply, no source or document enumeration.
+	toolLoopOverviewClassGreeting
+	// toolLoopOverviewClassOverview is card D-5 requirement 3's broad
+	// workspace overview: source names with their state, plus a document
+	// sample with citable excerpts.
+	toolLoopOverviewClassOverview
+	// toolLoopOverviewClassSources is card D-7 requirement 1: which sources
+	// exist. The answer is their human names alone, nothing else.
+	toolLoopOverviewClassSources
+	// toolLoopOverviewClassDatabase is card D-7 requirement 2: what the
+	// database holds, in business words. The answer names no table, column
+	// or other technical identifier.
+	toolLoopOverviewClassDatabase
+)
+
+// overviewShapePhrases are the generic phrasings of the broad workspace
+// overview and greeting class that overviewQuestionPattern's regex does not
+// already cover paraphrase-tolerantly. A phrase belonging to the narrower
+// source or database-business classes moved out to their own word/cue
+// matches above, so it is recognized by any wording, not by one fixed phrase.
+var overviewShapePhrases = []string{
+	"что ты знаешь", "что ты умеешь", "что ты можешь", "что тут есть", "что здесь есть",
+	"что у тебя есть", "что есть в рабочей области", "что в рабочей области",
+	"какие данные есть", "какие данные доступны", "какие документы есть",
+	"расскажи о рабочей области", "расскажи что знаешь", "обзор рабочей области",
+	"what do you know", "what can you do", "what do you have", "what is here", "what's here",
+	"what is in the workspace", "what data do you have", "what documents are there",
+	"workspace overview", "overview of the workspace", "tell me about the workspace",
+}
+
+// toolLoopOverviewQuestionClass classifies a question into one of the compact
+// answer shapes above, or classNone for the ordinary full tool loop. It is
+// deliberately narrow: a question that names a concrete subject -- a date, a
+// number, a document or a field -- or a hypothetical about a different
+// workspace keeps the ordinary full tool loop, so this never turns a data
+// question into a one-turn guess.
+func toolLoopOverviewQuestionClass(question string) toolLoopOverviewClass {
 	normalized := strings.ToLower(strings.TrimSpace(question))
 	trimmed := strings.Trim(normalized, " \t\r\n?!.,;:«»\"'")
 	if trimmed == "" {
-		return false
+		return toolLoopOverviewClassNone
 	}
 	if toolLoopGreetingQuestion(question) {
-		return true
+		return toolLoopOverviewClassGreeting
 	}
 	if overviewQuestionCue.MatchString(normalized) {
-		return false
+		return toolLoopOverviewClassNone
 	}
-	for _, phrase := range []string{
-		"что ты знаешь", "что ты умеешь", "что ты можешь", "что тут есть", "что здесь есть",
-		"что у тебя есть", "что есть в рабочей области", "что есть в базе", "что в рабочей области",
-		"какие данные есть", "какие данные доступны", "какие документы есть", "какие источники есть",
-		"расскажи о рабочей области", "расскажи что знаешь", "обзор рабочей области",
-		"what do you know", "what can you do", "what do you have", "what is here", "what's here",
-		"what is in the workspace", "what data do you have", "what documents are there",
-		"workspace overview", "overview of the workspace", "tell me about the workspace",
-		"what sources are there",
-	} {
+	if overviewCounterfactualCue.MatchString(normalized) {
+		return toolLoopOverviewClassNone
+	}
+	// Card D-7 requirement 1: a question built on "источник"/"source" is
+	// about the source list itself, whatever else it also says.
+	if overviewSourceWord.MatchString(normalized) {
+		return toolLoopOverviewClassSources
+	}
+	// Card D-7 requirement 2: an explicit business-terms request, or a
+	// reference to the database as a whole, is about its content in business
+	// words, not its structure.
+	if overviewBusinessTermsCue.MatchString(normalized) || overviewDatabaseWord.MatchString(normalized) {
+		return toolLoopOverviewClassDatabase
+	}
+	for _, phrase := range overviewShapePhrases {
 		if strings.Contains(normalized, phrase) {
-			return true
+			return toolLoopOverviewClassOverview
 		}
 	}
-	return overviewQuestionPattern.MatchString(normalized)
+	if overviewQuestionPattern.MatchString(normalized) {
+		return toolLoopOverviewClassOverview
+	}
+	return toolLoopOverviewClassNone
+}
+
+// toolLoopOverviewQuestion reports whether the question takes any of the
+// compact, no-tool-call answer shapes above, greeting included.
+func toolLoopOverviewQuestion(question string) bool {
+	return toolLoopOverviewQuestionClass(question) != toolLoopOverviewClassNone
 }
 
 // buildToolLoopOverview reads the compact workspace overview. Every read goes
@@ -124,14 +209,17 @@ func toolLoopOverviewQuestion(question string) bool {
 // run, and a changed or cancelled scope leaves the overview absent so the
 // ordinary loop takes over.
 //
-// greeting selects the opening instruction only: a greeting gets the same
-// overview (card D-5 requirement 3) but is told to answer with a short reply
-// instead of an inventory. Every source line carries the source's human name,
-// its source connection id (the identifier knowvault_source_schema and
-// knowvault_source_sql require) and its type, status and object counts.
+// class picks the opening instruction and, for toolLoopOverviewClassSources
+// and toolLoopOverviewClassDatabase, replaces the rest of the read entirely
+// (card D-7): those two answer from the source list alone, so no document is
+// inventoried or read for them. For toolLoopOverviewClassGreeting and
+// toolLoopOverviewClassOverview the read is unchanged from card D-5: every
+// source line carries the source's human name, its source connection id (the
+// identifier knowvault_source_schema and knowvault_source_sql require) and
+// its type, status and object counts, plus a document sample.
 func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspacetools.Scope,
-	record *ToolLoopRecord, language string, workspaceContextDocument string, greeting bool) (*toolLoopOverview, error) {
-	if service == nil || service.tools == nil || record == nil {
+	record *ToolLoopRecord, language string, workspaceContextDocument string, class toolLoopOverviewClass) (*toolLoopOverview, error) {
+	if service == nil || service.tools == nil || record == nil || class == toolLoopOverviewClassNone {
 		return nil, nil
 	}
 	overview := &toolLoopOverview{}
@@ -141,6 +229,20 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 		return nil, err
 	}
 	sources := toolLoopOverviewSourcesFromResult(sourcesResult.Structured)
+
+	if class == toolLoopOverviewClassSources || class == toolLoopOverviewClassDatabase {
+		names := toolLoopOverviewSourceNames(sources)
+		if class == toolLoopOverviewClassSources {
+			overview.Text = toolLoopSourcesOverviewText(language, names)
+		} else {
+			overview.Text = toolLoopDatabaseOverviewText(language, names, workspaceContextDocument)
+		}
+		if overview.Text == "" {
+			return nil, nil
+		}
+		return overview, nil
+	}
+	greeting := class == toolLoopOverviewClassGreeting
 
 	objectsArgs, _ := json.Marshal(map[string]any{"limit": toolLoopOverviewObjects})
 	objectsResult, err := service.invokeOverviewTool(ctx, scope, record, "knowvault_list_objects", objectsArgs)
@@ -228,6 +330,84 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 		return nil, nil
 	}
 	return overview, nil
+}
+
+// toolLoopOverviewSourceNames returns each source's human display name,
+// deduplicated and in the order knowvault_sources returned them. It is the
+// only projection of a source that toolLoopOverviewClassSources and
+// toolLoopOverviewClassDatabase ever see: no connection id, type, status,
+// sync state or object count.
+func toolLoopOverviewSourceNames(sources []toolLoopOverviewSource) []string {
+	names := make([]string, 0, len(sources))
+	seen := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		name := singleLine(source.Name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
+}
+
+// toolLoopSourcesOverviewText renders card D-7 requirement 1's answer shape:
+// the sources' exact human names and nothing else. The answer is submitted as
+// the clarification variant (card D-5's escape for an answer that needs no
+// document citation), because the source list is the workspace's own
+// registration, not a claim that needs verifying against document content.
+func toolLoopSourcesOverviewText(language string, names []string) string {
+	var builder strings.Builder
+	if language == questionLanguageRussian {
+		builder.WriteString("Обзор рабочей области, прочитанный сервером для этого вопроса. Это ориентир, а не замена чтению.\n")
+		builder.WriteString("Вопрос — про список источников, а не про их содержимое или состояние. Ответьте коротким списком точных имён источников из списка ниже (каждое имя в кавычках-ёлочках, скопированное как есть), без статусов, типов, количества объектов и без пояснений, если о них отдельно не спросили. Не добавляйте предложение об ограничениях ответа. Этот перечень не требует отдельной цитаты — отправьте ответ вариантом clarification с пустым списком claims. Весь ответ — не больше 6 строк.\n")
+	} else {
+		builder.WriteString("Workspace overview read by the server for this question. It is orientation, not a substitute for reading.\n")
+		builder.WriteString("The question is about the list of sources, not their content or state. Reply with a short list of the exact source names below (each copied as it is), without status, type, object counts or explanation unless asked separately. Do not add a sentence about the answer's boundaries. This list needs no separate citation -- submit the answer as the clarification variant with an empty claims list. The whole answer is at most 6 lines.\n")
+	}
+	if len(names) == 0 {
+		return strings.TrimRight(builder.String(), "\n")
+	}
+	builder.WriteString(localizedText(language, "Источники:\n", "Sources:\n"))
+	for _, name := range names {
+		builder.WriteString("- «")
+		builder.WriteString(name)
+		builder.WriteString("»\n")
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+// toolLoopDatabaseOverviewText renders card D-7 requirement 2's answer shape:
+// what the workspace's data is about and what one can ask of it, in business
+// words, grounded only in the sources' human names and the workspace's own
+// description -- never a table, column, schema or other technical name. Like
+// the sources-only answer above, it is submitted as the clarification
+// variant: the description rests on the workspace's own registration, not on
+// a document claim that needs a citation.
+func toolLoopDatabaseOverviewText(language string, names []string, workspaceContextDocument string) string {
+	var builder strings.Builder
+	if language == questionLanguageRussian {
+		builder.WriteString("Обзор рабочей области, прочитанный сервером для этого вопроса. Это ориентир, а не замена чтению.\n")
+		builder.WriteString("Вопрос — про то, что можно узнать из данных рабочей области, деловыми словами. Опишите в нескольких предложениях, о чём эти данные (например, о договорах, о клиентах, о местах хранения — своими словами по именам источников ниже, а не техническими терминами) и что по ним в целом можно спросить (количество, статус, детали). Не называйте таблицы, колонки, схемы, идентификаторы подключений и другие технические имена. Не пересказывайте документы, которые не упоминались в вопросе. Не добавляйте предложение об ограничениях ответа. Описание опирается на список источников рабочей области и не требует отдельной цитаты — отправьте ответ вариантом clarification с пустым списком claims. Весь ответ — не больше 6 строк.\n")
+	} else {
+		builder.WriteString("Workspace overview read by the server for this question. It is orientation, not a substitute for reading.\n")
+		builder.WriteString("The question is about what can be learned from the workspace's data, in business words. Describe in a few sentences what the data is about (for example contracts, clients, storage locations -- in your own words, from the source names below, not technical terms) and what one can generally ask about it (counts, status, detail). Do not name any table, column, schema, connection identifier or other technical name. Do not retell a document the question did not name. Do not add a sentence about the answer's boundaries. The description rests on the workspace's own source list and needs no separate citation -- submit the answer as the clarification variant with an empty claims list. The whole answer is at most 6 lines.\n")
+	}
+	if description := singleLine(workspaceContextDocument); description != "" {
+		builder.WriteString(localizedText(language, "Описание рабочей области: ", "Workspace description: "))
+		builder.WriteString(description)
+		builder.WriteString("\n")
+	}
+	if len(names) == 0 {
+		return strings.TrimRight(builder.String(), "\n")
+	}
+	builder.WriteString(localizedText(language, "Источники:\n", "Sources:\n"))
+	for _, name := range names {
+		builder.WriteString("- «")
+		builder.WriteString(name)
+		builder.WriteString("»\n")
+	}
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 // toolLoopOverviewSource is one workspace source the overview renders from the
