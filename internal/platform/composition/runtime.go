@@ -463,6 +463,10 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		}
 		questions.EnableGeneration(generationAdapter, generationVerifier)
 		questions.EnableGenerationProfiles(generationProfiles)
+		// ADR-0099 amendment 1: with a model adapter mounted, every question
+		// run recognises its kind in a separate short model call and records
+		// it. Without a mount the step stays off and no extra call is made.
+		questions.EnableAnswerKindRecognition()
 	}
 	// ADR-0089: the governed-query ask service is wired only behind its own
 	// explicit administrator mount (governedquery.LoadMountedConfig), exactly

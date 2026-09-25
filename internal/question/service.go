@@ -614,6 +614,14 @@ type Service struct {
 	verifier           *modelgateway.Verifier
 	generationProfiles *modelgateway.ProfileRegistry
 
+	// ADR-0099 amendment 1: the separate recognition step (answer_kind.go).
+	// answerKindRecognition is off until composition calls
+	// EnableAnswerKindRecognition; while it is off no extra model call is made
+	// and no kind is recorded. kindRecogniser, when set, replaces the
+	// model-backed step (tests, or a composition that mounts its own).
+	answerKindRecognition bool
+	kindRecogniser        KindRecogniser
+
 	// R2 Outcome 2: the server-validated QueryIntent gate. All three are nil
 	// until composition calls EnableQueryIntents (intent_gate.go). Production
 	// composition mounts a real, access-re-checked MetricDefinition catalog

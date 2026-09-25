@@ -1,7 +1,7 @@
 {
   "algorithm": "SHA256",
   "accepted": {
-    "docs/adr/0099-answer-kind-by-meaning-accepted.md": "d3e39ce07f9ea6af4a0162a4f8faf929adf30eab3d515af7c8e2838eecd4b881",
+    "docs/adr/0099-answer-kind-by-meaning-accepted.md": "114eee90d78a75ecb92159fec634f68f62477cd27e9766474803839bc5649fb4",
     "docs/adr/0098-workspace-model-context-accepted.md": "f3b97a80646079cd5cf7beb120318109fe86b03c628b90c1095e22fcb67f76c8",
     "docs/adr/0097-workspace-source-tools-accepted.md": "986835c2ffddc59248070957bc3d578d21af5bf73c13f04869bbb0a7732d79f8",
     "docs/adr/0001-go-modular-monolith-accepted.md": "45879c7e45c1c9901be78048cad0a9a4f40b4b215e5ba000d62a675cce9a4e0e",
