@@ -29,7 +29,9 @@ The local run:
 4. drives the `local` scenario in order in headless Chromium (Playwright): sign
    in; Sources, confirm the tables of the synthetic database source; Settings,
    save a change to the model context; chat, ask «что ты знаешь?» and get an
-   answer; open the evidence behind that answer;
+   answer; collapse and expand the conversation list; open the evidence panel
+   with the screen control, close it again, then open the evidence behind that
+   answer from its own link;
 5. writes `report.md`, `report.json` and `screenshots/` (default output
    `tests/e2e/walkthrough/baseline/`), and exits non-zero when any step failed.
 

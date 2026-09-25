@@ -2,12 +2,12 @@
   "schema_version": "walkthrough-report-v2",
   "command": "bash tests/e2e/walkthrough/run-walkthrough.sh",
   "scenario": "local",
-  "base_url": "https://127.0.0.1:55478",
-  "started_at": "2026-09-25T19:12:19.514Z",
-  "finished_at": "2026-09-25T19:12:22.893Z",
-  "total_seconds": 3.379,
+  "base_url": "https://127.0.0.1:55479",
+  "started_at": "2026-09-25T19:36:12.534Z",
+  "finished_at": "2026-09-25T19:36:19.700Z",
+  "total_seconds": 7.166,
   "passed": true,
-  "step_count": 9,
+  "step_count": 11,
   "failed_step_count": 0,
   "failed_steps": [],
   "answers": [
@@ -21,8 +21,8 @@
     {
       "name": "the interface shows the running server revision",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:19.514Z",
-      "seconds": 0.1313313,
+      "started_at": "2026-09-25T19:36:12.534Z",
+      "seconds": 0.1322269,
       "screenshot": "screenshots/01-the-interface-shows-the-running-server-revision.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -31,7 +31,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_YrY-PWZUe-fq2I7K8-Vp8w\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_TODgdLMIkJdyMnWvZnCRQQ\"}}"
         }
       ],
       "consoleErrors": [
@@ -46,8 +46,8 @@
     {
       "name": "sign in as the test user",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:19.682Z",
-      "seconds": 0.1044094,
+      "started_at": "2026-09-25T19:36:12.689Z",
+      "seconds": 0.0892861,
       "screenshot": "screenshots/02-sign-in-as-the-test-user.png",
       "httpErrors": [],
       "httpClientErrors": [
@@ -56,7 +56,7 @@
           "method": "GET",
           "path": "/api/v1/workspaces",
           "code": "UNAUTHENTICATED",
-          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_M0YAMlgYSS9IEsNMrjKajw\"}}"
+          "body": "{\"error\":{\"code\":\"UNAUTHENTICATED\",\"request_id\":\"req_b72UMKQMSk_290m78kqkRA\"}}"
         }
       ],
       "consoleErrors": [
@@ -71,8 +71,8 @@
     {
       "name": "open Sources and confirm the synthetic database tables",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:19.814Z",
-      "seconds": 1.0658441,
+      "started_at": "2026-09-25T19:36:12.803Z",
+      "seconds": 1.1018144,
       "screenshot": "screenshots/03-open-sources-and-confirm-the-synthetic-database-tables.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -99,8 +99,8 @@
     {
       "name": "open the model settings and save a change",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:20.917Z",
-      "seconds": 0.2396474,
+      "started_at": "2026-09-25T19:36:13.942Z",
+      "seconds": 0.2582162,
       "screenshot": "screenshots/04-open-the-model-settings-and-save-a-change.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -119,8 +119,8 @@
     {
       "name": "ask the question in the chat and get an answer",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:21.184Z",
-      "seconds": 0.9746915,
+      "started_at": "2026-09-25T19:36:14.224Z",
+      "seconds": 4.457108,
       "screenshot": "screenshots/05-ask-the-question-in-the-chat-and-get-an-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -144,8 +144,8 @@
     {
       "name": "collapse the conversation list",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:22.186Z",
-      "seconds": 0.0367894,
+      "started_at": "2026-09-25T19:36:18.721Z",
+      "seconds": 0.0503154,
       "screenshot": "screenshots/06-collapse-the-conversation-list.png",
       "httpErrors": [],
       "httpClientErrors": [],
@@ -159,9 +159,39 @@
     {
       "name": "expand the conversation list again",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:22.252Z",
-      "seconds": 0.0382783,
+      "started_at": "2026-09-25T19:36:18.818Z",
+      "seconds": 0.0528516,
       "screenshot": "screenshots/07-expand-the-conversation-list-again.png",
+      "httpErrors": [],
+      "httpClientErrors": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "writes": [],
+      "answers": [],
+      "error": null,
+      "page_excerpt": null
+    },
+    {
+      "name": "open the evidence panel with the screen control",
+      "status": "passed",
+      "started_at": "2026-09-25T19:36:18.920Z",
+      "seconds": 0.0513796,
+      "screenshot": "screenshots/08-open-the-evidence-panel-with-the-screen-control.png",
+      "httpErrors": [],
+      "httpClientErrors": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "writes": [],
+      "answers": [],
+      "error": null,
+      "page_excerpt": null
+    },
+    {
+      "name": "close the evidence panel with one action",
+      "status": "passed",
+      "started_at": "2026-09-25T19:36:19.023Z",
+      "seconds": 0.0506307,
+      "screenshot": "screenshots/09-close-the-evidence-panel-with-one-action.png",
       "httpErrors": [],
       "httpClientErrors": [],
       "consoleErrors": [],
@@ -174,9 +204,9 @@
     {
       "name": "open the evidence of that answer",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:22.319Z",
-      "seconds": 0.2322277,
-      "screenshot": "screenshots/08-open-the-evidence-of-that-answer.png",
+      "started_at": "2026-09-25T19:36:19.121Z",
+      "seconds": 0.2446689,
+      "screenshot": "screenshots/10-open-the-evidence-of-that-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
       "consoleErrors": [],
@@ -189,9 +219,9 @@
     {
       "name": "open the source page of that answer",
       "status": "passed",
-      "started_at": "2026-09-25T19:12:22.605Z",
-      "seconds": 0.1991147,
-      "screenshot": "screenshots/09-open-the-source-page-of-that-answer.png",
+      "started_at": "2026-09-25T19:36:19.406Z",
+      "seconds": 0.2066544,
+      "screenshot": "screenshots/11-open-the-source-page-of-that-answer.png",
       "httpErrors": [],
       "httpClientErrors": [],
       "consoleErrors": [],
