@@ -278,6 +278,7 @@ func writeMetricDefinitionError(writer http.ResponseWriter, err error, requestID
 		metricdef.CodeOf(err) == metricdef.CodeRetiredImmutable:
 		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
 	default:
+		setServerFailureCause(writer, "metric definition service", string(metricdef.CodeOf(err)))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }

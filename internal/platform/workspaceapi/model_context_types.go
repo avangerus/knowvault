@@ -468,6 +468,7 @@ func writeModelContextError(writer http.ResponseWriter, err error, requestID str
 		// note 1 in model_context.go for why none is available here.
 		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
 	default:
+		setServerFailureCause(writer, "workspace model context", string(code))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }
@@ -493,6 +494,7 @@ func writeModelContextProposalError(writer http.ResponseWriter, err error, reque
 	case workspacecontext.CodeInvalidDocument, workspacecontext.CodeUnknownLocation:
 		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
 	default:
+		setServerFailureCause(writer, "workspace model context proposal", string(code))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }

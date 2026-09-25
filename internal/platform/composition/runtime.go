@@ -22,6 +22,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/browserauth"
 	"knowvault.local/verified-workspace/internal/platform/buildinfo"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/platform/httpserver"
 	"knowvault.local/verified-workspace/internal/platform/metriccomparemount"
@@ -626,8 +627,11 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		return fail(StartupStageHTTPDispatcher)
 	}
 	// D7-8: the mandatory security header set wraps the whole application
-	// boundary, including the dispatcher's own 404 responses.
-	handler := apphttp.WithSecurityHeaders(dispatcher)
+	// boundary, including the dispatcher's own 404 responses. Inside it, the
+	// D-12 failure log owns exactly one content-free line for every 5xx the
+	// dispatcher's branches answer, so an operator can see why a request
+	// failed from the server log alone.
+	handler := apphttp.WithSecurityHeaders(failurelog.WithFailureLog(dispatcher))
 	serverConfig := httpserver.DefaultConfig()
 	serverConfig.Address = config.HTTPAddress()
 	// GEN-2 (ADR-0088): the default 60s http.Server.WriteTimeout covers the

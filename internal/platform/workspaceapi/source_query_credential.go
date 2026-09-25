@@ -181,5 +181,10 @@ func writeSourceQueryCredentialError(writer http.ResponseWriter, err error, requ
 		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
 		return
 	}
+	cause := string(SourceQueryCredentialRefusalCode(err))
+	if cause == "" {
+		cause = string(workspacerepository.CodeOf(err))
+	}
+	setServerFailureCause(writer, "source query credential", cause)
 	writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 }

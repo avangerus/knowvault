@@ -28,6 +28,7 @@ import (
 	"knowvault.local/verified-workspace/internal/conversation"
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/policy"
 	"knowvault.local/verified-workspace/internal/question"
@@ -596,12 +597,14 @@ func newHandlerWithQuestionsAndConversations(authenticator Authenticator, servic
 // decoded into aliases, or sent to the service.
 func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if handler == nil || handler.authenticator == nil || handler.service == nil || handler.sources == nil || handler.requestIDs == nil || request == nil {
+		setServerFailureCause(writer, "workspace handler dependency missing", "unwired boundary")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "")
 		return
 	}
 	endpoint, pathCode := parseEndpoint(request)
 	requestID, requestIDErr := handler.requestIDs.New()
 	if requestIDErr != nil || !validRequestID(requestID) {
+		setServerFailureCause(writer, "workspace request id generation failed", "ENTROPY_UNAVAILABLE")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "")
 		return
 	}
@@ -2671,6 +2674,7 @@ type memberCandidateResponse struct {
 func (handler *Handler) memberCandidates(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
 	provider, ok := handler.service.(WorkspaceMemberCandidateAuthority)
 	if !ok {
+		setServerFailureCause(writer, "workspace service capability missing", "WorkspaceMemberCandidateAuthority")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return
 	}
@@ -3222,8 +3226,12 @@ const (
 // role oracle; the handler never distinguishes a wrong role from a missing
 // grant, confirmation, binding or policy.
 func handleAuthorityError(writer http.ResponseWriter, err error, requestID string) {
-	status, code := authorityErrorResponse(workspacerepository.CodeOf(err))
-	writeError(writer, status, code, requestID)
+	code := workspacerepository.CodeOf(err)
+	status, publicCode := authorityErrorResponse(code)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "workspace authority", string(code))
+	}
+	writeError(writer, status, publicCode, requestID)
 }
 
 func authorityErrorResponse(code workspacerepository.ErrorCode) (int, string) {
@@ -3256,6 +3264,11 @@ func (handler *Handler) authorityCommands() (WorkspaceAuthority, bool) {
 func (handler *Handler) requireAuthority(writer http.ResponseWriter, requestID string) (WorkspaceAuthority, bool) {
 	authority, ok := handler.authorityCommands()
 	if !ok {
+		// The exact cause of the demo-stand 503: the injected storage service
+		// stopped satisfying the WorkspaceAuthority capability (a rename that
+		// was otherwise invisible). Name it in the log line instead of leaving
+		// a bare SERVICE_UNAVAILABLE.
+		setServerFailureCause(writer, "workspace service capability missing", "WorkspaceAuthority")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return nil, false
 	}
@@ -3272,6 +3285,7 @@ func (handler *Handler) connectionTrustAuthority() (ConnectionTrustAuthority, bo
 func (handler *Handler) requireConnectionTrustAuthority(writer http.ResponseWriter, requestID string) (ConnectionTrustAuthority, bool) {
 	authority, ok := handler.connectionTrustAuthority()
 	if !ok {
+		setServerFailureCause(writer, "workspace service capability missing", "ConnectionTrustAuthority")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return nil, false
 	}
@@ -3512,8 +3526,12 @@ func (handler *Handler) verifyConnectionTrust(writer http.ResponseWriter, reques
 // oracle, exactly as handleAuthorityError collapses the four confirmation
 // actions' CodeAuthorityDenied/CodeAuthorityNotFound.
 func handleConnectionTrustError(writer http.ResponseWriter, err error, requestID string) {
-	status, code := connectionTrustErrorResponse(workspacerepository.CodeOf(err))
-	writeError(writer, status, code, requestID)
+	code := workspacerepository.CodeOf(err)
+	status, publicCode := connectionTrustErrorResponse(code)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "workspace connection trust", string(code))
+	}
+	writeError(writer, status, publicCode, requestID)
 }
 
 func connectionTrustErrorResponse(code workspacerepository.ErrorCode) (int, string) {
@@ -4572,6 +4590,7 @@ func (handler *Handler) auditJournal(writer http.ResponseWriter, request *http.R
 	} else {
 		pager, ok := handler.service.(WorkspaceAuditJournalBefore)
 		if !ok {
+			setServerFailureCause(writer, "workspace service capability missing", "WorkspaceAuditJournalBefore")
 			writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 			return
 		}
@@ -5116,7 +5135,11 @@ type confirmationContextResponse struct {
 }
 
 func handleSourceServiceError(writer http.ResponseWriter, err error, requestID string, isCreate bool) {
-	status, publicCode := sourceServiceErrorResponse(registration.CodeOf(err), isCreate)
+	code := registration.CodeOf(err)
+	status, publicCode := sourceServiceErrorResponse(code, isCreate)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "source service", string(code))
+	}
 	writeError(writer, status, publicCode, requestID)
 }
 
@@ -5409,22 +5432,31 @@ func statusForMutationCode(code string) int {
 }
 
 func handleServiceError(writer http.ResponseWriter, err error, requestID string, isCreate bool) {
-	status, publicCode := serviceErrorResponse(workspacerepository.CodeOf(err), isCreate)
+	code := workspacerepository.CodeOf(err)
+	status, publicCode := serviceErrorResponse(code, isCreate)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "workspace service", string(code))
+	}
 	writeError(writer, status, publicCode, requestID)
 }
 
 func handleQuestionError(writer http.ResponseWriter, err error, requestID string, isCreate bool) {
-	status, code := questionErrorResponse(question.CodeOf(err), isCreate)
+	code := question.CodeOf(err)
+	status, publicCode := questionErrorResponse(code, isCreate)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "question authority", string(code))
+	}
 	// R2 Outcome 2: a typed QueryIntent refusal already carries a server-owned,
 	// closed-dictionary clarification. Surface it additively beside the
 	// unchanged status/code so the browser can show it instead of only the
 	// generic code sentence. Every other question error returns "" here, so
 	// the field is omitted and the response body is byte-for-byte unchanged.
-	writeErrorClarification(writer, status, code, requestID, question.ClarificationOf(err))
+	writeErrorClarification(writer, status, publicCode, requestID, question.ClarificationOf(err))
 }
 
 func handleConversationError(writer http.ResponseWriter, err error, requestID string) {
-	switch conversation.CodeOf(err) {
+	code := conversation.CodeOf(err)
+	switch code {
 	case conversation.CodeInvalid:
 		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
 	case conversation.CodeDenied, conversation.CodeNotFound:
@@ -5434,6 +5466,7 @@ func handleConversationError(writer http.ResponseWriter, err error, requestID st
 	case conversation.CodeIdempotencyConflict:
 		writeError(writer, http.StatusConflict, "CONVERSATION_IDEMPOTENCY_CONFLICT", requestID)
 	default:
+		setServerFailureCause(writer, "conversation service", string(code))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }
@@ -5443,6 +5476,7 @@ func handleConversationProjectionError(writer http.ResponseWriter, err error, re
 		handleQuestionError(writer, err, requestID, false)
 		return
 	}
+	setServerFailureCause(writer, "conversation projection", string(question.CodeOf(err)))
 	writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 }
 
@@ -5505,7 +5539,23 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
+// setServerFailureCause records the content-free cause of a failure this
+// handler is about to answer with 5xx. It is called only with a server-owned
+// scope and the typed code of the underlying error -- never with an error
+// message, request field or body -- so the one server-log line the HTTP
+// boundary emits for the response can name what failed without carrying tenant
+// content. It is a no-op on the writers test harnesses use directly.
+func setServerFailureCause(writer http.ResponseWriter, scope, code string) {
+	failurelog.Set(writer, strings.TrimSpace(scope+": "+code))
+}
+
 func writeError(writer http.ResponseWriter, status int, code, requestID string) {
+	if status >= http.StatusInternalServerError {
+		// Fallback for a route whose refusal is "this capability is not
+		// wired": the typed cause set by the caller (if any) already won, and
+		// the route in the log line names the endpoint.
+		setServerFailureCause(writer, "response", code)
+	}
 	response := errorEnvelope{}
 	response.Error.Code = code
 	response.Error.RequestID = requestID
