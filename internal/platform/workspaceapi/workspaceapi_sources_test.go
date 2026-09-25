@@ -883,7 +883,7 @@ func (service *fakeAuthorityWorkspaceService) ConfirmManagedSource(_ context.Con
 	return service.authorityResult, service.err
 }
 
-func (service *fakeAuthorityWorkspaceService) ConfirmManagedSourceBatch(_ context.Context, access database.AccessContext, request workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error) {
+func (service *fakeAuthorityWorkspaceService) ConfirmManagedSourcesBatch(_ context.Context, access database.AccessContext, request workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error) {
 	service.call, service.access, service.batchConfirmRequest = "confirm_batch", access, request
 	return service.batchConfirmResult, service.err
 }

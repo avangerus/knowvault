@@ -1146,10 +1146,15 @@ async function apiMutation<T>(method: "POST" | "PUT" | "DELETE", path: string, b
   try {
     const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
     if (csrf.kind !== "ok") return csrf;
+    // HTTP If-Match carries an entity-tag, so its value must be quoted. The
+    // workspace snapshot's ETag already is; a model-context content hash from
+    // the response body is not, and the server correctly refuses an unquoted
+    // tag (card U-1 found that this made every model-context save fail live).
+    const ifMatch = etag.startsWith("\"") && etag.endsWith("\"") ? etag : `"${etag}"`;
     const headers: Record<string, string> = {
       Accept: "application/json",
       "Idempotency-Key": idempotencyKey,
-      "If-Match": etag,
+      "If-Match": ifMatch,
       "X-KnowVault-CSRF": csrf.value.csrf_token,
     };
     const init: RequestInit = { method, cache: "no-store", headers };
