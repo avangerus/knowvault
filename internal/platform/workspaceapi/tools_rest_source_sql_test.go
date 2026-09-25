@@ -160,7 +160,8 @@ func TestWorkspaceToolSourceSQLRESTMatchesMCPAndChatProjection(t *testing.T) {
 func TestWorkspaceToolSourceSQLClosedRefusalsReachTheAgent(t *testing.T) {
 	for _, code := range []string{
 		"SQL_REJECTED_STATIC", "RELATION_NOT_IN_SOURCE", "COST_LIMIT", "ROW_LIMIT", "TIMEOUT",
-		"DATABASE_REJECTED", "SOURCE_SQL_NOT_CONFIGURED",
+		"DATABASE_REJECTED", "SOURCE_SQL_NOT_CONFIGURED", "SOURCE_SQL_CONCURRENCY_LIMITED",
+		"SOURCE_SQL_RATE_LIMITED",
 	} {
 		t.Run(code, func(t *testing.T) {
 			harness := newSourceSQLHarness(t)

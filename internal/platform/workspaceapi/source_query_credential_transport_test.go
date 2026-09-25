@@ -70,9 +70,17 @@ func TestSourceQueryCredentialSetsAndClearsThroughTheOwnerControl(t *testing.T) 
 func TestSourceQueryCredentialClosedRefusalsReachTheOperator(t *testing.T) {
 	for _, code := range []string{
 		SourceQueryCredentialUnresolved,
+		SourceQueryCredentialIngestionReference,
 		"SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH",
 		"SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE",
 		"SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED",
+		"SOURCE_QUERY_CREDENTIAL_MISSING_SELECT",
+		"SOURCE_QUERY_CREDENTIAL_EXTRA_RELATION",
+		"SOURCE_QUERY_CREDENTIAL_WRITE_PRIVILEGE",
+		"SOURCE_QUERY_CREDENTIAL_ELEVATED_ROLE",
+		"SOURCE_QUERY_CREDENTIAL_ROLE_MEMBERSHIP",
+		"SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER",
+		"SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION",
 	} {
 		t.Run(code, func(t *testing.T) {
 			harness := newTestHarness(t)

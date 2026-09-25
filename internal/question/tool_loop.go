@@ -1458,13 +1458,19 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				result = sourceSQLState.refused()
 			} else {
 				result, callErr = service.tools.Invoke(callCtx, scope, name, args)
-				if callErr == nil && !result.IsError {
-					var execution *liveDataExecution
-					result, execution, _ = sourceSQLRetainResult(run.ID, result, profile.MaxToolResultBytes)
-					if execution != nil {
-						sourceSQLState.record(result)
-						liveDataState.retain(execution)
+				if callErr == nil {
+					if !result.IsError {
+						var execution *liveDataExecution
+						result, execution, _ = sourceSQLRetainResult(run.ID, result, profile.MaxToolResultBytes)
+						if execution != nil {
+							liveDataState.retain(execution)
+						}
 					}
+					// Card S3.2c: the budget counts every attempt that reached
+					// execution, so a TIMEOUT, ROW_LIMIT, COST_LIMIT or
+					// DATABASE_REJECTED consumes it exactly like a success. A
+					// refusal that never executed stays free.
+					sourceSQLState.record(result)
 				}
 			}
 		} else {

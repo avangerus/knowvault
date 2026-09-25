@@ -239,6 +239,12 @@ type Metadata struct {
 	GovernedQueryRowCount              *int64  `json:"governed_query_row_count,omitempty"`
 	GovernedQueryResultDigest          *string `json:"governed_query_result_digest,omitempty"`
 	GovernedQueryOutcome               *string `json:"governed_query_outcome,omitempty"`
+	// GovernedQueryPurpose is S3 card 2c's bounded agent note describing what
+	// the statement answers. It is deliberately the only free-form governed
+	// field: it is capped and stripped of control characters by the validator,
+	// never carries SQL text, a row or a credential, and exists so an operator
+	// can see why a read was attempted.
+	GovernedQueryPurpose *string `json:"governed_query_purpose,omitempty"`
 }
 
 // EventInput is the trusted application intent. Organization and actor values
@@ -802,6 +808,7 @@ func cloneMetadata(value Metadata) Metadata {
 	copy.GovernedQueryRowCount = cloneInt64(value.GovernedQueryRowCount)
 	copy.GovernedQueryResultDigest = cloneString(value.GovernedQueryResultDigest)
 	copy.GovernedQueryOutcome = cloneString(value.GovernedQueryOutcome)
+	copy.GovernedQueryPurpose = cloneString(value.GovernedQueryPurpose)
 	return copy
 }
 

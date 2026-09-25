@@ -9,6 +9,8 @@ package audit
 // appear here (ADR-0089 §4, mirroring MOD-007/MOD-008's content-free
 // discipline for model-gateway attempts).
 
+import "unicode/utf8"
+
 // ActionGovernedQueryAttempted is the one action this vocabulary reserves.
 const ActionGovernedQueryAttempted Action = "source.governed_query_attempted"
 
@@ -54,7 +56,7 @@ func hasGovernedQueryMetadata(metadata Metadata) bool {
 	return metadata.GovernedQueryConnectionID != nil || metadata.GovernedQueryExposedSchemaRevision != nil ||
 		metadata.GovernedQuerySQLHash != nil || metadata.GovernedQueryCostEstimate != nil ||
 		metadata.GovernedQueryRowCount != nil || metadata.GovernedQueryResultDigest != nil ||
-		metadata.GovernedQueryOutcome != nil
+		metadata.GovernedQueryOutcome != nil || metadata.GovernedQueryPurpose != nil
 }
 
 // validGovernedQueryMetadataFields checks field-level shape only. Which
@@ -81,6 +83,26 @@ func validGovernedQueryMetadataFields(metadata Metadata) bool {
 	}
 	if metadata.GovernedQueryOutcome != nil && !validGovernedQueryOutcome(*metadata.GovernedQueryOutcome) {
 		return false
+	}
+	if metadata.GovernedQueryPurpose != nil && !validGovernedQueryPurpose(*metadata.GovernedQueryPurpose) {
+		return false
+	}
+	return true
+}
+
+// validGovernedQueryPurpose bounds the one free-form governed-query field. It
+// is at most 200 bytes of valid UTF-8 with no control character other than tab
+// and newline, exactly the envelope the transport already accepts; it can never
+// carry SQL text because SQL is rejected by the static pre-check and hashed
+// separately.
+func validGovernedQueryPurpose(value string) bool {
+	if len(value) > 200 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 && character != '\n' && character != '\t' {
+			return false
+		}
 	}
 	return true
 }

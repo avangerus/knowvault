@@ -68,12 +68,10 @@ func VerifyQueryCredential(ctx context.Context, config Config, params QueryCrede
 	if identity != config.DatabaseIdentity {
 		return &Error{code: CodeQueryCredentialDatabaseMismatch}
 	}
-	for _, relation := range params.Relations {
-		if err := verifyRelationColumnPrivileges(ctx, transaction, relation); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Card S3.2c: the candidate is accepted only when it passes the full
+	// least-privilege proof, not merely the column check. Every rule failure is
+	// a distinct closed code that names the rule.
+	return VerifyQueryRole(ctx, transaction, params.Relations)
 }
 
 // queryCredentialDatabaseIdentity recomputes the source's immutable "pgdb:…"
@@ -100,51 +98,4 @@ func queryCredentialDatabaseIdentity(ctx context.Context, transaction pgx.Tx) (s
 		return "", &Error{code: CodeQueryCredentialRejected, cause: err}
 	}
 	return "pgdb:" + strings.TrimPrefix(canon.Hash(raw), "sha256:"), nil
-}
-
-// verifyRelationColumnPrivileges refuses a credential that can SELECT any
-// column of the relation the registered projection excludes. Columns are read
-// from the live relation, so a column added to the source table after
-// registration is checked too; a relation that no longer exists is a rejected
-// credential rather than a silently passing check.
-func verifyRelationColumnPrivileges(ctx context.Context, transaction pgx.Tx, relation ScopedRelation) error {
-	projected := make(map[string]struct{}, len(relation.Columns))
-	for _, column := range relation.Columns {
-		projected[column] = struct{}{}
-	}
-	rows, err := transaction.Query(ctx, `
-		SELECT attribute.attname,
-		       has_column_privilege(current_user, attribute.attrelid, attribute.attname, 'SELECT')
-		FROM pg_catalog.pg_attribute AS attribute
-		JOIN pg_catalog.pg_class AS class ON class.oid = attribute.attrelid
-		JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
-		WHERE namespace.nspname = $1 AND class.relname = $2
-		  AND attribute.attnum > 0 AND NOT attribute.attisdropped
-		ORDER BY attribute.attnum`, relation.Schema, relation.Table)
-	if err != nil {
-		return &Error{code: CodeQueryCredentialRejected, cause: err}
-	}
-	defer rows.Close()
-	found := false
-	for rows.Next() {
-		var column string
-		var canSelect bool
-		if err := rows.Scan(&column, &canSelect); err != nil {
-			return &Error{code: CodeQueryCredentialRejected, cause: err}
-		}
-		found = true
-		if _, included := projected[column]; included {
-			continue
-		}
-		if canSelect {
-			return &Error{code: CodeQueryCredentialColumnPrivilege}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return &Error{code: CodeQueryCredentialRejected, cause: err}
-	}
-	if !found {
-		return &Error{code: CodeQueryCredentialRejected}
-	}
-	return nil
 }

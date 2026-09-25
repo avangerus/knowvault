@@ -21,12 +21,24 @@ func TestSourceQueryCredentialRefusalCodeVocabulary(t *testing.T) {
 	// an operator sees one vocabulary across every layer.
 	for _, code := range []string{
 		workspaceapi.SourceQueryCredentialUnresolved,
+		workspaceapi.SourceQueryCredentialIngestionReference,
 		string(governedquery.CodeQueryCredentialDatabaseMismatch),
 		string(governedquery.CodeQueryCredentialColumnPrivilege),
 		string(governedquery.CodeQueryCredentialRejected),
+		string(governedquery.CodeQueryRoleMissingSelect),
+		string(governedquery.CodeQueryRoleExtraRelation),
+		string(governedquery.CodeQueryRoleWritePrivilege),
+		string(governedquery.CodeQueryRoleElevatedAttribute),
+		string(governedquery.CodeQueryRoleMembership),
+		string(governedquery.CodeQueryRoleSecurityDefiner),
+		string(governedquery.CodeQueryRoleRemoteExecution),
 	} {
-		if code != "SOURCE_QUERY_CREDENTIAL_UNRESOLVED" && code != "SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH" &&
-			code != "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE" && code != "SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED" {
+		if code != "SOURCE_QUERY_CREDENTIAL_UNRESOLVED" && code != "SOURCE_QUERY_CREDENTIAL_INGESTION_REFERENCE" &&
+			code != "SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH" && code != "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE" &&
+			code != "SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED" && code != "SOURCE_QUERY_CREDENTIAL_MISSING_SELECT" &&
+			code != "SOURCE_QUERY_CREDENTIAL_EXTRA_RELATION" && code != "SOURCE_QUERY_CREDENTIAL_WRITE_PRIVILEGE" &&
+			code != "SOURCE_QUERY_CREDENTIAL_ELEVATED_ROLE" && code != "SOURCE_QUERY_CREDENTIAL_ROLE_MEMBERSHIP" &&
+			code != "SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER" && code != "SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION" {
 			t.Fatalf("unexpected closed credential code %q", code)
 		}
 	}

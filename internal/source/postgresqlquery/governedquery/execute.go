@@ -49,6 +49,11 @@ type Attempt struct {
 	ResultDigest          string
 	Elapsed               time.Duration
 	Outcome               Outcome
+	// RoleVerificationDigest is S3 card 2c's content-free evidence that the
+	// query role passed the least-privilege proof for the registered
+	// projection during this attempt. It is empty when the proof was served
+	// from the product store's cache (Config.RoleProven) rather than recomputed.
+	RoleVerificationDigest string
 }
 
 // Execute is the single production entry point. It never treats the static

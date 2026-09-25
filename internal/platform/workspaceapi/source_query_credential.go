@@ -21,9 +21,15 @@ import (
 )
 
 // SourceQueryCredentialUnresolved is the closed code for a reference that the
-// server's mounted credentials do not resolve. The other three codes are the
+// server's mounted credentials do not resolve. The other codes are the
 // governed executor's own vocabulary, reported verbatim.
 const SourceQueryCredentialUnresolved = "SOURCE_QUERY_CREDENTIAL_UNRESOLVED"
+
+// SourceQueryCredentialIngestionReference is the closed code for a candidate
+// that equals the connection's own ingestion credential. Migration 000118
+// enforces the separation in the database; this code only names it to the
+// operator.
+const SourceQueryCredentialIngestionReference = "SOURCE_QUERY_CREDENTIAL_INGESTION_REFERENCE"
 
 // SourceQueryCredential is S3 card 2b's optional owner-only capability behind
 // the Sources database-card control. The injected implementation owns the
@@ -145,9 +151,17 @@ func (handler *Handler) clearSourceQueryCredential(writer http.ResponseWriter, r
 func writeSourceQueryCredentialError(writer http.ResponseWriter, err error, requestID string) {
 	switch code := SourceQueryCredentialRefusalCode(err); code {
 	case SourceQueryCredentialUnresolved,
+		SourceQueryCredentialIngestionReference,
 		"SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH",
 		"SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE",
-		"SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED":
+		"SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED",
+		"SOURCE_QUERY_CREDENTIAL_MISSING_SELECT",
+		"SOURCE_QUERY_CREDENTIAL_EXTRA_RELATION",
+		"SOURCE_QUERY_CREDENTIAL_WRITE_PRIVILEGE",
+		"SOURCE_QUERY_CREDENTIAL_ELEVATED_ROLE",
+		"SOURCE_QUERY_CREDENTIAL_ROLE_MEMBERSHIP",
+		"SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER",
+		"SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION":
 		writeError(writer, http.StatusConflict, code, requestID)
 		return
 	default:

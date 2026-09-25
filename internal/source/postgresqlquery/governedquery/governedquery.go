@@ -50,6 +50,11 @@ const (
 	CodeQueryCredentialDatabaseMismatch ErrorCode = "SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH"
 	CodeQueryCredentialColumnPrivilege  ErrorCode = "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE"
 	CodeQueryCredentialRejected         ErrorCode = "SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED"
+	// S3 card 2c's server-owned load-limit refusals. Both are decided before
+	// any external connection is opened, so an over-limit call never reaches
+	// the customer database.
+	CodeSourceSQLConcurrencyLimited ErrorCode = "SOURCE_SQL_CONCURRENCY_LIMITED"
+	CodeSourceSQLRateLimited        ErrorCode = "SOURCE_SQL_RATE_LIMITED"
 )
 
 type Error struct {
@@ -126,6 +131,13 @@ type Config struct {
 	// close a capability. It is set from the mount manifest, never from a
 	// request.
 	PresetOnly bool
+	// RoleProven is S3 card 2c's cached least-privilege proof for the exact
+	// (connection revision, query credential revision, scope projection) pair.
+	// It is server-owned: composition sets it only from the product store's
+	// verification row after that row matched the current pair. The safe zero
+	// value is false, so a Config built without the cache always re-proves the
+	// role before executing anything.
+	RoleProven bool
 }
 
 func (config Config) Validate() error {

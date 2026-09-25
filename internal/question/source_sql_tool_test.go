@@ -52,3 +52,31 @@ func TestSourceSQLRunStateRefusalsDoNotConsumeTheBudget(t *testing.T) {
 		t.Fatal("a nil run state allowed a call")
 	}
 }
+
+// TestSourceSQLRunStateCountsAttemptsThatReachedExecution is card S3.2c's chat
+// budget rule: a statement that ran and then timed out, hit the row cap or hit
+// the cost cap consumes the same budget a success does, so four timeouts refuse
+// the fifth call while a pre-execution refusal stays free.
+func TestSourceSQLRunStateCountsAttemptsThatReachedExecution(t *testing.T) {
+	for _, code := range []string{"TIMEOUT", "ROW_LIMIT", "COST_LIMIT", "DATABASE_REJECTED"} {
+		var state sourceSQLRunState
+		for call := 0; call < sourceSQLMaxSuccessfulCalls; call++ {
+			state.record(workspacetools.Result{IsError: true, Text: `{"error":"` + code + `"}`})
+		}
+		if state.successfulCalls != sourceSQLMaxSuccessfulCalls || state.allow() {
+			t.Fatalf("%s consumed %d of %d budget units, allow=%v", code, state.successfulCalls, sourceSQLMaxSuccessfulCalls, state.allow())
+		}
+	}
+	for _, code := range []string{
+		"SQL_REJECTED_STATIC", "RELATION_NOT_IN_SOURCE", "SOURCE_SQL_NOT_CONFIGURED",
+		"SOURCE_SQL_CONCURRENCY_LIMITED", "SOURCE_SQL_RATE_LIMITED", "SQL_LIMIT_REACHED",
+	} {
+		var state sourceSQLRunState
+		for call := 0; call < sourceSQLMaxSuccessfulCalls*2; call++ {
+			state.record(workspacetools.Result{IsError: true, Structured: []byte(`{"error":"` + code + `"}`)})
+		}
+		if state.successfulCalls != 0 || !state.allow() {
+			t.Fatalf("pre-execution refusal %s consumed the budget: successful=%d", code, state.successfulCalls)
+		}
+	}
+}

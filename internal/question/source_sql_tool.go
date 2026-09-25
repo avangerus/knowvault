@@ -20,8 +20,13 @@ import (
 // sourceSQLToolName is the registry name of ADR-0097's agent-authored SQL tool.
 const sourceSQLToolName = "knowvault_source_sql"
 
-// sourceSQLMaxSuccessfulCalls is the card's per-run bound on successful
-// statements. It mirrors the ADR-0089 live-read bound and is deliberately a
+// sourceSQLMaxSuccessfulCalls is the card's per-run bound. Card 2c tightened
+// it from "successful statements" to "attempts that reached execution": a
+// statement that ran in the customer database and then timed out, hit the row
+// cap or hit the cost cap consumed the same resources as a successful one, so
+// it consumes the budget too. A refusal that never reached execution (an
+// invalid statement, a scope violation, an unconfigured source, a load-limit
+// refusal) stays free so the agent can correct and retry. It is deliberately a
 // server-owned constant: no request can widen it.
 const sourceSQLMaxSuccessfulCalls = 3
 
@@ -32,17 +37,58 @@ type sourceSQLRunState struct {
 	successfulCalls int
 }
 
-// allow reports whether one more successful call may run.
+// allow reports whether one more call may run.
 func (state *sourceSQLRunState) allow() bool {
 	return state != nil && state.successfulCalls < sourceSQLMaxSuccessfulCalls
 }
 
-// record consumes one unit of the budget only for a successful call.
+// record consumes one unit of the budget for a call that reached execution. A
+// successful result always counts; a closed refusal counts only when its code
+// is one the execution path produced after the statement was sent to the
+// database. A refusal that never executed does not consume the budget.
 func (state *sourceSQLRunState) record(result workspacetools.Result) {
-	if state == nil || result.IsError {
+	if state == nil {
 		return
 	}
-	state.successfulCalls++
+	if !result.IsError {
+		state.successfulCalls++
+		return
+	}
+	if sourceSQLReachedExecution(sourceSQLResultCode(result)) {
+		state.successfulCalls++
+	}
+}
+
+// sourceSQLReachedExecution reports whether a closed refusal code means the
+// agent's statement reached the customer database. TIMEOUT, ROW_LIMIT and
+// COST_LIMIT are the card's named cases; DATABASE_REJECTED covers a statement
+// PostgreSQL itself refused (a revoked column, a function the role may not
+// call) and is counted conservatively, because a resource limit must never
+// under-count an attempt that could have run.
+func sourceSQLReachedExecution(code string) bool {
+	switch code {
+	case "TIMEOUT", "ROW_LIMIT", "COST_LIMIT", "DATABASE_REJECTED", "SOURCE_SQL_RESULT_TOO_LARGE":
+		return true
+	default:
+		return false
+	}
+}
+
+// sourceSQLResultCode extracts the closed refusal code from a tool result. It
+// returns the empty string for a success or a result that is not the closed
+// refusal envelope.
+func sourceSQLResultCode(result workspacetools.Result) string {
+	payload := result.Structured
+	if len(payload) == 0 {
+		payload = []byte(result.Text)
+	}
+	var decoded struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return ""
+	}
+	return decoded.Error
 }
 
 // refused renders the content-free refusal the fourth successful call receives.

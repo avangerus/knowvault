@@ -24,3 +24,27 @@ func TestSourceQueryColumnsFollowProjectionOrder(t *testing.T) {
 		t.Fatal("a malformed projection was accepted")
 	}
 }
+
+// TestSourceQueryMixedScopeRowsAreRefused is card S3.2c's scope-consistency
+// rule: every row of one call must share the same scope, scope revision and
+// connection revision, so a workspace that bound the same connection twice can
+// never merge two scopes into one agent-visible schema.
+func TestSourceQueryMixedScopeRowsAreRefused(t *testing.T) {
+	source := SourceQuerySource{SourceScopeID: "scope_a", ScopeRevision: 4, ConnectionRevision: 2}
+	if !sourceQueryScopeMatches(source, "scope_a", 4, 2) {
+		t.Fatal("the first row did not match itself")
+	}
+	for name, candidate := range map[string]struct {
+		scopeID            string
+		scopeRevision      int64
+		connectionRevision int64
+	}{
+		"another scope":               {"scope_b", 4, 2},
+		"another scope revision":      {"scope_a", 5, 2},
+		"another connection revision": {"scope_a", 4, 3},
+	} {
+		if sourceQueryScopeMatches(source, candidate.scopeID, candidate.scopeRevision, candidate.connectionRevision) {
+			t.Fatalf("%s was merged into one scope", name)
+		}
+	}
+}

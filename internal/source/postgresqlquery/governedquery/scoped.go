@@ -69,6 +69,17 @@ const (
 	// maxScopedRelations bounds one source scope. It mirrors the ADR-0089
 	// exposed-schema bound so a stored scope can never grow unbounded.
 	maxScopedRelations = 512
+	// scopedWorkMem is the server-owned per-operation memory bound of every
+	// agent-authored transaction (card S3.2c). It is a string literal so it can
+	// only ever be a valid PostgreSQL memory unit, never request input.
+	scopedWorkMem = "16MB"
+	// scopedTempFileLimit is the bounded spill-to-disk allowance. PostgreSQL
+	// makes temp_file_limit superuser-only, so it is pinned only when the
+	// server permits it (see prepareScopedTransaction).
+	scopedTempFileLimit = "64MB"
+	// scopedLockTimeout is the card's "<= 2 s" bound on waiting for a lock held
+	// by the customer's own workloads.
+	scopedLockTimeout = "2s"
 )
 
 // ScopedRelation is one relation registered for a source plus the exact set of
@@ -166,6 +177,31 @@ func ExecuteScoped(ctx context.Context, config Config, params ScopedParams) (Que
 		return QueryResult{}, attempt, &Error{code: CodeDatabaseRejected, cause: err}
 	}
 
+	// ADR-0097 §3 / card S3.2c: the connected database must be the exact
+	// database the source was registered against. The check runs after the
+	// connection and before any statement (including any role proof or plan
+	// walk), so a credential repointed at another database is refused as
+	// DATABASE_REJECTED with nothing executed.
+	identity, identityErr := queryCredentialDatabaseIdentity(dialCtx, tx)
+	if identityErr != nil || identity != config.DatabaseIdentity {
+		attempt.Outcome = OutcomeRejectedDatabase
+		return QueryResult{}, attempt, &Error{code: CodeDatabaseRejected, cause: identityErr}
+	}
+
+	// The database role is the security boundary (ADR-0097 §3), so the server
+	// proves it is least privilege before the agent's statement is even
+	// planned. A cached proof bound to the same connection/credential/scope
+	// pair (server-owned Config.RoleProven) stands in for a fresh proof; a
+	// failure is the tool's closed SOURCE_SQL_NOT_CONFIGURED and nothing runs.
+	if config.RoleProven {
+		attempt.RoleVerificationDigest = roleVerificationDigest(params.Schema.Relations)
+	} else if roleErr := VerifyQueryRole(dialCtx, tx, params.Schema.Relations); roleErr != nil {
+		attempt.Outcome = OutcomeRejectedDatabase
+		return QueryResult{}, attempt, &Error{code: CodeSourceSQLNotConfigured, cause: roleErr}
+	} else {
+		attempt.RoleVerificationDigest = roleVerificationDigest(params.Schema.Relations)
+	}
+
 	planJSON, cost, err := explainPlan(dialCtx, tx, params.SQLText)
 	if err != nil {
 		attempt.Outcome = OutcomeRejectedDatabase
@@ -222,11 +258,27 @@ func prepareScopedTransaction(ctx context.Context, tx pgx.Tx, limits Limits, sch
 		"SET LOCAL max_parallel_workers = 0",
 		"SET LOCAL jit = off",
 		"SET LOCAL search_path = " + scopedSearchPath(schema),
+		// Card S3.2c: every agent-authored transaction pins the lock wait and
+		// the per-operation memory bound. lock_timeout is the card's <= 2s
+		// bound; work_mem is a bounded server-owned value, never a request
+		// field. Both are settable by any role, so a failure here is a real
+		// refusal rather than a tolerated server difference.
+		"SET LOCAL lock_timeout = '" + scopedLockTimeout + "'",
+		"SET LOCAL work_mem = '" + scopedWorkMem + "'",
 	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(ctx, statement); err != nil {
 			return &Error{code: CodeDatabaseRejected, cause: err}
 		}
+	}
+	// temp_file_limit is superuser-only on PostgreSQL, so the card says "where
+	// the server allows it": pin it inside a savepoint so a refusal rolls back
+	// only the pin instead of aborting the whole transaction.
+	if _, err := tx.Exec(ctx, "SAVEPOINT kv_scoped_settings"); err == nil {
+		if _, err := tx.Exec(ctx, "SET LOCAL temp_file_limit = '"+scopedTempFileLimit+"'"); err != nil {
+			_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT kv_scoped_settings")
+		}
+		_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT kv_scoped_settings")
 	}
 	timeoutMS := strconv.FormatInt(limits.StatementTimeout.Milliseconds(), 10) + "ms"
 	for _, name := range []string{"statement_timeout", "idle_in_transaction_session_timeout"} {

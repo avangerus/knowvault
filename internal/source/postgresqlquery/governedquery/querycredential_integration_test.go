@@ -40,6 +40,9 @@ func queryCredentialIntegrationConfig(t *testing.T) (Config, QueryCredentialPara
 	}
 	t.Cleanup(func() { _ = admin.Close(ctx) })
 	seedScopedIntegration(t, ctx, admin)
+	// Card S3.2c: VerifyQueryCredential now runs the full least-privilege proof,
+	// so the candidate role must hold exactly the registered projection.
+	hardenScopedIntegrationRole(t, ctx, admin)
 
 	transaction, err := admin.Begin(ctx)
 	if err != nil {
@@ -80,9 +83,12 @@ func TestVerifyQueryCredentialOnRealPostgreSQL(t *testing.T) {
 		t.Fatalf("wrong database identity = %v (%s), want %s", err, CodeOf(err), CodeQueryCredentialDatabaseMismatch)
 	}
 
-	// The role can SELECT customers.name, so a projection that excludes it is
-	// exactly the column-privilege refusal.
+	// The role can SELECT customers.name, so a projection of the full registered
+	// scope that excludes it is exactly the column-privilege refusal. Both
+	// registered relations stay in the scope so the extra-relation rule (which
+	// runs first) cannot mask the column rule.
 	excluded := QueryCredentialParams{Relations: []ScopedRelation{
+		{Schema: scopedIntegrationSchema, Table: "contracts", Columns: []string{"id", "status", "amount"}},
 		{Schema: scopedIntegrationSchema, Table: "customers", Columns: []string{"id"}},
 	}}
 	if err := VerifyQueryCredential(ctx, config, excluded); CodeOf(err) != CodeQueryCredentialColumnPrivilege {
@@ -90,6 +96,8 @@ func TestVerifyQueryCredentialOnRealPostgreSQL(t *testing.T) {
 	}
 
 	missing := QueryCredentialParams{Relations: []ScopedRelation{
+		{Schema: scopedIntegrationSchema, Table: "contracts", Columns: []string{"id", "status", "amount"}},
+		{Schema: scopedIntegrationSchema, Table: "customers", Columns: []string{"id", "name"}},
 		{Schema: scopedIntegrationSchema, Table: "missing_relation", Columns: []string{"id"}},
 	}}
 	if err := VerifyQueryCredential(ctx, config, missing); CodeOf(err) != CodeQueryCredentialRejected {

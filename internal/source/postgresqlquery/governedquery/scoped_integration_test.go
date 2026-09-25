@@ -80,6 +80,23 @@ func seedScopedIntegration(t *testing.T, ctx context.Context, admin *pgx.Conn) {
 	}
 }
 
+// hardenScopedIntegrationRole narrows the same role to exactly the registered
+// projection, so card S3.2c's least-privilege proof passes while the plan walk
+// fixtures stay in place. It revokes the unregistered view and the foreign
+// table the permissive plan-walk seed granted.
+func hardenScopedIntegrationRole(t *testing.T, ctx context.Context, admin *pgx.Conn) {
+	t.Helper()
+	for _, statement := range []string{
+		`REVOKE ALL ON ` + scopedIntegrationSchema + `.active_contracts FROM ` + scopedIntegrationQueryRole,
+		`REVOKE ALL ON ` + scopedIntegrationForeign + `.foreign_rows FROM ` + scopedIntegrationQueryRole,
+		`REVOKE ALL ON SCHEMA ` + scopedIntegrationForeign + ` FROM ` + scopedIntegrationQueryRole,
+	} {
+		if _, err := admin.Exec(ctx, statement); err != nil {
+			t.Fatalf("harden %q: %v", statement, err)
+		}
+	}
+}
+
 // explainAsQueryRole runs EXPLAIN (VERBOSE, FORMAT JSON) with the query role's
 // rights on the administrative connection, so the plan walk sees exactly the
 // plan the real execution role would produce. search_path is reset to the
@@ -152,7 +169,10 @@ func TestScopedPlanWalkOnRealPostgreSQLPlans(t *testing.T) {
 
 // scopedIntegrationConfig builds the governed connection for the read-only
 // query role. It is only called when the TLS material is supplied, because the
-// package's DSN policy requires sslmode=verify-full.
+// package's DSN policy requires sslmode=verify-full. The registered database
+// identity is recomputed from the live database (the admin DSN points at the
+// same database by convention), because card S3.2c refuses to run when the
+// connected database is not the registered one.
 func scopedIntegrationConfig(t *testing.T, limits Limits) Config {
 	t.Helper()
 	queryDSN := strings.TrimSpace(os.Getenv("KNOWVAULT_TEST_POSTGRES_QUERY_URL"))
@@ -164,8 +184,27 @@ func scopedIntegrationConfig(t *testing.T, limits Limits) Config {
 	if !pool.AppendCertsFromPEM([]byte(caPEM)) {
 		t.Fatalf("KNOWVAULT_TEST_POSTGRES_CA_PEM is not a certificate")
 	}
+	ctx := context.Background()
+	adminDSN := strings.TrimSpace(os.Getenv("KNOWVAULT_TEST_POSTGRES_URL"))
+	if adminDSN == "" {
+		t.Skip("set KNOWVAULT_TEST_POSTGRES_URL for the ADR-0097 end-to-end proof")
+	}
+	admin, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connect admin: %v", err)
+	}
+	defer admin.Close(ctx)
+	transaction, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin identity read: %v", err)
+	}
+	identity, err := queryCredentialDatabaseIdentity(ctx, transaction)
+	_ = transaction.Rollback(ctx)
+	if err != nil {
+		t.Fatalf("read database identity: %v", err)
+	}
 	return Config{
-		ConnectionID: "conn_s3_2_query", DatabaseIdentity: "pgdb:s3_2_test", WorkspaceID: "ws_s3_2",
+		ConnectionID: "conn_s3_2_query", DatabaseIdentity: identity, WorkspaceID: "ws_s3_2",
 		DSN: queryDSN, TrustRoots: pool, Limits: limits,
 	}
 }
@@ -182,6 +221,10 @@ func TestExecuteScopedOnRealPostgreSQL(t *testing.T) {
 	}
 	defer admin.Close(ctx)
 	seedScopedIntegration(t, ctx, admin)
+	// Card S3.2c: ExecuteScoped now proves the role is least privilege before it
+	// plans anything, so the end-to-end role must not hold SELECT on the
+	// unregistered view or on the foreign schema the plan-walk test exercises.
+	hardenScopedIntegrationRole(t, ctx, admin)
 
 	config := scopedIntegrationConfig(t, validLimits())
 	scope := scopedIntegrationScope()
@@ -209,9 +252,13 @@ func TestExecuteScopedOnRealPostgreSQL(t *testing.T) {
 	if _, _, err := ExecuteScoped(ctx, config, ScopedParams{SQLText: `INSERT INTO ` + scopedIntegrationSchema + `.contracts (id) VALUES (99)`, Schema: scope}); CodeOf(err) != CodeSQLRejectedStatic {
 		t.Fatalf("insert = %v, want %s", CodeOf(err), CodeSQLRejectedStatic)
 	}
-	// A relation outside the source is refused by the plan walk.
-	if _, _, err := ExecuteScoped(ctx, config, ScopedParams{SQLText: `SELECT count(*) FROM ` + scopedIntegrationForeign + `.foreign_rows`, Schema: scope}); CodeOf(err) != CodeRelationNotInSource {
-		t.Fatalf("foreign relation = %v, want %s", CodeOf(err), CodeRelationNotInSource)
+	// A relation outside the source is refused. Card S3.2c's least-privilege
+	// proof revoked the foreign table from the role, so PostgreSQL denies the
+	// EXPLAIN itself: the closed code is DATABASE_REJECTED, one layer below the
+	// plan walk (which TestScopedPlanWalkOnRealPostgreSQL still proves with the
+	// permissive planning role).
+	if _, _, err := ExecuteScoped(ctx, config, ScopedParams{SQLText: `SELECT count(*) FROM ` + scopedIntegrationForeign + `.foreign_rows`, Schema: scope}); CodeOf(err) != CodeDatabaseRejected {
+		t.Fatalf("foreign relation = %v, want %s", CodeOf(err), CodeDatabaseRejected)
 	}
 	// A function scan is outside the relation scope.
 	if _, _, err := ExecuteScoped(ctx, config, ScopedParams{SQLText: `SELECT * FROM generate_series(1, 3)`, Schema: scope}); CodeOf(err) != CodeRelationNotInSource {
