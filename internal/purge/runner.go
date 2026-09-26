@@ -9,6 +9,8 @@ package purge
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
@@ -139,13 +141,22 @@ func (runner *Runner) RunOnce(ctx context.Context) (RunOutcome, error) {
 		return RunOutcome{Reclaimed: reclaimed, Processed: processed}, &RunnerError{code: RunnerCodeFailed, cause: err}
 	}
 	outcome := RunOutcome{Reclaimed: reclaimed, Processed: processed}
-	feedbackPurged, err := runner.purger.ProcessFeedbackCommentPurgeQueue(ctx, runner.access, feedbackCommentPurgeBatch)
-	outcome.FeedbackCommentsPurged = feedbackPurged
-	if err != nil {
-		if ctx.Err() != nil {
-			return outcome, &RunnerError{code: RunnerCodeStopped, cause: ctx.Err()}
+	// The feedback-comment queue has no lease/reclaim phase and no fenced
+	// retention state machine of its own (unlike the conversation and
+	// source-version queues above and below); a tick's failure to drain it
+	// must never abort or fail the whole tick -- it is logged content-free
+	// (a fixed message and the operational error's Go type only, never the
+	// error text, which could otherwise echo a SQL literal) and every other
+	// queue still gets its normal chance to run, this tick and every tick
+	// after, since this branch never returns an error up to Run's loop.
+	if ctx.Err() == nil {
+		feedbackPurged, feedbackErr := runner.purger.ProcessFeedbackCommentPurgeQueue(ctx, runner.access, feedbackCommentPurgeBatch)
+		if feedbackErr != nil {
+			slog.Warn("purge runner: feedback comment purge queue tick failed; other purge queues continue",
+				"component", "purge.Runner", "error_type", errorTypeName(feedbackErr))
+		} else {
+			outcome.FeedbackCommentsPurged = feedbackPurged
 		}
-		return outcome, &RunnerError{code: RunnerCodeFailed, cause: err}
 	}
 	if runner.sourceQueue == nil {
 		return outcome, nil
@@ -198,4 +209,14 @@ func (runner *Runner) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// errorTypeName is a content-free error identifier safe for logs: the
+// dependency's Go error type (e.g. "*pgconn.PgError"), never Error() text,
+// which could otherwise carry a SQL literal or a driver-formatted value.
+func errorTypeName(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%T", err)
 }

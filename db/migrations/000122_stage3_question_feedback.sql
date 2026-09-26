@@ -252,16 +252,45 @@ CREATE POLICY question_feedback_comment_purge_queue_tenant ON public.question_fe
     USING (organization_id = app.current_organization_id())
     WITH CHECK (organization_id = app.current_organization_id());
 
+-- No table grant reaches the application role at all: enqueue is possible
+-- only through the SECURITY DEFINER function below, which proves ownership
+-- first. A stray direct INSERT (or a bug reusing a raw connection) has no
+-- privilege to fall back on.
 REVOKE ALL ON TABLE public.question_feedback_comment_purge_queue FROM PUBLIC;
-GRANT SELECT, INSERT ON TABLE public.question_feedback_comment_purge_queue TO knowvault_app;
 GRANT SELECT, DELETE ON TABLE public.question_feedback_comment_purge_queue TO knowvault_purger;
 
--- Enqueue: app-role only, plain INSERT -- never touches encrypted_artifact.
-CREATE FUNCTION app.question_feedback_enqueue_comment_purge(p_org text, p_artifact_id text)
+-- Enqueue: app-role only, and only for an artifact that is provably a
+-- comment_artifact_id-branch artifact of the caller's OWN feedback row --
+-- never an arbitrary artifact id (question text, Evidence, another
+-- member's comment). It also refuses to enqueue the row's CURRENT comment
+-- artifact: only a superseded one may ever be queued, so the drain below can
+-- never race a still-referenced comment out from under a concurrent read.
+CREATE FUNCTION app.question_feedback_enqueue_comment_purge(p_org text, p_owning_row_id text, p_artifact_id text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 BEGIN
     IF session_user <> 'knowvault_app' OR p_org IS DISTINCT FROM app.current_organization_id() THEN
         RAISE EXCEPTION 'feedback comment purge enqueue is restricted to the application role for its own tenant' USING ERRCODE = '42501';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM public.question_feedback feedback
+        WHERE feedback.organization_id = p_org AND feedback.id = p_owning_row_id
+          AND feedback.created_by = app.current_principal_id()
+    ) THEN
+        RAISE EXCEPTION 'question feedback row missing or not owned by the caller' USING ERRCODE = '23514';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM public.encrypted_artifact artifact
+        WHERE artifact.organization_id = p_org AND artifact.id = p_artifact_id
+          AND artifact.owner_table = 'question_feedback' AND artifact.owner_column = 'comment_artifact_id'
+          AND artifact.resource_id = p_owning_row_id
+    ) THEN
+        RAISE EXCEPTION 'artifact is not a comment of the caller''s own feedback row' USING ERRCODE = '23514';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.question_feedback feedback
+        WHERE feedback.organization_id = p_org AND feedback.comment_artifact_id = p_artifact_id
+    ) THEN
+        RAISE EXCEPTION 'cannot enqueue a feedback row''s current comment artifact for purge' USING ERRCODE = '23514';
     END IF;
     INSERT INTO public.question_feedback_comment_purge_queue (organization_id, artifact_id)
     VALUES (p_org, p_artifact_id)
@@ -273,7 +302,11 @@ $$;
 -- artifacts across every tenant -- the purger process is already the sole
 -- trusted tenant-wide operator for this kind of reconciliation sweep, exactly
 -- like the existing conversation/source-version purge queues it drains in
--- the same poll tick (internal/purge.Runner).
+-- the same poll tick (internal/purge.Runner). The UPDATE repeats the exact
+-- same owner-branch and "not anyone's current comment" checks the enqueue
+-- function already proved, so this function alone -- even if some future
+-- caller enqueued a row some other way -- can never erase a text/Evidence/
+-- other-branch artifact or one a feedback row still points to.
 CREATE FUNCTION app.question_feedback_process_comment_purge_queue(p_limit integer)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE
@@ -294,9 +327,16 @@ BEGIN
         LIMIT p_limit
         FOR UPDATE SKIP LOCKED
     LOOP
-        UPDATE public.encrypted_artifact
+        UPDATE public.encrypted_artifact AS artifact
            SET ciphertext = NULL, wrapped_dek = NULL, purged_at = clock_timestamp()
-         WHERE organization_id = item.organization_id AND id = item.artifact_id AND purged_at IS NULL;
+         WHERE artifact.organization_id = item.organization_id AND artifact.id = item.artifact_id
+           AND artifact.owner_table = 'question_feedback' AND artifact.owner_column = 'comment_artifact_id'
+           AND artifact.purged_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM public.question_feedback feedback
+               WHERE feedback.organization_id = artifact.organization_id
+                 AND feedback.comment_artifact_id = artifact.id
+           );
         IF FOUND THEN
             purged_count := purged_count + 1;
         END IF;
@@ -308,8 +348,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION app.question_feedback_enqueue_comment_purge(text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION app.question_feedback_enqueue_comment_purge(text, text) TO knowvault_app;
+REVOKE ALL ON FUNCTION app.question_feedback_enqueue_comment_purge(text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.question_feedback_enqueue_comment_purge(text, text, text) TO knowvault_app;
 REVOKE ALL ON FUNCTION app.question_feedback_process_comment_purge_queue(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.question_feedback_process_comment_purge_queue(integer) TO knowvault_purger;
 
@@ -323,12 +363,17 @@ GRANT EXECUTE ON FUNCTION app.question_feedback_process_comment_purge_queue(inte
 ALTER TABLE public.question_feedback ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.question_feedback FORCE ROW LEVEL SECURITY;
 
+-- Both branches require app.question_run_readable: the manager's error-review
+-- read is authorized to see every member's mark, but never one on an answer
+-- that is not itself currently readable (purged or disclosure-revoked) --
+-- exactly the same readability rule the row's own author is held to.
 CREATE POLICY question_feedback_read ON public.question_feedback
     FOR SELECT
     USING (
         organization_id = app.current_organization_id()
+        AND app.question_run_readable(question_run_id, workspace_id)
         AND (
-            (created_by = app.current_principal_id() AND app.question_run_readable(question_run_id, workspace_id))
+            created_by = app.current_principal_id()
             OR EXISTS (
                 SELECT 1 FROM public.workspace_member manager
                 WHERE manager.organization_id = question_feedback.organization_id

@@ -264,8 +264,8 @@ func (service *Service) SubmitFeedback(ctx context.Context, access database.Acce
 		// decision to erase commits in the same transaction, and the erasure
 		// itself follows within one purger poll interval.
 		if existingCommentArtifactID.Valid {
-			if _, err := tx.Exec(txCtx, `SELECT app.question_feedback_enqueue_comment_purge($1, $2)`,
-				access.OrganizationID, existingCommentArtifactID.String); err != nil {
+			if _, err := tx.Exec(txCtx, `SELECT app.question_feedback_enqueue_comment_purge($1, $2, $3)`,
+				access.OrganizationID, feedbackRowID, existingCommentArtifactID.String); err != nil {
 				return err
 			}
 		}

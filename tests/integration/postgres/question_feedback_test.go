@@ -6,8 +6,10 @@ package postgres_test
 // is reserved to OWNER/MANAGER.
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -750,5 +752,234 @@ func TestQuestionFeedbackReadCommentFunctionDeniesNonAuthorNonManager(t *testing
 	}
 	if count := readAs(t, "usr_fbd_manager"); count != 1 {
 		t.Fatalf("the workspace MANAGER could not read the comment: rows=%d", count)
+	}
+}
+
+// sealFakeEvidenceArtifact inserts a plausible EVIDENCE_METADATA-branch
+// artifact directly (bypassing every bind function, the same way
+// sealArtifactTx elsewhere in this package seeds fixtures): a valid AAD
+// owner tuple, but a wholly different owner_table than question_feedback, so
+// it stands in for "some other content's artifact id" without needing a real
+// evidence_fragment row (encrypted_artifact.resource_id carries no FK).
+func sealFakeEvidenceArtifact(t *testing.T, ctx context.Context, admin *pgxpool.Pool, codec *artifactcrypto.Codec, organizationID, artifactID, resourceID string) {
+	t.Helper()
+	owner, err := artifactcrypto.NewOwnerIdentity(artifactcrypto.EvidenceMetadata, organizationID, resourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := codec.Seal(owner, []byte("fake evidence metadata, not a feedback comment"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+		INSERT INTO public.encrypted_artifact (
+			organization_id, id, owner_table, owner_column, resource_type, resource_id, field_name,
+			ciphertext, size_bytes, nonce, wrapped_dek, wrapped_dek_hash, kek_reference, kek_version, aad_hash, plaintext_hash
+		) VALUES ($1,$2,'evidence_fragment','metadata_artifact_id','EVIDENCE_METADATA',$3,'METADATA',$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	`, organizationID, artifactID, resourceID, envelope.Ciphertext(), envelope.SizeBytes(), envelope.Nonce(),
+		envelope.WrappedDEK(), envelope.WrappedDEKHash(), envelope.KEKReference(), envelope.KEKVersion(),
+		envelope.AADHash(), envelope.PlaintextHash()); err != nil {
+		t.Fatalf("seal fake evidence artifact: %v", err)
+	}
+}
+
+// TestQuestionFeedbackEnqueuePurgeRejectsForeignAndCurrentArtifacts proves
+// review item 1 (blocker): app.question_feedback_enqueue_comment_purge only
+// ever accepts an artifact that is provably a superseded comment_artifact_id
+// of the CALLER's OWN feedback row -- never a question text artifact, a
+// foreign-branch (Evidence) artifact, another member's comment, or the
+// row's own CURRENT comment. Every rejected attempt leaves the queue and the
+// target artifact's ciphertext completely untouched.
+func TestQuestionFeedbackEnqueuePurgeRejectsForeignAndCurrentArtifacts(t *testing.T) {
+	ctx := context.Background()
+	admin := resetStage1Database(t)
+	seedOrganization(t, ctx, admin, "org_fbx", "usr_fbx_owner", "ws_fbx")
+	addFeedbackMember(t, ctx, admin, "org_fbx", "ws_fbx", "usr_fbx_member", "MEMBER")
+	addFeedbackMember(t, ctx, admin, "org_fbx", "ws_fbx", "usr_fbx_other", "MEMBER")
+
+	appStore := openStore(t, ctx, appRole, "knowvault_app")
+	codec := feedbackCodec(t, "org_fbx")
+	seedFeedbackRun(t, ctx, appStore, codec, "org_fbx", "ws_fbx", "run_fbx_1", "usr_fbx_owner", "Вопрос", "Ответ")
+	service := newFeedbackService(t, appStore, codec)
+
+	memberAccess := database.AccessContext{OrganizationID: "org_fbx", PrincipalID: "usr_fbx_member", RequestID: "req_fbx_member"}
+	otherAccess := database.AccessContext{OrganizationID: "org_fbx", PrincipalID: "usr_fbx_other", RequestID: "req_fbx_other"}
+	if _, err := service.SubmitFeedback(ctx, memberAccess, "ws_fbx", "run_fbx_1", question.FeedbackIncorrect, "первый комментарий"); err != nil {
+		t.Fatalf("member submit: %v", err)
+	}
+	if _, err := service.SubmitFeedback(ctx, otherAccess, "ws_fbx", "run_fbx_1", question.FeedbackIncorrect, "комментарий другого участника"); err != nil {
+		t.Fatalf("other submit: %v", err)
+	}
+
+	var memberFeedbackID, memberCommentArtifactID string
+	if err := admin.QueryRow(ctx, `
+		SELECT id, comment_artifact_id FROM public.question_feedback
+		WHERE organization_id = 'org_fbx' AND question_run_id = 'run_fbx_1' AND created_by = 'usr_fbx_member'
+	`).Scan(&memberFeedbackID, &memberCommentArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	var otherCommentArtifactID string
+	if err := admin.QueryRow(ctx, `
+		SELECT comment_artifact_id FROM public.question_feedback
+		WHERE organization_id = 'org_fbx' AND question_run_id = 'run_fbx_1' AND created_by = 'usr_fbx_other'
+	`).Scan(&otherCommentArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	var questionArtifactID string
+	if err := admin.QueryRow(ctx, `
+		SELECT question_text_artifact_id FROM public.question_run WHERE organization_id = 'org_fbx' AND id = 'run_fbx_1'
+	`).Scan(&questionArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	const evidenceArtifactID = "art_fbx_fake_evidence"
+	sealFakeEvidenceArtifact(t, ctx, admin, codec, "org_fbx", evidenceArtifactID, "evf_fbx_fake")
+
+	tryEnqueue := func(t *testing.T, artifactID string) error {
+		t.Helper()
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		setAccessContextForPrincipal(t, ctx, tx, "org_fbx", "usr_fbx_member")
+		_, execErr := tx.Exec(ctx, `SELECT app.question_feedback_enqueue_comment_purge($1, $2, $3)`,
+			"org_fbx", memberFeedbackID, artifactID)
+		if execErr == nil {
+			_ = tx.Commit(ctx)
+		}
+		return execErr
+	}
+
+	cases := map[string]string{
+		"question text artifact":    questionArtifactID,
+		"foreign Evidence artifact": evidenceArtifactID,
+		"another member's comment":  otherCommentArtifactID,
+		"own current comment":       memberCommentArtifactID,
+	}
+	for name, artifactID := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := tryEnqueue(t, artifactID); err == nil {
+				t.Fatalf("enqueue accepted a %s id", name)
+			}
+			var queued int
+			if err := admin.QueryRow(ctx, `
+				SELECT count(*) FROM public.question_feedback_comment_purge_queue
+				WHERE organization_id = 'org_fbx' AND artifact_id = $1
+			`, artifactID).Scan(&queued); err != nil {
+				t.Fatal(err)
+			}
+			if queued != 0 {
+				t.Fatalf("a %s id was queued despite the rejection", name)
+			}
+			var ciphertext []byte
+			if err := admin.QueryRow(ctx, `
+				SELECT ciphertext FROM public.encrypted_artifact WHERE organization_id = 'org_fbx' AND id = $1
+			`, artifactID).Scan(&ciphertext); err != nil {
+				t.Fatal(err)
+			}
+			if ciphertext == nil {
+				t.Fatalf("a %s artifact's ciphertext was erased despite the rejected enqueue", name)
+			}
+		})
+	}
+
+	// The application role has no direct table access at all -- only the
+	// function above (which just proved it validates every attempt).
+	if err := appStore.Write(ctx, memberAccess, func(txCtx context.Context, tx database.Transaction) error {
+		_, execErr := tx.Exec(txCtx, `
+			INSERT INTO public.question_feedback_comment_purge_queue (organization_id, artifact_id) VALUES ($1, $2)
+		`, "org_fbx", "art_direct_insert_attempt")
+		return execErr
+	}); err == nil {
+		t.Fatal("the application role inserted into the purge queue table directly, bypassing the function")
+	}
+}
+
+// TestPurgeRunnerFeedbackCommentQueueFailureDoesNotBlockOtherPurges proves
+// review item 2: a tick whose feedback-comment queue drain fails (here,
+// because the schema predates migration 000122, so the function does not
+// exist) still completes every other queue's work in that same tick -- the
+// conversation purge request queued for this run is still claimed and
+// completed -- and the failure is only logged, never returned as a fatal
+// RunOnce/Run error.
+func TestPurgeRunnerFeedbackCommentQueueFailureDoesNotBlockOtherPurges(t *testing.T) {
+	ctx := context.Background()
+	admin := resetDatabaseThrough(t, "000121_stage3_question_run_interruption.sql")
+	const (
+		organizationID = "org_purge_runner_iso"
+		ownerID        = "usr_purge_runner_iso"
+		workspaceID    = "ws_purge_runner_iso"
+		conversationID = "conv_purge_runner_iso"
+	)
+	seedOrganization(t, ctx, admin, organizationID, ownerID, workspaceID)
+	appStore := openStore(t, ctx, appRole, "knowvault_app")
+	seedConversationForPurgeQueue(t, ctx, appStore, organizationID, ownerID, workspaceID, conversationID)
+
+	appQueue, err := purge.NewQueue(appStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appAccess := database.AccessContext{OrganizationID: organizationID, PrincipalID: ownerID, RequestID: "req_purge_runner_iso_enqueue"}
+	requestID, err := ids.New("purge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appQueue.Enqueue(ctx, appAccess, purge.RequestSpec{
+		RequestID: requestID, WorkspaceID: workspaceID, ConversationID: conversationID,
+		ReasonCode: "RETENTION_REQUEST", IdempotencyKey: "purge-runner-iso", Priority: 10, MaxAttempts: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	purgerStore := openStore(t, ctx, purgerRole, "knowvault_purger")
+	purgeQueue, err := purge.NewQueue(purgerStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	purger, err := purge.NewPurger(purgerStore, time.Now, ids.New)
+	if err != nil {
+		t.Fatal(err)
+	}
+	purgeAccess := database.AccessContext{OrganizationID: organizationID, PrincipalID: "usr_purge_runner_iso_worker", RequestID: "req_purge_runner_iso_worker"}
+	runner, err := purge.NewRunner(purger, purgeQueue, purgeAccess, purge.RunnerConfig{
+		WorkerID: "purger_runner_iso", LeaseSeconds: 30, PollInterval: time.Second, ReclaimLimit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logOutput bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+	defer slog.SetDefault(previousLogger)
+
+	outcome, runErr := runner.RunOnce(ctx)
+	if runErr != nil {
+		t.Fatalf("RunOnce returned an error despite the feedback comment queue being schema-absent: %v", runErr)
+	}
+	if !outcome.Processed {
+		t.Fatal("the conversation purge request was not processed while the feedback comment queue was unavailable")
+	}
+	if outcome.FeedbackCommentsPurged != 0 {
+		t.Fatalf("unexpected feedback comment purge count: %d", outcome.FeedbackCommentsPurged)
+	}
+	logged := logOutput.String()
+	if !strings.Contains(logged, "feedback comment purge queue tick failed") {
+		t.Fatalf("expected a logged warning for the feedback comment purge failure, got: %s", logged)
+	}
+
+	var requestStatus, retentionState string
+	if err := admin.QueryRow(ctx, `
+		SELECT request.status, retention.state
+		  FROM public.conversation_purge_request AS request
+		  JOIN public.conversation_retention AS retention
+		    ON retention.organization_id = request.organization_id
+		   AND retention.conversation_id = request.conversation_id
+		 WHERE request.organization_id = $1 AND request.id = $2
+	`, organizationID, requestID).Scan(&requestStatus, &retentionState); err != nil {
+		t.Fatal(err)
+	}
+	if requestStatus != "SUCCEEDED" || retentionState != "PURGED" {
+		t.Fatalf("conversation purge did not complete despite the feedback queue failure: request=%s retention=%s", requestStatus, retentionState)
 	}
 }
