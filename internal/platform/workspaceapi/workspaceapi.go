@@ -28,6 +28,7 @@ import (
 	"knowvault.local/verified-workspace/internal/conversation"
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/policy"
 	"knowvault.local/verified-workspace/internal/question"
@@ -40,16 +41,22 @@ import (
 	sourceupload "knowvault.local/verified-workspace/internal/source/upload"
 	"knowvault.local/verified-workspace/internal/workspace"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacecontext"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 const (
-	apiPrefix              = "/api/v1"
-	workspacesPath         = apiPrefix + "/workspaces"
-	sourcesPath            = apiPrefix + "/sources"
-	sourceConnectorsPath   = apiPrefix + "/source-connectors"
-	csrfPath               = apiPrefix + "/session/csrf"
-	maxBodyBytes           = 32 << 10
+	apiPrefix            = "/api/v1"
+	workspacesPath       = apiPrefix + "/workspaces"
+	sourcesPath          = apiPrefix + "/sources"
+	sourceConnectorsPath = apiPrefix + "/source-connectors"
+	csrfPath             = apiPrefix + "/session/csrf"
+	maxBodyBytes         = 32 << 10
+	// maxBatchBodyBytes is the body bound of the two card S3.4b batch routes.
+	// One request legitimately carries up to 1000 table tuples or 200 view
+	// selectors, which cannot fit the single-object 32 KiB limit; every other
+	// route keeps that default.
+	maxBatchBodyBytes      = 512 << 10
 	jsonContentType        = "application/json"
 	questionModeExtractive = "EXTRACTIVE"
 	// questionModeGenerative is GEN-1 (ADR-0088): accepted at this transport
@@ -122,9 +129,26 @@ var _ WorkspaceAuditJournalBefore = (*workspacerepository.Store)(nil)
 type WorkspaceAuthority interface {
 	IssueConfirmationGrant(context.Context, database.AccessContext, workspacerepository.IssueGrantRequest) (workspacerepository.AuthorityResult, error)
 	ConfirmManagedSource(context.Context, database.AccessContext, workspacerepository.ConfirmRequest) (workspacerepository.AuthorityResult, error)
+	// ConfirmManagedSourcesBatch is card S3.4b's bounded composite of
+	// ConfirmManagedSource: up to workspacerepository.MaxBatchConfirmTables
+	// tables in one request, each one through the unchanged individual command,
+	// with one closed per-table outcome. The name matches the repository's own
+	// method so the production Store really satisfies this interface; the
+	// compile-time assertion below keeps that from regressing silently.
+	ConfirmManagedSourcesBatch(context.Context, database.AccessContext, workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error)
 	RevokeConfirmationGrant(context.Context, database.AccessContext, workspacerepository.RevokeGrantRequest) (workspacerepository.AuthorityResult, error)
 	RevokeManagedConfirmation(context.Context, database.AccessContext, workspacerepository.RevokeConfirmationRequest) (workspacerepository.AuthorityResult, error)
 }
+
+// The production workspace repository is the one runtime that must satisfy
+// WorkspaceAuthority. Card U-1's screen walkthrough found that it did not: the
+// interface named ConfirmManagedSourceBatch while the Store implements
+// ConfirmManagedSourcesBatch, so the type assertion in authorityCommands()
+// failed at run time and every managed-source confirmation (individual and
+// batch) answered 503 SERVICE_UNAVAILABLE -- exactly the «Confirm» error the
+// owner saw on the demo stand. This assertion makes that mismatch a build
+// failure instead of a silent dead route.
+var _ WorkspaceAuthority = (*workspacerepository.Store)(nil)
 
 // ConnectionTrustAuthority is the ADR-0087 §2 connection trust verification
 // runtime. Like WorkspaceAuthority it is satisfied at composition time by the
@@ -188,6 +212,20 @@ type SourceConnectionBootstrap interface {
 	BootstrapPostgreSQLConnection(context.Context, database.AccessContext, registration.PostgreSQLConnectionBootstrapRequest) (registration.PostgreSQLConnectionBootstrapResult, error)
 }
 
+// SourceConnectionDrafts is card D-1's workspace-scoped view of unfinished
+// PostgreSQL connections plus the pointer-only discard. It is deliberately a
+// separate optional capability (exactly like SourceConnectorCatalog and
+// SourceDiscovery) so every existing SourceService implementation and test
+// fake stays source-compatible: the production facade implements it by pure
+// delegation to the workspace repository, and a service that does not means
+// the runtime was not composed for this route. Reads audit through the same
+// source-metadata boundary as ListSources; both methods return the identical
+// content-free CodeNotFound for an unauthorized, unknown or foreign workspace.
+type SourceConnectionDrafts interface {
+	ListSourceConnectionDrafts(context.Context, database.AccessContext, string) ([]workspacerepository.SourceConnectionDraft, error)
+	DiscardSourceConnectionDraft(context.Context, database.AccessContext, string, string) error
+}
+
 // SourceDiscovery is the asynchronous connection inventory capability. The
 // POST command accepts only a connection reference and idempotency key; the
 // GET command returns a bounded server-derived catalog projection.
@@ -197,9 +235,31 @@ type SourceDiscovery interface {
 }
 
 // SourceDiscoveryRegistration resolves and registers one server-issued view
-// selector. No projection metadata is accepted from the HTTP request.
+// selector. No projection metadata is accepted from the HTTP request; the
+// only caller-supplied content is the optional excluded-column-ordinal list
+// (ADR-0097), narrowing a base/partitioned-table projection the server
+// already discovered, and the optional registration mode (S3 card 4):
+// INDEXED (the default) or QUERY_ONLY ("only for SQL queries, not indexed").
 type SourceDiscoveryRegistration interface {
-	RegisterDiscoveredView(context.Context, database.AccessContext, string, string) (registration.RegisterResult, error)
+	RegisterDiscoveredView(context.Context, database.AccessContext, string, string, []int, string) (registration.RegisterResult, error)
+	// RegisterDiscoveredViews is card S3.4b's bounded batch: one server request
+	// registers up to registration.MaxBatchRegisterViews selectors with the
+	// same per-table rules and a per-table outcome.
+	RegisterDiscoveredViews(context.Context, database.AccessContext, string, []registration.BatchRegisterItem) (registration.BatchRegisterResult, error)
+}
+
+// SourceSchemaProvider is ADR-0097's optional, read-only source schema
+// capability behind the knowvault_source_schema knowledge tool. It is
+// discovered on the injected source service exactly like the other optional
+// source capabilities, so a service that does not implement it leaves the
+// tool failing closed rather than widening the required SourceService
+// interface. The production implementation is the workspace repository's
+// sourceMetadataRead boundary: authorization, cross-tenant invisibility and
+// the source.metadata.read.* audit journal stay there, and neither method
+// touches the external source database.
+type SourceSchemaProvider interface {
+	ListSourceSchemas(context.Context, database.AccessContext, string) ([]workspacerepository.SourceSchemaSource, error)
+	SourceSchema(context.Context, database.AccessContext, string, string, string, int, int) (workspacerepository.SourceSchema, error)
 }
 
 // EvidenceService is the read boundary for the Evidence viewer route. The
@@ -253,6 +313,21 @@ type QuestionService interface {
 	// the source scope's entire current snapshot.
 	StructuredRowset(ctx context.Context, access database.AccessContext, workspaceID, fragmentID, scope string) (*question.RowsetEvidence, error)
 }
+
+// QuestionFeedbackService is the narrow answer-feedback capability
+// (R1.S10.s1.T4). It is satisfied by the production *question.Service and
+// reached only by a type assertion on handler.questions; a QuestionService
+// that does not implement it fails the feedback/report routes closed as a
+// content-free SERVICE_UNAVAILABLE rather than silently no-oping the mark or
+// bypassing the workspace.read_content / workspace.manage policy gates that
+// live in internal/question.
+type QuestionFeedbackService interface {
+	SubmitFeedback(ctx context.Context, access database.AccessContext, workspaceID, runID string, verdict question.FeedbackVerdict, comment string) (question.Feedback, error)
+	OwnFeedback(ctx context.Context, access database.AccessContext, workspaceID, runID string) (question.Feedback, bool, error)
+	FeedbackReport(ctx context.Context, access database.AccessContext, workspaceID string) ([]question.FeedbackReportEntry, error)
+}
+
+var _ QuestionFeedbackService = (*question.Service)(nil)
 
 // ConversationService is the single lifecycle/read authority.  It returns
 // metadata and opaque Question Run links; handlers enrich those links only via
@@ -363,6 +438,32 @@ type Handler struct {
 	// means a presented profile header is ignored, because granting it without
 	// an authority to journal the decision would be an unrecorded ablation.
 	searchProfiles SearchProfileChannel
+	// modelContext is S2 card A's optional PostgreSQL-backed workspace model
+	// context capability (ADR-0098), wired by composition only once
+	// internal/workspacecontext.Store is mounted. A nil value keeps every
+	// model-context document route content-free SERVICE_UNAVAILABLE.
+	modelContext ModelContextService
+	// modelContextProposals is card E's optional workspacecontext.ProposalService
+	// implementation. A nil value keeps every proposal route content-free
+	// SERVICE_UNAVAILABLE, per S2-CONTRACT.md.
+	modelContextProposals workspacecontext.ProposalService
+	// modelContextProposalExamples is the optional example-dialogue resolver
+	// (see model_context.go's file-level deviation note 3). A nil value keeps
+	// every listed proposal's examples empty and hidden_examples at 0.
+	modelContextProposalExamples ProposalExampleResolver
+	// workspaceContext is ADR-0098's optional Reader capability for the
+	// knowvault_workspace_context / tools/workspace-context knowledge tool
+	// and the MCP initialize instructions' single-workspace rendered
+	// context, wired by composition only when a workspacecontext store
+	// (card A) is mounted. A nil value keeps every workspace-context surface
+	// content-free SERVICE_UNAVAILABLE, exactly like the other optional
+	// capabilities; EnableWorkspaceContext (mcp_adapter.go) sets it. It backs
+	// both the MCP tool and the REST tool-parity route
+	// (endpointWorkspaceToolWorkspaceContext, via workspaceToolDispatch) --
+	// the one kept implementation of that path; card A's
+	// endpointModelContextTool duplicate was removed during S2 integration
+	// (see model_context.go's file-level deviation note 4).
+	workspaceContext workspacecontext.Reader
 }
 
 // GovernedQueryService is the ADR-0089 orchestration boundary
@@ -511,12 +612,14 @@ func newHandlerWithQuestionsAndConversations(authenticator Authenticator, servic
 // decoded into aliases, or sent to the service.
 func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if handler == nil || handler.authenticator == nil || handler.service == nil || handler.sources == nil || handler.requestIDs == nil || request == nil {
+		setServerFailureCause(writer, "workspace handler dependency missing", "unwired boundary")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "")
 		return
 	}
 	endpoint, pathCode := parseEndpoint(request)
 	requestID, requestIDErr := handler.requestIDs.New()
 	if requestIDErr != nil || !validRequestID(requestID) {
+		setServerFailureCause(writer, "workspace request id generation failed", "ENTROPY_UNAVAILABLE")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "")
 		return
 	}
@@ -600,6 +703,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	case endpointSourceDiscoveryRegister:
 		handler.registerSourceDiscoveryView(writer, request, access, requestID,
 			endpoint.discoveryRequestID, endpoint.discoveryViewID)
+	case endpointSourceDiscoveryRegisterBatch:
+		handler.registerSourceDiscoveryViewBatch(writer, request, access, requestID, endpoint.discoveryRequestID)
 	case endpointSourceActivate:
 		handler.activateSource(writer, request, access, requestID, endpoint.sourceScopeID)
 	case endpointSourceSync:
@@ -614,6 +719,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		}
 	case endpointWorkspaceSourceRemove:
 		handler.removeSource(writer, request, access, requestID, endpoint.workspaceID, endpoint.sourceScopeID)
+	case endpointWorkspaceSourceDrafts:
+		handler.listSourceConnectionDrafts(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointWorkspaceSourceDraftDiscard:
+		handler.discardSourceConnectionDraft(writer, request, access, requestID, endpoint.workspaceID, endpoint.connectionID)
 	case endpointEvidenceGet:
 		handler.evidenceGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.fragmentID)
 	case endpointWorkspaceAuditEvents:
@@ -622,6 +731,14 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.questionCreate(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointQuestionGet:
 		handler.questionGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.questionRunID)
+	case endpointQuestionFeedback:
+		if request.Method == http.MethodGet {
+			handler.questionFeedbackGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.questionRunID)
+		} else {
+			handler.questionFeedbackSubmit(writer, request, access, requestID, endpoint.workspaceID, endpoint.questionRunID)
+		}
+	case endpointQuestionFeedbackReport:
+		handler.questionFeedbackReport(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointConversationList:
 		handler.conversationList(writer, request, access, requestID, endpoint.workspaceID, endpoint.conversationPaginated, endpoint.conversationPageLimit, endpoint.conversationCursor)
 	case endpointConversationGet:
@@ -636,10 +753,16 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.confirmGrantRevoke(writer, request, access, requestID, endpoint.workspaceID, endpoint.authorityID)
 	case endpointManagedSourceConfirm:
 		handler.managedSourceConfirm(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointManagedSourceConfirmBatch:
+		handler.managedSourceConfirmBatch(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointManagedConfirmationRevoke:
 		handler.managedConfirmationRevoke(writer, request, access, requestID, endpoint.workspaceID, endpoint.authorityID)
 	case endpointSourceConnectionVerifyTrust:
 		handler.verifyConnectionTrust(writer, request, access, requestID, endpoint.connectionID)
+	case endpointSourceQueryCredentialSet:
+		handler.setSourceQueryCredential(writer, request, access, requestID, endpoint.workspaceID, endpoint.connectionID)
+	case endpointSourceQueryCredentialClear:
+		handler.clearSourceQueryCredential(writer, request, access, requestID, endpoint.workspaceID, endpoint.connectionID)
 	case endpointAccessCodes:
 		if request.Method == http.MethodGet {
 			handler.accessCodeList(writer, request, access, requestID, endpoint.workspaceID)
@@ -674,8 +797,25 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	case endpointMetricDefinitionApprove:
 		handler.metricDefinitionApprove(writer, request, access, requestID, endpoint.workspaceID,
 			endpoint.metricDefinitionID)
+	case endpointModelContextGet:
+		handler.modelContextGet(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextSave:
+		handler.modelContextSave(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextVersions:
+		handler.modelContextVersionsList(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextVersionGet:
+		handler.modelContextVersionGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextVersion)
+	case endpointModelContextRestore:
+		handler.modelContextRestore(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextVersion)
+	case endpointModelContextProposals:
+		handler.modelContextProposalsList(writer, request, access, requestID, endpoint.workspaceID)
+	case endpointModelContextProposalAccept:
+		handler.modelContextProposalAccept(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
+	case endpointModelContextProposalReject:
+		handler.modelContextProposalReject(writer, request, access, requestID, endpoint.workspaceID, endpoint.modelContextProposalID)
 	case endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep,
-		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+		endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh,
+		endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
 		handler.workspaceToolDispatch(writer, request, access, requestID, endpoint)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
@@ -704,6 +844,15 @@ const (
 	endpointSourceSync
 	endpointWorkspaceSources
 	endpointWorkspaceSourceRemove
+	// endpointWorkspaceSourceDrafts is card D-1's workspace-scoped read of the
+	// unfinished PostgreSQL connections the workspace started
+	// (GET /api/v1/workspaces/{workspace_id}/source-drafts). It is a separate
+	// route rather than a field of the sources envelope so the MCP
+	// sources/list projection stays byte-identical to its own contract.
+	endpointWorkspaceSourceDrafts
+	// endpointWorkspaceSourceDraftDiscard removes one workspace-scoped draft
+	// pointer (DELETE /api/v1/workspaces/{workspace_id}/source-drafts/{connection_id}).
+	endpointWorkspaceSourceDraftDiscard
 	endpointEvidenceGet
 	endpointWorkspaceAuditEvents
 	endpointQuestionCreate
@@ -820,6 +969,110 @@ const (
 	// denial and the projection are the same implementation, not a
 	// re-derivation.
 	endpointWorkspaceToolRefresh
+	// endpointModelContextGet/endpointModelContextSave are S2 card A's
+	// (ADR-0098) current-context routes on the same path
+	// (GET / PUT /api/v1/workspaces/{workspace_id}/model-context), split into
+	// two kinds exactly like endpointWorkspaceGet/endpointWorkspaceUpdate so
+	// each keeps its own single HTTP method.
+	endpointModelContextGet
+	endpointModelContextSave
+	// endpointModelContextVersions is the read-only history list
+	// (GET .../model-context/versions).
+	endpointModelContextVersions
+	// endpointModelContextVersionGet is the exact-version read
+	// (GET .../model-context/versions/{version}).
+	endpointModelContextVersionGet
+	// endpointModelContextRestore mints a new version from a historical one
+	// (POST .../model-context/versions/{version}:restore).
+	endpointModelContextRestore
+	// endpointModelContextProposals is the OWNER/MANAGER-only proposal review
+	// queue (GET .../model-context/proposals).
+	endpointModelContextProposals
+	// endpointModelContextProposalAccept/endpointModelContextProposalReject are
+	// the OWNER/MANAGER-only proposal decisions
+	// (POST .../model-context/proposals/{proposal_id}:accept|:reject).
+	endpointModelContextProposalAccept
+	endpointModelContextProposalReject
+	// endpointWorkspaceToolWorkspaceContext is ADR-0098's REST tool-parity
+	// route for the knowvault_workspace_context knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/workspace-context, the
+	// only workspace tool-parity route that is POST-only: its optional
+	// terms/section filter travels in a JSON body, not a query string). It
+	// dispatches through the identical injected workspacecontext.Reader the
+	// MCP tool and the chat tool runtime compose, so the projection and the
+	// content-free denial are the same implementation, not a re-derivation.
+	//
+	// S2 integration note: card A also implemented this same REST path as a
+	// dedicated endpointModelContextTool kind backed by ModelContextService,
+	// which duplicated this projection outside the shared
+	// workspacecontext.Reader/MatchTerms path the MCP tool and the chat tool
+	// runtime use. That duplicate was removed during merge so
+	// tools/workspace-context has exactly one implementation, the one that
+	// is byte-identical with MCP and chat (S2-CONTRACT.md "Tool parity").
+	endpointWorkspaceToolWorkspaceContext
+	// endpointWorkspaceToolSourceSchema is ADR-0097's REST tool-parity route
+	// for the knowvault_source_schema knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/source-schema, POST-only
+	// like the workspace-context route: its optional source_id/table/offset/
+	// limit arguments travel in a JSON body). It dispatches through the
+	// identical injected SourceSchemaProvider and shared
+	// sourceSchemaToolResult core the MCP tool and the chat tool runtime
+	// compose, so the projection, the page window and the content-free denial
+	// are the same implementation, not a re-derivation.
+	endpointWorkspaceToolSourceSchema
+	// endpointWorkspaceToolSourceSQL is ADR-0097's REST tool-parity route for
+	// the knowvault_source_sql knowledge tool
+	// (POST /api/v1/workspaces/{workspace_id}/tools/source-sql, POST-only like
+	// the source-schema route: its source_id/sql/purpose arguments travel in a
+	// JSON body). It dispatches through the identical injected
+	// SourceSQLProvider and shared sourceSQLToolResult core the MCP tool and
+	// the chat tool runtime compose, so the projection, the closed refusal
+	// vocabulary and the content-free denial are the same implementation, not
+	// a re-derivation. The route is the agent-facing parity surface ADR-0097
+	// §2 permits; no UI, operator or user-facing field accepts SQL.
+	endpointWorkspaceToolSourceSQL
+	// endpointSourceQueryCredentialSet is S3 card 2b's organization-OWNER
+	// control that sets or clears the opaque SQL query credential reference of
+	// one PostgreSQL source connection
+	// (POST /api/v1/workspaces/{workspace_id}/source-connections/{connection_id}:set-query-credential).
+	// The reference is an opaque 'cred' id; no DSN, password or secret value is
+	// ever accepted or returned. A non-owner, an unknown workspace and a
+	// foreign connection are one content-free 404, like every other OWNER
+	// source operation.
+	endpointSourceQueryCredentialSet
+	// endpointSourceQueryCredentialClear is the removal half
+	// (POST /api/v1/workspaces/{workspace_id}/source-connections/{connection_id}:clear-query-credential).
+	// After it the tool answers SOURCE_SQL_NOT_CONFIGURED and the Sources card
+	// shows "SQL not configured".
+	endpointSourceQueryCredentialClear
+	// endpointManagedSourceConfirmBatch is card S3.4b's bounded batch of
+	// WORKSPACE_MANAGED_CONFIRM commands
+	// (POST /api/v1/workspaces/{workspace_id}/managed-source-confirmations:batch).
+	// It is a composite of the single confirm route, not a new ADR-0053
+	// operation: the repository confirms each named table through the unchanged
+	// individual command and returns one closed per-table outcome, so every
+	// table keeps the identical decision phase, confirmation document, audit
+	// event and replay receipt. At most MaxBatchConfirmTables tables per
+	// request; a larger request is refused as a whole.
+	endpointManagedSourceConfirmBatch
+	// endpointSourceDiscoveryRegisterBatch is card S3.4b's bounded batch of
+	// discovered-view registrations
+	// (POST /api/v1/sources/discovery/{request_id}:register-batch). It accepts
+	// at most registration.MaxBatchRegisterViews selectors and returns one
+	// per-view outcome, so registering hundreds of discovered tables from the
+	// wizard is one server request per batch instead of one request per table.
+	endpointSourceDiscoveryRegisterBatch
+	// endpointQuestionFeedback is R1.S10.s1.T4's answer-feedback mark
+	// (GET/POST /api/v1/workspaces/{workspace_id}/questions/{question_run_id}:feedback).
+	// GET returns the caller's own current mark, if any; POST sets or changes
+	// it. Access mirrors the answer's own visibility (workspace.read_content).
+	endpointQuestionFeedback
+	// endpointQuestionFeedbackReport is the workspace OWNER/MANAGER
+	// error-review report
+	// (GET /api/v1/workspaces/{workspace_id}/questions:feedback-report): every
+	// member's current feedback with the question, the answer and the
+	// decrypted comment.
+	endpointQuestionFeedbackReport
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -852,6 +1105,12 @@ func workspaceToolEndpointKind(kind workspacetools.Kind) (endpointKind, bool) {
 		return endpointWorkspaceToolSources, true
 	case workspacetools.KindRefresh:
 		return endpointWorkspaceToolRefresh, true
+	case workspacetools.KindWorkspaceContext:
+		return endpointWorkspaceToolWorkspaceContext, true
+	case workspacetools.KindSourceSchema:
+		return endpointWorkspaceToolSourceSchema, true
+	case workspacetools.KindSourceSQL:
+		return endpointWorkspaceToolSourceSQL, true
 	default:
 		return 0, false
 	}
@@ -875,6 +1134,13 @@ type endpoint struct {
 	// int64; an unparsable segment never reaches here as a route.
 	metricDefinitionID      string
 	metricDefinitionVersion int64
+	// modelContextVersion is the parsed exact-version read/restore target for
+	// GET/POST .../model-context/versions/{version}[:restore] (S2 card A): a
+	// validated positive decimal int64, exactly like metricDefinitionVersion.
+	// modelContextProposalID is the parsed {proposal_id} segment of
+	// .../model-context/proposals/{proposal_id}:accept|:reject.
+	modelContextVersion    int64
+	modelContextProposalID string
 	// journalBeforeSequence is the parsed, validated before_sequence cursor for
 	// the audit-journal continuation route. It is nil for the legacy first
 	// screen (no query) and never carries a client value the route did not
@@ -939,6 +1205,11 @@ type endpoint struct {
 	readLimit            int64
 	readExpectedSpanHash string
 	readCursor           *string
+	// readOutline is the strictly parsed outline=true query parameter
+	// (R1.S9.s1.T1): the REST twin of the MCP knowvault_read outline argument.
+	// It is mutually exclusive with cursor and with a nonzero offset, exactly
+	// like the MCP argument.
+	readOutline bool
 	// refreshSourceScopeID, refreshOffset and refreshLimit are the strictly
 	// parsed tools/refresh parameters. An explicit source_scope_id narrows the
 	// refresh to exactly one bound scope; offset/limit page the resolved source
@@ -1003,6 +1274,18 @@ func parseEndpoint(request *http.Request) (endpoint, string) {
 		result.conversationCursor = cursor
 		return result, ""
 	}
+	if result.kind == endpointModelContextProposals {
+		// The proposal review queue is the model-context route that carries a
+		// query string (?status=&limit=&cursor=); modelContextProposalsList
+		// re-parses it with the same closed validator. Without this branch the
+		// generic "no query string" rule below rejected the web interface's
+		// ?status=PROPOSED with REQUEST_INVALID, so the queue never loaded
+		// (found by card U-1's screen walkthrough).
+		if _, _, _, ok := validModelContextProposalsQuery(request.URL); !ok {
+			return endpoint{}, "REQUEST_INVALID"
+		}
+		return result, ""
+	}
 	if result.kind == endpointWorkspaceToolListObjects {
 		offset, limit, allVersions, ok := validListObjectsQuery(request.URL)
 		if !ok {
@@ -1060,6 +1343,7 @@ func parseEndpoint(request *http.Request) (endpoint, string) {
 		result.readLimit = read.limit
 		result.readExpectedSpanHash = read.expectedSpanHash
 		result.readCursor = read.cursor
+		result.readOutline = read.outline
 		return result, ""
 	}
 	if result.kind == endpointWorkspaceToolRefresh {
@@ -1648,6 +1932,7 @@ type workspaceToolReadQuery struct {
 	limit            int64
 	expectedSpanHash string
 	cursor           *string
+	outline          bool
 }
 
 // validWorkspaceToolReadQuery strictly validates the tools/read query string,
@@ -1672,7 +1957,7 @@ func validWorkspaceToolReadQuery(requestURL *url.URL) (workspaceToolReadQuery, b
 		return workspaceToolReadQuery{}, false
 	}
 	values, err := url.ParseQuery(requestURL.RawQuery)
-	if err != nil || len(values) == 0 || len(values) > 6 {
+	if err != nil || len(values) == 0 || len(values) > 7 {
 		return workspaceToolReadQuery{}, false
 	}
 	result := workspaceToolReadQuery{}
@@ -1715,6 +2000,15 @@ func validWorkspaceToolReadQuery(requestURL *url.URL) (workspaceToolReadQuery, b
 			}
 			cursor := raw
 			result.cursor = &cursor
+		case "outline":
+			switch raw {
+			case "true":
+				result.outline = true
+			case "false":
+				result.outline = false
+			default:
+				return workspaceToolReadQuery{}, false
+			}
 		default:
 			return workspaceToolReadQuery{}, false
 		}
@@ -1723,6 +2017,9 @@ func validWorkspaceToolReadQuery(requestURL *url.URL) (workspaceToolReadQuery, b
 		return workspaceToolReadQuery{}, false
 	}
 	if result.cursor != nil && result.offset != 0 {
+		return workspaceToolReadQuery{}, false
+	}
+	if result.outline && (result.cursor != nil || result.offset != 0) {
 		return workspaceToolReadQuery{}, false
 	}
 	return result, true
@@ -1791,6 +2088,19 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 			discoveryPath := strings.TrimPrefix(remainder, discoveryPrefix)
 			const viewMarker = "/views/"
 			const registerSuffix = ":register"
+			// Card S3.4b: one server request registers a whole batch of
+			// discovered tables (.../discovery/{request_id}:register-batch).
+			// It is checked before the plain discovery-read fallback because a
+			// batch id is itself a valid opaque id, so an unordered match would
+			// silently route it to the read.
+			const registerBatchSuffix = ":register-batch"
+			if !strings.Contains(discoveryPath, "/") && strings.HasSuffix(discoveryPath, registerBatchSuffix) {
+				requestID := strings.TrimSuffix(discoveryPath, registerBatchSuffix)
+				if validOpaqueID(requestID) {
+					return endpoint{kind: endpointSourceDiscoveryRegisterBatch, discoveryRequestID: requestID}, ""
+				}
+				return endpoint{}, "NOT_FOUND"
+			}
 			if strings.Contains(discoveryPath, viewMarker) && strings.HasSuffix(discoveryPath, registerSuffix) {
 				parts := strings.SplitN(discoveryPath, viewMarker, 2)
 				viewID := strings.TrimSuffix(parts[1], registerSuffix)
@@ -1887,6 +2197,33 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	if len(parts) == 2 && parts[1] == "sources" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointWorkspaceSources, workspaceID: parts[0]}, ""
 	}
+	if len(parts) == 2 && parts[1] == "source-drafts" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointWorkspaceSourceDrafts, workspaceID: parts[0]}, ""
+	}
+	// S3 card 2b: the organization-OWNER control over one source connection's
+	// SQL query credential (ADR-0097). The connection id is the same
+	// workspace source id the Sources card shows.
+	if len(parts) == 3 && parts[1] == "source-connections" && validOpaqueID(parts[0]) {
+		if strings.HasSuffix(parts[2], ":set-query-credential") {
+			connectionID := strings.TrimSuffix(parts[2], ":set-query-credential")
+			if validOpaqueID(connectionID) {
+				return endpoint{kind: endpointSourceQueryCredentialSet, workspaceID: parts[0], connectionID: connectionID}, ""
+			}
+		}
+		if strings.HasSuffix(parts[2], ":clear-query-credential") {
+			connectionID := strings.TrimSuffix(parts[2], ":clear-query-credential")
+			if validOpaqueID(connectionID) {
+				return endpoint{kind: endpointSourceQueryCredentialClear, workspaceID: parts[0], connectionID: connectionID}, ""
+			}
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
+	if len(parts) == 3 && parts[1] == "source-drafts" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
+		if request.Method == http.MethodDelete {
+			return endpoint{kind: endpointWorkspaceSourceDraftDiscard, workspaceID: parts[0], connectionID: parts[2]}, ""
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
 	if len(parts) == 3 && parts[1] == "sources" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		if request.Method == http.MethodDelete {
 			return endpoint{kind: endpointWorkspaceSourceRemove, workspaceID: parts[0], sourceScopeID: parts[2]}, ""
@@ -1929,6 +2266,53 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 		}
 		return endpoint{kind: endpointMetricDefinitionGet, workspaceID: parts[0],
 			metricDefinitionID: parts[2], metricDefinitionVersion: version}, ""
+	}
+	// S2 card A (ADR-0098): the workspace model context document, its version
+	// history and its deterministic-proposal review queue. GET/PUT share one
+	// path exactly like the bare workspace route above; every other action is
+	// its own colon path so the GET routes keep 405-on-POST.
+	if len(parts) == 2 && parts[1] == "model-context" && validOpaqueID(parts[0]) {
+		if request.Method == http.MethodGet {
+			return endpoint{kind: endpointModelContextGet, workspaceID: parts[0]}, ""
+		}
+		return endpoint{kind: endpointModelContextSave, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 3 && parts[1] == "model-context" && parts[2] == "versions" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointModelContextVersions, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 4 && parts[1] == "model-context" && parts[2] == "versions" && validOpaqueID(parts[0]) {
+		if strings.HasSuffix(parts[3], ":restore") && len(parts[3]) > len(":restore") {
+			version, ok := modelContextVersionSegment(strings.TrimSuffix(parts[3], ":restore"))
+			if !ok {
+				return endpoint{}, "NOT_FOUND"
+			}
+			return endpoint{kind: endpointModelContextRestore, workspaceID: parts[0], modelContextVersion: version}, ""
+		}
+		version, ok := modelContextVersionSegment(parts[3])
+		if !ok {
+			return endpoint{}, "NOT_FOUND"
+		}
+		return endpoint{kind: endpointModelContextVersionGet, workspaceID: parts[0], modelContextVersion: version}, ""
+	}
+	if len(parts) == 3 && parts[1] == "model-context" && parts[2] == "proposals" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointModelContextProposals, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 4 && parts[1] == "model-context" && parts[2] == "proposals" && validOpaqueID(parts[0]) {
+		if strings.HasSuffix(parts[3], ":accept") && len(parts[3]) > len(":accept") {
+			proposalID := strings.TrimSuffix(parts[3], ":accept")
+			if validOpaqueID(proposalID) {
+				return endpoint{kind: endpointModelContextProposalAccept, workspaceID: parts[0], modelContextProposalID: proposalID}, ""
+			}
+			return endpoint{}, "NOT_FOUND"
+		}
+		if strings.HasSuffix(parts[3], ":reject") && len(parts[3]) > len(":reject") {
+			proposalID := strings.TrimSuffix(parts[3], ":reject")
+			if validOpaqueID(proposalID) {
+				return endpoint{kind: endpointModelContextProposalReject, workspaceID: parts[0], modelContextProposalID: proposalID}, ""
+			}
+			return endpoint{}, "NOT_FOUND"
+		}
+		return endpoint{}, "NOT_FOUND"
 	}
 	if len(parts) == 2 && parts[1] == "access-codes" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointAccessCodes, workspaceID: parts[0]}, ""
@@ -1979,6 +2363,16 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	if len(parts) == 2 && parts[1] == "questions" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointQuestionCreate, workspaceID: parts[0]}, ""
 	}
+	if len(parts) == 2 && parts[1] == "questions:feedback-report" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointQuestionFeedbackReport, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 3 && parts[1] == "questions" && validOpaqueID(parts[0]) && strings.HasSuffix(parts[2], ":feedback") {
+		runID := strings.TrimSuffix(parts[2], ":feedback")
+		if validOpaqueID(runID) {
+			return endpoint{kind: endpointQuestionFeedback, workspaceID: parts[0], questionRunID: runID}, ""
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
 	if len(parts) == 3 && parts[1] == "questions" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		return endpoint{kind: endpointQuestionGet, workspaceID: parts[0], questionRunID: parts[2]}, ""
 	}
@@ -2011,6 +2405,9 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 		if validOpaqueID(grantID) {
 			return endpoint{kind: endpointConfirmGrantRevoke, workspaceID: parts[0], authorityID: grantID}, ""
 		}
+	}
+	if len(parts) == 2 && parts[1] == "managed-source-confirmations:batch" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointManagedSourceConfirmBatch, workspaceID: parts[0]}, ""
 	}
 	if len(parts) == 2 && parts[1] == "managed-source-confirmations" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointManagedSourceConfirm, workspaceID: parts[0]}, ""
@@ -2057,20 +2454,31 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 
 func methodAllowed(endpoint endpoint, method string) bool {
 	switch endpoint.kind {
-	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet:
+	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals, endpointWorkspaceSourceDrafts, endpointQuestionFeedbackReport:
 		return method == http.MethodGet
-	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh, endpointQuestionFeedback:
 		return method == http.MethodGet || method == http.MethodPost
+	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
+		// ADR-0098's tool-parity route is POST-only (S2-CONTRACT.md "Tool
+		// parity"): its optional filter travels in a JSON body, unlike the
+		// other six GET/POST workspace tool-parity routes. ADR-0097's
+		// source-schema and source-sql routes follow the same shape.
+		return method == http.MethodPost
 	case endpointWorkspaceSourceRemove:
+		return method == http.MethodDelete
+	case endpointWorkspaceSourceDraftDiscard:
 		return method == http.MethodDelete
 	case endpointMCP:
 		return method == http.MethodPost
-	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
-		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
+	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceDiscoveryRegisterBatch, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
+		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedSourceConfirmBatch, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
-		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove:
+		endpointSourceQueryCredentialSet, endpointSourceQueryCredentialClear,
+		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
+		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject:
 		return method == http.MethodPost
-	case endpointWorkspaceUpdate, endpointMemberChange:
+	case endpointWorkspaceUpdate, endpointMemberChange, endpointModelContextSave:
 		return method == http.MethodPut
 	case endpointMemberRemove:
 		return method == http.MethodDelete
@@ -2081,20 +2489,29 @@ func methodAllowed(endpoint endpoint, method string) bool {
 
 func allowedMethods(endpoint endpoint) string {
 	switch endpoint.kind {
-	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet:
+	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals, endpointQuestionFeedbackReport:
 		return http.MethodGet
-	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh, endpointQuestionFeedback:
 		return http.MethodGet + ", " + http.MethodPost
+	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
+		return http.MethodPost
+	case endpointWorkspaceSourceDrafts:
+		return http.MethodGet
+	case endpointWorkspaceSourceDraftDiscard:
+		return http.MethodDelete
 	case endpointWorkspaceSourceRemove:
 		return http.MethodDelete
 	case endpointMCP:
 		return http.MethodPost
-	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
-		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
+	case endpointWorkspaceCreate, endpointWorkspaceArchive, endpointMemberAdd, endpointOwnershipTransfer, endpointSourceRegister, endpointSourceConnectionBootstrap, endpointSourceDiscoveryRequest, endpointSourceDiscoveryRegister, endpointSourceDiscoveryRegisterBatch, endpointSourceActivate, endpointSourceSync, endpointQuestionCreate, endpointConversationArchive,
+		endpointConfirmGrantIssue, endpointConfirmGrantRevoke, endpointManagedSourceConfirm, endpointManagedSourceConfirmBatch, endpointManagedConfirmationRevoke, endpointSourceConnectionVerifyTrust, endpointAccessCodeRevoke,
 		endpointGovernedQuerySetLiveQueries, endpointGovernedQueryExposedSchema, endpointGovernedQueryAsk, endpointGovernedQueryPromote, endpointSearchProfileRevise, endpointSourceUploadDocuments,
-		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove:
+		endpointSourceQueryCredentialSet, endpointSourceQueryCredentialClear,
+		endpointMetricDefinitionDraft, endpointMetricDefinitionApprove,
+		endpointModelContextRestore, endpointModelContextProposalAccept, endpointModelContextProposalReject:
 		return http.MethodPost
-	case endpointWorkspaceUpdate, endpointMemberChange:
+	case endpointWorkspaceUpdate, endpointMemberChange, endpointModelContextSave:
 		return http.MethodPut
 	case endpointMemberRemove:
 		return http.MethodDelete
@@ -2320,6 +2737,7 @@ type memberCandidateResponse struct {
 func (handler *Handler) memberCandidates(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
 	provider, ok := handler.service.(WorkspaceMemberCandidateAuthority)
 	if !ok {
+		setServerFailureCause(writer, "workspace service capability missing", "WorkspaceMemberCandidateAuthority")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return
 	}
@@ -2485,6 +2903,7 @@ func (handler *Handler) bootstrapPostgreSQLConnection(writer http.ResponseWriter
 		registration.PostgreSQLConnectionBootstrapRequest{
 			Name: *body.Name, DatabaseIdentity: *body.DatabaseIdentity,
 			LineageID: *body.LineageID, CredentialReference: valueOrEmpty(body.CredentialReference),
+			WorkspaceID: valueOrEmpty(body.WorkspaceID),
 		})
 	if err != nil {
 		handleSourceServiceError(writer, err, requestID, true)
@@ -2551,14 +2970,15 @@ func (handler *Handler) getSourceDiscovery(writer http.ResponseWriter, request *
 				Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
 				LogicalType: column.LogicalType, Nullable: column.Nullable,
 				Precision: column.Precision, Scale: column.Scale, MaxBytes: column.MaxBytes,
-				Comment: column.Comment, Roles: roles,
+				Comment: column.Comment, Roles: roles, PrimaryKey: column.PrimaryKey,
 			}
 		}
 		views[index] = sourceDiscoveryViewResponse{
 			Selector: view.Selector, SchemaName: view.SchemaName,
 			RelationName: view.RelationName, RelationKind: view.RelationKind,
-			Comment: view.Comment, Status: view.Status,
+			Comment: view.Comment, ApproxRowCount: view.ApproxRowCount, Status: view.Status,
 			Interpretation: view.Interpretation, Columns: columns,
+			ExcludedColumns: sourceDiscoveryExcludedColumnResponses(view.ExcludedColumns),
 		}
 	}
 	writeJSON(writer, http.StatusOK, sourceDiscoveryResponse{
@@ -2583,8 +3003,13 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		writeValidationError(writer, request, requestID, "REQUEST_INVALID", fields)
 		return
 	}
-	if code, fields := emptyBody(writer, request); code != "" {
-		writeValidationError(writer, request, requestID, code, fields)
+	var body sourceDiscoveryRegisterBody
+	if code := decodeOptionalJSON(writer, request, &body); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if !postgresqlquery.ValidProjectionMode(body.Mode) {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"mode"})
 		return
 	}
 	provider, ok := handler.sources.(SourceDiscoveryRegistration)
@@ -2592,7 +3017,7 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return
 	}
-	result, err := provider.RegisterDiscoveredView(request.Context(), access, discoveryRequestID, viewID)
+	result, err := provider.RegisterDiscoveredView(request.Context(), access, discoveryRequestID, viewID, body.ExcludedColumns, body.Mode)
 	if err != nil {
 		switch sourcediscovery.CodeOf(err) {
 		case sourcediscovery.CodeInvalid:
@@ -2609,6 +3034,110 @@ func (handler *Handler) registerSourceDiscoveryView(writer http.ResponseWriter, 
 		DiscoveredScopeID: result.DiscoveredScopeID, Revision: result.Revision,
 		ScopeConfigHash: result.ScopeConfigHash, AccessMode: result.AccessMode,
 		Created: result.Created,
+	})
+}
+
+// sourceDiscoveryRegisterBatchBody is card S3.4b's batch registration body: a
+// bounded list of server-issued selectors, each with the same two optional
+// narrowing choices the single-view route accepts. No schema, relation, column
+// name, role, hash or SQL is ever accepted.
+type sourceDiscoveryRegisterBatchBody struct {
+	Items []sourceDiscoveryRegisterBatchItem `json:"items"`
+}
+
+type sourceDiscoveryRegisterBatchItem struct {
+	ViewID          string `json:"view_id"`
+	ExcludedColumns []int  `json:"excluded_columns"`
+	Mode            string `json:"mode"`
+}
+
+type sourceDiscoveryRegisterBatchResponse struct {
+	RegisteredCount int                                  `json:"registered_count"`
+	RefusedCount    int                                  `json:"refused_count"`
+	Results         []sourceDiscoveryRegisterBatchResult `json:"results"`
+}
+
+type sourceDiscoveryRegisterBatchResult struct {
+	ViewID       string                  `json:"view_id"`
+	Outcome      string                  `json:"outcome"`
+	ReasonCode   string                  `json:"reason_code,omitempty"`
+	Registration *sourceRegisterResponse `json:"registration,omitempty"`
+}
+
+// registerSourceDiscoveryViewBatch is card S3.4b's one-request-per-batch
+// registration: up to registration.MaxBatchRegisterViews selectors, each
+// registered through the unchanged single-table path, with one per-view
+// outcome. A larger request is refused as a whole before any selector reaches
+// the registration service.
+func (handler *Handler) registerSourceDiscoveryViewBatch(writer http.ResponseWriter, request *http.Request,
+	access database.AccessContext, requestID, discoveryRequestID string) {
+	if headerPresent(request.Header, "Idempotency-Key") || headerPresent(request.Header, "If-Match") {
+		var fields []string
+		if headerPresent(request.Header, "Idempotency-Key") {
+			fields = append(fields, "Idempotency-Key")
+		}
+		if headerPresent(request.Header, "If-Match") {
+			fields = append(fields, "If-Match")
+		}
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", fields)
+		return
+	}
+	var body sourceDiscoveryRegisterBatchBody
+	if code := decodeJSONLimited(writer, request, &body, maxBatchBodyBytes); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if len(body.Items) < 1 || len(body.Items) > registration.MaxBatchRegisterViews {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"items"})
+		return
+	}
+	items := make([]registration.BatchRegisterItem, len(body.Items))
+	for index, item := range body.Items {
+		if item.ViewID == "" || !postgresqlquery.ValidProjectionMode(item.Mode) {
+			writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"items"})
+			return
+		}
+		items[index] = registration.BatchRegisterItem{
+			ViewID: item.ViewID, ExcludedColumnOrdinals: item.ExcludedColumns, Mode: item.Mode,
+		}
+	}
+	provider, ok := handler.sources.(SourceDiscoveryRegistration)
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	result, err := provider.RegisterDiscoveredViews(request.Context(), access, discoveryRequestID, items)
+	if err != nil {
+		switch sourcediscovery.CodeOf(err) {
+		case sourcediscovery.CodeInvalid:
+			writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
+		case sourcediscovery.CodeNotFound, sourcediscovery.CodeExpired, sourcediscovery.CodeTrustStale:
+			writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
+		default:
+			handleSourceServiceError(writer, err, requestID, true)
+		}
+		return
+	}
+	results := make([]sourceDiscoveryRegisterBatchResult, len(result.Outcomes))
+	for index, outcome := range result.Outcomes {
+		result := sourceDiscoveryRegisterBatchResult{ViewID: outcome.ViewID}
+		if outcome.Registered {
+			registered := sourceRegisterResponse{
+				ConnectionID: outcome.Result.ConnectionID, SourceScopeID: outcome.Result.SourceScopeID,
+				DiscoveredScopeID: outcome.Result.DiscoveredScopeID, Revision: outcome.Result.Revision,
+				ScopeConfigHash: outcome.Result.ScopeConfigHash, AccessMode: outcome.Result.AccessMode,
+				Created: outcome.Result.Created,
+			}
+			result.Outcome = "REGISTERED"
+			result.Registration = &registered
+		} else {
+			result.Outcome = "REFUSED"
+			result.ReasonCode = outcome.ReasonCode
+		}
+		results[index] = result
+	}
+	writeJSON(writer, http.StatusOK, sourceDiscoveryRegisterBatchResponse{
+		RegisteredCount: result.RegisteredCount, RefusedCount: result.RefusedCount, Results: results,
 	})
 }
 
@@ -2760,8 +3289,12 @@ const (
 // role oracle; the handler never distinguishes a wrong role from a missing
 // grant, confirmation, binding or policy.
 func handleAuthorityError(writer http.ResponseWriter, err error, requestID string) {
-	status, code := authorityErrorResponse(workspacerepository.CodeOf(err))
-	writeError(writer, status, code, requestID)
+	code := workspacerepository.CodeOf(err)
+	status, publicCode := authorityErrorResponse(code)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "workspace authority", string(code))
+	}
+	writeError(writer, status, publicCode, requestID)
 }
 
 func authorityErrorResponse(code workspacerepository.ErrorCode) (int, string) {
@@ -2794,6 +3327,11 @@ func (handler *Handler) authorityCommands() (WorkspaceAuthority, bool) {
 func (handler *Handler) requireAuthority(writer http.ResponseWriter, requestID string) (WorkspaceAuthority, bool) {
 	authority, ok := handler.authorityCommands()
 	if !ok {
+		// The exact cause of the demo-stand 503: the injected storage service
+		// stopped satisfying the WorkspaceAuthority capability (a rename that
+		// was otherwise invisible). Name it in the log line instead of leaving
+		// a bare SERVICE_UNAVAILABLE.
+		setServerFailureCause(writer, "workspace service capability missing", "WorkspaceAuthority")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return nil, false
 	}
@@ -2810,6 +3348,7 @@ func (handler *Handler) connectionTrustAuthority() (ConnectionTrustAuthority, bo
 func (handler *Handler) requireConnectionTrustAuthority(writer http.ResponseWriter, requestID string) (ConnectionTrustAuthority, bool) {
 	authority, ok := handler.connectionTrustAuthority()
 	if !ok {
+		setServerFailureCause(writer, "workspace service capability missing", "ConnectionTrustAuthority")
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 		return nil, false
 	}
@@ -3050,8 +3589,12 @@ func (handler *Handler) verifyConnectionTrust(writer http.ResponseWriter, reques
 // oracle, exactly as handleAuthorityError collapses the four confirmation
 // actions' CodeAuthorityDenied/CodeAuthorityNotFound.
 func handleConnectionTrustError(writer http.ResponseWriter, err error, requestID string) {
-	status, code := connectionTrustErrorResponse(workspacerepository.CodeOf(err))
-	writeError(writer, status, code, requestID)
+	code := workspacerepository.CodeOf(err)
+	status, publicCode := connectionTrustErrorResponse(code)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "workspace connection trust", string(code))
+	}
+	writeError(writer, status, publicCode, requestID)
 }
 
 func connectionTrustErrorResponse(code workspacerepository.ErrorCode) (int, string) {
@@ -3306,6 +3849,128 @@ func (handler *Handler) managedSourceConfirm(writer http.ResponseWriter, request
 	writeJSON(writer, http.StatusOK, authorityResultResponse(result))
 }
 
+// managedSourceConfirmBatchBody is card S3.4b's closed batch confirmation
+// command: the shared grant/warning/policy fields every table of the request
+// confirms under, plus the bounded list of exact binding tuples. The closed
+// access-mode, warning-version and acknowledgement literals stay server
+// constants, exactly as on the single-table route.
+type managedSourceConfirmBatchBody struct {
+	WorkspaceRevision              int64                            `json:"workspace_revision"`
+	WorkspaceConfigurationHash     string                           `json:"workspace_configuration_hash"`
+	ConfirmationActorGrantID       string                           `json:"confirmation_actor_grant_id"`
+	ConfirmationActorGrantRevision int64                            `json:"confirmation_actor_grant_revision"`
+	ConfirmationActorGrantHash     string                           `json:"confirmation_actor_grant_hash"`
+	WarningContractHash            string                           `json:"warning_contract_hash"`
+	ExpectedPolicyRevision         string                           `json:"expected_policy_revision"`
+	Tables                         []managedSourceConfirmBatchTable `json:"tables"`
+}
+
+type managedSourceConfirmBatchTable struct {
+	WorkspaceSourceID   string `json:"workspace_source_id"`
+	SourceScopeID       string `json:"source_scope_id"`
+	SourceScopeRevision int64  `json:"source_scope_revision"`
+	ScopeConfigHash     string `json:"scope_config_hash"`
+}
+
+func (body managedSourceConfirmBatchBody) complete() bool {
+	if body.WorkspaceRevision < 1 || body.WorkspaceConfigurationHash == "" ||
+		body.ConfirmationActorGrantID == "" || body.ConfirmationActorGrantRevision < 1 ||
+		body.ConfirmationActorGrantHash == "" || body.WarningContractHash == "" ||
+		body.ExpectedPolicyRevision == "" ||
+		len(body.Tables) < 1 || len(body.Tables) > workspacerepository.MaxBatchConfirmTables {
+		return false
+	}
+	for _, table := range body.Tables {
+		if table.WorkspaceSourceID == "" || table.SourceScopeID == "" ||
+			table.SourceScopeRevision < 1 || table.ScopeConfigHash == "" {
+			return false
+		}
+	}
+	return true
+}
+
+type managedSourceConfirmBatchResponse struct {
+	ConfirmedCount int                               `json:"confirmed_count"`
+	RefusedCount   int                               `json:"refused_count"`
+	Results        []managedSourceConfirmBatchResult `json:"results"`
+}
+
+type managedSourceConfirmBatchResult struct {
+	SourceScopeID    string `json:"source_scope_id"`
+	Outcome          string `json:"outcome"`
+	ReasonCode       string `json:"reason_code,omitempty"`
+	ConfirmationID   string `json:"confirmation_id,omitempty"`
+	ConfirmationHash string `json:"confirmation_hash,omitempty"`
+}
+
+// managedSourceConfirmBatch exposes card S3.4b's bounded batch of
+// WORKSPACE_MANAGED_CONFIRM commands. The repository confirms each named table
+// through the unchanged individual command, so every table keeps the identical
+// checks, confirmation record and audit event; this handler only projects the
+// closed per-table outcome.
+func (handler *Handler) managedSourceConfirmBatch(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	authority, ok := handler.requireAuthority(writer, requestID)
+	if !ok {
+		return
+	}
+	key, _, code, fields := mutationHeaders(request, false)
+	if code != "" {
+		writeValidationError(writer, request, requestID, code, fields)
+		return
+	}
+	var body managedSourceConfirmBatchBody
+	if code := decodeJSONLimited(writer, request, &body, maxBatchBodyBytes); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if !body.complete() {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"tables"})
+		return
+	}
+	tables := make([]workspacerepository.BatchConfirmTable, len(body.Tables))
+	for index, table := range body.Tables {
+		tables[index] = workspacerepository.BatchConfirmTable{
+			WorkspaceSourceID: table.WorkspaceSourceID, SourceScopeID: table.SourceScopeID,
+			SourceScopeRevision: table.SourceScopeRevision, ScopeConfigHash: table.ScopeConfigHash,
+		}
+	}
+	result, err := authority.ConfirmManagedSourcesBatch(request.Context(), access, workspacerepository.BatchConfirmRequest{
+		IdempotencyKey:                 key,
+		OrganizationID:                 access.OrganizationID,
+		WorkspaceID:                    workspaceID,
+		WorkspaceRevision:              body.WorkspaceRevision,
+		WorkspaceConfigurationHash:     body.WorkspaceConfigurationHash,
+		ConfirmationActorGrantID:       body.ConfirmationActorGrantID,
+		ConfirmationActorGrantRevision: body.ConfirmationActorGrantRevision,
+		ConfirmationActorGrantHash:     body.ConfirmationActorGrantHash,
+		WarningVersion:                 managedWarningVersion,
+		WarningContractHash:            body.WarningContractHash,
+		AcknowledgementCode:            managedAcknowledgementCode,
+		ExpectedPolicyRevision:         body.ExpectedPolicyRevision,
+		Tables:                         tables,
+	})
+	if err != nil {
+		handleAuthorityError(writer, err, requestID)
+		return
+	}
+	results := make([]managedSourceConfirmBatchResult, len(result.Outcomes))
+	for index, outcome := range result.Outcomes {
+		item := managedSourceConfirmBatchResult{SourceScopeID: outcome.SourceScopeID}
+		if outcome.Confirmed {
+			item.Outcome = "CONFIRMED"
+			item.ConfirmationID = outcome.ConfirmationID
+			item.ConfirmationHash = outcome.ConfirmationHash
+		} else {
+			item.Outcome = "REFUSED"
+			item.ReasonCode = outcome.ReasonCode
+		}
+		results[index] = item
+	}
+	writeJSON(writer, http.StatusOK, managedSourceConfirmBatchResponse{
+		ConfirmedCount: result.ConfirmedCount, RefusedCount: result.RefusedCount, Results: results,
+	})
+}
+
 type managedConfirmationRevokeBody struct {
 	ConfirmationID         string `json:"confirmation_id"`
 	ConfirmationHash       string `json:"confirmation_hash"`
@@ -3413,10 +4078,85 @@ func (handler *Handler) listSources(writer http.ResponseWriter, request *http.Re
 				status.Enabled, status.Confirmed, status.TrustVerified, status.ActivationStatus, confirmation.SelfGrant != nil,
 			),
 			CanVerifyConnectionTrust: confirmation.CanVerifyConnectionTrust && !status.ViewerVerifyConflict,
+			SQLAvailable:             status.SQLAvailable,
+			QueryOnly:                status.QueryOnly,
 		}
 	}
 	response := map[string]any{"sources": items, "confirmation_context": confirmationContextResponseFrom(confirmation)}
 	writeJSON(writer, http.StatusOK, response)
+}
+
+// sourceConnectionDraftResponse is card D-1's content-free draft row: the
+// identifiers the wizard resumes with, the connection's display name, and the
+// server-derived state. It carries no credential, address, trust hash or
+// source content.
+type sourceConnectionDraftResponse struct {
+	ConnectionID       string    `json:"connection_id"`
+	ConnectionRevision int64     `json:"connection_revision"`
+	ConnectionName     string    `json:"connection_name"`
+	SourceType         string    `json:"source_type"`
+	TrustStatus        string    `json:"trust_status"`
+	State              string    `json:"state"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type sourceConnectionDraftListResponse struct {
+	Drafts []sourceConnectionDraftResponse `json:"drafts"`
+}
+
+// listSourceConnectionDrafts serves GET
+// /api/v1/workspaces/{workspace_id}/source-drafts (card D-1). It composes the
+// same optional SourceConnectionDrafts capability the discard route does and
+// fails closed as SERVICE_UNAVAILABLE when composition did not mount it. A
+// non-member, unknown or foreign workspace is the repository's single
+// content-free NOT_FOUND.
+func (handler *Handler) listSourceConnectionDrafts(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	provider, ok := handler.sources.(SourceConnectionDrafts)
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	drafts, err := provider.ListSourceConnectionDrafts(request.Context(), access, workspaceID)
+	if err != nil {
+		handleSourceServiceError(writer, err, requestID, false)
+		return
+	}
+	items := make([]sourceConnectionDraftResponse, len(drafts))
+	for index, draft := range drafts {
+		items[index] = sourceConnectionDraftResponse{
+			ConnectionID: draft.ConnectionID, ConnectionRevision: draft.ConnectionRevision,
+			ConnectionName: draft.ConnectionName, SourceType: draft.SourceType,
+			TrustStatus: draft.TrustStatus, State: draft.State, CreatedAt: draft.CreatedAt,
+		}
+	}
+	writeJSON(writer, http.StatusOK, sourceConnectionDraftListResponse{Drafts: items})
+}
+
+// discardSourceConnectionDraft serves DELETE
+// /api/v1/workspaces/{workspace_id}/source-drafts/{connection_id} (card D-1).
+// It deletes only the workspace's pointer to an unfinished connection: the
+// immutable connection lineage, trust material and any registered scope stay
+// untouched. The request shape is the same idempotency-key-only envelope the
+// other body-less source actions use.
+func (handler *Handler) discardSourceConnectionDraft(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, connectionID string) {
+	if _, _, code, fields := mutationHeaders(request, false); code != "" {
+		writeValidationError(writer, request, requestID, code, fields)
+		return
+	}
+	if code, fields := emptyBody(writer, request); code != "" {
+		writeValidationError(writer, request, requestID, code, fields)
+		return
+	}
+	provider, ok := handler.sources.(SourceConnectionDrafts)
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	if err := provider.DiscardSourceConnectionDraft(request.Context(), access, workspaceID, connectionID); err != nil {
+		handleSourceServiceError(writer, err, requestID, false)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"connection_id": connectionID, "discarded": true})
 }
 
 func confirmationContextResponseFrom(context workspacerepository.ConfirmationContext) confirmationContextResponse {
@@ -3711,6 +4451,126 @@ func (handler *Handler) questionGet(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusOK, run)
 }
 
+// questionFeedbackBody is the closed submit/change body: verdict is
+// mandatory, comment is mandatory only when verdict is INCORRECT and ignored
+// (cleared) otherwise. The comment is never echoed back.
+type questionFeedbackBody struct {
+	Verdict *string `json:"verdict"`
+	Comment *string `json:"comment"`
+}
+
+// questionFeedbackResponse is the caller's own current mark, or Marked=false
+// when none exists yet.
+type questionFeedbackResponse struct {
+	Marked     bool   `json:"marked"`
+	Verdict    string `json:"verdict,omitempty"`
+	HasComment bool   `json:"has_comment,omitempty"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
+}
+
+func feedbackResponseFrom(feedback question.Feedback) questionFeedbackResponse {
+	return questionFeedbackResponse{Marked: true, Verdict: string(feedback.Verdict), HasComment: feedback.HasComment,
+		UpdatedAt: feedback.UpdatedAt.Format(time.RFC3339)}
+}
+
+func (handler *Handler) questionFeedbackCapability() (QuestionFeedbackService, bool) {
+	capability, ok := handler.questions.(QuestionFeedbackService)
+	return capability, ok
+}
+
+func (handler *Handler) questionFeedbackGet(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, runID string) {
+	capability, ok := handler.questionFeedbackCapability()
+	if !ok {
+		setServerFailureCause(writer, "question service capability missing", "QuestionFeedbackService")
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	feedback, found, err := capability.OwnFeedback(request.Context(), access, workspaceID, runID)
+	if err != nil {
+		handleQuestionError(writer, err, requestID, false)
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusOK, questionFeedbackResponse{Marked: false})
+		return
+	}
+	writeJSON(writer, http.StatusOK, feedbackResponseFrom(feedback))
+}
+
+func (handler *Handler) questionFeedbackSubmit(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, runID string) {
+	capability, ok := handler.questionFeedbackCapability()
+	if !ok {
+		setServerFailureCause(writer, "question service capability missing", "QuestionFeedbackService")
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	var body questionFeedbackBody
+	if code := decodeJSON(writer, request, &body); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if body.Verdict == nil || (*body.Verdict != string(question.FeedbackCorrect) && *body.Verdict != string(question.FeedbackIncorrect)) {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"verdict"})
+		return
+	}
+	comment := ""
+	if body.Comment != nil {
+		comment = *body.Comment
+	}
+	feedback, err := capability.SubmitFeedback(request.Context(), access, workspaceID, runID, question.FeedbackVerdict(*body.Verdict), comment)
+	if err != nil {
+		if question.CodeOf(err) == question.CodeInvalid {
+			writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"comment"})
+			return
+		}
+		handleQuestionError(writer, err, requestID, false)
+		return
+	}
+	writeJSON(writer, http.StatusOK, feedbackResponseFrom(feedback))
+}
+
+// questionFeedbackReportEntryResponse is one row of the OWNER/MANAGER
+// error-review report: the exact question/answer/comment text the mark
+// refers to, decrypted only for this authorized read.
+type questionFeedbackReportEntryResponse struct {
+	QuestionRunID     string `json:"question_run_id"`
+	Question          string `json:"question"`
+	Answer            string `json:"answer"`
+	Verdict           string `json:"verdict"`
+	Comment           string `json:"comment,omitempty"`
+	AuthorPrincipalID string `json:"author_principal_id"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+type questionFeedbackReportResponse struct {
+	WorkspaceID string                                `json:"workspace_id"`
+	Entries     []questionFeedbackReportEntryResponse `json:"entries"`
+}
+
+func (handler *Handler) questionFeedbackReport(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	capability, ok := handler.questionFeedbackCapability()
+	if !ok {
+		setServerFailureCause(writer, "question service capability missing", "QuestionFeedbackService")
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	entries, err := capability.FeedbackReport(request.Context(), access, workspaceID)
+	if err != nil {
+		handleQuestionError(writer, err, requestID, false)
+		return
+	}
+	response := questionFeedbackReportResponse{WorkspaceID: workspaceID, Entries: make([]questionFeedbackReportEntryResponse, 0, len(entries))}
+	for _, entry := range entries {
+		response.Entries = append(response.Entries, questionFeedbackReportEntryResponse{
+			QuestionRunID: entry.QuestionRunID, Question: entry.Question, Answer: entry.Answer,
+			Verdict: string(entry.Verdict), Comment: entry.Comment, AuthorPrincipalID: entry.AuthorPrincipalID,
+			CreatedAt: entry.CreatedAt.Format(time.RFC3339), UpdatedAt: entry.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
 func (handler *Handler) conversationList(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string, paginated bool, limit int, cursor string) {
 	if handler.conversations == nil {
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
@@ -3913,6 +4773,7 @@ func (handler *Handler) auditJournal(writer http.ResponseWriter, request *http.R
 	} else {
 		pager, ok := handler.service.(WorkspaceAuditJournalBefore)
 		if !ok {
+			setServerFailureCause(writer, "workspace service capability missing", "WorkspaceAuditJournalBefore")
 			writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 			return
 		}
@@ -3973,6 +4834,17 @@ type conversationTurnResponse struct {
 	QuestionRun   *question.Run `json:"question_run,omitempty"`
 }
 
+// sourceDiscoveryRegisterBody is the only caller-supplied content the
+// discovered-view register route accepts. excluded_columns are ordinals from
+// the sealed discovery result (ADR-0097); every other projection field stays
+// server-owned. An empty or absent body registers the table unnarrowed. mode
+// (S3 card 4) is INDEXED when absent and QUERY_ONLY for the "only for SQL
+// queries, not indexed" registration; any other value is refused.
+type sourceDiscoveryRegisterBody struct {
+	ExcludedColumns []int  `json:"excluded_columns"`
+	Mode            string `json:"mode"`
+}
+
 type sourceRegisterBody struct {
 	SourceType          *string                 `json:"source_type"`
 	Name                *string                 `json:"name"`
@@ -4029,6 +4901,10 @@ type postgreSQLConnectionBootstrapBody struct {
 	DatabaseIdentity    *string `json:"database_identity"`
 	LineageID           *string `json:"lineage_id"`
 	CredentialReference *string `json:"credential_reference"`
+	// WorkspaceID is optional card D-1 context: when present the unfinished
+	// connection is registered as that workspace's draft and appears in its
+	// Sources surface. The connection lineage itself stays organization-scoped.
+	WorkspaceID *string `json:"workspace_id"`
 }
 
 func (body postgreSQLConnectionBootstrapBody) complete() bool {
@@ -4253,14 +5129,49 @@ type sourceDiscoveryResponse struct {
 }
 
 type sourceDiscoveryViewResponse struct {
-	Selector       string                               `json:"view_id"`
-	SchemaName     string                               `json:"schema_name"`
-	RelationName   string                               `json:"relation_name"`
-	RelationKind   string                               `json:"relation_kind"`
-	Comment        string                               `json:"comment,omitempty"`
+	Selector     string `json:"view_id"`
+	SchemaName   string `json:"schema_name"`
+	RelationName string `json:"relation_name"`
+	RelationKind string `json:"relation_kind"`
+	Comment      string `json:"comment,omitempty"`
+	// ApproxRowCount is pg_class.reltuples, rounded; -1 means PostgreSQL has
+	// not analyzed the relation yet. It is display metadata, never a security
+	// or capacity decision (ADR-0097).
+	ApproxRowCount int64                                `json:"approx_row_count"`
 	Status         postgresqlquery.DiscoveryStatus      `json:"status"`
 	Interpretation postgresqlquery.InterpretationReason `json:"interpretation,omitempty"`
 	Columns        []sourceDiscoveryColumnResponse      `json:"columns"`
+	// ExcludedColumns are observed base-table columns the server could not
+	// project (D-1). They are display-only metadata with a reason; they are
+	// never part of the registration projection and never appear in reads,
+	// search, the schema tool or SQL results.
+	ExcludedColumns []sourceDiscoveryExcludedColumnResponse `json:"excluded_columns,omitempty"`
+}
+
+// sourceDiscoveryExcludedColumnResponse is the browser-safe projection of one
+// auto-excluded column: identity and the bounded reason, never a type
+// fingerprint, value or comment.
+type sourceDiscoveryExcludedColumnResponse struct {
+	Ordinal     int                                  `json:"ordinal"`
+	Name        string                               `json:"name"`
+	TypeName    string                               `json:"type_name"`
+	LogicalType postgresqlquery.LogicalType          `json:"logical_type,omitempty"`
+	PrimaryKey  bool                                 `json:"primary_key,omitempty"`
+	Reason      postgresqlquery.InterpretationReason `json:"reason"`
+}
+
+func sourceDiscoveryExcludedColumnResponses(columns []postgresqlquery.ExcludedColumn) []sourceDiscoveryExcludedColumnResponse {
+	if len(columns) == 0 {
+		return nil
+	}
+	result := make([]sourceDiscoveryExcludedColumnResponse, len(columns))
+	for index, column := range columns {
+		result[index] = sourceDiscoveryExcludedColumnResponse{
+			Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
+			LogicalType: column.LogicalType, PrimaryKey: column.PrimaryKey, Reason: column.Reason,
+		}
+	}
+	return result
 }
 
 type sourceDiscoveryColumnResponse struct {
@@ -4274,6 +5185,9 @@ type sourceDiscoveryColumnResponse struct {
 	MaxBytes    int                         `json:"max_bytes,omitempty"`
 	Comment     string                      `json:"comment,omitempty"`
 	Roles       []postgresqlquery.Role      `json:"roles"`
+	// PrimaryKey is native primary-key membership (ADR-0097). It is always
+	// false for a VIEW/MATERIALIZED_VIEW column.
+	PrimaryKey bool `json:"primary_key"`
 }
 
 type sourceStatusResponse struct {
@@ -4326,6 +5240,16 @@ type sourceStatusResponse struct {
 	// the workspace-wide one, so the button is never shown to a viewer the
 	// database would then deny.
 	CanVerifyConnectionTrust bool `json:"can_verify_connection_trust"`
+	// SQLAvailable reports ADR-0097's per-connection "SQL available" state:
+	// the connection revision carries a separate query credential, so the
+	// knowvault_source_sql tool can run for its enabled sources. A false value
+	// means "SQL not configured" and the tool answers
+	// SOURCE_SQL_NOT_CONFIGURED. It is a display fact, never an authorization.
+	SQLAvailable bool `json:"sql_available"`
+	// QueryOnly is S3 card 4's registration mode of the bound relation: true
+	// means "only for SQL queries (not indexed)". The Sources card renders it
+	// as "только SQL" and shows no sync freshness for the source.
+	QueryOnly bool `json:"query_only"`
 }
 
 // confirmationStateFor derives the ADR-0087 operator-visible pending state of
@@ -4394,7 +5318,11 @@ type confirmationContextResponse struct {
 }
 
 func handleSourceServiceError(writer http.ResponseWriter, err error, requestID string, isCreate bool) {
-	status, publicCode := sourceServiceErrorResponse(registration.CodeOf(err), isCreate)
+	code := registration.CodeOf(err)
+	status, publicCode := sourceServiceErrorResponse(code, isCreate)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "source service", string(code))
+	}
 	writeError(writer, status, publicCode, requestID)
 }
 
@@ -4503,13 +5431,64 @@ func conditionalMutationHeaders(request *http.Request) (string, string, string, 
 // OWN required-field check after a successful decode is where a specific
 // field name is known.
 func decodeJSON(writer http.ResponseWriter, request *http.Request, destination any) string {
+	return decodeJSONLimited(writer, request, destination, maxBodyBytes)
+}
+
+// decodeJSONLimited is decodeJSON with an explicit byte bound. Card S3.4b's two
+// batch routes carry one bounded list (up to 1000 tables or 200 views) in one
+// request, which legitimately exceeds the 32 KiB single-object limit every other
+// route keeps; only those two routes raise their own bound, and an oversized
+// body is refused as a whole before any field is decoded.
+func decodeJSONLimited(writer http.ResponseWriter, request *http.Request, destination any, limit int64) string {
 	if headerPresent(request.Header, "Content-Encoding") {
 		return "REQUEST_INVALID"
+	}
+	if request.ContentLength > limit {
+		return "PAYLOAD_TOO_LARGE"
 	}
 	contentType, ok := exactHeader(request.Header, "Content-Type")
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if !ok || err != nil || mediaType != jsonContentType {
 		return "UNSUPPORTED_MEDIA_TYPE"
+	}
+	body := http.MaxBytesReader(writer, request.Body, limit)
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			return "PAYLOAD_TOO_LARGE"
+		}
+		return "REQUEST_INVALID"
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return "REQUEST_INVALID"
+	}
+	if err := jsonv2.Unmarshal(trimmed, destination,
+		jsonv2.RejectUnknownMembers(true),
+		jsonv2.MatchCaseInsensitiveNames(false),
+		jsontext.AllowDuplicateNames(false),
+		jsontext.AllowInvalidUTF8(false),
+	); err != nil {
+		return "REQUEST_INVALID"
+	}
+	return ""
+}
+
+// decodeOptionalJSON is decodeJSON for a route whose body is optional: no
+// body (or a body that trims to zero bytes) leaves destination at its zero
+// value and returns no error, matching how an omitted excluded_columns list
+// means "register unnarrowed." A present body must still be valid
+// application/json, decoded under the same strict rules as decodeJSON.
+func decodeOptionalJSON(writer http.ResponseWriter, request *http.Request, destination any) string {
+	if headerPresent(request.Header, "Content-Encoding") {
+		return "REQUEST_INVALID"
+	}
+	if request.ContentLength > maxBodyBytes {
+		return "PAYLOAD_TOO_LARGE"
+	}
+	if request.Body == nil || request.Body == http.NoBody {
+		return ""
 	}
 	body := http.MaxBytesReader(writer, request.Body, maxBodyBytes)
 	raw, err := io.ReadAll(body)
@@ -4521,7 +5500,15 @@ func decodeJSON(writer http.ResponseWriter, request *http.Request, destination a
 		return "REQUEST_INVALID"
 	}
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+	if len(trimmed) == 0 {
+		return ""
+	}
+	contentType, ok := exactHeader(request.Header, "Content-Type")
+	mediaType, _, mimeErr := mime.ParseMediaType(contentType)
+	if !ok || mimeErr != nil || mediaType != jsonContentType {
+		return "UNSUPPORTED_MEDIA_TYPE"
+	}
+	if trimmed[0] != '{' {
 		return "REQUEST_INVALID"
 	}
 	if err := jsonv2.Unmarshal(trimmed, destination,
@@ -4628,22 +5615,31 @@ func statusForMutationCode(code string) int {
 }
 
 func handleServiceError(writer http.ResponseWriter, err error, requestID string, isCreate bool) {
-	status, publicCode := serviceErrorResponse(workspacerepository.CodeOf(err), isCreate)
+	code := workspacerepository.CodeOf(err)
+	status, publicCode := serviceErrorResponse(code, isCreate)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "workspace service", string(code))
+	}
 	writeError(writer, status, publicCode, requestID)
 }
 
 func handleQuestionError(writer http.ResponseWriter, err error, requestID string, isCreate bool) {
-	status, code := questionErrorResponse(question.CodeOf(err), isCreate)
+	code := question.CodeOf(err)
+	status, publicCode := questionErrorResponse(code, isCreate)
+	if status >= http.StatusInternalServerError {
+		setServerFailureCause(writer, "question authority", string(code))
+	}
 	// R2 Outcome 2: a typed QueryIntent refusal already carries a server-owned,
 	// closed-dictionary clarification. Surface it additively beside the
 	// unchanged status/code so the browser can show it instead of only the
 	// generic code sentence. Every other question error returns "" here, so
 	// the field is omitted and the response body is byte-for-byte unchanged.
-	writeErrorClarification(writer, status, code, requestID, question.ClarificationOf(err))
+	writeErrorClarification(writer, status, publicCode, requestID, question.ClarificationOf(err))
 }
 
 func handleConversationError(writer http.ResponseWriter, err error, requestID string) {
-	switch conversation.CodeOf(err) {
+	code := conversation.CodeOf(err)
+	switch code {
 	case conversation.CodeInvalid:
 		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
 	case conversation.CodeDenied, conversation.CodeNotFound:
@@ -4653,6 +5649,7 @@ func handleConversationError(writer http.ResponseWriter, err error, requestID st
 	case conversation.CodeIdempotencyConflict:
 		writeError(writer, http.StatusConflict, "CONVERSATION_IDEMPOTENCY_CONFLICT", requestID)
 	default:
+		setServerFailureCause(writer, "conversation service", string(code))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }
@@ -4662,6 +5659,7 @@ func handleConversationProjectionError(writer http.ResponseWriter, err error, re
 		handleQuestionError(writer, err, requestID, false)
 		return
 	}
+	setServerFailureCause(writer, "conversation projection", string(question.CodeOf(err)))
 	writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 }
 
@@ -4724,7 +5722,23 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
+// setServerFailureCause records the content-free cause of a failure this
+// handler is about to answer with 5xx. It is called only with a server-owned
+// scope and the typed code of the underlying error -- never with an error
+// message, request field or body -- so the one server-log line the HTTP
+// boundary emits for the response can name what failed without carrying tenant
+// content. It is a no-op on the writers test harnesses use directly.
+func setServerFailureCause(writer http.ResponseWriter, scope, code string) {
+	failurelog.Set(writer, strings.TrimSpace(scope+": "+code))
+}
+
 func writeError(writer http.ResponseWriter, status int, code, requestID string) {
+	if status >= http.StatusInternalServerError {
+		// Fallback for a route whose refusal is "this capability is not
+		// wired": the typed cause set by the caller (if any) already won, and
+		// the route in the log line names the endpoint.
+		setServerFailureCause(writer, "response", code)
+	}
 	response := errorEnvelope{}
 	response.Error.Code = code
 	response.Error.RequestID = requestID

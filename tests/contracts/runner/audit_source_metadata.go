@@ -13,7 +13,8 @@ func validateSourceMetadataAuditProjection(event map[string]any) error {
 	if stringValue(event["resource_type"]) != "WORKSPACE" || (actor != "HUMAN" && actor != "SERVICE") ||
 		event["policy_decision_id"] != nil || event["on_behalf_of_principal_id"] != nil ||
 		len(array(event["referenced_evidence_ids"])) != 0 || len(metadata) != 1 || len(reasons) != 1 ||
-		(stringValue(reasons[0]) != "SOURCE_STATUS_LIST" && stringValue(reasons[0]) != "SOURCE_CONFIRMATION_CONTEXT") {
+		(stringValue(reasons[0]) != "SOURCE_STATUS_LIST" && stringValue(reasons[0]) != "SOURCE_CONFIRMATION_CONTEXT" &&
+			stringValue(reasons[0]) != "SOURCE_SCHEMA_LIST" && stringValue(reasons[0]) != "SOURCE_SCHEMA") {
 		return fail("AUDIT_SOURCE_METADATA_PROJECTION_INVALID")
 	}
 	workspaceID := stringValue(event["workspace_id"])

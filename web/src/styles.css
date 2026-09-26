@@ -64,6 +64,7 @@ svg { display: block; }
 .brand-mark svg { width: 16px; height: 16px; }
 .top-sep { width: 1px; height: 24px; background: var(--line); flex: 0 0 auto; }
 .top-spacer { flex: 1 1 auto; }
+.build-revision { color: var(--ink-tertiary); font-size: var(--fs-caption); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .04em; white-space: nowrap; }
 
 .workspace-switcher-wrap { position: relative; }
 .workspace-switcher { border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-align: left; padding: 6px 10px; border-radius: var(--r-sm); display: flex; align-items: center; gap: 9px; font-size: var(--fs-meta); }
@@ -332,13 +333,25 @@ svg { display: block; }
 .signin-note { margin-top: 14px; color: var(--ink-secondary); font-size: var(--fs-meta); line-height: 1.5; }
 
 /* ---------------------------------------------------------------------------
-   Questions: three-column layout — topics | conversation (talk) | evidence (evi) —
-   matching final.html's .screen.main grid. Only the inner panes scroll; the
-   layout itself fills the content panel without a page-level scrollbar
-   (decision 14: the primary scenario fits a laptop screen).
+   Questions: the chat screen's grid. The base layout is the conversation list
+   and the chat; the evidence column exists only while the person asked for the
+   evidence panel (`.ask-layout-evidence`, card W-8), so reading answers gets
+   the full width. Only the inner panes scroll; the layout itself fills the
+   content panel without a page-level scrollbar (decision 14: the primary
+   scenario fits a laptop screen).
 --------------------------------------------------------------------------- */
-.ask-layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr) minmax(300px, 25%); }
+.ask-layout { position: relative; flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
+/* Card W-6: with the conversation list put away its column is gone, so the
+   chat and the answer take that width. */
+.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr); }
+/* Card W-8: the evidence panel is open, so its column is part of the grid. */
+.ask-layout-evidence { grid-template-columns: 224px minmax(0, 1fr) minmax(300px, 25%); }
+.ask-layout-evidence.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) minmax(300px, 25%); }
+/* The fullscreen evidence variant covers the whole layout; it is declared after
+   the evidence rules so it wins when both apply, and the two-class rule is more
+   specific than the one-class evidence rule above. */
 .ask-layout-full { grid-template-columns: 224px minmax(0, 1fr) 0; }
+.ask-layout-full.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
 
 .topics { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .topics h2 { margin: 0; padding: 14px 16px 6px; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-tertiary); }
@@ -356,7 +369,24 @@ svg { display: block; }
 .topics-new:hover { border-color: var(--accent); color: var(--accent); }
 
 .talk { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
-.flow { flex: 1 1 auto; overflow-y: auto; padding: 20px 26px 8px; }
+/* Card W-6: the one control that puts the conversation list away and brings it
+   back. It sits above the flow in the chat column, so it stays reachable in
+   both states. */
+.conversations-control { flex: 0 0 auto; display: flex; align-items: center; padding: 12px 26px 0; }
+.conversations-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-secondary); font-size: var(--fs-caption); }
+.conversations-toggle:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+.conversations-toggle svg { width: 13px; height: 13px; }
+/* Card W-8: the chat screen's one evidence control. Closed, the dock holds
+   only that control and floats at the chat's top-right corner; because it is
+   out of flow it adds no grid column, so the chat keeps the width. Open, the
+   dock is transparent (`display: contents`) and the panel it contains is the
+   grid's evidence column. */
+.evidence-dock { position: absolute; top: 12px; right: 20px; z-index: 6; }
+.evidence-dock-open { position: static; display: contents; }
+.evidence-toggle { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-secondary); font-size: var(--fs-caption); }
+.evidence-toggle:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-tint); }
+.evidence-toggle svg { width: 13px; height: 13px; }
+.flow { flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding: 20px 26px 8px; }
 .flow-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 .flow-head h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 
@@ -370,7 +400,7 @@ svg { display: block; }
 .turn { border-left: 2px solid transparent; padding: 0 0 16px 14px; margin-bottom: 16px; border-bottom: 1px solid var(--line); cursor: default; }
 .turn:last-child { border-bottom: none; }
 .turn.turn-on { border-left-color: var(--accent); }
-.turn-question { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-body-lg); font-weight: 600; margin: 0 0 10px; }
+.turn-question { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-body-lg); font-weight: 600; margin: 0 0 10px; overflow-wrap: anywhere; }
 .turn-question time { margin-left: auto; font-size: var(--fs-caption); font-weight: 400; color: var(--ink-tertiary); white-space: nowrap; }
 .turn-role { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-tertiary); font-weight: 700; }
 
@@ -429,8 +459,8 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .badge-quote svg { width: 12px; height: 12px; }
 .badge-live { background: var(--success-tint); color: var(--success); }
 .badge-live svg { width: 12px; height: 12px; }
-.answer-quote { margin: 0 0 10px; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); font-size: var(--fs-meta); line-height: 1.6; color: var(--ink); max-width: 64ch; }
-.answer-body { margin: 0 0 10px; max-width: 88ch; font-size: var(--fs-body-lg); line-height: 1.65; color: var(--ink); }
+.answer-quote { margin: 0 0 10px; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--surface); font-size: var(--fs-meta); line-height: 1.6; color: var(--ink); max-width: 64ch; overflow-wrap: anywhere; }
+.answer-body { margin: 0 0 10px; max-width: 88ch; font-size: var(--fs-body-lg); line-height: 1.65; color: var(--ink); overflow-wrap: anywhere; }
 .answer-live-summary { font-weight: 650; }
 .live-calculation-evidence { margin-top: 8px; font-size: var(--fs-caption); color: var(--ink-secondary); }
 .live-calculation-evidence summary { cursor: pointer; }
@@ -490,8 +520,24 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .fn-tip q { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; margin: 0 0 6px; color: #E8EAEC; font-size: var(--fs-caption); quotes: "«" "»"; }
 .fn-tip .fn-tip-hint { display: block; color: #9AA0A4; font-size: 11px; }
 
-.msg-warning { margin: 0 0 10px; color: #5E3D0C; background: var(--warning-tint); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-meta); line-height: 1.5; max-width: 64ch; }
-.msg-note { margin: 0 0 10px; color: var(--ink-secondary); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-caption); line-height: 1.5; max-width: 64ch; }
+.msg-warning { margin: 0 0 10px; color: #5E3D0C; background: var(--warning-tint); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-meta); line-height: 1.5; max-width: 64ch; overflow-wrap: anywhere; }
+.msg-note { margin: 0 0 10px; color: var(--ink-secondary); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 11px; font-size: var(--fs-caption); line-height: 1.5; max-width: 64ch; overflow-wrap: anywhere; }
+/* A closed/cancelled turn is one fact ("not enough evidence, code X"), not a
+   reading experience -- one line, ellipsised, full text on hover/focus via
+   the element's title attribute. */
+.msg-compact { max-width: 64ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.answer-feedback { margin: 10px 0 0; }
+.answer-feedback-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.answer-feedback-controls button { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-sm); padding: 5px 12px; font-size: var(--fs-caption); cursor: pointer; }
+.answer-feedback-controls button:disabled { color: var(--ink-tertiary); cursor: default; }
+.answer-feedback-comment { display: block; width: 100%; max-width: 64ch; margin-top: 8px; min-height: 56px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px; font-size: var(--fs-caption); font-family: inherit; resize: vertical; }
+
+/* TXT-2: verification status folded into the collapsed tool-trace disclosure
+   instead of its own always-visible box (see ToolCallsDisclosure `footer`). */
+.tool-trace-evidence { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.tool-trace-evidence p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.tool-trace-evidence p:last-child { margin-bottom: 0; }
 
 .basis-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .basis { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-caption); color: var(--accent); border: 1px solid #C9D9EA; background: #F5F9FD; border-radius: var(--r-sm); padding: 6px 11px; max-width: 340px; }
@@ -512,10 +558,15 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .steps-note { margin: 0; font-size: var(--fs-caption); color: var(--ink-tertiary); max-width: 64ch; }
 .turn-pending { cursor: default; }
 .pending-action { color: var(--ink-secondary); font-size: var(--fs-meta); }
-.pending-action-line { display: flex; align-items: center; gap: 12px; }
-.pending-action-label { display: inline-flex; align-items: center; gap: 8px; }
-.pending-action-elapsed { color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
+/* One line per step, always -- a step's request/detail text is truncated
+   with an ellipsis (full text on hover/focus via title) rather than
+   wrapping, so new steps arriving does not reflow or jump the layout. */
+.pending-action-line { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pending-action-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
+.pending-action-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pending-action-elapsed { flex: 0 0 auto; color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
 .pending-action-history { margin: 8px 0 0; padding-left: 20px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.pending-action-history li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-action-history li + li { margin-top: 3px; }
 
 /* ---------------------------------------------------------------------------
@@ -584,9 +635,25 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .chip-ex { background: var(--warning-tint); border-color: #EBD9B4; color: #5E3D0C; }
 .doc-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-meta); line-height: 1.65; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 14px 16px; }
 .doc-readable { font-size: var(--fs-meta); line-height: 1.7; overflow-wrap: anywhere; }
-.doc-readable h3 { font-size: var(--fs-body-lg); line-height: 1.45; margin: 20px 0 10px; }
-.doc-readable h3:first-child { margin-top: 8px; }
+.doc-readable h1, .doc-readable h2, .doc-readable h3, .doc-readable h4, .doc-readable h5, .doc-readable h6 { line-height: 1.45; margin: 20px 0 10px; }
+.doc-readable h1, .doc-readable h2, .doc-readable h3 { font-size: var(--fs-body-lg); }
+.doc-readable h4, .doc-readable h5, .doc-readable h6 { font-size: var(--fs-meta); }
+.doc-readable h1:first-child, .doc-readable h2:first-child, .doc-readable h3:first-child { margin-top: 8px; }
 .doc-readable p { margin: 0 0 12px; white-space: pre-wrap; }
+.doc-readable ul, .doc-readable ol { margin: 0 0 12px; padding-left: 22px; }
+.doc-readable li { margin: 0 0 4px; }
+.doc-readable .doc-quote { margin: 0 0 12px; padding: 2px 0 2px 12px; border-left: 3px solid var(--line); color: var(--ink-secondary); white-space: pre-wrap; }
+.doc-readable code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .94em; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: 3px; padding: 0 4px; }
+.doc-table-scroll { margin: 0 0 14px; overflow-x: auto; }
+.doc-table-scroll table { border-collapse: collapse; width: 100%; font-size: var(--fs-caption); }
+.doc-table-scroll th, .doc-table-scroll td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.doc-table-scroll th { background: var(--surface-2); font-weight: 650; }
+.doc-code-block { margin: 0 0 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-caption); line-height: 1.6; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; }
+.doc-code-block code { font: inherit; background: none; border: 0; padding: 0; }
+.evidence-document { min-width: 0; }
+.evidence-quote { margin: 0 0 16px; padding: 10px 12px; border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--surface-2); }
+.evidence-quote figcaption { margin: 0 0 4px; font-size: var(--fs-caption); font-weight: 700; color: var(--ink-secondary); }
+.evidence-quote blockquote { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .evidence-text-toggle { display: block; margin: 0 0 10px auto; font-size: var(--fs-caption); }
 .evidence-quote-confirmed { margin: 10px 0 6px; color: var(--success); font-size: var(--fs-caption); font-weight: 650; }
 .evidence-verified-quote { background: #FFE49B; color: inherit; border-radius: 2px; box-shadow: 0 0 0 2px #FFE49B; }
@@ -596,6 +663,7 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .evi .tabs button { white-space: normal; text-align: left; }
 .ask-layout-full { grid-template-columns: 224px minmax(0, 1fr) 0; }
 .evi-provenance { margin-top: 14px; }
+.evi-details-body { margin-top: 10px; }
 .evi-provenance summary { cursor: pointer; font-size: var(--fs-caption); font-weight: 700; color: var(--ink-secondary); }
 .evi-provenance dl { margin: 10px 0 0; display: grid; gap: 6px; }
 .evi-provenance dl > div { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 12px; }
@@ -608,7 +676,15 @@ ul.answer-keys li:last-child { border-bottom: none; }
 @keyframes kv-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
 @media (max-width: 1180px) {
-  .ask-layout { grid-template-columns: 200px minmax(0, 1fr) 300px; }
+  .ask-layout { grid-template-columns: 200px minmax(0, 1fr); }
+  /* Card W-6: a collapsed list still frees its column at this width. */
+  .ask-layout-collapsed { grid-template-columns: minmax(0, 1fr); }
+  /* Card W-8: at this width the open evidence panel keeps its 300px column. */
+  .ask-layout-evidence { grid-template-columns: 200px minmax(0, 1fr) 300px; }
+  .ask-layout-evidence.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 300px; }
+  /* The fullscreen variant still covers the layout at this width. */
+  .ask-layout-full { grid-template-columns: 200px minmax(0, 1fr) 0; }
+  .ask-layout-full.ask-layout-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -638,7 +714,15 @@ ul.answer-keys li:last-child { border-bottom: none; }
    Responsive
 --------------------------------------------------------------------------- */
 @media (max-width: 900px) {
-  .ask-layout { grid-template-columns: 1fr; grid-auto-rows: auto; overflow-y: auto; }
+  /* One column whatever the evidence, fullscreen and list state; the
+     two-class evidence rules of the base layout must not win here, so the
+     whole variant set is named explicitly (card W-8). */
+  .ask-layout,
+  .ask-layout-collapsed,
+  .ask-layout-evidence,
+  .ask-layout-evidence.ask-layout-collapsed,
+  .ask-layout-full,
+  .ask-layout-full.ask-layout-collapsed { grid-template-columns: 1fr; grid-auto-rows: auto; overflow-y: auto; }
   .content-panel-ask { overflow-y: auto; }
   .topics { border-right: 0; border-bottom: 1px solid var(--line); max-height: 220px; }
   .evi { border-left: 0; border-top: 1px solid var(--line); min-height: 320px; }
@@ -794,6 +878,30 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .disabled-sources summary::-webkit-details-marker { display: none; }
 .disabled-sources[open] summary { margin-bottom: 4px; }
 
+/* Card S5.1: one card per PostgreSQL connection. The collapsed body keeps the
+   row idiom; the expansion lists the registered tables with their own state
+   and actions. */
+.source-connection-tables { margin-top: 10px; font-size: var(--fs-caption); }
+.source-connection-tables > summary { cursor: pointer; font-weight: 700; color: var(--ink-secondary); padding: 4px 0; }
+.source-table-rows { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.source-table { border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 10px 12px; background: var(--surface-2); }
+.source-table .source-success-time { margin: 4px 0 0; }
+.source-table .source-row-actions { margin-top: 8px; justify-content: flex-start; }
+
+/* Card S3.2b: the OWNER's SQL query credential control on the database card.
+   It accepts only the opaque mounted reference, never a DSN or a secret. */
+.source-sql-control { margin-top: 8px; display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.source-sql-control-field { display: grid; gap: 4px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.source-sql-control-field input { min-width: 260px; font-family: var(--font-mono, monospace); }
+
+/* Card S3.4b: bulk confirmation on the database card. One schema choice and one
+   action confirm every table awaiting confirmation, so a 600-table connection
+   is not 600 clicks. */
+.source-confirm-batch { margin-top: 8px; display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; }
+.source-confirm-batch-field { display: grid; gap: 4px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.source-confirm-batch-field select { min-width: 220px; }
+.source-confirm-batch-summary { margin-top: 6px; }
+
 /* ---------------------------------------------------------------------------
    UI-4.3: Access -- a single-screen code issue window (create -> show once
    -> hide), replacing the always-visible inline create/reveal form.
@@ -926,27 +1034,45 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .postgres-catalog-header p { margin: 6px 0 0; color: var(--ink-secondary); font-size: var(--fs-meta); }
 .postgres-catalog-expiry { display: grid; gap: 3px; flex: 0 0 auto; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink-secondary); font-size: var(--fs-caption); text-align: right; }
 .postgres-catalog-expiry strong { color: var(--ink); font-size: var(--fs-meta); font-weight: 650; }
+.postgres-catalog-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; padding: 0 30px 16px; }
+.postgres-filter-field, .postgres-sort-field, .postgres-schema-field { display: grid; gap: 4px; font-size: var(--fs-caption); color: var(--ink-secondary); }
+.postgres-filter-field { flex: 1 1 220px; min-width: 180px; }
+.postgres-filter-field input, .postgres-sort-field select, .postgres-schema-field select { padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font-size: var(--fs-meta); }
+.postgres-selection-controls { display: flex; align-items: center; gap: 12px; margin-left: auto; color: var(--ink-secondary); font-size: var(--fs-caption); white-space: nowrap; }
+.postgres-selection-controls .link-button:disabled { color: var(--ink-tertiary); text-decoration: none; cursor: default; }
 .postgres-view-grid { display: grid; gap: 12px; padding: 0 30px 20px; }
 .postgres-view-card { padding: 16px; border: 1px solid var(--line); border-left: 3px solid var(--warning); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-sm); }
 .postgres-view-prepared { border-left-color: var(--success); }
 .postgres-view-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.postgres-view-select { flex: 0 0 auto; margin-top: 4px; width: 17px; height: 17px; accent-color: var(--accent); }
 .postgres-view-title { min-width: 0; }
 .postgres-view-kind { display: block; margin-bottom: 5px; color: var(--ink-tertiary); font-size: var(--fs-caption); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .postgres-view-title h4 { margin: 0; font-size: var(--fs-body-lg); font-weight: 650; overflow-wrap: anywhere; }
 .postgres-view-title h4 code, .postgres-column-name code { color: var(--ink); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .postgres-view-title p { margin: 6px 0 0; color: var(--ink-secondary); font-size: var(--fs-meta); line-height: 1.5; overflow-wrap: anywhere; }
+.postgres-view-rowcount { color: var(--ink-tertiary); font-size: var(--fs-caption); }
 .postgres-view-action { display: flex; align-items: flex-end; flex-direction: column; gap: 8px; flex: 0 0 auto; }
 .postgres-view-status { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: var(--r-pill); font-size: var(--fs-caption); font-weight: 700; white-space: nowrap; }
 .postgres-view-status-prepared { color: var(--success); background: var(--success-tint); }
 .postgres-view-status-needs-interpretation { color: var(--warning); background: var(--warning-tint); }
 .postgres-view-interpretation { margin: 13px 0 0; padding: 9px 11px; border-radius: var(--r-sm); background: var(--warning-tint); color: var(--warning); font-size: var(--fs-caption); line-height: 1.45; }
-.postgres-columns-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--line-soft); color: var(--ink-secondary); font-size: var(--fs-caption); }
+.postgres-view-mode { display: flex; align-items: flex-start; gap: 9px; margin-top: 13px; padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface-muted, var(--line-soft)); font-size: var(--fs-caption); cursor: pointer; }
+.postgres-view-mode input { flex: 0 0 auto; margin-top: 2px; width: 16px; height: 16px; accent-color: var(--accent); }
+.postgres-view-mode span { display: grid; gap: 2px; }
+.postgres-view-mode strong { color: var(--ink); font-size: var(--fs-meta); font-weight: 650; }
+.postgres-view-mode small { color: var(--ink-secondary); font-size: var(--fs-caption); line-height: 1.4; }
+.postgres-columns-details { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.postgres-columns-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; color: var(--ink-secondary); font-size: var(--fs-caption); }
+.postgres-columns-heading::-webkit-details-marker { display: none; }
 .postgres-columns-heading strong { color: var(--ink); font-size: var(--fs-meta); }
 .postgres-columns-heading > span { display: inline-grid; place-items: center; min-width: 22px; min-height: 22px; padding: 0 6px; border-radius: var(--r-pill); background: var(--line-soft); color: var(--ink-secondary); }
 .postgres-column-list { display: grid; gap: 7px; margin: 9px 0 0; padding: 0; list-style: none; }
 .postgres-column-card { display: grid; grid-template-columns: minmax(145px, .35fr) minmax(0, .65fr); gap: 13px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--surface-2); }
+.postgres-column-excluded { opacity: .55; }
 .postgres-column-name { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.postgres-column-name input[type="checkbox"] { flex: 0 0 auto; margin-top: 2px; accent-color: var(--accent); }
 .postgres-column-name code { overflow-wrap: anywhere; font-size: var(--fs-caption); font-weight: 650; }
+.postgres-column-key-badge { flex: 0 0 auto; padding: 1px 7px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-strong); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .postgres-column-ordinal { display: grid; place-items: center; flex: 0 0 auto; width: 19px; height: 19px; border-radius: 50%; background: var(--line); color: var(--ink-secondary); font-size: 11px; }
 .postgres-column-details { display: grid; gap: 2px; min-width: 0; color: var(--ink-secondary); font-size: var(--fs-caption); line-height: 1.4; }
 .postgres-column-details span:first-child { color: var(--ink); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
@@ -956,11 +1082,21 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .postgres-catalog-empty svg { width: 20px; height: 20px; }
 .postgres-catalog-empty strong { font-size: var(--fs-body); }
 .postgres-catalog-empty p { max-width: 48ch; margin: 0; color: var(--ink-secondary); font-size: var(--fs-meta); line-height: 1.5; }
-.postgres-complete { display: grid; justify-items: center; align-content: center; gap: 9px; padding: 40px 30px; text-align: center; }
-.postgres-complete > span { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--success-tint); color: var(--success); }
-.postgres-complete svg { width: 26px; height: 26px; }
-.postgres-complete h3 { margin: 0; font-size: var(--fs-title); }
-.postgres-complete p { max-width: 42ch; margin: 0 0 10px; color: var(--ink-secondary); font-size: var(--fs-meta); line-height: 1.5; }
+.postgres-results-view { display: flex; flex-direction: column; }
+.postgres-results-list { display: grid; gap: 8px; margin: 0; padding: 0 30px 20px; list-style: none; }
+.postgres-result-row { display: flex; align-items: flex-start; gap: 11px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.postgres-result-row > span { display: grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; margin-top: 1px; }
+.postgres-result-row svg { width: 18px; height: 18px; }
+.postgres-result-row div { min-width: 0; }
+.postgres-result-row code { color: var(--ink); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-meta); font-weight: 650; overflow-wrap: anywhere; }
+.postgres-result-row p { margin: 3px 0 0; color: var(--ink-secondary); font-size: var(--fs-caption); line-height: 1.45; }
+.postgres-result-success { border-left: 3px solid var(--success); }
+.postgres-result-success svg { color: var(--success); }
+.postgres-result-failure { border-left: 3px solid var(--danger); }
+.postgres-result-failure svg { color: var(--danger); }
+.postgres-result-failure p { color: var(--danger); }
+.postgres-result-spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: postgres-result-spin .8s linear infinite; }
+@keyframes postgres-result-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 760px) {
   .postgres-steps, .postgres-connection-columns, .postgres-catalog-header, .postgres-trust-form { padding-left: 20px; padding-right: 20px; }
@@ -968,7 +1104,9 @@ ul.answer-keys li:last-child { border-bottom: none; }
   .postgres-step { gap: 4px; }
   .postgres-step b { font-size: 11px; }
   .postgres-connection-columns { grid-template-columns: 1fr; }
-  .postgres-view-grid { padding-left: 20px; padding-right: 20px; }
+  .postgres-catalog-toolbar, .postgres-view-grid, .postgres-results-list { padding-left: 20px; padding-right: 20px; }
+  .postgres-catalog-toolbar { flex-direction: column; align-items: stretch; }
+  .postgres-selection-controls { margin-left: 0; }
   .postgres-column-card { grid-template-columns: 1fr; gap: 5px; }
   .postgres-view-card-header, .postgres-catalog-header { align-items: flex-start; flex-direction: column; }
   .postgres-view-action { align-items: flex-start; width: 100%; }
@@ -984,6 +1122,16 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .tool-trace ol { padding-left: 22px; }
 .tool-trace pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; padding: 10px; background: #f5f7f8; border-radius: 6px; }
 .tool-trace-summary { display: block; max-width: 70ch; color: var(--ink-secondary); overflow-wrap: anywhere; }
+.tool-trace-sql { margin-top: 4px; }
+.tool-trace-sql summary { cursor: pointer; }
+.tool-trace-sql pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; padding: 8px; background: #f5f7f8; border-radius: 6px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.tool-trace-sql-refusal { color: var(--ink-secondary); margin: 4px 0; }
+.tool-trace-sql-result { width: 100%; border-collapse: collapse; margin: 6px 0; }
+.tool-trace-sql-result th, .tool-trace-sql-result td { padding: 4px 6px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.tool-trace-sql-count { margin: 4px 0 0; color: var(--ink-secondary); }
+.live-result-sql { margin: 6px 0; }
+.live-result-sql summary { cursor: pointer; }
+.live-result-sql pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; padding: 8px; background: #f5f7f8; border-radius: 6px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .source-address { margin: 12px 18px; font-size: 12px; }
 .source-address code { display: block; overflow-wrap: anywhere; user-select: all; }
 
@@ -1082,3 +1230,68 @@ ul.answer-keys li:last-child { border-bottom: none; }
   .governed-ask-input { flex-basis: 100%; }
   .governed-ask-form-row > button { flex: 1 1 auto; }
 }
+
+/* S2 card D: workspace model context (Settings). */
+.workspace-context-usage { margin: 0 0 10px; color: var(--ink-secondary); font-size: var(--fs-meta); line-height: 1.5; overflow-wrap: anywhere; }
+.model-context-page { padding-top: 4px; }
+.model-context-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.model-context-head h2 { margin: 4px 0 0; font-size: var(--fs-title); letter-spacing: -.015em; }
+.model-context-meta { margin: 6px 0 0; color: var(--ink-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.model-context-tabs { margin-top: 18px; }
+.model-context-panel { padding-top: 18px; }
+.model-context-hint { margin: 10px 0 0; color: var(--ink-secondary); font-size: var(--fs-caption); }
+.model-context-empty { color: var(--ink-tertiary); }
+.field-error { display: block; color: var(--danger); font-size: var(--fs-caption); margin-top: 4px; }
+.model-context-field-errors { margin: 18px 0 0; padding: 12px 15px; border: 1px solid #E7B8B8; border-radius: var(--r-md); background: #FDF2F2; color: #7A1F1F; font-size: var(--fs-meta); }
+.model-context-field-errors p { margin: 0 0 6px; font-weight: 700; }
+.model-context-field-errors ul { margin: 0; padding-left: 18px; }
+.model-context-rules { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.model-context-rules li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.model-context-rules li input { flex: 1 1 320px; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 10px; background: var(--surface); color: var(--ink); font-size: var(--fs-meta); }
+.model-context-rules li input:disabled { background: var(--line-soft); color: var(--ink-secondary); }
+.model-context-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: var(--fs-meta); }
+.model-context-table th, .model-context-table td { padding: 9px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
+.model-context-table th { font-size: var(--fs-caption); color: var(--ink-secondary); background: var(--surface-2); }
+.model-context-table input, .model-context-table textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 7px 8px; background: var(--surface); color: var(--ink); font-size: var(--fs-caption); }
+.model-context-table textarea { min-height: 74px; resize: vertical; }
+.model-context-locations { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.model-context-location-editor { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 6px; }
+.model-context-location-editor li { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap: 5px; align-items: center; }
+.model-context-location-editor input { font-size: var(--fs-caption); }
+.model-context-source { margin: 0 0 26px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.model-context-source h3 { margin: 0 0 10px; font-size: var(--fs-body-lg); }
+.model-context-table-note { margin: 0 0 14px; padding-left: 12px; border-left: 2px solid var(--line-soft); }
+.model-context-table-note h4 { margin: 0 0 8px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-meta); }
+.model-context-column-note span { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.model-context-proposal { margin: 0 0 18px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.model-context-proposal-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.model-context-proposal-fields { margin: 0 0 10px; display: grid; gap: 3px; }
+.model-context-proposal-fields div { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.model-context-proposal-fields dt { flex: 0 0 140px; color: var(--ink-tertiary); font-size: var(--fs-caption); }
+.model-context-proposal-fields dd { margin: 0; flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-meta); }
+.model-context-proposal-examples { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; font-size: var(--fs-meta); }
+.model-context-proposal-examples a { color: var(--accent); overflow-wrap: anywhere; }
+.model-context-proposal-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.model-context-proposal-edit { display: grid; gap: 10px; max-width: 620px; }
+.model-context-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.model-context-history li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); font-size: var(--fs-meta); }
+.model-context-history-main { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.model-context-history-actions { display: flex; gap: 10px; align-items: center; }
+@media (max-width: 600px) {
+  .model-context-head { flex-wrap: wrap; }
+  .model-context-location-editor li { grid-template-columns: 1fr 1fr; }
+  .model-context-table { display: block; overflow-x: auto; }
+  .model-context-proposal-fields dt { flex-basis: 100%; }
+}
+
+
+/* Card D-1: unfinished connection drafts on the Sources page and the
+   auto-excluded base-table columns in the PostgreSQL discovery catalog. */
+.source-drafts { margin: 0 0 18px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: var(--r-sm); background: var(--surface); }
+.source-drafts h3 { margin: 0 0 4px; font-size: var(--fs-body); }
+.source-drafts-hint { margin: 0 0 10px; color: var(--muted); font-size: var(--fs-meta); }
+.source-row-draft .dot-draft { background: var(--muted); }
+.state-chip.draft span { background: var(--muted); }
+.postgres-column-auto-excluded { opacity: 0.72; }
+.postgres-column-exclusion-reason { color: var(--muted); }
+.postgres-excluded-note { margin: 8px 0 0; color: var(--muted); font-size: var(--fs-meta); }

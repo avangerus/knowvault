@@ -3,7 +3,10 @@ package audit
 import "reflect"
 
 // The source-read projection deliberately has no data fields. A closed reason
-// identifies which of the two shared repository reads the event covers.
+// identifies which of the shared repository reads the event covers: the source
+// status list, the confirmation context, card D-1's connection draft list, or
+// ADR-0097's source schema list/schema read (S3 card 1) and the source SQL
+// scope read (S3 card 2).
 func validSourceMetadataReadProjection(input EventInput) bool {
 	if input.ResourceType != ResourceWorkspace || input.PolicyDecisionID != nil || input.OnBehalfOfPrincipalID != nil ||
 		(input.ActorType != ActorHuman && input.ActorType != ActorService) || len(input.ReferencedEvidenceIDs) != 0 ||
@@ -11,7 +14,8 @@ func validSourceMetadataReadProjection(input EventInput) bool {
 		return false
 	}
 	kind := input.Metadata.ReasonCodes[0]
-	if kind != "SOURCE_STATUS_LIST" && kind != "SOURCE_CONFIRMATION_CONTEXT" {
+	if kind != "SOURCE_STATUS_LIST" && kind != "SOURCE_CONFIRMATION_CONTEXT" && kind != "SOURCE_CONNECTION_DRAFT_LIST" &&
+		kind != "SOURCE_SCHEMA_LIST" && kind != "SOURCE_SCHEMA" && kind != "SOURCE_SQL" {
 		return false
 	}
 	// Comparison with the same struct carrying only this field also rejects

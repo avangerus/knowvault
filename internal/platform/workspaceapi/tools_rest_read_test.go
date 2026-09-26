@@ -266,6 +266,86 @@ func TestWorkspaceToolReadRESTWholeObjectPagesReassemble(t *testing.T) {
 	}
 }
 
+// TestWorkspaceToolReadRESTOutlineReturnsOrderedHeadings proves GET and POST
+// outline=true dispatch through the identical EvidenceWholeObject capability
+// the MCP knowvault_read outline mode composes, and return the same closed
+// {headings, truncated, fragment_count, address, canonical_address}
+// projection: no fragment text disclosed.
+func TestWorkspaceToolReadRESTOutlineReturnsOrderedHeadings(t *testing.T) {
+	anchor := testEvidenceFragment(t)
+	fragmentOne := []byte("# Overview\nWhat this document covers.\n\n")
+	fragmentTwo := []byte("## Details\nThe fine print goes here.\n")
+	whole := append(append([]byte(nil), fragmentOne...), fragmentTwo...)
+	anchor.Text = fragmentOne
+	other := "fragment_01H9ABCDEFGHJKMNPQRSTVWXYA"
+	object := evidence.WholeObject{
+		Fragment: anchor, Text: whole, FragmentCount: 2, FirstOrdinal: 1, LastOrdinal: 2,
+		Fragments: []evidence.ObjectFragmentSpan{
+			{FragmentID: anchor.FragmentID, Ordinal: 1, Offset: 0, Length: len(fragmentOne)},
+			{FragmentID: other, Ordinal: 2, Offset: len(fragmentOne), Length: len(fragmentTwo)},
+		},
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		method := method
+		t.Run(method, func(t *testing.T) {
+			service := &restReadEvidence{object: object}
+			harness := restReadHarness(t, service)
+			response, body := callRestRead(t, harness, method, "?fragment_id="+anchor.FragmentID+"&outline=true", "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("outline REST status=%d body=%s", response.Code, response.Body.String())
+			}
+			if service.objectCall != "read_object" {
+				t.Fatalf("outline did not dispatch through EvidenceWholeObject: %q", service.objectCall)
+			}
+			headings, ok := body["headings"].([]any)
+			if !ok || len(headings) != 2 {
+				t.Fatalf("outline headings=%#v", body["headings"])
+			}
+			first, _ := headings[0].(map[string]any)
+			if first["text"] != "Overview" || first["gist"] != "What this document covers." || first["level"] != float64(1) {
+				t.Fatalf("first outline heading=%#v", first)
+			}
+			if body["truncated"] != false || body["fragment_count"] != float64(2) {
+				t.Fatalf("outline metadata=%#v", body)
+			}
+			if _, hasText := body["text"]; hasText {
+				t.Fatalf("outline response disclosed fragment text: %#v", body)
+			}
+			if parsed, err := address.Parse(body["canonical_address"].(string)); err != nil || parsed.Object != anchor.FragmentID {
+				t.Fatalf("outline canonical_address=%#v err=%v", body["canonical_address"], err)
+			}
+		})
+	}
+}
+
+// TestWorkspaceToolReadRESTOutlineDeniesContentFree proves an outline denial is
+// the single content-free not-found with no headings and no workspace echo.
+func TestWorkspaceToolReadRESTOutlineDeniesContentFree(t *testing.T) {
+	service := &restReadEvidence{objectErr: evidence.ErrNotFound}
+	harness := restReadHarness(t, service)
+	response, body := callRestRead(t, harness, http.MethodGet,
+		"?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&outline=true", "")
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("outline denial status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "ws_alpha") || len(body) != 0 {
+		t.Fatalf("outline denial leaked content or echoed the workspace: %s", response.Body.String())
+	}
+}
+
+// TestWorkspaceToolReadRESTOutlineWithoutWholeObjectCapabilityFailsClosed
+// proves the default fragment-only harness fails closed as SERVICE_UNAVAILABLE
+// for outline mode, exactly like cursor mode.
+func TestWorkspaceToolReadRESTOutlineWithoutWholeObjectCapabilityFailsClosed(t *testing.T) {
+	harness := newTestHarness(t)
+	response, _ := callRestRead(t, harness, http.MethodGet,
+		"?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&outline=true", "")
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "SERVICE_UNAVAILABLE") {
+		t.Fatalf("outline no-whole-object status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 // TestWorkspaceToolReadRESTDeniesContentFree proves a denial is the single
 // content-free not-found with no page and no workspace-id echo.
 func TestWorkspaceToolReadRESTDeniesContentFree(t *testing.T) {
@@ -357,20 +437,24 @@ func TestWorkspaceToolReadRESTRejectsInvalidBeforeRead(t *testing.T) {
 	canonical := mcpTestCanonicalAddress(t, fragment)
 
 	for name, query := range map[string]string{
-		"missing_selector":  "?offset=0",
-		"empty_fragment_id": "?fragment_id=",
-		"negative_offset":   "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&offset=-1",
-		"negative_limit":    "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&limit=-1",
-		"nondecimal_limit":  "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&limit=1x",
-		"bad_cursor":        "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&cursor=nope",
-		"empty_cursor":      "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&cursor=",
-		"cursor_and_offset": "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&cursor=v1:0&offset=1",
-		"unknown_member":    "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&extra=true",
-		"duplicate":         "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&fragment_id=fragment_other",
-		"malformed_address": "?address=knowvault://address/v1?kind=text",
-		"address_mismatch":  "?fragment_id=fragment_other_01H9ABCDEFGHJKMNPQRSTVWX&address=" + url.QueryEscape(canonical.String()),
-		"bare_question":     "?",
-		"malformed_escape":  "?fragment_id=%zz",
+		"missing_selector":   "?offset=0",
+		"empty_fragment_id":  "?fragment_id=",
+		"negative_offset":    "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&offset=-1",
+		"negative_limit":     "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&limit=-1",
+		"nondecimal_limit":   "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&limit=1x",
+		"bad_cursor":         "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&cursor=nope",
+		"empty_cursor":       "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&cursor=",
+		"cursor_and_offset":  "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&cursor=v1:0&offset=1",
+		"unknown_member":     "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&extra=true",
+		"duplicate":          "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&fragment_id=fragment_other",
+		"malformed_address":  "?address=knowvault://address/v1?kind=text",
+		"address_mismatch":   "?fragment_id=fragment_other_01H9ABCDEFGHJKMNPQRSTVWX&address=" + url.QueryEscape(canonical.String()),
+		"bare_question":      "?",
+		"malformed_escape":   "?fragment_id=%zz",
+		"outline_and_cursor": "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&outline=true&cursor=v1:0",
+		"outline_and_offset": "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&outline=true&offset=1",
+		"bad_outline_value":  "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&outline=yes",
+		"empty_outline":      "?fragment_id=fragment_01H9ABCDEFGHJKMNPQRSTVWXYZ&outline=",
 	} {
 		name, query := name, query
 		t.Run(name, func(t *testing.T) {

@@ -109,6 +109,23 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	scopeRevokeDone := false
 	scopeChangedModelCalls := 0
 	finalizationModelCalls := 0
+	// Card D-5 requirement 1: one forced submit-only turn follows any stop that
+	// did not submit an answer. forcedCalls counts the runs that reached it.
+	forcedCalls := 0
+	// The user-visible Russian texts card D-5 requirement 4 requires for a
+	// Russian question, copied from internal/question's own constants because
+	// this is an external test package.
+	const noWorkspaceDataRussian = "\u0412 \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u043e\u0431\u043b\u0430\u0441\u0442\u0438 \u043d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445 \u0434\u043b\u044f \u043e\u0442\u0432\u0435\u0442\u0430 \u043d\u0430 \u044d\u0442\u043e\u0442 \u0432\u043e\u043f\u0440\u043e\u0441."
+	const unverifiedAnswerRussian = "\u041d\u0438 \u043e\u0434\u043d\u043e \u0443\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044c \u043f\u043e \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u043d\u0435\u0447\u0435\u0433\u043e. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0432\u043e\u043f\u0440\u043e\u0441 \u0438\u043b\u0438 \u043d\u0430\u0437\u043e\u0432\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0441\u043b\u0435\u0434\u0443\u0435\u0442 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c."
+	const scopeChangedAnswerRussian = "\u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043e\u0431\u043b\u0430\u0441\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0438\u043b\u0430\u0441\u044c \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u0437\u0430\u043f\u0440\u043e\u0441\u0430. \u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0437\u0430\u043f\u0440\u043e\u0441."
+	hasUncertaintyCode := func(items []question.Uncertainty, code string) bool {
+		for _, item := range items {
+			if item.Code == code {
+				return true
+			}
+		}
+		return false
+	}
 	access := database.AccessContext{OrganizationID: s1dOrg, PrincipalID: s1dOwner, RequestID: "req_tool_loop_live"}
 	const clarification = "\u0421\u043a\u043e\u043b\u044c\u043a\u043e \u0447\u0435\u0433\u043e \u043d\u0443\u0436\u043d\u043e \u0443\u0437\u043d\u0430\u0442\u044c: \u043c\u0430\u0441\u0441\u0443 \u043e\u0442\u0445\u043e\u0434\u043e\u0432 \u0438\u043b\u0438 \u0447\u0438\u0441\u043b\u043e \u0440\u0435\u0439\u0441\u043e\u0432?"
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,10 +187,38 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		message := map[string]any{"role": "assistant", "reasoning_content": "PRIVATE_MODEL_REASONING"}
 		finish := "stop"
 		lastMessage := input.Messages[len(input.Messages)-1]
+		// currentAnswer is the run's one supported claim with the citations it
+		// is bound to. Every answer-producing branch reuses it, so the scripted
+		// model's answer stays identical across scenarios.
+		currentAnswer := func(citations ...any) string {
+			content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{
+				"text":      "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.",
+				"citations": citations,
+			}}})
+			return string(content)
+		}
+		// englishAnswer is the same supported claim written in English, for the
+		// English question. Card D-5 requirement 4: an English question gets an
+		// English answer, and the tool loop now rejects a Russian submission for
+		// it instead of showing it.
+		englishAnswer := func(citations ...any) string {
+			content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{
+				"text":      "The read fragment reports 42 tonnes. Other periods were not checked.",
+				"citations": citations,
+			}}})
+			return string(content)
+		}
 		needsDocumentResearch := scenario == "answer" || scenario == "whole_page" ||
 			scenario == "address_only" || scenario == "fragment_reference" ||
 			scenario == "edited_quote" || scenario == "scope_changed"
-		if strings.HasPrefix(scenario, "final_") {
+		if isCardD5Scenario(scenario) {
+			content, calls, cardFinish := cardD5ScriptedAnswer(t, scenario, input, lastMessage, emittedAddress, currentAnswer, englishAnswer, &forcedCalls)
+			message["content"] = content
+			if len(calls) > 0 {
+				message["tool_calls"] = calls
+			}
+			finish = cardFinish
+		} else if strings.HasPrefix(scenario, "final_") {
 			finalizationModelCalls++
 			if finalizationModelCalls == 1 {
 				if len(input.Tools) <= 1 {
@@ -228,7 +273,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 							t.Error("bounded batch search returned no readable address")
 						}
 					}
-					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.", "citations": []any{map[string]any{"address": citeAddress}}}}})
+					content, _ := json.Marshal(map[string]any{"no_data": false, "claims": []any{map[string]any{"text": "\u041f\u043e \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u043c\u0443 \u0444\u0440\u0430\u0433\u043c\u0435\u043d\u0442\u0443 \u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. \u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.", "citations": []any{map[string]any{"address": citeAddress}}}}})
 					message["content"] = string(content)
 				}
 			}
@@ -341,7 +386,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 		// Keep the original bare-JSON answer as the compatibility control.
 		// Every other successful and adversarial scenario uses the model-only
 		// final action and must pass exactly the same evidence/lifecycle gates.
-		if content, ok := message["content"].(string); ok && scenario != "answer" {
+		if content, ok := message["content"].(string); ok && scenario != "answer" && !isCardD5Scenario(scenario) {
 			delete(message, "content")
 			calls := []any{map[string]any{"id": "submit-final", "type": "function", "function": map[string]any{"name": "submit_answer", "arguments": content}}}
 			if scenario == "mixed_submission" {
@@ -499,19 +544,19 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 					bindingReads++
 				}
 			}
-			if bindingReads != example.bindingReads || run.Citations[0].Address != emittedAddress || run.Citations[0].Excerpt != string(fragment.Text) || !strings.Contains(run.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u043f\u0440\u043e\u0432\u0435\u0440\u0435\u043d\u044b.") {
+			if bindingReads != example.bindingReads || run.Citations[0].Address != emittedAddress || run.Citations[0].Excerpt != string(fragment.Text) || !strings.Contains(run.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c.") {
 				t.Fatal("finalization bypassed source binding or lost the explicit answer scope")
 			}
 		})
 	}
 	for index, example := range []struct{ kind, text, status, stop, answer string }{
 		{"clarification", "\u0430 \u0441\u043a\u043e\u043b\u044c\u043a\u043e?", "COMPLETED", "CLARIFICATION", clarification},
-		{"absent", "\u041a\u0430\u043a\u0430\u044f \u0442\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430 \u0437\u0430\u0432\u0442\u0440\u0430 \u043d\u0430 \u041b\u0443\u043d\u0435?", "INSUFFICIENT_EVIDENCE", "ANSWER", "The workspace has no data to answer this question."},
-		{"forged", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
-		{"forged_address_only", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
-		{"unseen_fragment", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
-		{"edited_quote", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", "The answer citations could not be verified against their sources. Please try again."},
-		{"context", "\u0430 \u0432\u0447\u0435\u0440\u0430?", "INSUFFICIENT_EVIDENCE", "ANSWER", "The workspace has no data to answer this question."},
+		{"absent", "\u041a\u0430\u043a\u0430\u044f \u0442\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430 \u0437\u0430\u0432\u0442\u0440\u0430 \u043d\u0430 \u041b\u0443\u043d\u0435?", "INSUFFICIENT_EVIDENCE", "ANSWER", noWorkspaceDataRussian},
+		{"forged", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", ""},
+		{"forged_address_only", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", ""},
+		{"unseen_fragment", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", ""},
+		{"edited_quote", request.Question, "INSUFFICIENT_EVIDENCE", "CITATIONS_UNVERIFIED", ""},
+		{"context", "\u0430 \u0432\u0447\u0435\u0440\u0430?", "INSUFFICIENT_EVIDENCE", "ANSWER", noWorkspaceDataRussian},
 	} {
 		scenario = example.kind
 		key := make([]byte, 32)
@@ -521,17 +566,182 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 			next.ConversationID = first.ConversationID
 		}
 		run, err := questions.Create(ctx, access, next)
-		if err != nil || run.ToolLoop == nil || run.ResultStatus != example.status || run.ToolLoop.StopReason != example.stop || run.Answer != example.answer || len(run.Citations) != 0 {
+		wantAnswer := example.answer
+		if wantAnswer == "" {
+			// Card D-5 requirements 2 and 4: nothing verifiable remains, so the
+			// plain-language Russian text replaces the old profile-limits
+			// failure and the run records what happened.
+			wantAnswer = unverifiedAnswerRussian
+		}
+		if err != nil || run.ToolLoop == nil || run.ResultStatus != example.status || run.ToolLoop.StopReason != example.stop || run.Answer != wantAnswer || len(run.Citations) != 0 {
 			t.Fatalf("%s returned an incorrect or fabricated answer: %v %+v", scenario, err, run)
 		}
+		if strings.Contains(run.Answer, "profile limits") {
+			t.Fatalf("%s blamed profile limits: %q", scenario, run.Answer)
+		}
+		if scenario != "clarification" && scenario != "absent" && scenario != "context" &&
+			!hasUncertaintyCode(run.Uncertainties, question.UncertaintyInsufficientEvidence) {
+			t.Fatalf("%s lost its uncertainty signal: %+v", scenario, run.Uncertainties)
+		}
+	}
+	// Card D-5 requirement 1: the model never submits within the mounted turn
+	// budget, so the forced final turn submits the cited answer and the run
+	// completes instead of ending with a failure text.
+	scenario, forcedCalls = "forced_answer", 0
+	forcedKey := make([]byte, 32)
+	forcedKey[0] = 70
+	forcedRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, ModelProfileID: "turn-limit", IdempotencyKey: base64.RawURLEncoding.EncodeToString(forcedKey)})
+	scenario = "answer"
+	if err != nil || forcedRun.ToolLoop == nil || forcedRun.ResultStatus != "COMPLETED" || forcedRun.ToolLoop.StopReason != "ANSWER" || len(forcedRun.Citations) != 1 {
+		t.Fatalf("forced final turn did not answer: %v %+v", err, forcedRun)
+	}
+	if forcedCalls != 1 || forcedRun.ToolLoop.ModelTurns != forcedRun.ToolLoop.Profile.MaxTurns+1 ||
+		forcedRun.Citations[0].Address != emittedAddress {
+		t.Fatalf("forced final turn exceeded its one-turn allowance: calls=%d turns=%d max=%d cite=%q want=%q", forcedCalls, forcedRun.ToolLoop.ModelTurns, forcedRun.ToolLoop.Profile.MaxTurns, forcedRun.Citations[0].Address, emittedAddress)
+	}
+	// Card D-5 requirement 1: even the forced turn fails here, so the user gets
+	// an honest failure text that names what happened and never profile limits.
+	scenario, forcedCalls = "forced_fail", 0
+	failKey := make([]byte, 32)
+	failKey[0] = 71
+	failedRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, ModelProfileID: "small-budget", IdempotencyKey: base64.RawURLEncoding.EncodeToString(failKey)})
+	scenario = "answer"
+	if err != nil || failedRun.ToolLoop == nil || failedRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || len(failedRun.Citations) != 0 {
+		t.Fatalf("failed forced turn was not surfaced honestly: %v %+v", err, failedRun)
+	}
+	if forcedCalls != 1 || strings.Contains(failedRun.Answer, "profile limits") || strings.Contains(failedRun.Answer, "configured profile") {
+		t.Fatalf("failed forced turn blamed a limit that was not hit: %q", failedRun.Answer)
+	}
+	if !hasUncertaintyCode(failedRun.Uncertainties, question.UncertaintyInsufficientEvidence) {
+		t.Fatalf("failed forced turn lost its uncertainty signal: %+v", failedRun.Uncertainties)
+	}
+	// Card D-5 requirement 2: one verified and one forged citation. The verified
+	// claim is shown, the forged one is dropped, and the run completes with an
+	// uncertainty instead of failing.
+	scenario = "mixed_citations"
+	mixedCitationKey := make([]byte, 32)
+	mixedCitationKey[0] = 72
+	mixedCitationRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(mixedCitationKey)})
+	scenario = "answer"
+	if err != nil || mixedCitationRun.ToolLoop == nil || mixedCitationRun.ResultStatus != "COMPLETED" ||
+		mixedCitationRun.ToolLoop.StopReason != "ANSWER" || len(mixedCitationRun.Citations) != 1 {
+		t.Fatalf("partial verification discarded the verified content: %v %+v", err, mixedCitationRun)
+	}
+	if !strings.Contains(mixedCitationRun.Answer, "\u0414\u0440\u0443\u0433\u0438\u0435 \u043f\u0435\u0440\u0438\u043e\u0434\u044b \u043d\u0435 \u0447\u0438\u0442\u0430\u043b\u0438\u0441\u044c. [1]") ||
+		len(mixedCitationRun.ToolLoop.UnconfirmedClaims) != 1 {
+		t.Fatalf("partial verification did not keep the verified claim and record the dropped citation: %q %+v",
+			mixedCitationRun.Answer, mixedCitationRun.ToolLoop.UnconfirmedClaims)
+	}
+	if !hasUncertaintyCode(mixedCitationRun.Uncertainties, question.UncertaintyUnverifiedCitations) {
+		t.Fatalf("partial verification completed without an uncertainty: %+v", mixedCitationRun.Uncertainties)
+	}
+	// Card D-5 requirement 2 with two claims: a fully verified claim must
+	// survive a forged sibling claim, in both orders, and the run must complete
+	// with an uncertainty instead of discarding the verified content.
+	modelToolCalls := func(run question.Run) int {
+		calls := 0
+		for _, call := range run.ToolLoop.Calls {
+			if !call.System {
+				calls++
+			}
+		}
+		return calls
+	}
+	for index, kind := range []string{"mixed_claims", "mixed_claims_first"} {
+		scenario = kind
+		mixedClaimKey := make([]byte, 32)
+		mixedClaimKey[0] = byte(75 + index)
+		mixedClaimRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(mixedClaimKey)})
+		scenario = "answer"
+		if err != nil || mixedClaimRun.ToolLoop == nil || mixedClaimRun.ResultStatus != "COMPLETED" ||
+			mixedClaimRun.ToolLoop.StopReason != "ANSWER" || len(mixedClaimRun.Citations) != 1 {
+			t.Fatalf("%s: a forged sibling claim discarded the verified claim: %v %+v", kind, err, mixedClaimRun)
+		}
+		if !strings.Contains(mixedClaimRun.Answer, "\u0412\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b. [1]") ||
+			strings.Contains(mixedClaimRun.Answer, "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u044b\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u043d\u0435 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d.") {
+			t.Fatalf("%s: the kept answer was not exactly the verified claim: %q", kind, mixedClaimRun.Answer)
+		}
+		if !hasUncertaintyCode(mixedClaimRun.Uncertainties, question.UncertaintyUnverifiedCitations) {
+			t.Fatalf("%s: a forged sibling claim completed without an uncertainty: %+v", kind, mixedClaimRun.Uncertainties)
+		}
+	}
+	// Card D-5 requirement 3: the overview question is answered from the
+	// overview in one turn, with no tool call, and its citations verify.
+	scenario, forcedCalls = "overview", 0
+	overviewKey := make([]byte, 32)
+	overviewKey[0] = 73
+	overviewRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: "\u0447\u0442\u043e \u0442\u044b \u0437\u043d\u0430\u0435\u0448\u044c?", IdempotencyKey: base64.RawURLEncoding.EncodeToString(overviewKey)})
+	scenario = "answer"
+	if err != nil || overviewRun.ToolLoop == nil || overviewRun.ResultStatus != "COMPLETED" || overviewRun.ToolLoop.StopReason != "ANSWER" {
+		t.Fatalf("overview question did not complete: %v %+v", err, overviewRun)
+	}
+	if modelToolCalls(overviewRun) != 0 || forcedCalls != 0 {
+		t.Fatalf("overview question spent tool calls: calls=%+v", overviewRun.ToolLoop.Calls)
+	}
+	if len(overviewRun.Citations) != 1 || overviewRun.GroundingStatus != question.GroundingConfirmedByFragment {
+		t.Fatalf("overview citation did not verify: %+v", overviewRun.Citations)
+	}
+	// The overview read the first fragment of an inventoried document, which
+	// may be either fixture document; the citation must still open that exact
+	// stored fragment with its exact bytes.
+	overviewFragment, fragmentErr := viewer.Read(ctx, access, s1dWorkspace, overviewRun.Citations[0].EvidenceFragment)
+	if fragmentErr != nil || overviewRun.Citations[0].Excerpt != string(overviewFragment.Text) {
+		t.Fatalf("overview citation lost its stored bytes: %v %+v", fragmentErr, overviewRun.Citations[0])
+	}
+	// Card D-5 requirement 4: an English question gets an English answer. A
+	// greeting is an overview question, so it also exercises the quick path.
+	scenario = "greeting"
+	englishKey := make([]byte, 32)
+	englishKey[0] = 74
+	englishRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: "hello", IdempotencyKey: base64.RawURLEncoding.EncodeToString(englishKey)})
+	scenario = "answer"
+	if err != nil || englishRun.ToolLoop == nil || englishRun.ResultStatus != "COMPLETED" {
+		t.Fatalf("english greeting did not complete: %v %+v", err, englishRun)
+	}
+	if modelToolCalls(englishRun) != 0 || len(englishRun.Citations) != 1 {
+		t.Fatalf("english greeting spent tool calls or lost its citation: %+v", englishRun.ToolLoop.Calls)
+	}
+	if strings.Contains(englishRun.Answer, "\u041e\u0431\u0437\u043e\u0440") || strings.Contains(englishRun.Answer, "\u0412 \u0440\u0430\u0431\u043e\u0447\u0435\u0439") {
+		t.Fatalf("english question received russian text: %q", englishRun.Answer)
+	}
+	// Card D-5 requirement 4: a Russian answer to the English question is
+	// rejected with a language instruction, and the model's next English answer
+	// is shown. The handler's tool-protocol check fails the test if that
+	// instruction was inserted before the rejected submit_answer's tool result,
+	// which a real provider rejects with HTTP 400.
+	scenario = "language_retry"
+	retryKey := make([]byte, 32)
+	retryKey[0] = 90
+	retryRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: "hello", IdempotencyKey: base64.RawURLEncoding.EncodeToString(retryKey)})
+	scenario = "answer"
+	if err != nil || retryRun.ToolLoop == nil || retryRun.ResultStatus != "COMPLETED" || retryRun.ToolLoop.StopReason != "ANSWER" || len(retryRun.Citations) != 1 {
+		t.Fatalf("a rejected Russian answer was not replaced by an English one: %v %+v", err, retryRun)
+	}
+	if !strings.Contains(retryRun.Answer, "42 tonnes") || strings.Contains(retryRun.Answer, "\u0432\u044b\u0432\u0435\u0437\u0435\u043d\u043e") {
+		t.Fatalf("the wrong-language answer was shown: %q", retryRun.Answer)
+	}
+	if modelToolCalls(retryRun) != 0 {
+		t.Fatalf("the language retry spent knowledge tool calls: %+v", retryRun.ToolLoop.Calls)
 	}
 	scope := workspacetools.Scope{Access: access, WorkspaceID: s1dWorkspace, Revision: first.WorkspaceRevision}
 	scenario = "mixed_submission"
 	mixedKey := make([]byte, 32)
 	mixedKey[0] = 33
 	mixed, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(mixedKey)})
-	if err != nil || mixed.ToolLoop == nil || mixed.ToolLoop.StopReason != "FORMAT_INVALID" || len(mixed.ToolLoop.Calls) != 0 || len(mixed.Citations) != 0 {
+	scenario = "answer"
+	// Card D-5 requirements 1 and 2: a rejected mixed submission no longer ends
+	// the run. The model gets its forced final turn, the forbidden knowledge
+	// call never reaches data, and the answer it submits from nothing observed
+	// is surfaced as the plain "nothing verifiable" text instead of a
+	// profile-limits failure.
+	if err != nil || mixed.ToolLoop == nil || len(mixed.ToolLoop.Calls) != 0 || len(mixed.Citations) != 0 {
 		t.Fatalf("mixed final action executed knowledge calls or disclosed claims: %v %+v", err, mixed)
+	}
+	if mixed.ToolLoop.StopReason != "CITATIONS_UNVERIFIED" || mixed.ResultStatus != "INSUFFICIENT_EVIDENCE" {
+		t.Fatalf("mixed final action did not reach the forced final turn: %+v", mixed.ToolLoop)
+	}
+	if strings.Contains(mixed.Answer, "profile limits") {
+		t.Fatalf("mixed final action blamed a limit that was not hit: %q", mixed.Answer)
 	}
 	catalog, err := runtime.Catalog(ctx, scope)
 	if err != nil {
@@ -622,7 +832,7 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	scopeKey[0] = 34
 	scopeRun, err := questions.Create(ctx, access, question.CreateRequest{WorkspaceID: s1dWorkspace, Question: request.Question, IdempotencyKey: base64.RawURLEncoding.EncodeToString(scopeKey)})
 	scenario = "answer"
-	if err != nil || scopeRun.ToolLoop == nil || scopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || scopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || scopeRun.Answer != "The workspace changed during the request. Please try again." || len(scopeRun.Citations) != 0 {
+	if err != nil || scopeRun.ToolLoop == nil || scopeRun.ResultStatus != "INSUFFICIENT_EVIDENCE" || scopeRun.ToolLoop.StopReason != "SCOPE_CHANGED" || scopeRun.Answer != scopeChangedAnswerRussian || len(scopeRun.Citations) != 0 {
 		t.Fatalf("scope change was not surfaced safely: %v %+v", err, scopeRun)
 	}
 	if !scopeRevokeDone || scopeChangedModelCalls != 3 || len(scopeRun.ToolLoop.Calls) != 3 {
@@ -839,5 +1049,145 @@ func TestToolLoopQuestionUsesMCPAndEncryptedRunLifecycle(t *testing.T) {
 	batch, err := questions.GetBatch(ctx, access, s1dWorkspace, []string{first.ID})
 	if err != nil || len(batch) != 0 {
 		t.Fatalf("uncited revoked data escaped through conversation: %v", err)
+	}
+}
+
+// isCardD5Scenario reports whether this scripted scenario belongs to card D-5's
+// own turn plan, which the older scenario chain must not answer for.
+func isCardD5Scenario(scenario string) bool {
+	switch scenario {
+	case "overview", "greeting", "language_retry", "forced_answer", "forced_fail", "mixed_citations", "mixed_claims", "mixed_claims_first", "mixed_submission":
+		return true
+	default:
+		return false
+	}
+}
+
+// cardD5ScriptedAnswer scripts one card D-5 scenario turn and returns the
+// assistant content, any tool calls, and the finish reason for it. Every
+// scenario here owns every one of its turns.
+func cardD5ScriptedAnswer(t *testing.T, scenario string, input struct {
+	Messages []modelgateway.Message        `json:"messages"`
+	Tools    []modelgateway.ToolDefinition `json:"tools"`
+}, lastMessage modelgateway.Message, emittedAddress string, currentAnswer func(...any) string, englishAnswer func(...any) string, forcedCalls *int) (string, []any, string) {
+	t.Helper()
+	finalOnly := len(input.Tools) == 1 && input.Tools[0].Function.Name == "submit_answer"
+	switch scenario {
+	case "overview", "greeting", "language_retry":
+		// Card D-5 requirement 3: the overview is already in the first request,
+		// with no tool call. The model answers it directly. Card D-5 requirement
+		// 4: the greeting's question is English, so its answer is too.
+		overviewText := ""
+		for _, entry := range input.Messages {
+			if strings.Contains(entry.Content, "Workspace overview") || strings.Contains(entry.Content, "\u041e\u0431\u0437\u043e\u0440 \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u043e\u0431\u043b\u0430\u0441\u0442\u0438") {
+				overviewText = entry.Content
+				if entry.Role == "system" {
+					// Card D-5 requirement 3: the overview carries untrusted
+					// document bytes, so it must never be appended to the trusted
+					// system instruction block.
+					t.Error("overview was appended to the trusted system message")
+				}
+				break
+			}
+		}
+		if overviewText == "" {
+			t.Error("overview question reached the model without its overview")
+		}
+		address := regexp.MustCompile(`kv1:[^\s"\\)\]]+`).FindString(overviewText)
+		if address == "" {
+			t.Errorf("overview carried no citable address: %q", overviewText)
+		}
+		if scenario == "greeting" {
+			return englishAnswer(map[string]any{"address": address}), nil, "stop"
+		}
+		if scenario == "language_retry" {
+			// The first submission is Russian and must be rejected with a
+			// language instruction; the next request carries it, so the model
+			// answers in English. The protocol check above fails the test if the
+			// hint was inserted before the rejected call's tool result.
+			for _, entry := range input.Messages {
+				if entry.Role == "user" && strings.Contains(entry.Content, "must be in English") {
+					return englishAnswer(map[string]any{"address": address}), nil, "stop"
+				}
+			}
+			return currentAnswer(map[string]any{"address": address}), nil, "stop"
+		}
+		return currentAnswer(map[string]any{"address": address}), nil, "stop"
+	case "forced_answer":
+		// Card D-5 requirement 1: the first turn reads the evidence, the mounted
+		// finalization turn refuses to answer, and only the forced final turn
+		// supplies the cited answer from what the first turn read. The
+		// finalization turn is the one whose own instructions are the last
+		// message; every turn after it is the forced one.
+		if !finalOnly {
+			calls := []any{}
+			for i := 0; i < 2; i++ {
+				args, _ := json.Marshal(map[string]any{"address": emittedAddress})
+				calls = append(calls, map[string]any{"id": fmt.Sprintf("forced-read-%d", i), "type": "function",
+					"function": map[string]any{"name": "knowvault_read", "arguments": string(args)}})
+			}
+			return "", calls, "tool_calls"
+		}
+		if strings.Contains(lastMessage.Content, "Research calls are complete") {
+			return "the response is prose, not the required JSON answer", nil, "stop"
+		}
+		*forcedCalls++
+		return currentAnswer(map[string]any{"address": emittedAddress}), nil, "stop"
+	case "forced_fail":
+		// The model never submits a usable answer, even in the forced turn, so
+		// the run must fall back to its honest failure text. Only a turn after
+		// the finalization instruction is the forced one.
+		if finalOnly && !strings.Contains(lastMessage.Content, "Research calls are complete") {
+			*forcedCalls++
+		}
+		return "the response is prose, not the required JSON answer", nil, "stop"
+	case "mixed_citations":
+		// Card D-5 requirement 2: one verified citation and one forged one. The
+		// first turn observes the address in this run; the answer then cites it
+		// alongside a forged address.
+		if !finalOnly && lastMessage.Role == "user" {
+			args, _ := json.Marshal(map[string]any{"address": emittedAddress})
+			return "", []any{map[string]any{"id": "mixed-read", "type": "function",
+				"function": map[string]any{"name": "knowvault_read", "arguments": string(args)}}}, "tool_calls"
+		}
+		return currentAnswer(
+			map[string]any{"address": emittedAddress},
+			map[string]any{"address": emittedAddress + "x"},
+		), nil, "stop"
+	case "mixed_claims", "mixed_claims_first":
+		// Two claims where only one is supported: the verified claim must still
+		// be shown and the unsupported one must not be. The two scenarios put
+		// the forged claim second and first, so the kept claim is not assumed to
+		// be a prefix of the submitted list.
+		if !finalOnly && lastMessage.Role == "user" {
+			args, _ := json.Marshal(map[string]any{"address": emittedAddress})
+			return "", []any{map[string]any{"id": "mixed-claims-read", "type": "function",
+				"function": map[string]any{"name": "knowvault_read", "arguments": string(args)}}}, "tool_calls"
+		}
+		verified := map[string]any{"text": "\u0412\u044b\u0432\u0435\u0437\u0435\u043d\u043e 42 \u0442\u043e\u043d\u043d\u044b.", "citations": []any{map[string]any{"address": emittedAddress}}}
+		forged := map[string]any{"text": "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u044b\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u043d\u0435 \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d.", "citations": []any{map[string]any{"address": emittedAddress + "forged"}}}
+		claims := []any{verified, forged}
+		if scenario == "mixed_claims_first" {
+			claims = []any{forged, verified}
+		}
+		content, _ := json.Marshal(map[string]any{"no_data": false, "claims": claims})
+		return string(content), nil, "stop"
+	case "mixed_submission":
+		// The final action carries a forbidden knowledge call beside the answer.
+		// The first turn submits it; after the format refusal every later turn
+		// (the forced final turn included) answers from what was already read,
+		// with nothing observed in this run, so the run ends with the plain
+		// "nothing verifiable" text instead of a profile-limits failure.
+		if finalOnly || lastMessage.Role == "tool" {
+			return currentAnswer(map[string]any{"address": emittedAddress}), nil, "stop"
+		}
+		args, _ := json.Marshal(map[string]any{"address": emittedAddress})
+		return currentAnswer(map[string]any{"address": emittedAddress}), []any{
+			map[string]any{"id": "submit-final", "type": "function", "function": map[string]any{"name": "submit_answer", "arguments": currentAnswer(map[string]any{"address": emittedAddress})}},
+			map[string]any{"id": "must-not-read", "type": "function", "function": map[string]any{"name": "knowvault_read", "arguments": string(args)}},
+		}, "tool_calls"
+	default:
+		_ = lastMessage
+		return "the response is prose, not the required JSON answer", nil, "stop"
 	}
 }

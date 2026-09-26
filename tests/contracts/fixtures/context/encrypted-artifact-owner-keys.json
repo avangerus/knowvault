@@ -25,5 +25,6 @@
   "question_citation.anchor_artifact_id": {"id": "citation_1"},
   "question_citation.deep_link_artifact_id": {"id": "citation_1"},
   "model_run_artifact.input_artifact_id": {"model_run_id": "model_run_1"},
-  "model_run_artifact.output_artifact_id": {"model_run_id": "model_run_1"}
+  "model_run_artifact.output_artifact_id": {"model_run_id": "model_run_1"},
+  "question_feedback.comment_artifact_id": {"id": "question_feedback_1"}
 }

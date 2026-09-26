@@ -86,7 +86,10 @@ type oidcRootsState struct{ roots *rootSetState }
 type gitRootsState struct{ roots *rootSetState }
 type mailRootsState struct{ roots *rootSetState }
 
-type rootSetState struct{ certificates [][]byte }
+type rootSetState struct {
+	certificates    [][]byte
+	allowPinnedLeaf bool
+}
 
 func (DatabaseRoots) String() string   { return "trustbundle.DatabaseRoots{[REDACTED]}" }
 func (DatabaseRoots) GoString() string { return "trustbundle.DatabaseRoots{[REDACTED]}" }
@@ -219,16 +222,18 @@ func loadSourceMountedForConsumer(rootPath string, consumer runtimeidentity.Moun
 // Production composition uses LoadMounted; this constructor is also the
 // deterministic seam used by network-boundary tests.
 func NewDatabaseRootsPEM(raw []byte) (DatabaseRoots, error) {
-	certificates, err := parseStrictPEM(raw)
+	certificates, err := parseStrictPEM(raw, true)
 	if err != nil {
 		return DatabaseRoots{}, err
 	}
-	return DatabaseRoots{database: &databaseRootsState{roots: newRootSetState(certificates)}}, nil
+	roots := newRootSetState(certificates)
+	roots.allowPinnedLeaf = true
+	return DatabaseRoots{database: &databaseRootsState{roots: roots}}, nil
 }
 
 // NewOIDCRootsPEM validates and snapshots an OIDC-purpose PEM bundle.
 func NewOIDCRootsPEM(raw []byte) (OIDCRoots, error) {
-	certificates, err := parseStrictPEM(raw)
+	certificates, err := parseStrictPEM(raw, false)
 	if err != nil {
 		return OIDCRoots{}, err
 	}
@@ -237,7 +242,7 @@ func NewOIDCRootsPEM(raw []byte) (OIDCRoots, error) {
 
 // NewGitRootsPEM validates and snapshots a Git-purpose PEM bundle.
 func NewGitRootsPEM(raw []byte) (GitRoots, error) {
-	certificates, err := parseStrictPEM(raw)
+	certificates, err := parseStrictPEM(raw, false)
 	if err != nil {
 		return GitRoots{}, err
 	}
@@ -246,7 +251,7 @@ func NewGitRootsPEM(raw []byte) (GitRoots, error) {
 
 // NewMailRootsPEM validates and snapshots an IMAP-purpose PEM bundle.
 func NewMailRootsPEM(raw []byte) (MailRoots, error) {
-	certificates, err := parseStrictPEM(raw)
+	certificates, err := parseStrictPEM(raw, false)
 	if err != nil {
 		return MailRoots{}, err
 	}
@@ -363,7 +368,7 @@ func (state *rootSetState) newCertPool() (*x509.CertPool, error) {
 	for _, retained := range state.certificates {
 		owned := append([]byte(nil), retained...)
 		certificate, err := x509.ParseCertificate(owned)
-		if err != nil || !validCertificate(certificate) {
+		if err != nil || !validCertificate(certificate, state.allowPinnedLeaf) {
 			return nil, &Error{code: CodeInvalid}
 		}
 		pool.AddCert(certificate)
@@ -414,7 +419,7 @@ func (value SourceBundle) DatabaseFingerprint() ([sha256.Size]byte, error) {
 	return value.databaseFingerprint, nil
 }
 
-func parseStrictPEM(raw []byte) ([][]byte, error) {
+func parseStrictPEM(raw []byte, allowPinnedLeaf bool) ([][]byte, error) {
 	if len(raw) == 0 || len(raw) > maximumBundleBytes {
 		return nil, &Error{code: CodeInvalid}
 	}
@@ -435,7 +440,7 @@ func parseStrictPEM(raw []byte) ([][]byte, error) {
 			return nil, &Error{code: CodeInvalid}
 		}
 		certificate, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !validCertificate(certificate) {
+		if err != nil || !validCertificate(certificate, allowPinnedLeaf) {
 			return nil, &Error{code: CodeInvalid}
 		}
 		fingerprint := sha256.Sum256(block.Bytes)
@@ -456,7 +461,21 @@ func parseStrictPEM(raw []byte) ([][]byte, error) {
 	return certificates, nil
 }
 
-func validCertificate(certificate *x509.Certificate) bool {
-	return certificate != nil && certificate.BasicConstraintsValid && certificate.IsCA &&
-		(certificate.KeyUsage == 0 || certificate.KeyUsage&x509.KeyUsageCertSign != 0) && len(certificate.UnhandledCriticalExtensions) == 0
+func validCertificate(certificate *x509.Certificate, allowPinnedLeaf bool) bool {
+	if certificate != nil && certificate.BasicConstraintsValid && certificate.IsCA &&
+		(certificate.KeyUsage == 0 || certificate.KeyUsage&x509.KeyUsageCertSign != 0) && len(certificate.UnhandledCriticalExtensions) == 0 {
+		return true
+	}
+	return allowPinnedLeaf && pinnedSelfSignedServer(certificate)
+}
+
+// pinnedSelfSignedServer accepts, for database trust only, the exact
+// self-signed server certificate a PostgreSQL server presents. Pinning that
+// certificate is as strict as trusting a private CA: only a server holding its
+// key verifies, and the name still has to match through SAN (ADR-0097).
+func pinnedSelfSignedServer(certificate *x509.Certificate) bool {
+	return certificate != nil && !certificate.IsCA && len(certificate.DNSNames) > 0 &&
+		bytes.Equal(certificate.RawSubject, certificate.RawIssuer) &&
+		certificate.CheckSignature(certificate.SignatureAlgorithm, certificate.RawTBSCertificate, certificate.Signature) == nil &&
+		len(certificate.UnhandledCriticalExtensions) == 0
 }

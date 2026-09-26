@@ -28,27 +28,33 @@ const testScopeID = "scope_01H9ABCDEFGHJKMNPQRSTVWXYZ"
 const testHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 type fakeSourceService struct {
-	call                       string
-	access                     database.AccessContext
-	err                        error
-	registerRequest            registration.RegisterRequest
-	registerResult             registration.RegisterResult
-	bootstrapRequest           registration.PostgreSQLConnectionBootstrapRequest
-	bootstrapResult            registration.PostgreSQLConnectionBootstrapResult
-	discoveryRequest           registration.DiscoveryRequest
-	discoveryResult            registration.DiscoveryResult
-	discoveryReadID            string
-	discoveryRead              sourcediscovery.ReadResult
-	discoveryReadErr           error
-	discoveryRegisterRequestID string
-	discoveryRegisterViewID    string
-	discoveryRegisterResult    registration.RegisterResult
-	discoveryRegisterErr       error
-	activateRequest            registration.ActivateRequest
-	activateResult             registration.ActivateResult
-	syncRequest                registration.SyncRequest
-	syncResult                 registration.SyncResult
-	statuses                   []workspacerepository.SourceStatus
+	call                         string
+	access                       database.AccessContext
+	err                          error
+	registerRequest              registration.RegisterRequest
+	registerResult               registration.RegisterResult
+	bootstrapRequest             registration.PostgreSQLConnectionBootstrapRequest
+	bootstrapResult              registration.PostgreSQLConnectionBootstrapResult
+	discoveryRequest             registration.DiscoveryRequest
+	discoveryResult              registration.DiscoveryResult
+	discoveryReadID              string
+	discoveryRead                sourcediscovery.ReadResult
+	discoveryReadErr             error
+	discoveryRegisterRequestID   string
+	discoveryRegisterViewID      string
+	discoveryRegisterExcluded    []int
+	discoveryRegisterMode        string
+	discoveryRegisterResult      registration.RegisterResult
+	discoveryRegisterErr         error
+	discoveryRegisterBatchID     string
+	discoveryRegisterBatchItems  []registration.BatchRegisterItem
+	discoveryRegisterBatchResult registration.BatchRegisterResult
+	discoveryRegisterBatchErr    error
+	activateRequest              registration.ActivateRequest
+	activateResult               registration.ActivateResult
+	syncRequest                  registration.SyncRequest
+	syncResult                   registration.SyncResult
+	statuses                     []workspacerepository.SourceStatus
 
 	// ConfirmationContext is tracked separately from `call`/`access` above
 	// (rather than through the shared `save` helper) so existing assertions
@@ -61,6 +67,80 @@ type fakeSourceService struct {
 
 	uploadRequest registration.UploadDocumentsRequest
 	uploadResult  registration.UploadDocumentsResult
+
+	// S3 card 1's optional SourceSchemaProvider capability: the stored source
+	// schema read behind knowvault_source_schema.
+	schemaSources       []workspacerepository.SourceSchemaSource
+	schemaSourceListErr error
+	schemaResult        workspacerepository.SourceSchema
+	schemaErr           error
+	schemaSourceID      string
+	schemaTable         string
+	schemaOffset        int
+	schemaLimit         int
+	schemaCalls         int
+
+	// S3 card 2's optional SourceSQLProvider capability: the governed
+	// agent-authored SQL execution behind knowvault_source_sql.
+	sqlResult   SourceSQLResult
+	sqlErr      error
+	sqlSourceID string
+	sqlSQL      string
+	sqlPurpose  string
+	sqlCalls    int
+
+	// S3 card 2b's optional SourceQueryCredential capability: the owner-only
+	// set/clear of one connection's opaque SQL query credential reference.
+	queryCredentialReference string
+	queryCredentialErr       error
+	queryCredentialCalls     int
+}
+
+func (service *fakeSourceService) SetSourceQueryCredential(_ context.Context, access database.AccessContext, _, _, credentialReference string) error {
+	service.call, service.access = "set_source_query_credential", access
+	service.queryCredentialReference = credentialReference
+	service.queryCredentialCalls++
+	return service.queryCredentialErr
+}
+
+func (service *fakeSourceService) SourceSQL(_ context.Context, access database.AccessContext, _ string, request SourceSQLRequest) (SourceSQLResult, error) {
+	service.call, service.access = "source_sql", access
+	service.sqlSourceID, service.sqlSQL, service.sqlPurpose = request.SourceID, request.SQL, request.Purpose
+	service.sqlCalls++
+	if service.sqlErr != nil {
+		return SourceSQLResult{}, service.sqlErr
+	}
+	return service.sqlResult, nil
+}
+
+func (service *fakeSourceService) ListSourceSchemas(_ context.Context, access database.AccessContext, _ string) ([]workspacerepository.SourceSchemaSource, error) {
+	service.call, service.access = "list_source_schemas", access
+	if service.schemaSourceListErr != nil {
+		return nil, service.schemaSourceListErr
+	}
+	return service.schemaSources, nil
+}
+
+func (service *fakeSourceService) SourceSchema(_ context.Context, access database.AccessContext, _, sourceID, table string, offset, limit int) (workspacerepository.SourceSchema, error) {
+	service.call, service.access = "source_schema", access
+	service.schemaSourceID, service.schemaTable, service.schemaOffset, service.schemaLimit = sourceID, table, offset, limit
+	service.schemaCalls++
+	if service.schemaErr != nil {
+		return workspacerepository.SourceSchema{}, service.schemaErr
+	}
+	// Emulate the repository's own page window so the transport's has_more /
+	// next_offset contract is exercised against a provider that really pages.
+	result := service.schemaResult
+	if offset > len(result.Tables) {
+		offset = len(result.Tables)
+	}
+	end := offset + limit
+	if end > len(result.Tables) {
+		end = len(result.Tables)
+	}
+	result.HasMore = end < len(result.Tables)
+	result.Tables = result.Tables[offset:end]
+	return result, nil
 }
 
 func (service *fakeSourceService) save(call string, access database.AccessContext) error {
@@ -91,13 +171,24 @@ func (service *fakeSourceService) GetDiscovery(_ context.Context, access databas
 	return service.discoveryRead, service.save("get_discovery", access)
 }
 
-func (service *fakeSourceService) RegisterDiscoveredView(_ context.Context, access database.AccessContext, requestID, viewID string) (registration.RegisterResult, error) {
+func (service *fakeSourceService) RegisterDiscoveredView(_ context.Context, access database.AccessContext, requestID, viewID string, excludedColumns []int, mode string) (registration.RegisterResult, error) {
 	service.discoveryRegisterRequestID = requestID
 	service.discoveryRegisterViewID = viewID
+	service.discoveryRegisterExcluded = excludedColumns
+	service.discoveryRegisterMode = mode
 	if service.discoveryRegisterErr != nil {
 		return registration.RegisterResult{}, service.discoveryRegisterErr
 	}
 	return service.discoveryRegisterResult, service.save("register_discovered_view", access)
+}
+
+func (service *fakeSourceService) RegisterDiscoveredViews(_ context.Context, access database.AccessContext, requestID string, items []registration.BatchRegisterItem) (registration.BatchRegisterResult, error) {
+	service.discoveryRegisterBatchID = requestID
+	service.discoveryRegisterBatchItems = items
+	if service.discoveryRegisterBatchErr != nil {
+		return registration.BatchRegisterResult{}, service.discoveryRegisterBatchErr
+	}
+	return service.discoveryRegisterBatchResult, service.save("register_discovered_views", access)
 }
 
 func (service *fakeSourceService) Activate(_ context.Context, access database.AccessContext, request registration.ActivateRequest) (registration.ActivateResult, error) {
@@ -290,9 +381,42 @@ func TestSourceDiscoveryRegisterAcceptsOnlyServerIssuedCoordinates(t *testing.T)
 	}
 }
 
-func TestSourceDiscoveryRegisterRejectsBodyAndMutationHeaders(t *testing.T) {
+// TestSourceDiscoveryRegisterAcceptsExcludedColumns proves the one caller-
+// supplied field this route now accepts (ADR-0097): a well-formed
+// excluded_columns list is decoded and handed to the registration service
+// unchanged, while every other projection field stays exclusively
+// server-derived (TestSourceDiscoveryRegisterAcceptsOnlyServerIssuedCoordinates
+// above still proves that half).
+func TestSourceDiscoveryRegisterAcceptsExcludedColumns(t *testing.T) {
+	harness := newTestHarness(t)
+	harness.sources.discoveryRegisterResult = registration.RegisterResult{
+		ConnectionID: "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", SourceScopeID: "scope_01H9ABCDEFGHJKMNPQRSTVWXYZ",
+		DiscoveredScopeID: "discovered_01H9ABCDEFGHJKMNPQRSTVWXYZ", Revision: 1,
+		ScopeConfigHash: testHash, AccessMode: "WORKSPACE_MANAGED", Created: true,
+	}
 	viewID := "sdv_" + strings.Repeat("a", 64)
-	for name, body := range map[string]string{"body": `{\"columns\":[]}`, "empty": ""} {
+	request := harness.request(http.MethodPost,
+		sourcesPath+"/discovery/sdrq_01H9ABCDEFGHJKMNPQRSTVWXYZ/views/"+viewID+":register", `{"excluded_columns":[3,4]}`)
+	response := httptest.NewRecorder()
+	harness.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || harness.sources.call != "register_discovered_view" {
+		t.Fatalf("status=%d call=%q body=%s", response.Code, harness.sources.call, response.Body.String())
+	}
+	if len(harness.sources.discoveryRegisterExcluded) != 2 ||
+		harness.sources.discoveryRegisterExcluded[0] != 3 || harness.sources.discoveryRegisterExcluded[1] != 4 {
+		t.Fatalf("excluded_columns not projected: %#v", harness.sources.discoveryRegisterExcluded)
+	}
+}
+
+// TestSourceDiscoveryRegisterRejectsMalformedBodyAndMutationHeaders proves the
+// two things this route still refuses even though a well-formed
+// excluded_columns body is now accepted (see the excluded-columns test
+// above): a body that is not valid JSON (never browser-authored projection
+// fields -- there is no such field to smuggle), and the mutation headers this
+// idempotent-by-content route has never accepted.
+func TestSourceDiscoveryRegisterRejectsMalformedBodyAndMutationHeaders(t *testing.T) {
+	viewID := "sdv_" + strings.Repeat("a", 64)
+	for name, body := range map[string]string{"malformed_body": `{\"columns\":[]}`, "empty": ""} {
 		t.Run(name, func(t *testing.T) {
 			harness := newTestHarness(t)
 			request := harness.request(http.MethodPost,
@@ -744,6 +868,8 @@ type fakeAuthorityWorkspaceService struct {
 	confirmRequest            workspacerepository.ConfirmRequest
 	revokeGrantRequest        workspacerepository.RevokeGrantRequest
 	revokeConfirmationRequest workspacerepository.RevokeConfirmationRequest
+	batchConfirmRequest       workspacerepository.BatchConfirmRequest
+	batchConfirmResult        workspacerepository.BatchConfirmResult
 	authorityResult           workspacerepository.AuthorityResult
 }
 
@@ -755,6 +881,11 @@ func (service *fakeAuthorityWorkspaceService) IssueConfirmationGrant(_ context.C
 func (service *fakeAuthorityWorkspaceService) ConfirmManagedSource(_ context.Context, access database.AccessContext, request workspacerepository.ConfirmRequest) (workspacerepository.AuthorityResult, error) {
 	service.call, service.access, service.confirmRequest = "confirm", access, request
 	return service.authorityResult, service.err
+}
+
+func (service *fakeAuthorityWorkspaceService) ConfirmManagedSourcesBatch(_ context.Context, access database.AccessContext, request workspacerepository.BatchConfirmRequest) (workspacerepository.BatchConfirmResult, error) {
+	service.call, service.access, service.batchConfirmRequest = "confirm_batch", access, request
+	return service.batchConfirmResult, service.err
 }
 
 func (service *fakeAuthorityWorkspaceService) RevokeConfirmationGrant(_ context.Context, access database.AccessContext, request workspacerepository.RevokeGrantRequest) (workspacerepository.AuthorityResult, error) {
@@ -1029,5 +1160,202 @@ func TestUploadDocumentsRejectsEmptyRequest(t *testing.T) {
 
 	if response.Code != http.StatusBadRequest || harness.sources.call != "" {
 		t.Fatalf("status=%d call=%q body=%s", response.Code, harness.sources.call, response.Body.String())
+	}
+}
+
+// batchConfirmBody builds a strict batch-confirm body with the given table
+// tuples, each rendered as a {workspace_source_id, source_scope_id,
+// source_scope_revision, scope_config_hash} object.
+func batchConfirmBody(harness *testHarness, tables ...string) string {
+	return `{"workspace_revision":3,"workspace_configuration_hash":"` + harness.hash +
+		`","confirmation_actor_grant_id":"grant_01H9ABCDEFGHJKMNPQRSTVWXYZ","confirmation_actor_grant_revision":1,` +
+		`"confirmation_actor_grant_hash":"` + harness.hash + `","warning_contract_hash":"` + harness.hash +
+		`","expected_policy_revision":"pol_alpha","tables":[` + strings.Join(tables, ",") + `]}`
+}
+
+func batchConfirmTable(scopeID string) string {
+	return `{"workspace_source_id":"binding_01H9ABCDEFGHJKMNPQRSTVWXYZ","source_scope_id":"` + scopeID +
+		`","source_scope_revision":2,"scope_config_hash":"sha256:` + strings.Repeat("a", 64) + `"}`
+}
+
+// TestManagedSourceConfirmBatchDispatchesClosedCommandToAuthorityRuntime pins
+// card S3.4b's transport contract: one POST /managed-source-confirmations:batch
+// projects the shared grant/warning/policy fields and the ordered table tuples
+// onto the repository batch request and echoes the repository's closed per-table
+// outcome, without re-deriving any policy in the transport.
+func TestManagedSourceConfirmBatchDispatchesClosedCommandToAuthorityRuntime(t *testing.T) {
+	harness, authority, handler := newAuthorityHarness(t)
+	const secondScope = "scope_01H9ABCDEFGHJKMNPQRSTVWXZ"
+	authority.batchConfirmResult = workspacerepository.BatchConfirmResult{
+		Outcomes: []workspacerepository.BatchConfirmOutcome{
+			{SourceScopeID: testScopeID, Confirmed: true, ConfirmationID: "wmc_01H9ABCDEFGHJKMNPQRSTVWXYZ", ConfirmationHash: harness.hash},
+			{SourceScopeID: secondScope, ReasonCode: "WORKSPACE_AUTHORITY_DENIED"},
+		},
+		ConfirmedCount: 1, RefusedCount: 1,
+	}
+	request := harness.request(http.MethodPost, workspacesPath+"/ws_alpha/managed-source-confirmations:batch",
+		batchConfirmBody(harness, batchConfirmTable(testScopeID), batchConfirmTable(secondScope)))
+	request.Header.Set("Idempotency-Key", harness.idempotencyKey)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || authority.call != "confirm_batch" {
+		t.Fatalf("status=%d call=%q body=%s", response.Code, authority.call, response.Body.String())
+	}
+	got := authority.batchConfirmRequest
+	if got.WorkspaceID != "ws_alpha" || got.OrganizationID != "org_alpha" || got.IdempotencyKey != harness.idempotencyKey ||
+		got.WorkspaceRevision != 3 || got.WarningVersion != "workspace-managed-risk-v1" ||
+		got.AcknowledgementCode != "WORKSPACE_MEMBERS_MAY_READ_WITHOUT_SOURCE_NATIVE_ACL" {
+		t.Fatalf("shared batch fields not projected: %#v", got)
+	}
+	if len(got.Tables) != 2 || got.Tables[0].SourceScopeID != testScopeID || got.Tables[1].SourceScopeID != secondScope {
+		t.Fatalf("table tuples not projected in order: %#v", got.Tables)
+	}
+	var decoded managedSourceConfirmBatchResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, response.Body.String())
+	}
+	if decoded.ConfirmedCount != 1 || decoded.RefusedCount != 1 || len(decoded.Results) != 2 ||
+		decoded.Results[0].Outcome != "CONFIRMED" || decoded.Results[0].ConfirmationID != "wmc_01H9ABCDEFGHJKMNPQRSTVWXYZ" ||
+		decoded.Results[1].Outcome != "REFUSED" || decoded.Results[1].ReasonCode != "WORKSPACE_AUTHORITY_DENIED" {
+		t.Fatalf("per-table outcome not projected: %#v", decoded)
+	}
+	if strings.Contains(response.Body.String(), "scope_config_hash") || strings.Contains(response.Body.String(), "binding_") {
+		t.Fatalf("batch response leaked request detail: %s", response.Body.String())
+	}
+}
+
+// TestManagedSourceConfirmBatchRefusesTooManyTablesAsAWhole proves the 1000
+// hard bound: a 1001-table request is a 400 before the authority runtime is
+// reached, so no table is partially confirmed.
+func TestManagedSourceConfirmBatchRefusesTooManyTablesAsAWhole(t *testing.T) {
+	harness, authority, handler := newAuthorityHarness(t)
+	tables := make([]string, workspacerepository.MaxBatchConfirmTables+1)
+	for index := range tables {
+		tables[index] = batchConfirmTable("scope_01H9ABCDEFGHJKMNPQRSTVW" + string(rune('A'+index%26)))
+	}
+	request := harness.request(http.MethodPost, workspacesPath+"/ws_alpha/managed-source-confirmations:batch",
+		batchConfirmBody(harness, tables...))
+	request.Header.Set("Idempotency-Key", harness.idempotencyKey)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || authority.call != "" {
+		t.Fatalf("status=%d call=%q body=%s", response.Code, authority.call, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "REQUEST_INVALID") {
+		t.Fatalf("1001-table batch did not return REQUEST_INVALID: %s", response.Body.String())
+	}
+}
+
+// TestManagedSourceConfirmBatchRequiresIdempotencyAndStrictBody pins the same
+// mutation boundary as the single-table route: a missing Idempotency-Key, an
+// unknown body member, an empty table list or a table missing a tuple field is
+// refused before the authority runtime.
+func TestManagedSourceConfirmBatchRequiresIdempotencyAndStrictBody(t *testing.T) {
+	for name, fixture := range map[string]struct {
+		body       string
+		withKey    bool
+		wantStatus int
+	}{
+		"missing idempotency key": {batchConfirmBody(&testHarness{hash: testHash}, batchConfirmTable(testScopeID)), false, http.StatusBadRequest},
+		"unknown body member":     {`{"workspace_revision":3,"tables":[` + batchConfirmTable(testScopeID) + `],"extra":1}`, true, http.StatusBadRequest},
+		"empty table list":        {batchConfirmBody(&testHarness{hash: testHash}), true, http.StatusBadRequest},
+		"incomplete table tuple": {`{"workspace_revision":3,"workspace_configuration_hash":"` + testHash +
+			`","confirmation_actor_grant_id":"grant_01H9ABCDEFGHJKMNPQRSTVWXYZ","confirmation_actor_grant_revision":1,` +
+			`"confirmation_actor_grant_hash":"` + testHash + `","warning_contract_hash":"` + testHash +
+			`","expected_policy_revision":"pol_alpha","tables":[{"source_scope_id":"` + testScopeID + `"}]}`, true, http.StatusBadRequest},
+	} {
+		name, fixture := name, fixture
+		t.Run(name, func(t *testing.T) {
+			harness, authority, handler := newAuthorityHarness(t)
+			request := harness.request(http.MethodPost, workspacesPath+"/ws_alpha/managed-source-confirmations:batch", fixture.body)
+			if fixture.withKey {
+				request.Header.Set("Idempotency-Key", harness.idempotencyKey)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != fixture.wantStatus || authority.call != "" {
+				t.Fatalf("status=%d call=%q body=%s", response.Code, authority.call, response.Body.String())
+			}
+		})
+	}
+}
+
+// TestSourceDiscoveryRegisterBatchProjectsPerViewOutcome pins card S3.4b's
+// batch registration transport: one POST :register-batch projects every
+// selector and its narrowing choices onto the registration service and echoes
+// the per-view outcome, including a refusal with its closed reason code.
+func TestSourceDiscoveryRegisterBatchProjectsPerViewOutcome(t *testing.T) {
+	harness := newTestHarness(t)
+	harness.sources.discoveryRegisterBatchResult = registration.BatchRegisterResult{
+		Outcomes: []registration.BatchRegisterOutcome{
+			{ViewID: "sdv_" + strings.Repeat("1", 64), Registered: true, Result: registration.RegisterResult{
+				ConnectionID: "conn_01H9ABCDEFGHJKMNPQRSTVWXYZ", SourceScopeID: testScopeID,
+				DiscoveredScopeID: "discovered_01H9ABCDEFGHJKMNPQRSTVWXYZ", Revision: 1,
+				ScopeConfigHash: harness.hash, AccessMode: "WORKSPACE_MANAGED", Created: true,
+			}},
+			{ViewID: "sdv_" + strings.Repeat("2", 64), ReasonCode: "NO_PRIMARY_KEY"},
+		},
+		RegisteredCount: 1, RefusedCount: 1,
+	}
+	body := `{"items":[{"view_id":"sdv_` + strings.Repeat("1", 64) + `","mode":"QUERY_ONLY","excluded_columns":[2]},` +
+		`{"view_id":"sdv_` + strings.Repeat("2", 64) + `"}]}`
+	request := harness.request(http.MethodPost, sourcesPath+"/discovery/sdrq_01H9ABCDEFGHJKMNPQRSTVWXYZ:register-batch", body)
+	response := httptest.NewRecorder()
+
+	harness.handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || harness.sources.call != "register_discovered_views" {
+		t.Fatalf("status=%d call=%q body=%s", response.Code, harness.sources.call, response.Body.String())
+	}
+	if harness.sources.discoveryRegisterBatchID != "sdrq_01H9ABCDEFGHJKMNPQRSTVWXYZ" ||
+		len(harness.sources.discoveryRegisterBatchItems) != 2 ||
+		harness.sources.discoveryRegisterBatchItems[0].Mode != "QUERY_ONLY" ||
+		len(harness.sources.discoveryRegisterBatchItems[0].ExcludedColumnOrdinals) != 1 {
+		t.Fatalf("batch items not projected: %#v", harness.sources.discoveryRegisterBatchItems)
+	}
+	var decoded sourceDiscoveryRegisterBatchResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, response.Body.String())
+	}
+	if decoded.RegisteredCount != 1 || decoded.RefusedCount != 1 || len(decoded.Results) != 2 ||
+		decoded.Results[0].Outcome != "REGISTERED" || decoded.Results[0].Registration == nil ||
+		decoded.Results[1].Outcome != "REFUSED" || decoded.Results[1].ReasonCode != "NO_PRIMARY_KEY" {
+		t.Fatalf("per-view outcome not projected: %#v", decoded)
+	}
+}
+
+// TestSourceDiscoveryRegisterBatchRefusesTooManyViewsAsAWhole proves the 200
+// hard bound and the prohibited mutation headers.
+func TestSourceDiscoveryRegisterBatchRefusesTooManyViewsAsAWhole(t *testing.T) {
+	harness := newTestHarness(t)
+	items := make([]string, registration.MaxBatchRegisterViews+1)
+	for index := range items {
+		items[index] = `{"view_id":"sdv_` + strings.Repeat("a", 64) + `"}`
+	}
+	request := harness.request(http.MethodPost, sourcesPath+"/discovery/sdrq_01H9ABCDEFGHJKMNPQRSTVWXYZ:register-batch",
+		`{"items":[`+strings.Join(items, ",")+`]}`)
+	response := httptest.NewRecorder()
+
+	harness.handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || harness.sources.call != "" {
+		t.Fatalf("status=%d call=%q body=%s", response.Code, harness.sources.call, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "REQUEST_INVALID") {
+		t.Fatalf("201-view batch did not return REQUEST_INVALID: %s", response.Body.String())
+	}
+
+	harness2 := newTestHarness(t)
+	request = harness2.request(http.MethodPost, sourcesPath+"/discovery/sdrq_01H9ABCDEFGHJKMNPQRSTVWXYZ:register-batch",
+		`{"items":[{"view_id":"sdv_`+strings.Repeat("a", 64)+`"}]}`)
+	request.Header.Set("Idempotency-Key", harness2.idempotencyKey)
+	response = httptest.NewRecorder()
+	harness2.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || harness2.sources.call != "" {
+		t.Fatalf("mutation header not rejected: status=%d call=%q body=%s", response.Code, harness2.sources.call, response.Body.String())
 	}
 }

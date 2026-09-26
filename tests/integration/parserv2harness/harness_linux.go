@@ -1328,7 +1328,7 @@ func extractImage(image, destination string) error {
 		return err
 	}
 	id := strings.TrimSpace(string(container))
-	defer func() { _, _ = dockerOutput("rm", id) }()
+	defer func() { _, _ = dockerOutput("rm", "-v", id) }()
 	archivePath := destination + ".tar"
 	if _, err := dockerOutput("export", "--output", archivePath, id); err != nil {
 		return err

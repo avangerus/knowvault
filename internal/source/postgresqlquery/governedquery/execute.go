@@ -49,6 +49,13 @@ type Attempt struct {
 	ResultDigest          string
 	Elapsed               time.Duration
 	Outcome               Outcome
+	// RoleVerificationDigest is S3 card 2c's content-free evidence that the
+	// query role passed the least-privilege proof for the registered
+	// projection during this attempt. Card S3.2d recomputes it on every
+	// execution inside the statement's own read-only transaction; it is
+	// recorded as evidence for the store's proof row and never authorizes a
+	// later statement.
+	RoleVerificationDigest string
 }
 
 // Execute is the single production entry point. It never treats the static
@@ -182,14 +189,24 @@ func staticPrecheck(sqlText string) error {
 	for _, forbidden := range []string{
 		"insert", "update", "delete", "drop", "alter", "create", "grant", "revoke",
 		"truncate", "copy", "call", "do ", "vacuum", "merge", "execute", "prepare",
-		"listen", "notify", "set ", "reset", "begin", "commit", "rollback", "savepoint",
+		"listen", "notify", "begin", "commit", "rollback", "savepoint",
 		"lock ",
 	} {
 		if containsWord(lower, strings.TrimSpace(forbidden)) {
 			return &Error{code: CodeInvalid}
 		}
 	}
-	return nil
+	// `set` and `reset` are deliberately absent from the word list: both are
+	// ordinary identifiers (a column or alias named set/reset is valid SQL) and
+	// a setting change is refused by the statement shape above plus the gate's
+	// set_config call rule below, never by a bare spelling.
+	// Card S3.2d: a deterministic, spelling-aware gate refuses a setting change
+	// and the cross-session, file, large-object and query-executing function
+	// families before EXPLAIN. The keyword scan above is only a first pass; this
+	// one case-folds and unquotes every identifier and also strips a schema
+	// qualifier, so `pg_catalog.set_config`, `"SET"` and `U&"set"` are refused
+	// too.
+	return staticGate(body)
 }
 
 func containsWord(haystack, word string) bool {
@@ -267,6 +284,14 @@ func runQuery(ctx context.Context, tx pgx.Tx, sqlText string, limits Limits) (Qu
 	defer rows.Close()
 	fields := rows.FieldDescriptions()
 	if len(fields) == 0 || len(fields) > maxColumnCount {
+		// A statement PostgreSQL cancels or refuses can produce no
+		// RowDescription at all (a statement timeout is the common case), so
+		// the reader must be drained here: otherwise the driver's own error is
+		// masked by the shape check and the attempt is reported with no cause.
+		_ = rows.Next()
+		if err := rows.Err(); err != nil {
+			return QueryResult{}, &Error{code: CodeExternalFailure, cause: err}
+		}
 		return QueryResult{}, &Error{code: CodeExternalFailure}
 	}
 	result := QueryResult{Columns: make([]string, len(fields)), Rows: make([][]*string, 0), ExecutionStartedAt: started}

@@ -61,8 +61,11 @@ const maxActionFrames = 4096;
 /** Mirrors the server's question.ActionTextMaxRunes: the client re-checks the same bound rather than trusting it. */
 const maxActionTextRunes = 180;
 
-function withinActionTextBound(value: string): boolean {
-  return Array.from(value).length <= maxActionTextRunes;
+// Over-long text is clamped, not refused: a refused frame ends the whole
+// stream, and a step label must never cost the user the answer.
+function clampActionText(value: string): string {
+  const runes = Array.from(value);
+  return runes.length <= maxActionTextRunes ? value : runes.slice(0, maxActionTextRunes - 1).join("") + "…";
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -132,12 +135,14 @@ export class QuestionStreamDecoder<Run> {
           !actionLabels.has(frame.label as QuestionActionLabel)) {
         throw new Error("Invalid question action frame");
       }
-      if (frame.request !== undefined && (typeof frame.request !== "string" || !withinActionTextBound(frame.request))) {
+      if (frame.request !== undefined && typeof frame.request !== "string") {
         throw new Error("Invalid question action request text");
       }
-      if (frame.detail !== undefined && (typeof frame.detail !== "string" || !withinActionTextBound(frame.detail))) {
+      if (frame.detail !== undefined && typeof frame.detail !== "string") {
         throw new Error("Invalid question action detail text");
       }
+      if (typeof frame.request === "string") frame.request = clampActionText(frame.request);
+      if (typeof frame.detail === "string") frame.detail = clampActionText(frame.detail);
       // Request describes what was asked (known only once a call starts);
       // detail describes what came back (known only once it finishes). Each
       // is valid on exactly one phase, mirroring outcome/duration_ms below.

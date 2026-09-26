@@ -606,6 +606,14 @@ paths:
                 credential_reference:
                   type: string
                   pattern: '^cred_[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+                workspace_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  description: >-
+                    Card D-1: when present, the unfinished connection is registered as this
+                    workspace's draft and appears in its Sources surface. The connection lineage
+                    itself stays organization-scoped.
       responses:
         "200":
           description: Immutable DRAFT connection revision
@@ -750,19 +758,132 @@ paths:
       tags: [Sources]
       summary: "Register the selected prepared view as a DRAFT scope"
       description: >-
-        The body is empty. The server resolves the opaque view_id within the valid encrypted
-        discovery result, rechecks OWNER, security epoch, trust, and connection revision, and
-        creates the projection without browser-supplied schema, columns, roles, SQL, or hashes. An
-        exact retry converges on request_id and view_id; mutation headers are prohibited.
+        The body is empty, or names columns to exclude from a base/partitioned-table discovery
+        (ADR-0097). The server resolves the opaque view_id within the valid encrypted discovery
+        result, rechecks OWNER, security epoch, trust, and connection revision, and creates the
+        projection without browser-supplied schema, columns, roles, SQL, or hashes; excluded_columns
+        is the one exception, and it may only narrow -- an ordinal outside the sealed discovery
+        result, or one naming a primary-key column, is refused. Excluding a column changes the
+        registered ContractHash. An exact retry converges on request_id, view_id and the same
+        excluded_columns; mutation headers are prohibited.
       x-implementation-status: LIVE
       security:
         - SessionCookie: []
       parameters:
         - $ref: "#/components/parameters/CSRFHeader"
         - $ref: "#/components/parameters/OriginHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceDiscoveryRegisterInput"
       responses:
         "200":
           $ref: "#/components/responses/SourceRegisterResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CreateForbiddenOrCSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SourceConflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /sources/discovery/{request_id}:register-batch:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^sdrq_[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+    post:
+      operationId: registerDiscoveredPostgreSQLViewsBatch
+      tags: [Sources]
+      summary: "Register a batch of discovered PostgreSQL views (card S3.4b)"
+      description: >-
+        Registers up to 200 server-issued view selectors from one live encrypted discovery result
+        in one request, instead of one request per table. Each selector is registered through the
+        unchanged single-view path and the response reports one closed outcome per view: a relation
+        the discovery worker could not prepare (for example one without a declared primary key)
+        carries its interpretation reason and never blocks the others. No schema, relation, column,
+        role, hash or SQL is accepted; excluded_columns and mode are the same two narrowing choices
+        the single-view route accepts. A request naming more than 200 selectors is refused as a
+        whole.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [view_id]
+                    properties:
+                      view_id:
+                        type: string
+                        pattern: '^sdv_[0-9a-f]{64}$'
+                      excluded_columns:
+                        type: array
+                        maxItems: 255
+                        items:
+                          type: integer
+                      mode:
+                        type: string
+                        enum: [INDEXED, QUERY_ONLY]
+      responses:
+        "200":
+          description: "One closed outcome per named view."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [registered_count, refused_count, results]
+                properties:
+                  registered_count:
+                    type: integer
+                  refused_count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [view_id, outcome]
+                      properties:
+                        view_id:
+                          type: string
+                        outcome:
+                          type: string
+                          enum: [REGISTERED, REFUSED]
+                        reason_code:
+                          type: string
+                        registration:
+                          $ref: "#/components/schemas/SourceRegisterResult"
         "400":
           $ref: "#/components/responses/RequestInvalid"
         "401":
@@ -926,6 +1047,216 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/source-drafts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceSourceConnectionDrafts
+      tags: [Sources]
+      summary: "Unfinished PostgreSQL connections started from this workspace"
+      description: >-
+        Card D-1: the workspace-scoped draft registry. Only the current workspace's own drafts are
+        returned; a non-member, an unknown workspace and a foreign workspace all resolve to one
+        content-free 404. Each row carries the identifiers and derived state the wizard resumes
+        from and contains no credential, address, trust hash or source content.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SourceConnectionDraftListResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/source-drafts/{connection_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    delete:
+      operationId: discardWorkspaceSourceConnectionDraft
+      tags: [Sources]
+      summary: "Discard this workspace's pointer to an unfinished connection"
+      description: >-
+        Card D-1: removes only the workspace-scoped draft pointer. The immutable connection
+        lineage, its trust material and any registered scope stay untouched, so another workspace
+        that started the same connection is unaffected. An unauthorized, unknown or foreign
+        workspace, and a draft that does not exist, all resolve to one content-free 404.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: The draft pointer was removed (or was already absent for this workspace).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [connection_id, discarded]
+                properties:
+                  connection_id:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  discarded:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/source-connections/{connection_id}:set-query-credential:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/OpaqueID"
+    post:
+      operationId: setSourceQueryCredential
+      tags: [Sources]
+      summary: "Set the SQL query credential reference of a PostgreSQL source connection (ADR-0097)"
+      description: >-
+        Card 2b: the organization OWNER configures which mounted query credential
+        knowvault_source_sql uses for this connection. The body carries only the opaque
+        'cred' reference; a DSN, a password or any other secret value is never accepted or
+        returned. Before the reference is accepted the server resolves it in its mounted
+        credentials, opens a read-only connection and checks it reaches the source's own
+        database identity, and checks the role cannot read any column excluded from the
+        registered tables. Any failed check returns its closed code and changes nothing.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [credential_reference]
+              properties:
+                credential_reference:
+                  type: string
+                  minLength: 31
+                  maxLength: 31
+      responses:
+        "200":
+          description: "The connection and its new SQL availability."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [connection_id, sql_available]
+                properties:
+                  connection_id:
+                    type: string
+                  sql_available:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The candidate reference failed a check; the closed code names which one
+            (SOURCE_QUERY_CREDENTIAL_UNRESOLVED, SOURCE_QUERY_CREDENTIAL_INGESTION_REFERENCE,
+            SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH, SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE,
+            SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED, SOURCE_QUERY_CREDENTIAL_MISSING_SELECT,
+            SOURCE_QUERY_CREDENTIAL_EXTRA_RELATION, SOURCE_QUERY_CREDENTIAL_WRITE_PRIVILEGE,
+            SOURCE_QUERY_CREDENTIAL_ELEVATED_ROLE, SOURCE_QUERY_CREDENTIAL_ROLE_MEMBERSHIP,
+            SOURCE_QUERY_CREDENTIAL_SECURITY_DEFINER, SOURCE_QUERY_CREDENTIAL_REMOTE_EXECUTION,
+            SOURCE_QUERY_CREDENTIAL_RESOURCE_LIMIT, SOURCE_QUERY_CREDENTIAL_LARGE_OBJECT,
+            SOURCE_QUERY_CREDENTIAL_UNTRUSTED_LANGUAGE, SOURCE_SQL_RATE_LIMITED,
+            SOURCE_SQL_CONCURRENCY_LIMITED).
+            Nothing changed.
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/source-connections/{connection_id}:clear-query-credential:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/OpaqueID"
+    post:
+      operationId: clearSourceQueryCredential
+      tags: [Sources]
+      summary: "Clear the SQL query credential reference of a PostgreSQL source connection (ADR-0097)"
+      description: >-
+        Card 2b: the organization OWNER removes the connection's query credential. After it
+        knowvault_source_sql answers SOURCE_SQL_NOT_CONFIGURED and the Sources card shows
+        "SQL not configured". The body is empty.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: "The connection and its cleared SQL availability."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [connection_id, sql_available]
+                properties:
+                  connection_id:
+                    type: string
+                  sql_available:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/questions:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -1000,6 +1331,107 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/QuestionRunResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/questions/{question_run_id}:feedback:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/QuestionRunID"
+    get:
+      operationId: getQuestionFeedback
+      tags: [Search]
+      summary: "Read the caller's own current mark on one answer"
+      description: >-
+        Returns marked=false when the caller has not marked this answer. Access mirrors the
+        answer's own current readability; the comment text itself is never returned here.
+      x-implementation-status: LIVE_EXTRACTIVE
+      security:
+        - SessionCookie: []
+        - BearerSession: []
+      responses:
+        "200":
+          description: The caller's own current feedback state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionFeedback"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    post:
+      operationId: submitQuestionFeedback
+      tags: [Search]
+      summary: "Mark one answer CORRECT or INCORRECT, or change the caller's existing mark"
+      description: >-
+        One member holds exactly one current mark per answer; a resubmission changes that same
+        mark rather than adding another. INCORRECT requires a non-empty comment describing what is
+        wrong; CORRECT discards any previously stored comment. Only a member who can currently
+        read the answer (the same rule that gates the answer itself) may mark or see it.
+      x-implementation-status: LIVE_EXTRACTIVE
+      security:
+        - SessionCookie: []
+        - BearerSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuestionFeedbackInput"
+      responses:
+        "200":
+          description: The caller's current feedback state after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionFeedback"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/questions:feedback-report:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: getQuestionFeedbackReport
+      tags: [Search]
+      summary: "Error-review report: every member's current answer feedback"
+      description: >-
+        Reserved to the workspace OWNER/MANAGER (workspace.manage). A member without that role
+        receives the same content-free NOT_FOUND as an unknown workspace. Question, answer and
+        comment text are decrypted only for this authorized read.
+      x-implementation-status: LIVE_EXTRACTIVE
+      security:
+        - SessionCookie: []
+        - BearerSession: []
+      responses:
+        "200":
+          description: Every current feedback row in the workspace, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionFeedbackReport"
         "400":
           $ref: "#/components/responses/RequestInvalid"
         "401":
@@ -2270,6 +2702,18 @@ paths:
         schema:
           type: string
           pattern: "^v1:[0-9]{1,19}$"
+      - name: outline
+        in: query
+        required: false
+        description: >-
+          R1.S9.s1.T1: "true" returns the addressed document's ordered Markdown ATX heading list
+          (level, text, canonical_address, gist) instead of a text page, for orientation before
+          reading; no fragment text is disclosed. Mutually exclusive with cursor and with a nonzero
+          offset (REQUEST_INVALID). "false", like omission, keeps the existing fragment or
+          whole-object page mode.
+        schema:
+          type: string
+          enum: ["true", "false"]
     get:
       operationId: readWorkspaceToolEvidence
       tags: [Search]
@@ -2283,7 +2727,11 @@ paths:
         length, next_cursor, has_more, complete, effective limit, total_bytes, whole_hash,
         page_hash, address, canonical_address, fragment_count, ordinal_start, and ordinal_end.
         Concatenating decoded text_base64 from all pages reproduces the retained text assembly
-        hashed by whole_hash; a limit never silently truncates it. Dispatches through the same
+        hashed by whole_hash; a limit never silently truncates it. Outline mode (outline=true,
+        mutually exclusive with cursor and a nonzero offset) returns the addressed document's
+        ordered Markdown ATX heading list (headings, truncated) instead of a page: no fragment text,
+        only orientation -- read the addressed fragment before citing or asserting anything.
+        Dispatches through the same
         authorized Evidence.Read and EvidenceWholeObject/address.Read capabilities as MCP,
         preserving admission-before-data, audit, and content-free denial. An unknown workspace or a
         nonmember receives the same 404 NOT_FOUND without text or an echo of the requested
@@ -2394,6 +2842,30 @@ paths:
                     type: integer
                   ordinal_end:
                     type: integer
+                  headings:
+                    type: array
+                    description: >-
+                      Present only in outline mode (outline=true): the addressed document's ordered
+                      Markdown ATX headings, at most 200. No fragment text is disclosed alongside it.
+                    items:
+                      type: object
+                      required: [level, text, canonical_address, gist]
+                      properties:
+                        level:
+                          type: integer
+                          minimum: 1
+                          maximum: 6
+                        text:
+                          type: string
+                        canonical_address:
+                          type: string
+                        gist:
+                          type: string
+                  truncated:
+                    type: boolean
+                    description: >-
+                      Present only in outline mode. true when the document held more than 200
+                      headings, so headings carries only the first 200.
         "400":
           $ref: "#/components/responses/RequestInvalid"
         "401":
@@ -2413,10 +2885,10 @@ paths:
       summary: "Explicit fragment or whole-object pages within a workspace (POST parity)"
       description: >-
         The same REST parity with knowvault_read as GET:
-        fragment_id/address/offset/limit/expected_span_hash/cursor are query parameters; the request
-        body is not a parameter channel, and a nonempty body returns REQUEST_INVALID. POST supports
-        clients that call knowledge tools using POST; projection, authorization, audit, and denial
-        are identical to GET.
+        fragment_id/address/offset/limit/expected_span_hash/cursor/outline are query parameters; the
+        request body is not a parameter channel, and a nonempty body returns REQUEST_INVALID. POST
+        supports clients that call knowledge tools using POST; projection, authorization, audit, and
+        denial are identical to GET.
       x-implementation-status: LIVE
       security:
         - SessionCookie: []
@@ -2643,6 +3115,115 @@ paths:
             application/json:
               schema:
                 type: object
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/managed-source-confirmations:batch:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: confirmManagedSourcesBatch
+      tags: [Sources]
+      summary: "Confirm many workspace-managed sources at once (card S3.4b)"
+      description: >-
+        Confirms up to 1000 named table bindings in one request. Every table is confirmed
+        through the unchanged individual managed-source confirmation command, so it keeps the
+        identical checks, immutable confirmation record and content-free audit event, including
+        the verifier/confirmer separation of duty. The response reports one closed outcome per
+        table: a refused table never blocks the others. A table that is not a binding of this
+        workspace (another workspace or organization) is never named to the authority runtime
+        and resolves to the same content-free not-found as an individual confirmation. A request
+        naming more than 1000 tables is refused as a whole. Repeating the request with the same
+        Idempotency-Key creates no second confirmation and returns the same per-table outcomes.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [workspace_revision, workspace_configuration_hash, confirmation_actor_grant_id, confirmation_actor_grant_revision, confirmation_actor_grant_hash, warning_contract_hash, expected_policy_revision, tables]
+              properties:
+                workspace_revision:
+                  type: integer
+                workspace_configuration_hash:
+                  type: string
+                confirmation_actor_grant_id:
+                  type: string
+                confirmation_actor_grant_revision:
+                  type: integer
+                confirmation_actor_grant_hash:
+                  type: string
+                warning_contract_hash:
+                  type: string
+                expected_policy_revision:
+                  type: string
+                tables:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [workspace_source_id, source_scope_id, source_scope_revision, scope_config_hash]
+                    properties:
+                      workspace_source_id:
+                        type: string
+                      source_scope_id:
+                        type: string
+                      source_scope_revision:
+                        type: integer
+                      scope_config_hash:
+                        type: string
+      responses:
+        "200":
+          description: "One closed outcome per named table."
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [confirmed_count, refused_count, results]
+                properties:
+                  confirmed_count:
+                    type: integer
+                  refused_count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [source_scope_id, outcome]
+                      properties:
+                        source_scope_id:
+                          type: string
+                        outcome:
+                          type: string
+                          enum: [CONFIRMED, REFUSED]
+                        reason_code:
+                          type: string
+                        confirmation_id:
+                          type: string
+                        confirmation_hash:
+                          type: string
         "400":
           $ref: "#/components/responses/RequestInvalid"
         "401":
@@ -3066,6 +3647,515 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/model-context:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: getWorkspaceModelContext
+      tags: [ModelContext]
+      summary: "Current workspace model context (ADR-0098, S2)"
+      description: >-
+        The workspace's explicit description, answer rules, glossary and source/table/column notes:
+        visible configuration, never hidden model memory or evidence. A workspace with no saved
+        context yet returns version 0 with an empty document. editable is true only for a caller
+        currently holding OWNER or MANAGER. Exactly one content-free
+        workspace.model_context_read audit event is appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: "Current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    put:
+      operationId: saveWorkspaceModelContext
+      tags: [ModelContext]
+      summary: "Save a new workspace model context version (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        Creates the next immutable version and moves the current pointer to it. New rules/glossary
+        items are sent with "id": "" and the server assigns their ids. Every data_locations entry
+        and every source/table/column note must reference a relation or column already registered
+        by a source enabled in this workspace; an S1-excluded column is rejected. Exactly one
+        content-free workspace.model_context_revised audit event is appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ModelContextIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceModelContextSaveRequest"
+      responses:
+        "200":
+          description: "Newly created current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "412":
+          $ref: "#/components/responses/RevisionConflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/versions:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceModelContextVersions
+      tags: [ModelContext]
+      summary: "Workspace model context version history (ADR-0098, S2)"
+      description: "Newest-first metadata only; the document content itself is on the exact-version read."
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          description: "The version number (from a previous next_cursor) to page strictly before."
+          schema:
+            type: string
+            pattern: '^[1-9][0-9]{0,18}$'
+      responses:
+        "200":
+          description: "A page of version history, newest first."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContextVersionList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/versions/{version}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextVersionParam"
+    get:
+      operationId: getWorkspaceModelContextVersion
+      tags: [ModelContext]
+      summary: "One historical workspace model context version (ADR-0098, S2)"
+      description: >-
+        editable is always false: a historical version is read-only, restorable but never itself
+        editable. Exactly one content-free workspace.model_context_read audit event is appended on
+        success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: "Requested context version."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/versions/{version}:restore:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextVersionParam"
+    post:
+      operationId: restoreWorkspaceModelContextVersion
+      tags: [ModelContext]
+      summary: "Restore a historical version as the new current context (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        Creates a new version (change_kind RESTORE) whose document is byte-identical to the named
+        historical version; history is never rewritten. The request body is empty. Exactly one
+        content-free workspace.model_context_revised audit event is appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ModelContextIfMatch"
+      responses:
+        "200":
+          description: "Newly created current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "412":
+          $ref: "#/components/responses/RevisionConflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/proposals:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: listWorkspaceContextProposals
+      tags: [ModelContext]
+      summary: "Deterministic glossary-change proposal review queue (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        A MEMBER (or any caller without OWNER/MANAGER standing) receives 404 NOT_FOUND, never 403:
+        this queue's existence is not disclosed to a non-manager. examples lists only runs the
+        current viewer can read now; question_excerpt is at most 300 characters.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: "Defaults to PROPOSED."
+          schema:
+            type: string
+            enum: [PROPOSED, ACCEPTED, REJECTED, WITHDRAWN]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OpaqueID"
+      responses:
+        "200":
+          description: "A page of proposals matching status."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceContextProposalList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/proposals/{proposal_id}:accept:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextProposalIDParam"
+    post:
+      operationId: acceptWorkspaceContextProposal
+      tags: [ModelContext]
+      summary: "Accept a glossary-change proposal (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        Applies the proposal's own candidate term/suggested text, or the optional body's override,
+        to the current document and mints a new version (change_kind PROPOSAL_ACCEPTED) atomically
+        with the decision. A non-manager, an absent proposal, or one no longer PROPOSED all collapse
+        to 404 NOT_FOUND. Exactly one content-free workspace.context_proposal_decided audit event is
+        appended on success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ModelContextIfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceContextProposalAcceptRequest"
+      responses:
+        "200":
+          description: "Newly created current context version."
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/NoSniff"
+            ETag:
+              $ref: "#/components/headers/ModelContextETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceModelContext"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/RevisionConflict"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/model-context/proposals/{proposal_id}:reject:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ModelContextProposalIDParam"
+    post:
+      operationId: rejectWorkspaceContextProposal
+      tags: [ModelContext]
+      summary: "Reject a glossary-change proposal (ADR-0098, S2, OWNER/MANAGER only)"
+      description: >-
+        The context document is unchanged; only the proposal's own status moves to REJECTED. A
+        non-manager, an absent proposal, or one no longer PROPOSED all collapse to 404 NOT_FOUND.
+        Exactly one content-free workspace.context_proposal_decided audit event is appended on
+        success.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: "Rejected proposal id and its new status."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceContextProposalRejectResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/tools/workspace-context:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: workspaceContextToolParity
+      tags: [ModelContext]
+      summary: "REST parity of the knowvault_workspace_context MCP tool (ADR-0098, S2)"
+      description: >-
+        Filters the current document by the optional terms/section body: terms matches a
+        glossary entry's term or any synonym case-insensitively; section narrows the projection to
+        one of glossary/rules/sources (default: all). notice is always the fixed string "context,
+        not evidence": this surface is never a citation source, and sources always covers enabled
+        sources only (a note can only exist here if it referenced an enabled source when saved).
+        Exactly one content-free workspace.model_context_read audit event is appended on success.
+        Card A implements this route directly on internal/workspacecontext.Store; card C's MCP tool
+        knowvault_workspace_context is a separate transport over the same document and may reuse or
+        re-route this path.
+      x-implementation-status: HANDLER_READY_NOT_COMPOSED
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceContextToolRequest"
+      responses:
+        "200":
+          description: "Rendered context, section-filtered when section is given."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceContextToolResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/tools/source-schema:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: workspaceSourceSchemaToolParity
+      tags: [Sources]
+      summary: "REST parity of the knowvault_source_schema MCP tool (ADR-0097, S3)"
+      description: >-
+        Read-only REST twin of the knowvault_source_schema knowledge tool, served from the stored
+        projections and discovery metadata of the PostgreSQL sources enabled in the workspace. The
+        optional body carries source_id (the source connection id knowvault_sources returns), an
+        optional schema.name table selector and the offset/limit page window (at most 50 tables per
+        page); without source_id the response lists the workspace's PostgreSQL sources. Columns
+        excluded at registration are never returned. An unknown, foreign, disabled or non-member
+        source is a single content-free 404 NOT_FOUND. Every call is audited through the existing
+        source.metadata.read.* boundary; no external database is opened and no SQL is composed.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceSchemaToolRequest"
+      responses:
+        "200":
+          description: "One page of the source schema, or the workspace's PostgreSQL source list when source_id is omitted."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSchemaToolResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/tools/source-sql:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      operationId: workspaceSourceSQLToolParity
+      tags: [Sources]
+      summary: "REST parity of the knowvault_source_sql MCP tool (ADR-0097, S3)"
+      description: >-
+        Agent-facing REST twin of the knowvault_source_sql knowledge tool: one SELECT/WITH statement
+        written by the caller (the chat model or an authenticated MCP/API agent) against one
+        PostgreSQL source enabled in the workspace. The statement runs with the source's own
+        read-only query credential, in a read-only transaction, under the shared governed-execution
+        statement timeout, EXPLAIN cost cap and row/byte cap; every relation the planner touches must
+        belong to the source's registered tables, so pg_catalog, information_schema, another schema
+        and a function scan are refused. The body carries source_id, sql (at most 8192 bytes) and a
+        bounded purpose note. A closed refusal (SQL_REJECTED_STATIC, RELATION_NOT_IN_SOURCE,
+        COST_LIMIT, ROW_LIMIT, TIMEOUT, DATABASE_REJECTED, SOURCE_SQL_NOT_CONFIGURED) is a 200 tool
+        result with an error code the agent reacts to. An unknown, foreign, disabled or non-member
+        source is a single content-free 404 NOT_FOUND. No UI, operator or user-facing field accepts
+        SQL. Every attempt is audited with the source id, sql hash and result digest; a failed audit
+        returns no rows.
+      x-implementation-status: LIVE
+      security:
+        - SessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceSQLToolRequest"
+      responses:
+        "200":
+          description: "The executed statement's text-table projection, or a closed refusal result carrying its error code."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSQLToolResponse"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/governed-query-connections/{connection_id}:set-live-queries:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -3426,6 +4516,32 @@ components:
       schema:
         type: string
         pattern: '^"sha256:[0-9a-f]{64}"$'
+    ModelContextVersionParam:
+      name: version
+      in: path
+      required: true
+      description: "Immutable context version number: a positive decimal integer without a sign or leading zeros."
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 9007199254740991
+    ModelContextProposalIDParam:
+      name: proposal_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueID"
+    ModelContextIfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: >-
+        Exactly one strong ETag: the current context's content hash, or the literal
+        "sha256:empty" when the workspace has no saved context yet (version 0). Weak tags,
+        wildcards, and lists are prohibited.
+      schema:
+        type: string
+        pattern: '^"sha256:(empty|[0-9a-f]{64})"$'
   headers:
     NoStore:
       description: "All handler JSON responses are noncacheable."
@@ -3451,6 +4567,14 @@ components:
       schema:
         type: string
         const: nosniff
+    ModelContextETag:
+      description: >-
+        Strong ETag exact match to the returned context's content_hash, or "sha256:empty" for a
+        workspace with no saved context yet (version 0).
+      required: true
+      schema:
+        type: string
+        pattern: '^"sha256:(empty|[0-9a-f]{64})"$'
   schemas:
     GovernedQueryResult:
       type: object
@@ -3612,15 +4736,15 @@ components:
         view_count:
           type: integer
           minimum: 0
-          maximum: 64
+          maximum: 1024
         prepared_view_count:
           type: integer
           minimum: 0
-          maximum: 64
+          maximum: 1024
         needs_interpretation_view_count:
           type: integer
           minimum: 0
-          maximum: 64
+          maximum: 1024
         failure_code:
           type: string
           minLength: 1
@@ -3630,13 +4754,13 @@ components:
           format: date-time
         views:
           type: array
-          maxItems: 64
+          maxItems: 1024
           items:
             $ref: "#/components/schemas/SourceDiscoveryView"
     SourceDiscoveryView:
       type: object
       additionalProperties: false
-      required: [view_id, schema_name, relation_name, relation_kind, status, columns]
+      required: [view_id, schema_name, relation_name, relation_kind, approx_row_count, status, columns]
       properties:
         view_id:
           type: string
@@ -3651,10 +4775,20 @@ components:
           maxLength: 63
         relation_kind:
           type: string
-          enum: [VIEW, MATERIALIZED_VIEW]
+          description: >-
+            VIEW and MATERIALIZED_VIEW are the original DBA-reviewed five-column business-object
+            contract. TABLE and PARTITIONED_TABLE (ADR-0097) are an ordinary or partitioned base
+            table, prepared only when it has a declared primary key.
+          enum: [VIEW, MATERIALIZED_VIEW, TABLE, PARTITIONED_TABLE]
         comment:
           type: string
           maxLength: 4096
+        approx_row_count:
+          type: integer
+          description: >-
+            pg_class.reltuples, rounded. -1 means PostgreSQL has not analyzed the relation yet.
+            Planner statistics, not a live count; never used for a security or capacity decision.
+          minimum: -1
         status:
           type: string
           enum: [PREPARED, NEEDS_INTERPRETATION]
@@ -3666,15 +4800,53 @@ components:
             - MALFORMED_BUSINESS_OBJECT_CONTRACT
             - UNSUPPORTED_TYPE
             - INVALID_IDENTIFIER
+            - NO_PRIMARY_KEY
         columns:
           type: array
           maxItems: 256
           items:
             $ref: "#/components/schemas/SourceDiscoveryColumn"
+        excluded_columns:
+          type: array
+          description: >-
+            Base or partitioned-table columns the server observed but cannot project into the
+            immutable value contract (for example a PostGIS geometry). They are display-only
+            metadata carrying a reason, are never part of the registration projection and never
+            appear in reads, search, the schema tool or SQL results. A table whose primary key or
+            every column is unsupported stays NEEDS_INTERPRETATION with UNSUPPORTED_TYPE.
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/SourceDiscoveryExcludedColumn"
+    SourceDiscoveryExcludedColumn:
+      type: object
+      additionalProperties: false
+      required: [ordinal, name, type_name, reason]
+      properties:
+        ordinal:
+          type: integer
+          minimum: 1
+          maximum: 256
+          description: The column's observed position in the external relation.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+        type_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        logical_type:
+          type: string
+          description: Present only when the server recognized a logical type but the column is still unprojectable.
+        primary_key:
+          type: boolean
+        reason:
+          type: string
+          enum: [UNSUPPORTED_TYPE]
     SourceDiscoveryColumn:
       type: object
       additionalProperties: false
-      required: [ordinal, name, type_name, logical_type, nullable, roles]
+      required: [ordinal, name, type_name, logical_type, nullable, roles, primary_key]
       properties:
         ordinal:
           type: integer
@@ -3712,6 +4884,74 @@ components:
           items:
             type: string
             enum: [IDENTITY, TITLE, VERSION_HINT, EVIDENCE, PERIOD, STATUS]
+        primary_key:
+          type: boolean
+          description: >-
+            Native primary-key membership (ADR-0097). Always false for a VIEW/MATERIALIZED_VIEW
+            column.
+    SourceDiscoveryRegisterInput:
+      type: object
+      additionalProperties: false
+      properties:
+        excluded_columns:
+          type: array
+          description: >-
+            Ordinals from the sealed discovery result's SourceDiscoveryColumn.ordinal, accepted
+            only for a TABLE/PARTITIONED_TABLE selection. May not name a primary_key column.
+          maxItems: 255
+          items:
+            type: integer
+            minimum: 1
+            maximum: 256
+        mode:
+          type: string
+          enum: [INDEXED, QUERY_ONLY]
+          description: >-
+            The immutable registration mode (S3 card 4). INDEXED (the default when absent) copies
+            the relation's rows into search; QUERY_ONLY registers the relation only for
+            knowvault_source_sql, so the sync worker never copies its rows and search never
+            returns its fragments. The mode is part of the registered contract, never a per-call
+            flag; re-registering an indexed relation as QUERY_ONLY supersedes the indexed
+            registration and removes its fragments.
+    SourceConnectionDraftList:
+      type: object
+      additionalProperties: false
+      required: [drafts]
+      properties:
+        drafts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceConnectionDraft"
+    SourceConnectionDraft:
+      type: object
+      additionalProperties: false
+      required: [connection_id, connection_revision, connection_name, source_type, trust_status, state, created_at]
+      properties:
+        connection_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        connection_revision:
+          type: integer
+          minimum: 1
+        connection_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        source_type:
+          type: string
+        trust_status:
+          type: string
+          enum: [DRAFT, VERIFIED]
+        state:
+          type: string
+          description: >-
+            AWAITING_TRUST_VERIFICATION resumes the wizard at trust verification;
+            READY_FOR_DISCOVERY resumes it at catalog discovery.
+          enum: [AWAITING_TRUST_VERIFICATION, READY_FOR_DISCOVERY]
+        created_at:
+          type: string
+          format: date-time
     WorkspaceRole:
       type: string
       enum: [OWNER, MANAGER, MEMBER, VIEWER, AUDITOR]
@@ -4430,6 +5670,19 @@ components:
           enum: [DRAFT, SYNCING, READY, REVOKED, FAILED]
         trust_verified:
           type: boolean
+        sql_available:
+          type: boolean
+          description: >-
+            ADR-0097: whether this connection revision carries the separate read-only query credential,
+            so knowvault_source_sql can run for its enabled sources. False means SQL not configured and
+            the tool answers SOURCE_SQL_NOT_CONFIGURED. A display fact, never an authorization.
+        query_only:
+          type: boolean
+          description: >-
+            S3 card 4: whether this relation is registered only for SQL queries (not indexed). True
+            means the sync worker never copies its rows and search never returns its fragments; the
+            Sources card shows the state "только SQL" and no sync freshness. False for every
+            non-PostgreSQL source.
         sync_status:
           type: string
           nullable: true
@@ -4620,6 +5873,72 @@ components:
             request without that mount is rejected with QUESTION_MODE_UNSUPPORTED before any run is
             created.
           enum: [EXTRACTIVE, GENERATIVE, TOOL_LOOP]
+    QuestionFeedbackInput:
+      type: object
+      additionalProperties: false
+      required: [verdict]
+      properties:
+        verdict:
+          type: string
+          enum: [CORRECT, INCORRECT]
+        comment:
+          description: >-
+            Required and non-empty when verdict is INCORRECT; ignored (any stored comment is
+            cleared) when verdict is CORRECT. Stored envelope-encrypted, never as plain text; never
+            echoed back by any endpoint except the OWNER/MANAGER feedback report.
+          type: string
+          maxLength: 4096
+    QuestionFeedback:
+      type: object
+      additionalProperties: false
+      required: [marked]
+      properties:
+        marked:
+          description: false when the caller has not marked this answer.
+          type: boolean
+        verdict:
+          type: string
+          enum: [CORRECT, INCORRECT]
+        has_comment:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+    QuestionFeedbackReportEntry:
+      type: object
+      additionalProperties: false
+      required: [question_run_id, question, answer, verdict, author_principal_id, created_at, updated_at]
+      properties:
+        question_run_id:
+          $ref: "#/components/schemas/OpaqueID"
+        question:
+          type: string
+        answer:
+          type: string
+        verdict:
+          type: string
+          enum: [CORRECT, INCORRECT]
+        comment:
+          type: string
+        author_principal_id:
+          $ref: "#/components/schemas/OpaqueID"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    QuestionFeedbackReport:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, entries]
+      properties:
+        workspace_id:
+          $ref: "#/components/schemas/OpaqueID"
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuestionFeedbackReportEntry"
     ConversationTurn:
       type: object
       additionalProperties: false
@@ -4866,7 +6185,11 @@ components:
           default: UNCONFIRMED
         status:
           type: string
-          enum: [RUNNING, COMPLETED, INSUFFICIENT_EVIDENCE, FAILED, CANCELLED]
+          description: >-
+            INTERRUPTED is the terminal state of a run whose answering server process
+            stopped before it finished (for example a restart). It carries no answer and
+            the client should invite the user to ask again.
+          enum: [RUNNING, COMPLETED, INSUFFICIENT_EVIDENCE, FAILED, CANCELLED, INTERRUPTED]
         corpus_status:
           type: string
           enum: [COMPLETE, PARTIAL]
@@ -5291,6 +6614,496 @@ components:
           enum: [NOT_COVERED, NO_MATCHES, UNAVAILABLE]
         message:
           type: string
+    WorkspaceModelContextDataLocation:
+      type: object
+      additionalProperties: false
+      required: [source_connection_id, relation]
+      properties:
+        source_connection_id:
+          $ref: "#/components/schemas/OpaqueID"
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        column:
+          type: string
+          maxLength: 256
+        hint:
+          type: string
+          maxLength: 200
+    WorkspaceModelContextRule:
+      type: object
+      additionalProperties: false
+      required: [id, text]
+      properties:
+        id:
+          type: string
+          description: "Server-assigned (rule_<ULID>). Empty on a new rule in a save request."
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+    WorkspaceModelContextTerm:
+      type: object
+      additionalProperties: false
+      required: [id, term]
+      properties:
+        id:
+          type: string
+          description: "Server-assigned (term_<ULID>). Empty on a new term in a save request."
+        term:
+          type: string
+          minLength: 1
+          maxLength: 80
+        synonyms:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+        definition:
+          type: string
+          maxLength: 1000
+        data_locations:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextDataLocation"
+    WorkspaceModelContextColumn:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        note:
+          type: string
+          maxLength: 500
+    WorkspaceModelContextTable:
+      type: object
+      additionalProperties: false
+      required: [relation]
+      properties:
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 256
+        note:
+          type: string
+          maxLength: 1000
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextColumn"
+    WorkspaceModelContextSource:
+      type: object
+      additionalProperties: false
+      required: [source_connection_id]
+      properties:
+        source_connection_id:
+          $ref: "#/components/schemas/OpaqueID"
+        description:
+          type: string
+          maxLength: 2000
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextTable"
+    WorkspaceModelContextDocument:
+      type: object
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+          maxLength: 4000
+        rules:
+          type: array
+          maxItems: 30
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextRule"
+        glossary:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextTerm"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextSource"
+    WorkspaceModelContext:
+      type: object
+      additionalProperties: false
+      required: [version, content_hash, editable, document, updated_at, updated_by]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: "0 means the workspace has no saved context yet; document is then empty."
+        content_hash:
+          type: string
+          pattern: '^sha256:(empty|[0-9a-f]{64})$'
+        editable:
+          type: boolean
+          description: "True only for a caller currently holding OWNER or MANAGER. Always false on a historical version read."
+        document:
+          $ref: "#/components/schemas/WorkspaceModelContextDocument"
+        updated_at:
+          type: string
+          description: "RFC 3339 timestamp of this version, or empty string at version 0."
+        updated_by:
+          type: string
+          description: "Principal id that created this version, or empty string at version 0."
+    WorkspaceModelContextSaveRequest:
+      type: object
+      additionalProperties: false
+      required: [document]
+      properties:
+        document:
+          $ref: "#/components/schemas/WorkspaceModelContextDocument"
+    WorkspaceModelContextVersionSummary:
+      type: object
+      additionalProperties: false
+      required: [version, content_hash, change_kind, created_at, created_by]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        content_hash:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        change_kind:
+          type: string
+          enum: [EDIT, PROPOSAL_ACCEPTED, RESTORE]
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          $ref: "#/components/schemas/OpaqueID"
+        proposal_id:
+          type: string
+          description: "Present only when change_kind is PROPOSAL_ACCEPTED."
+    WorkspaceModelContextVersionList:
+      type: object
+      additionalProperties: false
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextVersionSummary"
+        next_cursor:
+          type: string
+          description: "Pass as ?cursor= to continue. Absent on the last page."
+    WorkspaceContextProposalExample:
+      type: object
+      additionalProperties: false
+      required: [conversation_id, question_excerpt]
+      properties:
+        conversation_id:
+          $ref: "#/components/schemas/OpaqueID"
+        question_excerpt:
+          type: string
+          maxLength: 300
+    WorkspaceContextProposal:
+      type: object
+      additionalProperties: false
+      required:
+        - proposal_id
+        - kind
+        - candidate_term
+        - target_term_id
+        - target_term
+        - suggested_text
+        - status
+        - occurrences
+        - created_at
+        - examples
+        - hidden_examples
+      properties:
+        proposal_id:
+          type: string
+        kind:
+          type: string
+          enum: [NEW_TERM, SYNONYM, DEFINITION_CORRECTION]
+        candidate_term:
+          type: string
+          maxLength: 80
+        target_term_id:
+          type: string
+          description: "Empty for a NEW_TERM proposal, which names no existing term."
+        target_term:
+          type: string
+          description: "Current display name of target_term_id, resolved server-side; empty when target_term_id is empty."
+        suggested_text:
+          type: string
+          maxLength: 300
+        status:
+          type: string
+          enum: [PROPOSED, ACCEPTED, REJECTED, WITHDRAWN]
+        occurrences:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        examples:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/WorkspaceContextProposalExample"
+        hidden_examples:
+          type: integer
+          minimum: 0
+          description: "Count of this proposal's evidence rows not resolvable into an example for the current viewer."
+    WorkspaceContextProposalList:
+      type: object
+      additionalProperties: false
+      required: [proposals]
+      properties:
+        proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceContextProposal"
+        next_cursor:
+          type: string
+          description: "Pass as ?cursor= to continue. Absent on the last page."
+    WorkspaceContextProposalAcceptRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        term:
+          type: string
+          maxLength: 80
+        synonyms:
+          type: array
+          items:
+            type: string
+            maxLength: 80
+        definition:
+          type: string
+          maxLength: 1000
+    WorkspaceContextProposalRejectResponse:
+      type: object
+      additionalProperties: false
+      required: [proposal_id, status]
+      properties:
+        proposal_id:
+          type: string
+        status:
+          type: string
+          enum: [REJECTED]
+    WorkspaceContextToolRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        terms:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            maxLength: 80
+        section:
+          type: string
+          enum: [all, glossary, rules, sources]
+    WorkspaceContextToolResponse:
+      type: object
+      additionalProperties: false
+      required: [version, content_hash, description, rules, glossary, sources, notice]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        content_hash:
+          type: string
+          pattern: '^sha256:(empty|[0-9a-f]{64})$'
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextRule"
+        glossary:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextTerm"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceModelContextSource"
+        notice:
+          type: string
+          enum: ["context, not evidence"]
+    SourceSchemaToolRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        table:
+          type: string
+          maxLength: 257
+          pattern: '^[A-Za-z_][A-Za-z0-9_]{0,127}\.[A-Za-z_][A-Za-z0-9_]{0,127}$'
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+    SourceSchemaToolResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSchemaToolSource"
+        source_id:
+          type: string
+        database_identity:
+          type: string
+        context_version:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        source_note:
+          type: string
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSchemaToolTable"
+        next_offset:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        has_more:
+          type: boolean
+    SourceSchemaToolSource:
+      type: object
+      additionalProperties: false
+      required: [id, name, table_count]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        table_count:
+          type: integer
+          minimum: 0
+    SourceSchemaToolTable:
+      type: object
+      additionalProperties: false
+      required: [schema, name, kind, row_estimate, note, columns]
+      properties:
+        schema:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [TABLE, PARTITIONED_TABLE, VIEW, MATERIALIZED_VIEW]
+        row_estimate:
+          type: integer
+          minimum: -1
+          maximum: 9007199254740991
+        note:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSchemaToolColumn"
+    SourceSchemaToolColumn:
+      type: object
+      additionalProperties: false
+      required: [name, type, nullable, primary_key, note]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        nullable:
+          type: boolean
+        primary_key:
+          type: boolean
+        note:
+          type: string
+    SourceSQLToolRequest:
+      type: object
+      additionalProperties: false
+      required: [source_id, sql]
+      properties:
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        sql:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        purpose:
+          type: string
+          maxLength: 200
+    SourceSQLToolResponse:
+      type: object
+      additionalProperties: false
+      required: [format, columns, rows, row_count, attempt_id, sql_hash, result_digest, database_identity, execution_started_at, execution_completed_at, complete]
+      properties:
+        format:
+          type: string
+          enum: [postgres-text-table-v1]
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: [string, "null"]
+        row_count:
+          type: integer
+          minimum: 0
+        attempt_id:
+          type: string
+        sql_hash:
+          type: string
+        result_digest:
+          type: string
+        database_identity:
+          type: string
+        execution_started_at:
+          type: string
+        execution_completed_at:
+          type: string
+        complete:
+          type: boolean
+    SourceSQLToolRefusal:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - SQL_REJECTED_STATIC
+            - RELATION_NOT_IN_SOURCE
+            - COST_LIMIT
+            - ROW_LIMIT
+            - TIMEOUT
+            - DATABASE_REJECTED
+            - SOURCE_SQL_NOT_CONFIGURED
+            - SOURCE_SQL_CONCURRENCY_LIMITED
+            - SOURCE_SQL_RATE_LIMITED
   responses:
     CSRFResponse:
       description: Derived CSRF proof.
@@ -5350,6 +7163,9 @@ components:
       $ref: "#/components/responses/ErrorResponse"
     CreateForbiddenOrCSRFRejected:
       description: CSRF validation failed or create operation was denied.
+      $ref: "#/components/responses/ErrorResponse"
+    Forbidden:
+      description: Caller is a readable workspace member but not a current OWNER or MANAGER.
       $ref: "#/components/responses/ErrorResponse"
     NotFound:
       description: Route absent, malformed canonical resource path, or resource unavailable to this access context.
@@ -5424,6 +7240,19 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/SourceList"
+    SourceConnectionDraftListResponse:
+      description: The unfinished PostgreSQL connections this workspace started, with their derived state.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+        X-Content-Type-Options:
+          $ref: "#/components/headers/NoSniff"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SourceConnectionDraftList"
     QuestionRunResponse:
       description: Immutable extractive Question Run projection with current-access-checked citations.
       headers:

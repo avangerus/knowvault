@@ -36,15 +36,22 @@ type ReadResult struct {
 // View is a browser-safe catalog item. Selector is server-derived and is the
 // only view coordinate a later registration request may return to the server.
 type View struct {
-	Selector       string
-	SchemaName     string
-	RelationName   string
-	RelationKind   string
-	Comment        string
+	Selector     string
+	SchemaName   string
+	RelationName string
+	RelationKind string
+	Comment      string
+	// ApproxRowCount is the server's pg_class.reltuples estimate (-1 when
+	// PostgreSQL has not analyzed the relation). It is display metadata only.
+	ApproxRowCount int64
 	Status         postgresqlquery.DiscoveryStatus
 	Interpretation postgresqlquery.InterpretationReason
 	Columns        []Column
-	projection     *postgresqlquery.Projection
+	// ExcludedColumns are observed columns the server cannot project (D-1):
+	// visible catalog metadata with a reason, never part of the projection a
+	// registration can select.
+	ExcludedColumns []postgresqlquery.ExcludedColumn
+	projection      *postgresqlquery.Projection
 }
 
 // SelectedView is the trusted registration input recovered from one live
@@ -57,6 +64,16 @@ type SelectedView struct {
 	ConnectionID       string
 	ConnectionRevision int64
 	Projection         postgresqlquery.Projection
+	// RelationComment, ApproxRowCount and CatalogColumns are the bounded
+	// catalog display metadata observed for exactly this relation at discovery
+	// time: pg_class.reltuples, the relation comment and each discovered
+	// column's native type name, comment and primary-key membership. They are
+	// display-only (ADR-0097, never a security check) and ADR-0097's
+	// knowvault_source_schema tool must answer from them without a live call,
+	// so the registration boundary persists them next to the projection.
+	RelationComment string
+	ApproxRowCount  int64
+	CatalogColumns  []Column
 }
 
 // Column is read-only catalog metadata. Roles are present only when the
@@ -72,6 +89,9 @@ type Column struct {
 	MaxBytes    int
 	Comment     string
 	Roles       []postgresqlquery.Role
+	// PrimaryKey is native primary-key membership (ADR-0097). It is always
+	// false for a VIEW/MATERIALIZED_VIEW column.
+	PrimaryKey bool
 }
 
 // Reader authorizes and decrypts discovery results for the source-management
@@ -160,9 +180,78 @@ func (reader *Reader) Select(ctx context.Context, access database.AccessContext,
 			RequestID: requestID, ResultID: result.ResultID, Selector: selector,
 			ConnectionID:       projection.ConnectionID,
 			ConnectionRevision: result.connectionRevision, Projection: projection,
+			RelationComment: view.Comment, ApproxRowCount: view.ApproxRowCount,
+			CatalogColumns: cloneColumns(view.Columns),
 		}, nil
 	}
 	return SelectedView{}, &Error{code: CodeNotFound}
+}
+
+// selectManyReasonNotFound is the content-free per-selector reason a batch
+// registration reports for a selector the live discovery result does not
+// contain. It never carries a schema, relation or any other catalog text.
+const selectManyReasonNotFound = "NOT_FOUND"
+
+// SelectedViewResolution is one selector's outcome from SelectMany: either a
+// registerable projection or the closed reason it cannot cross the
+// registration boundary. A nil Selected with a non-empty Reason is a
+// per-selector refusal, never a whole-request failure.
+type SelectedViewResolution struct {
+	Selector string
+	Selected *SelectedView
+	Reason   string
+}
+
+// SelectMany resolves a bounded list of selectors against one live encrypted
+// discovery result. One authorization and one decryption cover the whole list,
+// so a catalog of hundreds of tables is one read rather than one per table. A
+// selector the live result does not contain resolves to the content-free
+// NOT_FOUND reason; a relation the discovery worker could not prepare resolves
+// to its closed interpretation reason (for example NO_PRIMARY_KEY or
+// UNSUPPORTED_TYPE), so a batch registration can report exactly why one table
+// was refused and still register the others.
+func (reader *Reader) SelectMany(ctx context.Context, access database.AccessContext, requestID string, selectors []string) ([]SelectedViewResolution, error) {
+	if len(selectors) == 0 {
+		return nil, &Error{code: CodeInvalid}
+	}
+	for _, selector := range selectors {
+		if !validViewSelector(selector) {
+			return nil, &Error{code: CodeInvalid}
+		}
+	}
+	result, err := reader.Get(ctx, access, requestID)
+	if err != nil {
+		return nil, err
+	}
+	bySelector := make(map[string]View, len(result.Views))
+	for _, view := range result.Views {
+		bySelector[view.Selector] = view
+	}
+	resolutions := make([]SelectedViewResolution, len(selectors))
+	for index, selector := range selectors {
+		resolution := SelectedViewResolution{Selector: selector}
+		view, found := bySelector[selector]
+		switch {
+		case !found:
+			resolution.Reason = selectManyReasonNotFound
+		case view.Status != postgresqlquery.DiscoveryPrepared || view.projection == nil:
+			resolution.Reason = string(view.Interpretation)
+			if resolution.Reason == "" {
+				resolution.Reason = string(postgresqlquery.DiscoveryNeedsInterpretation)
+			}
+		default:
+			projection := cloneProjection(*view.projection)
+			resolution.Selected = &SelectedView{
+				RequestID: requestID, ResultID: result.ResultID, Selector: selector,
+				ConnectionID:       projection.ConnectionID,
+				ConnectionRevision: result.connectionRevision, Projection: projection,
+				RelationComment: view.Comment, ApproxRowCount: view.ApproxRowCount,
+				CatalogColumns: cloneColumns(view.Columns),
+			}
+		}
+		resolutions[index] = resolution
+	}
+	return resolutions, nil
 }
 
 func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, access database.AccessContext, result *ReadResult) error {
@@ -215,7 +304,7 @@ func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, ac
 		return &Error{code: CodeMetadataInvalid, cause: errors.Join(err, errMetadataInvalid)}
 	}
 	identityDigest, digestErr := databaseIdentityHash(metadata.DatabaseOID, metadata.DatabaseName)
-	if !metadata.Validate(64) || metadata.ConnectionID != connectionID ||
+	if !metadata.Validate(1024) || metadata.ConnectionID != connectionID ||
 		metadata.ConnectionRevision != connectionRevision || len(metadata.Views) != viewCount ||
 		digestErr != nil || identityDigest != databaseIdentityDigest || metadata.PrivilegeDigest != privilegeDigest {
 		return &Error{code: CodeMetadataInvalid, cause: errors.Join(digestErr, errMetadataInvalid)}
@@ -238,15 +327,16 @@ func (reader *Reader) readViews(ctx context.Context, tx database.Transaction, ac
 				Ordinal: column.Ordinal, Name: column.Name, TypeName: column.TypeName,
 				LogicalType: column.LogicalType, Nullable: column.Nullable,
 				Precision: column.Precision, Scale: column.Scale, MaxBytes: column.MaxBytes,
-				Comment: column.Comment, Roles: roles[column.Ordinal],
+				Comment: column.Comment, Roles: roles[column.Ordinal], PrimaryKey: column.PrimaryKey,
 			}
 		}
 		views[index] = View{
 			Selector: selector, SchemaName: discovered.SchemaName,
 			RelationName: discovered.RelationName, RelationKind: discovered.RelationKind,
-			Comment: discovered.Comment, Status: discovered.Status,
+			Comment: discovered.Comment, ApproxRowCount: discovered.ApproxRowCount, Status: discovered.Status,
 			Interpretation: discovered.Interpretation, Columns: columns,
-			projection: discovered.Projection,
+			ExcludedColumns: append([]postgresqlquery.ExcludedColumn(nil), discovered.ExcludedColumns...),
+			projection:      discovered.Projection,
 		}
 	}
 	result.Views = views
@@ -273,6 +363,15 @@ func cloneProjection(projection postgresqlquery.Projection) postgresqlquery.Proj
 	}
 	projection.Columns = columns
 	return projection
+}
+
+func cloneColumns(columns []Column) []Column {
+	cloned := make([]Column, len(columns))
+	for index, column := range columns {
+		column.Roles = append([]postgresqlquery.Role(nil), column.Roles...)
+		cloned[index] = column
+	}
+	return cloned
 }
 
 func (reader *Reader) viewSelector(resultID string, view postgresqlquery.ViewDiscovery) (string, error) {

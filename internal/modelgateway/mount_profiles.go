@@ -93,7 +93,7 @@ func LoadMountedProfilesAt(rootPath string) (*ProfileRegistry, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !profileRuntimeLocationConsistent(config) || (isDefault && config.RuntimeScope() != RuntimeScopeLocalLab) {
+		if !profileRuntimeLocationConsistent(config) {
 			return nil, &Error{code: CodeLabMountInvalid}
 		}
 		defaultFound = defaultFound || isDefault

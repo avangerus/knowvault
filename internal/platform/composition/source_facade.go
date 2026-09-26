@@ -11,6 +11,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/database"
 	"knowvault.local/verified-workspace/internal/platform/secretmount"
 	"knowvault.local/verified-workspace/internal/platform/workspaceapi"
+	"knowvault.local/verified-workspace/internal/question"
 	sourcediscovery "knowvault.local/verified-workspace/internal/source/discovery"
 	"knowvault.local/verified-workspace/internal/source/ids"
 	"knowvault.local/verified-workspace/internal/source/registration"
@@ -73,6 +74,54 @@ var _ workspaceapi.SourceConnectorCatalog = sourceServiceFacade{}
 var _ workspaceapi.SourceConnectionBootstrap = sourceServiceFacade{}
 var _ workspaceapi.SourceDiscovery = sourceServiceFacade{}
 var _ workspaceapi.SourceDiscoveryRegistration = sourceServiceFacade{}
+var _ workspaceapi.SourceConnectionDrafts = sourceServiceFacade{}
+var _ workspaceapi.SourceSchemaProvider = sourceServiceFacade{}
+
+// sourceServiceFacadeWithSQL is the production facade plus ADR-0097's
+// agent-authored SQL capability. It is a distinct concrete type on purpose:
+// the handler discovers SourceSQLProvider by a type assertion, so a deployment
+// that mounted no source trust bundle leaves the tool failing closed as
+// SERVICE_UNAVAILABLE instead of advertising a capability it cannot serve.
+// Embedding the base facade promotes every other SourceService method
+// unchanged.
+type sourceServiceFacadeWithSQL struct {
+	sourceServiceFacade
+	sourceSQL sourceSQLExecutor
+}
+
+var _ workspaceapi.SourceSQLProvider = sourceServiceFacadeWithSQL{}
+var _ workspaceapi.SourceQueryCredential = sourceServiceFacadeWithSQL{}
+var _ workspaceapi.SourceSQLAttemptReauthority = sourceServiceFacadeWithSQL{}
+var _ workspaceapi.SourceReadabilityProvider = sourceServiceFacadeWithSQL{}
+
+// SourceReadable is card D-18's live readability check for one source. It is a
+// pure delegation to the SQL executor, which owns the source-access read, the
+// credential resolution and the one governed execution path.
+func (facade sourceServiceFacadeWithSQL) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	return facade.sourceSQL.SourceReadable(ctx, access, workspaceID, connectionID)
+}
+
+// ReauthorizeSourceSQLAttempt is the read-time reauthorization of one stored
+// agent-authored SQL receipt. It is a pure delegation to the executor, which
+// owns the current source-access check.
+func (facade sourceServiceFacadeWithSQL) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {
+	return facade.sourceSQL.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, disclosure)
+}
+
+// SetSourceQueryCredential is S3 card 2b's owner-only control over the source
+// connection's SQL query credential. The executor owns the owner gate (through
+// the repository target read), the mounted-credential resolution, the
+// read-only/identity/column-privilege checks and the audited write.
+func (facade sourceServiceFacadeWithSQL) SetSourceQueryCredential(ctx context.Context, access database.AccessContext, workspaceID, connectionID, credentialReference string) error {
+	return facade.sourceSQL.SetSourceQueryCredential(ctx, access, workspaceID, connectionID, credentialReference)
+}
+
+// SourceSQL is a pure delegation to the executor, which owns the authorization,
+// credential resolution, the single governedquery execution path and the
+// mandatory attempt audit.
+func (facade sourceServiceFacadeWithSQL) SourceSQL(ctx context.Context, access database.AccessContext, workspaceID string, request workspaceapi.SourceSQLRequest) (workspaceapi.SourceSQLResult, error) {
+	return facade.sourceSQL.SourceSQL(ctx, access, workspaceID, request)
+}
 
 // newAppArtifactCodec mounts the application-side artifact codec on the same
 // wrap key the worker uses, so source artifacts sealed by the web process open
@@ -145,12 +194,21 @@ func (facade sourceServiceFacade) GetDiscovery(ctx context.Context, access datab
 	return facade.discovery.Get(ctx, access, requestID)
 }
 
-func (facade sourceServiceFacade) RegisterDiscoveredView(ctx context.Context, access database.AccessContext, requestID, viewID string) (registration.RegisterResult, error) {
+func (facade sourceServiceFacade) RegisterDiscoveredView(ctx context.Context, access database.AccessContext, requestID, viewID string, excludedColumnOrdinals []int, mode string) (registration.RegisterResult, error) {
 	selected, err := facade.discovery.Select(ctx, access, requestID, viewID)
 	if err != nil {
 		return registration.RegisterResult{}, err
 	}
-	return facade.registration.RegisterDiscoveredView(ctx, access, selected)
+	return facade.registration.RegisterDiscoveredView(ctx, access, selected, excludedColumnOrdinals, mode)
+}
+
+// RegisterDiscoveredViews is card S3.4b's bounded batch twin of
+// RegisterDiscoveredView: the batch loop and its per-view outcome live in the
+// registration package, so this facade stays a delegation exactly like the
+// single-view method above and the composition supplies only the one discovery
+// reader the batch resolves its selectors through.
+func (facade sourceServiceFacade) RegisterDiscoveredViews(ctx context.Context, access database.AccessContext, requestID string, items []registration.BatchRegisterItem) (registration.BatchRegisterResult, error) {
+	return registration.RegisterDiscoveredViewBatch(ctx, facade.registration, facade.discovery, access, requestID, items)
 }
 
 func (facade sourceServiceFacade) Register(ctx context.Context, access database.AccessContext, request registration.RegisterRequest) (registration.RegisterResult, error) {
@@ -177,10 +235,37 @@ func (facade sourceServiceFacade) ConfirmationContext(ctx context.Context, acces
 	return facade.workspaces.ConfirmationContext(ctx, access, workspaceID)
 }
 
+// ListSourceConnectionDrafts and DiscardSourceConnectionDraft expose card
+// D-1's workspace-scoped draft registry on the production facade. Both are
+// pure delegations: the workspace-membership policy gate, the content-free
+// denial and the audit receipt stay in the workspace repository, exactly like
+// ListSources and ConfirmationContext above.
+func (facade sourceServiceFacade) ListSourceConnectionDrafts(ctx context.Context, access database.AccessContext, workspaceID string) ([]workspacerepository.SourceConnectionDraft, error) {
+	return facade.workspaces.ListSourceConnectionDrafts(ctx, access, workspaceID)
+}
+
+func (facade sourceServiceFacade) DiscardSourceConnectionDraft(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	return facade.workspaces.DiscardSourceConnectionDraft(ctx, access, workspaceID, connectionID)
+}
+
 // UploadDocuments is UPL-1: a pure delegation like every other method here,
 // added only because it widens the shared SourceService boundary.
 func (facade sourceServiceFacade) UploadDocuments(ctx context.Context, access database.AccessContext, request registration.UploadDocumentsRequest) (registration.UploadDocumentsResult, error) {
 	return facade.registration.UploadDocuments(ctx, access, request)
+}
+
+// ListSourceSchemas and SourceSchema expose ADR-0097's read-only source schema
+// capability on the production facade. Both are pure delegations to the
+// workspace repository's sourceMetadataRead boundary, which owns the
+// authorization, the cross-tenant denial and the source.metadata.read.* audit
+// journal; this method adds no logic of its own, exactly like the other
+// delegations on this facade, and touches no external source database.
+func (facade sourceServiceFacade) ListSourceSchemas(ctx context.Context, access database.AccessContext, workspaceID string) ([]workspacerepository.SourceSchemaSource, error) {
+	return facade.workspaces.ListSourceSchemas(ctx, access, workspaceID)
+}
+
+func (facade sourceServiceFacade) SourceSchema(ctx context.Context, access database.AccessContext, workspaceID, sourceID, table string, offset, limit int) (workspacerepository.SourceSchema, error) {
+	return facade.workspaces.SourceSchema(ctx, access, workspaceID, sourceID, table, offset, limit)
 }
 
 // ConnectorCatalog exposes the registration-owned source-connector catalog on

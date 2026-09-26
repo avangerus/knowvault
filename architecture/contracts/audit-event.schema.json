@@ -57,7 +57,9 @@
         "MODEL_RUN",
         "POLICY",
         "SIGNING_KEY",
-        "AUDIT_CHECKPOINT"
+        "AUDIT_CHECKPOINT",
+        "WORKSPACE_MODEL_CONTEXT",
+        "WORKSPACE_CONTEXT_PROPOSAL"
       ]
     },
     "resource_id": { "$ref": "#/$defs/opaqueId" },

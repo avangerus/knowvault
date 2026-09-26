@@ -51,7 +51,7 @@ AAD passes `architecture/contracts/encrypted-artifact-aad.schema.json` and is a 
 }
 ```
 
-`resource_type` cannot be used as a general container for another type of data. The normative closed inventory of 27 owning columns is located directly in `oneOf` file `encrypted-artifact-aad.schema.json`; it must match one-to-one with all columns `*_artifact_id` in `DATA_MODEL.md`.
+`resource_type` cannot be used as a general container for another type of data. The normative closed inventory of 28 owning columns is located directly in `oneOf` file `encrypted-artifact-aad.schema.json`; it must match one-to-one with all columns `*_artifact_id` in `DATA_MODEL.md`.
 
 | owning table.column | resource_type / field | trusted resource_id |
 |---|---|---|
@@ -82,6 +82,7 @@ AAD passes `architecture/contracts/encrypted-artifact-aad.schema.json` and is a 
 | `question_citation.deep_link_artifact_id` | `SOURCE_DEEPLINK / DEEPLINK` | `question_citation.id` |
 | `model_run_artifact.input_artifact_id` | `MODEL_ARTIFACT / CANONICAL_INPUT` | `model_run.id` |
 | `model_run_artifact.output_artifact_id` | `MODEL_ARTIFACT / CANONICAL_OUTPUT` | `model_run.id` |
+| `question_feedback.comment_artifact_id` | `QUESTION_FEEDBACK / COMMENT_TEXT` | `question_feedback.id` |
 
 One owning row and one owning column always yield one exact AAD tuple. An unused pair is forbidden, even if its `resource_type/field` looks plausible. Decrypt recalculates owner table/column, organization/resource ID, type, and field from the trusted repository mapping; none of these values are accepted from the ciphertext envelope or API. Copying ciphertext between tenants, rows, columns, or resource types must result in a GCM authentication error. `plaintext_hash` is required for integrity/provenance after an allowed purge/rotation and does not replace GCM authentication.
 
@@ -90,7 +91,8 @@ Envelope encryption is mandatory for:
 - question text and answer body;
 - cited excerpts and canonical manifest content bytes;
 - normalized Evidence text and stored SearchChunk text outside OpenSearch;
-- model canonical input/output artifacts.
+- model canonical input/output artifacts;
+- an answer-feedback free-text comment (`question_feedback.comment_artifact_id`); unlike the other branches above it is replaceable in place when the mark changes, not write-once.
 
 Raw OCR/parser output in 1.0 is not persisted as a separate artifact: it exists only within the bounded worker job until normalization. Only the Evidence text/metadata/anchor, profile, and hashes extraction listed in the closed inventory are persistently stored. Adding raw extraction storage requires a new owning `*_artifact_id` column, AAD branches, a retention/purge contract, and acceptance tests before the first write.
 

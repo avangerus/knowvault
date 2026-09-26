@@ -84,6 +84,7 @@ const (
 	ResourcePolicy           ResourceType = "POLICY"
 	ResourceSigningKey       ResourceType = "SIGNING_KEY"
 	ResourceAuditCheckpoint  ResourceType = "AUDIT_CHECKPOINT"
+	ResourceQuestionFeedback ResourceType = "QUESTION_FEEDBACK"
 )
 
 // Action is a closed, server-owned registry. A transport handler must choose
@@ -156,6 +157,18 @@ const (
 	// ADR-0087 §2: CONNECTOR_ADMIN-gated source connection trust verification
 	// (DRAFT -> VERIFIED). See TrustVerificationID/TrustVerificationHash below.
 	ActionSourceConnectionTrustVerified Action = "source.connection_trust_verified"
+	// ActionSourceQueryCredentialSet and ActionSourceQueryCredentialCleared are
+	// S3 card 2b's organization-OWNER control over one PostgreSQL source
+	// connection's opaque SQL query credential reference (ADR-0097). The two
+	// actions distinguish set from clear without the reserved 'enabled' metadata
+	// key; the event carries the connection id and never the reference, a DSN or
+	// any secret value.
+	ActionSourceQueryCredentialSet     Action = "source.query_credential_set"
+	ActionSourceQueryCredentialCleared Action = "source.query_credential_cleared"
+	// ActionQuestionFeedbackSubmitted is R1.S10.s1.T4's answer-feedback mark.
+	// It records the run, the closed verdict vocabulary and whether a comment
+	// is present, never the comment text itself.
+	ActionQuestionFeedbackSubmitted Action = "question.feedback_submitted"
 )
 
 // Metadata is an allowlisted projection only. It intentionally has no title,
@@ -231,6 +244,18 @@ type Metadata struct {
 	GovernedQueryRowCount              *int64  `json:"governed_query_row_count,omitempty"`
 	GovernedQueryResultDigest          *string `json:"governed_query_result_digest,omitempty"`
 	GovernedQueryOutcome               *string `json:"governed_query_outcome,omitempty"`
+	// GovernedQueryPurpose is S3 card 2c's bounded agent note describing what
+	// the statement answers. It is deliberately the only free-form governed
+	// field: it is capped and stripped of control characters by the validator,
+	// never carries SQL text, a row or a credential, and exists so an operator
+	// can see why a read was attempted.
+	GovernedQueryPurpose *string `json:"governed_query_purpose,omitempty"`
+
+	// Answer feedback vocabulary (R1.S10.s1.T4). Reserved to
+	// question.feedback_submitted: the closed CORRECT/INCORRECT verdict and
+	// whether a comment is attached, never the comment text.
+	FeedbackVerdict    *string `json:"feedback_verdict,omitempty"`
+	FeedbackHasComment *bool   `json:"feedback_has_comment,omitempty"`
 }
 
 // EventInput is the trusted application intent. Organization and actor values
@@ -566,7 +591,7 @@ func validOutcome(outcome Outcome) bool {
 
 func validResource(resource ResourceType) bool {
 	switch resource {
-	case ResourceOrganization, ResourceIdentity, ResourceWorkspace, ResourceWorkspaceMember, ResourceWorkspaceSource, ResourceWorkspaceAuthorityCommand, ResourceSourceConnection, ResourceSourceScope, ResourceSourceObject, ResourceConversation, ResourceQuestionRun, ResourceAnswerDocument, ResourceCitation, ResourceModelRun, ResourcePolicy, ResourceSigningKey, ResourceAuditCheckpoint, ResourceCryptoKey, ResourceGovernedQueryAttempt, ResourceSearchProfile:
+	case ResourceOrganization, ResourceIdentity, ResourceWorkspace, ResourceWorkspaceMember, ResourceWorkspaceSource, ResourceWorkspaceAuthorityCommand, ResourceSourceConnection, ResourceSourceScope, ResourceSourceObject, ResourceConversation, ResourceQuestionRun, ResourceAnswerDocument, ResourceCitation, ResourceModelRun, ResourcePolicy, ResourceSigningKey, ResourceAuditCheckpoint, ResourceCryptoKey, ResourceGovernedQueryAttempt, ResourceSearchProfile, ResourceWorkspaceModelContext, ResourceWorkspaceContextProposal, ResourceQuestionFeedback:
 		return true
 	default:
 		return false
@@ -578,6 +603,12 @@ func validAction(action Action) bool {
 	case ActionSourceObjectMissing, ActionSourceObjectRestored:
 		return true
 	case ActionSourceMetadataReadAdmitted, ActionSourceMetadataReadCompleted, ActionSourceMetadataReadFailed:
+		return true
+	case ActionWorkspaceModelContextRevised, ActionWorkspaceModelContextRead, ActionWorkspaceContextProposalCreated, ActionWorkspaceContextProposalDecided:
+		return true
+	case ActionSourceQueryCredentialSet, ActionSourceQueryCredentialCleared:
+		return true
+	case ActionQuestionFeedbackSubmitted:
 		return true
 	case ActionIdentityLogin, ActionIdentityLoginFailed, ActionIdentityDeprovisioned, ActionSessionTerminated, ActionWorkspaceCreated, ActionWorkspaceUpdated, ActionWorkspaceArchived, ActionWorkspaceMemberAdded, ActionWorkspaceMemberRemoved, ActionWorkspaceRoleChanged, ActionWorkspaceSourceAdded, ActionWorkspaceSourceRemoved, ActionWorkspaceSourceConfirmationGrantIssued, ActionWorkspaceSourceConfirmationGrantRevoked, ActionWorkspaceSourceConfirmed, ActionWorkspaceSourceConfirmationRevoked, ActionPolicyDecision, ActionAuditViewed, ActionAuditExported, ActionSourceScopeChanged, ActionSourceScopeActivated, ActionSourceRegistrationCreated, ActionSourceActivationRequested, ActionSourceObjectIngested, ActionSourceObjectDeleted, ActionSourceVersionCreated, ActionSourceVersionPurging, ActionSourceVersionPurged, ActionSourceExtractionActive, ActionQuestionCreated, ActionQuestionCompleted, ActionQuestionFailed, ActionModelGatewayAttempt, ActionConversationArchived, ActionConversationPurging, ActionConversationPurged, ActionCitationOpened, ActionEvidenceReadAdmitted, ActionEvidenceReadFailed, ActionQuestionRunAdmitted, ActionGovernedQueryAdmitted, ActionAnswerDocumentAmended, ActionKeyRotationBegin, ActionKeyRotationComplete, ActionSourceConnectionTrustVerified, ActionGovernedQueryAttempted, ActionSearchProfileRevisionRequested, ActionSearchProfileCallLexical, ActionSearchProfileCallVector, ActionSearchProfileCallHybrid:
 		return true
@@ -635,7 +666,49 @@ func validMetadata(metadata Metadata) bool {
 	if !validGovernedQueryMetadataFields(metadata) {
 		return false
 	}
+	if metadata.FeedbackVerdict != nil && !validFeedbackVerdict(*metadata.FeedbackVerdict) {
+		return false
+	}
 	return true
+}
+
+// validFeedbackVerdict admits only the closed answer-feedback verdict
+// vocabulary (R1.S10.s1.T4).
+func validFeedbackVerdict(value string) bool {
+	return value == "CORRECT" || value == "INCORRECT"
+}
+
+// hasFeedbackMetadata reports whether any protected answer-feedback field is
+// present. Reserved to the question.feedback_submitted action.
+func hasFeedbackMetadata(metadata Metadata) bool {
+	return metadata.FeedbackVerdict != nil || metadata.FeedbackHasComment != nil
+}
+
+// feedbackMetadataOnly admits exactly the protected feedback fields plus the
+// existing generic QuestionRunID, nothing else.
+func feedbackMetadataOnly(metadata Metadata) bool {
+	return metadata.WorkspaceRevision == nil && metadata.WorkspaceSourceID == nil && metadata.SourceScopeID == nil &&
+		metadata.SourceScopeRevision == nil && metadata.ScopeConfigHash == nil && metadata.AccessMode == nil &&
+		metadata.Enabled == nil && metadata.SourceConnectionID == nil && metadata.ConnectorJobID == nil &&
+		metadata.SyncRunID == nil && metadata.ModelRunID == nil &&
+		metadata.CitationNumber == nil && metadata.ManifestHash == nil && metadata.PolicyRevision == nil &&
+		len(metadata.ReasonCodes) == 0 && metadata.RemoteAddressDigest == nil && metadata.UserAgentFamily == nil &&
+		!hasAuthorityMetadata(metadata) && !hasRotationMetadata(metadata) && !hasTrustVerificationMetadata(metadata) &&
+		!hasGovernedQueryMetadata(metadata) && !hasAnswerMetadata(metadata)
+}
+
+// validQuestionFeedbackProjection pins the answer-feedback audit shape: the
+// action names the exact QUESTION_FEEDBACK resource, carries the run id, the
+// closed verdict and whether a comment is present, and never the comment text
+// itself. A successful submission must name its workspace.
+func validQuestionFeedbackProjection(input EventInput) bool {
+	metadata := input.Metadata
+	if input.ResourceType != ResourceQuestionFeedback || metadata.QuestionRunID == nil ||
+		metadata.FeedbackVerdict == nil || !validFeedbackVerdict(*metadata.FeedbackVerdict) ||
+		metadata.FeedbackHasComment == nil || !feedbackMetadataOnly(metadata) {
+		return false
+	}
+	return input.Outcome != OutcomeSuccess || input.WorkspaceID != nil
 }
 
 // validAmendmentClass admits only the closed ADR-0076 amendment vocabulary.
@@ -707,8 +780,14 @@ func validActionProjection(input EventInput) bool {
 	if isSearchProfileAction(input.Action) || input.ResourceType == ResourceSearchProfile {
 		return validSearchProfileProjection(input)
 	}
+	if isModelContextAction(input.Action) || input.ResourceType == ResourceWorkspaceModelContext || input.ResourceType == ResourceWorkspaceContextProposal {
+		return validModelContextProjection(input)
+	}
+	if input.Action == ActionQuestionFeedbackSubmitted || input.ResourceType == ResourceQuestionFeedback {
+		return validQuestionFeedbackProjection(input)
+	}
 	if input.Action != ActionWorkspaceSourceAdded && input.Action != ActionWorkspaceSourceRemoved {
-		return input.ResourceType != ResourceWorkspaceSource && !hasAuthorityMetadata(input.Metadata) && !hasRotationMetadata(input.Metadata) && !hasAnswerMetadata(input.Metadata) && !hasGovernedQueryMetadata(input.Metadata)
+		return input.ResourceType != ResourceWorkspaceSource && !hasAuthorityMetadata(input.Metadata) && !hasRotationMetadata(input.Metadata) && !hasAnswerMetadata(input.Metadata) && !hasGovernedQueryMetadata(input.Metadata) && !hasFeedbackMetadata(input.Metadata)
 	}
 	metadata := input.Metadata
 	if input.ResourceType != ResourceWorkspaceSource || input.Outcome == OutcomeSuccess && input.WorkspaceID == nil ||
@@ -787,6 +866,7 @@ func cloneMetadata(value Metadata) Metadata {
 	copy.GovernedQueryRowCount = cloneInt64(value.GovernedQueryRowCount)
 	copy.GovernedQueryResultDigest = cloneString(value.GovernedQueryResultDigest)
 	copy.GovernedQueryOutcome = cloneString(value.GovernedQueryOutcome)
+	copy.GovernedQueryPurpose = cloneString(value.GovernedQueryPurpose)
 	return copy
 }
 

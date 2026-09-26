@@ -88,6 +88,10 @@ type AnswerResult struct {
 	// Governed live read receipt fields (additive; absent for legacy answers).
 	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
 	ReceiptDigest     string                   `json:"receipt_digest,omitempty"`
+	// SourceID is the workspace source an agent-authored SQL live read ran
+	// against (ADR-0097). It is absent for an administrator-governed
+	// live-table read, whose receipt is bound by result_digest alone.
+	SourceID string `json:"source_id,omitempty"`
 	// Receipts carries every successful governed live read used by one answer.
 	// The top-level live-table fields remain the first receipt for compatibility.
 	Receipts []LiveTableReceipt `json:"receipts,omitempty"`
@@ -103,6 +107,8 @@ type LiveTableReceipt struct {
 	RowCount          int                      `json:"row_count"`
 	Completeness      string                   `json:"completeness"`
 	ObservationWindow *AnswerObservationWindow `json:"observation_window,omitempty"`
+	// SourceID binds an agent-authored SQL receipt to its workspace source.
+	SourceID string `json:"source_id,omitempty"`
 }
 
 // AnswerObservationWindow is the server-observed wall-clock window around a
@@ -280,17 +286,33 @@ var searchedMessages = map[string]string{
 	SearchedUnavailable: "The source was unavailable at request time (not synchronized or disabled).",
 }
 
-// uncertaintyMessages / conflictMessages are the closed, human-readable
-// Russian dictionary for FIX-2 #6: every code the deriveSignals/GENERATIVE
-// paths actually emit (UncertaintyPlannerUnknown..GENERATION_UNAVAILABLE,
-// the four typed Conflict codes). A code outside this table still gets a
-// safe, content-free fallback rather than an empty string.
+// uncertaintyMessages is the Russian dictionary for FIX-2 #6: every code the
+// deriveSignals/GENERATIVE paths actually emit (UncertaintyPlannerUnknown..
+// GENERATION_UNAVAILABLE, the four typed Conflict codes). A code outside this
+// table still gets a safe, content-free fallback rather than an empty string.
+// Card D-5 requirement 4 completed the translation: before, the Russian map
+// still held the English sentences, so a Russian question was answered in
+// Russian but caveated in English.
 var uncertaintyMessages = map[string]string{
+	UncertaintyPlannerUnknown:            "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043d\u044f\u0442\u044c, \u043a\u0430\u043a\u0443\u044e \u043a\u043e\u043d\u043a\u0440\u0435\u0442\u043d\u0443\u044e \u0437\u0430\u0434\u0430\u0447\u0443 \u0438\u043c\u0435\u0435\u0442 \u0432 \u0432\u0438\u0434\u0443 \u0432\u043e\u043f\u0440\u043e\u0441. \u0423\u0442\u043e\u0447\u043d\u0438\u0442\u0435 \u0435\u0433\u043e.",
+	UncertaintyPlannerClarification:      "\u0423 \u0432\u043e\u043f\u0440\u043e\u0441\u0430 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0442\u043e\u043b\u043a\u043e\u0432\u0430\u043d\u0438\u0439, \u043d\u0443\u0436\u043d\u043e \u0443\u0442\u043e\u0447\u043d\u0435\u043d\u0438\u0435.",
+	UncertaintyCorpusPartial:             "\u041a\u043e\u0440\u043f\u0443\u0441 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u043e\u0432 \u043d\u0435\u043f\u043e\u043b\u043d\u044b\u0439: \u043e\u0442\u0432\u0435\u0442 \u043d\u0435 \u043e\u0445\u0432\u0430\u0442\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u0430\u043d\u043d\u044b\u0435 \u0440\u0430\u0431\u043e\u0447\u0435\u0439 \u043e\u0431\u043b\u0430\u0441\u0442\u0438.",
+	UncertaintyInsufficientEvidence:      "\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044e\u0449\u0438\u0435 \u0434\u0430\u043d\u043d\u044b\u0435 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b \u0438\u043b\u0438 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b \u0434\u043b\u044f \u043f\u043e\u043a\u0430\u0437\u0430.",
+	UncertaintyAmbiguousStructuredSource: "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0434\u043d\u043e\u0437\u043d\u0430\u0447\u043d\u043e \u0441\u043e\u043f\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0432\u043e\u043f\u0440\u043e\u0441 \u043e\u0434\u043d\u043e\u043c\u0443 \u0432\u043a\u043b\u044e\u0447\u0451\u043d\u043d\u043e\u043c\u0443 \u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u043c\u0443 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0443.",
+	UncertaintyUnverifiedCitations:       "\u0427\u0430\u0441\u0442\u044c \u0443\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0439 \u043e\u0442\u0432\u0435\u0442\u0430 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u044c \u043f\u043e \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430\u043c; \u043e\u043d\u0438 \u043e\u0442\u043c\u0435\u0447\u0435\u043d\u044b \u043a\u0430\u043a \u043d\u0435\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d\u043d\u044b\u0435.",
+	"GENERATION_UNAVAILABLE":             "\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f \u043e\u0442\u0432\u0435\u0442\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0430 \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u0437\u0430\u043f\u0440\u043e\u0441\u0430; \u043f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0440\u0435\u0436\u0438\u043c EXTRACTIVE.",
+}
+
+// uncertaintyMessagesEnglish mirrors uncertaintyMessages for a question asked
+// in English (card D-5 requirement 4): the message is derived from the code and
+// the run's own question language on every read, never persisted.
+var uncertaintyMessagesEnglish = map[string]string{
 	UncertaintyPlannerUnknown:            "The question could not be interpreted as a specific task. Please make it more precise.",
 	UncertaintyPlannerClarification:      "The question has more than one interpretation and needs clarification.",
 	UncertaintyCorpusPartial:             "The source corpus is incomplete: the answer does not cover all data available in the workspace.",
 	UncertaintyInsufficientEvidence:      "Relevant evidence was not found or is unavailable for display.",
 	UncertaintyAmbiguousStructuredSource: "The question could not be unambiguously matched to one enabled structured source.",
+	UncertaintyUnverifiedCitations:       "Some of the answer's claims could not be verified against their sources and are marked unconfirmed.",
 	"GENERATION_UNAVAILABLE":             "Model-generated answers are unavailable for this request; try EXTRACTIVE mode.",
 }
 
@@ -308,6 +330,18 @@ func uncertaintyMessage(code string) string {
 	return "Uncertainty with an undocumented code: " + code + "."
 }
 
+// uncertaintyMessageForLanguage picks the dictionary for the question's own
+// language. A code missing from the English dictionary keeps the Russian
+// variant rather than echoing the raw code.
+func uncertaintyMessageForLanguage(code, language string) string {
+	if language == questionLanguageEnglish {
+		if text, ok := uncertaintyMessagesEnglish[code]; ok {
+			return text
+		}
+	}
+	return uncertaintyMessage(code)
+}
+
 func conflictMessage(code string) string {
 	if text, ok := conflictMessages[code]; ok {
 		return text
@@ -320,6 +354,26 @@ func attachUncertaintyMessages(items []Uncertainty) []Uncertainty {
 		items[index].Message = uncertaintyMessage(items[index].Code)
 	}
 	return items
+}
+
+// attachUncertaintyMessagesForLanguage attaches the message in the question's
+// own language. Every read path calls it once, after the run's question text is
+// decrypted, so a Russian question never sees an English caveat and an English
+// question never sees a Russian one.
+func attachUncertaintyMessagesForLanguage(items []Uncertainty, question string) []Uncertainty {
+	language := questionLanguage(question)
+	for index := range items {
+		items[index].Message = uncertaintyMessageForLanguage(items[index].Code, language)
+	}
+	return items
+}
+
+// attachConflictMessagesForLanguage is the conflict twin. The English conflict
+// dictionary is empty today, so every conflict keeps the existing wording; the
+// seam exists so a future localized conflict code cannot silently ship in only
+// one language.
+func attachConflictMessagesForLanguage(items []Conflict, question string) []Conflict {
+	return attachConflictMessages(items)
 }
 
 func attachConflictMessages(items []Conflict) []Conflict {

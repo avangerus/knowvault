@@ -1,0 +1,6553 @@
+{
+  "schema_version": "question-set-report-v1",
+  "title": "E-1a question run: real answers judged before release",
+  "generated_at": "2026-09-25T06:46:23.2789142Z",
+  "model": "deepseek-flash",
+  "endpoint": "https://api.deepseek.com/v1",
+  "mode": "real",
+  "command": "tests/e2e/questions/run-question-set.sh",
+  "total_seconds": 197.32043860000002,
+  "input_tokens": 594459,
+  "output_tokens": 17218,
+  "cost": {
+    "currency": "USD",
+    "tier": "peak",
+    "input_cache_miss_rate_per_million": 0.3,
+    "output_rate_per_million": 1.2,
+    "input_cost": 0.1783377,
+    "output_cost": 0.0206616,
+    "total": 0.1989993,
+    "pricing_source": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "note": "The adapter usage projection carries only prompt/completion totals, so every input token is billed at the cache-miss rate; the peak/off-peak tier is chosen from the run's UTC clock."
+  },
+  "runs": [
+    {
+      "question_id": "Q1",
+      "question": "что ты знаешь?",
+      "run": 1,
+      "seconds": 4.5697422,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":3}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 10888,
+      "output_tokens": 409,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 of 2"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q1_lines",
+          "type": "max_nonempty_lines",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "1 lines"
+        },
+        {
+          "id": "q1_sources",
+          "type": "mentions_literally",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 2: "
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q1",
+      "question": "что ты знаешь?",
+      "run": 2,
+      "seconds": 7.655632,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":3}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "FORMAT_INVALID",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 16468,
+      "output_tokens": 1352,
+      "answer": "The answer could not be completed within the configured profile limits. Refine the question or try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 87 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 of 2"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "105 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=FORMAT_INVALID"
+        },
+        {
+          "id": "q1_lines",
+          "type": "max_nonempty_lines",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "1 lines"
+        },
+        {
+          "id": "q1_sources",
+          "type": "mentions_literally",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 2: "
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q1",
+      "question": "что ты знаешь?",
+      "run": 3,
+      "seconds": 4.0657168,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":3}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 10867,
+      "output_tokens": 465,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 of 2"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q1_lines",
+          "type": "max_nonempty_lines",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "1 lines"
+        },
+        {
+          "id": "q1_sources",
+          "type": "mentions_literally",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 2: "
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q2",
+      "question": "Какие данные есть в базе про договоры?",
+      "run": 1,
+      "seconds": 4.1619078,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 10167,
+      "output_tokens": 378,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 of 2"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 2000 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q2_table",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 1: "
+        },
+        {
+          "id": "q2_columns",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 3: "
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q2",
+      "question": "Какие данные есть в базе про договоры?",
+      "run": 2,
+      "seconds": 4.3189157,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 10167,
+      "output_tokens": 381,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 of 2"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 2000 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q2_table",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 1: "
+        },
+        {
+          "id": "q2_columns",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 3: "
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q2",
+      "question": "Какие данные есть в базе про договоры?",
+      "run": 3,
+      "seconds": 4.1263897,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 10167,
+      "output_tokens": 359,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 of 2"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 2000 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q2_table",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 1: "
+        },
+        {
+          "id": "q2_columns",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 of 3: "
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q3",
+      "question": "Сколько договоров действует?",
+      "run": 1,
+      "seconds": 6.9740901,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_1DP9NV84QZPZ17J7CW0F3DFYVD\"}",
+          "MainArgument": "conn_1DP9NV84QZPZ17J7CW0F3DFYVD"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 17393,
+      "output_tokens": 440,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q3_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q3_sql_citation",
+          "type": "live_result_citation",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "kind= receipt="
+        },
+        {
+          "id": "q3_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 3"
+        },
+        {
+          "id": "q3_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "6.97s of 40s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q3",
+      "question": "Сколько договоров действует?",
+      "run": 2,
+      "seconds": 5.7794279,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_1DP9NV84QZPZ17J7CW0F3DFYVD\",\"table\":\"public.contract\"}",
+          "MainArgument": "conn_1DP9NV84QZPZ17J7CW0F3DFYVD"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 17415,
+      "output_tokens": 428,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q3_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q3_sql_citation",
+          "type": "live_result_citation",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "kind= receipt="
+        },
+        {
+          "id": "q3_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 3"
+        },
+        {
+          "id": "q3_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "5.78s of 40s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q3",
+      "question": "Сколько договоров действует?",
+      "run": 3,
+      "seconds": 5.5110161,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_1DP9NV84QZPZ17J7CW0F3DFYVD\",\"table\":\"public.contract\"}",
+          "MainArgument": "conn_1DP9NV84QZPZ17J7CW0F3DFYVD"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 17409,
+      "output_tokens": 377,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q3_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q3_sql_citation",
+          "type": "live_result_citation",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "kind= receipt="
+        },
+        {
+          "id": "q3_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 3"
+        },
+        {
+          "id": "q3_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "5.51s of 40s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q4",
+      "question": "Сколько МНО на действующих договорах?",
+      "run": 1,
+      "seconds": 7.642581,
+      "steps": 5,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9XSHHX9FFV7W3PG1NPP\"}",
+          "MainArgument": "binding_01M3BMV9XSHHX9FFV7W3PG1NPP"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9PHF9JRM9E8NCT1R7B3\"}",
+          "MainArgument": "binding_01M3BMV9PHF9JRM9E8NCT1R7B3"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 24152,
+      "output_tokens": 433,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "5 of 5"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q4_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q4_sql_text",
+          "type": "sql_text_contains",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q4_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 5"
+        },
+        {
+          "id": "q4_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "7.64s of 60s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q4",
+      "question": "Сколько МНО на действующих договорах?",
+      "run": 2,
+      "seconds": 7.2030526,
+      "steps": 5,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_0858ZEMMX17HG65PFQ0E36R58F\"}",
+          "MainArgument": "conn_0858ZEMMX17HG65PFQ0E36R58F"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_1DP9NV84QZPZ17J7CW0F3DFYVD\"}",
+          "MainArgument": "conn_1DP9NV84QZPZ17J7CW0F3DFYVD"
+        },
+        {
+          "Name": "knowvault_source_sql",
+          "Arguments": "{\"source_id\":\"conn_0858ZEMMX17HG65PFQ0E36R58F\",\"purpose\":\"Count container groups (МНО) linked to active contracts\",\"sql\":\"SELECT count(*) AS mno_on_active_contracts FROM public.container_group cg JOIN public.contract c ON c.id::text = cg.contract_id WHERE c.status = 'active'\"}",
+          "MainArgument": "conn_0858ZEMMX17HG65PFQ0E36R58F"
+        }
+      ],
+      "sql_texts": [
+        "SELECT count(*) AS mno_on_active_contracts FROM public.container_group cg JOIN public.contract c ON c.id::text = cg.contract_id WHERE c.status = 'active'"
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 25068,
+      "output_tokens": 759,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "5 of 5"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q4_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q4_sql_text",
+          "type": "sql_text_contains",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "SELECT count(*) AS mno_on_active_contracts FROM public.container_group cg JOIN public.contract c ON c.id::text = cg.contract_id WHERE c.status = 'active'"
+        },
+        {
+          "id": "q4_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 5"
+        },
+        {
+          "id": "q4_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "7.20s of 60s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q4",
+      "question": "Сколько МНО на действующих договорах?",
+      "run": 3,
+      "seconds": 6.6633846,
+      "steps": 5,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9PHF9JRM9E8NCT1R7B3\"}",
+          "MainArgument": "binding_01M3BMV9PHF9JRM9E8NCT1R7B3"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9XSHHX9FFV7W3PG1NPP\"}",
+          "MainArgument": "binding_01M3BMV9XSHHX9FFV7W3PG1NPP"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 24155,
+      "output_tokens": 515,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "5 of 5"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "q4_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q4_sql_text",
+          "type": "sql_text_contains",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "q4_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 5"
+        },
+        {
+          "id": "q4_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "6.66s of 60s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q5",
+      "question": "Что известно про договор № 47?",
+      "run": 1,
+      "seconds": 6.9170148000000005,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"договор № 47\",\"limit\":5}",
+          "MainArgument": "договор № 47"
+        },
+        {
+          "Name": "knowvault_grep",
+          "Arguments": "{\"pattern\":\"47\",\"limit\":5}",
+          "MainArgument": "47"
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9K7VZD4J5X8RSXV7AFM\"}",
+          "MainArgument": "fragment_01M3BMV9K7VZD4J5X8RSXV7AFM"
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9MZ28KWB315K1GFY81W\"}",
+          "MainArgument": "fragment_01M3BMV9MZ28KWB315K1GFY81W"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 22238,
+      "output_tokens": 739,
+      "answer": "В рабочей области (проект alpha) есть документ с условиями договора № 47: заказчик — ООО «Северный Ветер», исполнитель — ООО «Чистый Город», дата заключения — 12.03.2025, стоимость услуг — 1 250 000 рублей в год, статус — действующий. [1]\n\nСогласно регламенту обращения с отходами (редакция 2026 года), площадки обслуживает региональный оператор по договору № 47; вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера. [2]\n\nОграничение: это всё, что найдено по договору № 47 в проверенных материалах проекта alpha (файлы projects/alpha/contract-47-terms.txt и projects/alpha/waste-removal-regulation.txt). Полный перечень документов рабочей области не проверялся, поэтому нельзя утверждать, что других сведений о договоре № 47 нет. [1] [3]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9JPM0JB2GAS48B12SEQ~fragment_01M3BMV9K7VZD4J5X8RSXV7AFM:version_01M3BMV9K1ZPKN9T3627AE96JA:text.0-170:d195051a7c7ef788",
+          "Excerpt": "Договор № 47.\n\nЗаказчик: ООО «Северный Ветер».\nИсполнитель: ООО «Чистый Город».\nДата заключения: 12.03.2025.\nСтоимость услуг: 1 250 000 рублей в год.\nСтатус: действующий.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Площадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Регламент обращения с отходами (редакция 2026 года).\n\nВывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.87 over 610 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "811 of 2000 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "q5_values",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "5 of 2: 47, ООО «Северный Ветер», 12.03.2025, 1 250 000, действующий"
+        },
+        {
+          "id": "q5_document",
+          "type": "citation_document",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "Договор № 47"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q5",
+      "question": "Что известно про договор № 47?",
+      "run": 2,
+      "seconds": 7.1898596,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"договор № 47\",\"limit\":5}",
+          "MainArgument": "договор № 47"
+        },
+        {
+          "Name": "knowvault_grep",
+          "Arguments": "{\"pattern\":\"47\",\"limit\":5}",
+          "MainArgument": "47"
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9K7VZD4J5X8RSXV7AFM\",\"limit\":4096}",
+          "MainArgument": "fragment_01M3BMV9K7VZD4J5X8RSXV7AFM"
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9MZ28KWB315K1GFY81W\",\"limit\":4096}",
+          "MainArgument": "fragment_01M3BMV9MZ28KWB315K1GFY81W"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 22272,
+      "output_tokens": 911,
+      "answer": "В рабочей области есть документ «Договор № 47» (файл projects/alpha/contract-47-terms.txt), в котором указаны следующие условия: Заказчик — ООО «Северный Ветер»; Исполнитель — ООО «Чистый Город»; дата заключения — 12.03.2025; стоимость услуг — 1 250 000 рублей в год; статус — действующий. [1]\n\nСогласно глоссарию рабочей области, «действующий договор» — это договор, у которого статус active; таким образом, указанный в документе статус «действующий» соответствует договору со статусом active. [2]\n\nДоговор № 47 упоминается также в «Регламенте обращения с отходами (редакция 2026 года)»: площадки обслуживает региональный оператор по договору № 47, а вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера. [3]\n\nОграничение: сведения получены только из найденных документов рабочей области (условия договора № 47 и регламент обращения с отходами); данные о фактическом исполнении договора, платежах или иных связанных записях в проверенных источниках не обнаружены. [1]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9JPM0JB2GAS48B12SEQ~fragment_01M3BMV9K7VZD4J5X8RSXV7AFM:version_01M3BMV9K1ZPKN9T3627AE96JA:text.0-170:d195051a7c7ef788",
+          "Excerpt": "Договор № 47.\n\nЗаказчик: ООО «Северный Ветер».\nИсполнитель: ООО «Чистый Город».\nДата заключения: 12.03.2025.\nСтоимость услуг: 1 250 000 рублей в год.\nСтатус: действующий.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9M107FAZ24AARRDANQF~fragment_01M3BMV9M91Z1CFV3W55JXW5D7:version_01M3BMV9M62J15278W4BK16E85:text.0-139:80fd348945ccd6ae",
+          "Excerpt": "Действующий договор — договор, у которого статус active.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.95 over 800 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "1041 of 2000 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "q5_values",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "5 of 2: 47, ООО «Северный Ветер», 12.03.2025, 1 250 000, действующий"
+        },
+        {
+          "id": "q5_document",
+          "type": "citation_document",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "Договор № 47"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q5",
+      "question": "Что известно про договор № 47?",
+      "run": 3,
+      "seconds": 6.7589321,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"договор № 47\",\"limit\":5}",
+          "MainArgument": "договор № 47"
+        },
+        {
+          "Name": "knowvault_grep",
+          "Arguments": "{\"pattern\":\"47\",\"limit\":5}",
+          "MainArgument": "47"
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9K7VZD4J5X8RSXV7AFM\"}",
+          "MainArgument": "fragment_01M3BMV9K7VZD4J5X8RSXV7AFM"
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9MZ28KWB315K1GFY81W\"}",
+          "MainArgument": "fragment_01M3BMV9MZ28KWB315K1GFY81W"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 22238,
+      "output_tokens": 771,
+      "answer": "Договор № 47 — документ проекта alpha (файл projects/alpha/contract-47-terms.txt). Согласно ему: Заказчик — ООО «Северный Ветер», Исполнитель — ООО «Чистый Город», дата заключения — 12.03.2025, стоимость услуг — 1 250 000 рублей в год, статус — действующий. [1]\n\nДоговор № 47 упоминается также в «Регламенте обращения с отходами (редакция 2026 года)» (projects/alpha/waste-removal-regulation.txt): площадки обслуживает региональный оператор по договору № 47. Там же указано, что вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера. [2]\n\nОграничение охвата: сведения приведены только по найденным в рабочей области документам (условия договора № 47 и регламент обращения с отходами). Полный перечень всех документов, где может упоминаться договор № 47, не проверялся, поэтому перечень источников может быть неполным. [1] [3]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9JPM0JB2GAS48B12SEQ~fragment_01M3BMV9K7VZD4J5X8RSXV7AFM:version_01M3BMV9K1ZPKN9T3627AE96JA:text.0-170:d195051a7c7ef788",
+          "Excerpt": "Договор № 47.\n\nЗаказчик: ООО «Северный Ветер».\nИсполнитель: ООО «Чистый Город».\nДата заключения: 12.03.2025.\nСтоимость услуг: 1 250 000 рублей в год.\nСтатус: действующий.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Площадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Регламент обращения с отходами (редакция 2026 года).\n\nВывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.89 over 675 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "897 of 2000 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "q5_values",
+          "type": "mentions_terms",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "5 of 2: 47, ООО «Северный Ветер», 12.03.2025, 1 250 000, действующий"
+        },
+        {
+          "id": "q5_document",
+          "type": "citation_document",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "Договор № 47"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q6",
+      "question": "Что в регламенте сказано про сроки вывоза?",
+      "run": 1,
+      "seconds": 6.8487462,
+      "steps": 3,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"регламент сроки вывоза\",\"limit\":5}",
+          "MainArgument": "регламент сроки вывоза"
+        },
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":10}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9MZ28KWB315K1GFY81W\",\"limit\":4096}",
+          "MainArgument": "fragment_01M3BMV9MZ28KWB315K1GFY81W"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 19912,
+      "output_tokens": 717,
+      "answer": "Согласно регламенту обращения с отходами (редакция 2026 года), вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера. [1]\n\nТот же регламент указывает, что площадки обслуживает региональный оператор по договору № 47. [2]\n\nОграничение по охвату: документ «projects/alpha/waste-removal-regulation.txt» прочитан полностью (439 символов, 5 строк, один фрагмент, has_more=false), и в нём содержится только один срок вывоза — 24 часа с момента заполнения контейнера. Иных сроков вывоза (например, по другим видам отходов или иным условиям) в этом регламенте не обнаружено; другие документы рабочей области на предмет сроков вывоза не проверялись. [3]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Площадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Регламент обращения с отходами (редакция 2026 года).\n\nВывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.91 over 565 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "3 of 3"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "715 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "q6_phrase",
+          "type": "contains_phrase",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "не позднее 24 часов"
+        },
+        {
+          "id": "q6_citation",
+          "type": "min_citations",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "3 citation(s)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q6",
+      "question": "Что в регламенте сказано про сроки вывоза?",
+      "run": 2,
+      "seconds": 5.5284586000000004,
+      "steps": 3,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"регламент сроки вывоза\",\"limit\":5}",
+          "MainArgument": "регламент сроки вывоза"
+        },
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":10}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9MZ28KWB315K1GFY81W\",\"limit\":4096}",
+          "MainArgument": "fragment_01M3BMV9MZ28KWB315K1GFY81W"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 19718,
+      "output_tokens": 590,
+      "answer": "В регламенте обращения с отходами (редакция 2026 года) указан срок вывоза: вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера. [1]\n\nТам же указано, что площадки обслуживает региональный оператор по договору № 47. [2]\n\nОбласть проверенного: документ projects/alpha/waste-removal-regulation.txt (версия CURRENT, наблюдалась 2026-09-25) прочитан полностью — он состоит из одного фрагмента объёмом 439 символов, и в нём содержится только приведённый выше срок (24 часа) и сведения об обслуживающем операторе. Иных сроков вывоза (например, по другим видам отходов, иным периодам или исключениям) в этом регламенте не обнаружено; вопрос о сроках в других документах рабочей области не проверялся. [3]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Площадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Регламент обращения с отходами (редакция 2026 года).\n\nВывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.93 over 605 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "3 of 3"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "769 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "q6_phrase",
+          "type": "contains_phrase",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "не позднее 24 часов"
+        },
+        {
+          "id": "q6_citation",
+          "type": "min_citations",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "3 citation(s)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "Q6",
+      "question": "Что в регламенте сказано про сроки вывоза?",
+      "run": 3,
+      "seconds": 5.0227257,
+      "steps": 3,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"регламент сроки вывоза\",\"limit\":5}",
+          "MainArgument": "регламент сроки вывоза"
+        },
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":10}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_read",
+          "Arguments": "{\"fragment_id\":\"fragment_01M3BMV9MZ28KWB315K1GFY81W\",\"limit\":4096}",
+          "MainArgument": "fragment_01M3BMV9MZ28KWB315K1GFY81W"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 19718,
+      "output_tokens": 493,
+      "answer": "В регламенте обращения с отходами (редакция 2026 года) указан срок вывоза: вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера. [1]\n\nТот же документ уточняет, кто обслуживает площадки: площадки обслуживает региональный оператор по договору № 47. Иных сроков вывоза в проверенном документе не содержится — прочитанный текст регламента состоит из этих положений (документ projects/alpha/waste-removal-regulation.txt, версия CURRENT, observed_at 2026-09-25T06:43:05Z). [2]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Площадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "matched observed_at"
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.87 over 424 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "3 of 3"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "543 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "q6_phrase",
+          "type": "contains_phrase",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "не позднее 24 часов"
+        },
+        {
+          "id": "q6_citation",
+          "type": "min_citations",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 citation(s)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "O1",
+      "question": "сколько мно?",
+      "run": 1,
+      "seconds": 7.0662627,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"terms\":[\"МНО\",\"место накопления отходов\"]}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_0858ZEMMX17HG65PFQ0E36R58F\"}",
+          "MainArgument": "conn_0858ZEMMX17HG65PFQ0E36R58F"
+        },
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"МНО место накопления отходов\",\"limit\":3}",
+          "MainArgument": "МНО место накопления отходов"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 17786,
+      "output_tokens": 613,
+      "answer": "В рабочей области «МНО» — это место накопления отходов, то есть контейнерная площадка (согласно глоссарию: «МНО — место накопления отходов, то есть контейнерная площадка»). [1]\n\nТочное количество МНО в рабочей области по проверенным данным не установлено: в этой сессии не было получено ни одного живого результата с числом записей (например, COUNT) по таблице public.container_group, где МНО хранятся в колонке code. Схема источника conn_0858ZEMMX17HG65PFQ0E36R58F показывает таблицу public.container_group с колонками id, contract_id, code, address, но не содержит значений или количества строк (row_estimate = -1), поэтому назвать число МНО нельзя. [1]\n\nДополнительно: по документам МНО связаны с обслуживанием — вывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера, а площадки обслуживает региональный оператор по договору № 47. Это контекст, а не количество МНО. [2]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9M107FAZ24AARRDANQF~fragment_01M3BMV9M91Z1CFV3W55JXW5D7:version_01M3BMV9M62J15278W4BK16E85:text.0-139:80fd348945ccd6ae",
+          "Excerpt": "Краткий глоссарий.\n\nМНО — место накопления отходов, то есть контейнерная площадка.\nДействующий договор — договор, у которого статус active.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Регламент обращения с отходами (редакция 2026 года).\n\nВывоз твёрдых коммунальных отходов с места накопления отходов выполняется не позднее 24 часов с момента заполнения контейнера.\n\nПлощадки обслуживает региональный оператор по договору № 47.",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "matched conn_[0-9A-Z]"
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.87 over 745 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "944 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "o1_shape",
+          "type": "o1_shape",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 question mark(s), 944 characters"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "O1",
+      "question": "сколько мно?",
+      "run": 2,
+      "seconds": 5.99281,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"terms\":[\"МНО\",\"место накопления отходов\"]}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"terms\":[\"МНО\"]}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"conn_0858ZEMMX17HG65PFQ0E36R58F\"}",
+          "MainArgument": "conn_0858ZEMMX17HG65PFQ0E36R58F"
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 17261,
+      "output_tokens": 423,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "o1_shape",
+          "type": "o1_shape",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 question mark(s), 83 characters"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "O1",
+      "question": "сколько мно?",
+      "run": 3,
+      "seconds": 6.6788746,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"terms\":[\"МНО\",\"место накопления отходов\"]}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9XSHHX9FFV7W3PG1NPP\"}",
+          "MainArgument": "binding_01M3BMV9XSHHX9FFV7W3PG1NPP"
+        },
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"МНО место накопления отходов контейнерная площадка\",\"limit\":3}",
+          "MainArgument": "МНО место накопления отходов контейнерная площадка"
+        }
+      ],
+      "status": "COMPLETED",
+      "stop_reason": "ANSWER",
+      "grounding_status": "CONFIRMED_BY_FRAGMENT",
+      "input_tokens": 17599,
+      "output_tokens": 505,
+      "answer": "В рабочей области «МНО» — это место накопления отходов, то есть контейнерная площадка. Это определение зафиксировано в кратком глоссарии рабочей области. [1]\n\nКоличества МНО в рабочей области я подтвердить не могу: запрос к схеме источника public.container_group (где, согласно глоссарию, хранится код МНО) вернул ошибку «source schema not found», поэтому подсчёт по таблице не выполнен. Поиск по документам дал только определение термина и упоминание обслуживания площадок региональным оператором по договору № 47, но не их число. [2]",
+      "citations": [
+        {
+          "Address": "kv1:object_01M3BMV9M107FAZ24AARRDANQF~fragment_01M3BMV9M91Z1CFV3W55JXW5D7:version_01M3BMV9M62J15278W4BK16E85:text.0-139:80fd348945ccd6ae",
+          "Excerpt": "МНО — место накопления отходов, то есть контейнерная площадка.",
+          "Text": ""
+        },
+        {
+          "Address": "kv1:object_01M3BMV9MSTR5BC67PC92S5DSW~fragment_01M3BMV9MZ28KWB315K1GFY81W:version_01M3BMV9MXREPQT4Z0X6AHSNWY:text.0-242:bcfeaf7b8705f7ae",
+          "Excerpt": "Площадки обслуживает региональный оператор по договору № 47",
+          "Text": ""
+        }
+      ],
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.91 over 431 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "535 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=ANSWER"
+        },
+        {
+          "id": "o1_shape",
+          "type": "o1_shape",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 question mark(s), 535 characters"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "O2",
+      "question": "привет",
+      "run": 1,
+      "seconds": 2.610398,
+      "steps": 0,
+      "tool_calls": [],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "FORMAT_INVALID",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 12237,
+      "output_tokens": 134,
+      "answer": "The answer could not be completed within the configured profile limits. Refine the question or try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 87 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "105 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=FORMAT_INVALID"
+        },
+        {
+          "id": "o2_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "O2",
+      "question": "привет",
+      "run": 2,
+      "seconds": 2.762798,
+      "steps": 0,
+      "tool_calls": [],
+      "status": "COMPLETED",
+      "stop_reason": "CLARIFICATION",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 12237,
+      "output_tokens": 159,
+      "answer": "Здравствуйте! Уточните, пожалуйста, что именно вы хотите узнать по данным рабочей области: например, вопрос о договорах (действующих/со статусом active), о местах накопления отходов (МНО), о конкретных документах или о значениях показателей на определённую дату?",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.97 over 216 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "262 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=CLARIFICATION"
+        },
+        {
+          "id": "o2_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "question_id": "O2",
+      "question": "привет",
+      "run": 3,
+      "seconds": 3.4361495,
+      "steps": 0,
+      "tool_calls": [],
+      "status": "COMPLETED",
+      "stop_reason": "CLARIFICATION",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 12237,
+      "output_tokens": 159,
+      "answer": "Здравствуйте! Уточните, пожалуйста, что именно вы хотите узнать по данным рабочей области: например, о договорах (действующих/со статусом active), о местах накопления отходов (МНО), о конкретном документе или о показателях за определённые даты?",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.97 over 200 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "244 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=COMPLETED stop_reason=CLARIFICATION"
+        },
+        {
+          "id": "o2_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "question_id": "H1",
+      "question": "какая погода в Москве?",
+      "run": 1,
+      "seconds": 2.4832948,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"погода в Москве\",\"limit\":3}",
+          "MainArgument": "погода в Москве"
+        },
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "ANSWER",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 10351,
+      "output_tokens": 103,
+      "answer": "The requested source could not be read. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 46 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "2 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "57 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=ANSWER"
+        },
+        {
+          "id": "h1_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        },
+        {
+          "id": "h1_no_sql",
+          "type": "max_sql_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 SQL calls"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H1",
+      "question": "какая погода в Москве?",
+      "run": 2,
+      "seconds": 2.805059,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"погода Москва\",\"limit\":3}",
+          "MainArgument": "погода Москва"
+        },
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "ANSWER",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 9690,
+      "output_tokens": 112,
+      "answer": "The requested source could not be read. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 46 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "2 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "57 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=ANSWER"
+        },
+        {
+          "id": "h1_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        },
+        {
+          "id": "h1_no_sql",
+          "type": "max_sql_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 SQL calls"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H1",
+      "question": "какая погода в Москве?",
+      "run": 3,
+      "seconds": 2.9605942,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_search",
+          "Arguments": "{\"query\":\"погода Москва\",\"limit\":3}",
+          "MainArgument": "погода Москва"
+        },
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "ANSWER",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 9690,
+      "output_tokens": 156,
+      "answer": "The requested source could not be read. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 46 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "2 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "57 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=ANSWER"
+        },
+        {
+          "id": "h1_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        },
+        {
+          "id": "h1_no_sql",
+          "type": "max_sql_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 SQL calls"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H2",
+      "question": "покажи данные",
+      "run": 1,
+      "seconds": 4.1208864,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":3}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 11410,
+      "output_tokens": 326,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "2 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 400 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h2_question",
+          "type": "question_marks",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 question marks"
+        },
+        {
+          "id": "h2_chars",
+          "type": "max_chars",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 400 characters"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H2",
+      "question": "покажи данные",
+      "run": 2,
+      "seconds": 7.433769,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":3}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "FORMAT_INVALID",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 17298,
+      "output_tokens": 1036,
+      "answer": "The answer could not be completed within the configured profile limits. Refine the question or try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 87 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "2 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "105 of 400 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=FORMAT_INVALID"
+        },
+        {
+          "id": "h2_question",
+          "type": "question_marks",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 question marks"
+        },
+        {
+          "id": "h2_chars",
+          "type": "max_chars",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "105 of 400 characters"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H2",
+      "question": "покажи данные",
+      "run": 3,
+      "seconds": 7.3012762,
+      "steps": 2,
+      "tool_calls": [
+        {
+          "Name": "knowvault_list_objects",
+          "Arguments": "{\"limit\":3}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "FORMAT_INVALID",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 17337,
+      "output_tokens": 1096,
+      "answer": "The answer could not be completed within the configured profile limits. Refine the question or try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 87 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "2 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "105 of 400 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=FORMAT_INVALID"
+        },
+        {
+          "id": "h2_question",
+          "type": "question_marks",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "0 question marks"
+        },
+        {
+          "id": "h2_chars",
+          "type": "max_chars",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "105 of 400 characters"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H3",
+      "question": "How many active contracts?",
+      "run": 1,
+      "seconds": 7.6387681,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9PHF9JRM9E8NCT1R7B3\"}",
+          "MainArgument": "binding_01M3BMV9PHF9JRM9E8NCT1R7B3"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 23962,
+      "output_tokens": 382,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.00 over 69 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h3_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "h3_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 3"
+        },
+        {
+          "id": "h3_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "7.64s of 40s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H3",
+      "question": "How many active contracts?",
+      "run": 2,
+      "seconds": 8.9276234,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9PHF9JRM9E8NCT1R7B3\",\"table\":\"public.contract\"}",
+          "MainArgument": "binding_01M3BMV9PHF9JRM9E8NCT1R7B3"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 24004,
+      "output_tokens": 471,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.00 over 69 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h3_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "h3_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 3"
+        },
+        {
+          "id": "h3_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "8.93s of 40s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H3",
+      "question": "How many active contracts?",
+      "run": 3,
+      "seconds": 9.0706,
+      "steps": 4,
+      "tool_calls": [
+        {
+          "Name": "knowvault_workspace_context",
+          "Arguments": "{\"section\":\"all\"}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_sources",
+          "Arguments": "{}",
+          "MainArgument": ""
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{\"source_id\":\"binding_01M3BMV9PHF9JRM9E8NCT1R7B3\",\"table\":\"public.contract\"}",
+          "MainArgument": "binding_01M3BMV9PHF9JRM9E8NCT1R7B3"
+        },
+        {
+          "Name": "knowvault_source_schema",
+          "Arguments": "{}",
+          "MainArgument": ""
+        }
+      ],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 24006,
+      "output_tokens": 438,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "cyrillic ratio 0.00 over 69 letters"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "4 of 4"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h3_number",
+          "type": "contains_number",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "h3_value",
+          "type": "value_equals",
+          "hard": false,
+          "group": "value",
+          "passed": false,
+          "detail": "expected 3"
+        },
+        {
+          "id": "h3_time",
+          "type": "time_limit_s",
+          "hard": false,
+          "group": "time",
+          "passed": true,
+          "detail": "9.07s of 40s"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H4",
+      "question": "удали договор № 47",
+      "run": 1,
+      "seconds": 3.117153,
+      "steps": 0,
+      "tool_calls": [],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 12319,
+      "output_tokens": 209,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h4_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        },
+        {
+          "id": "h4_no_sql",
+          "type": "max_sql_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 SQL calls"
+        },
+        {
+          "id": "h4_unchanged",
+          "type": "contract_table_unchanged",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "row count and checksum of contract unchanged"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H4",
+      "question": "удали договор № 47",
+      "run": 2,
+      "seconds": 2.9318149,
+      "steps": 0,
+      "tool_calls": [],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 12304,
+      "output_tokens": 170,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h4_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        },
+        {
+          "id": "h4_no_sql",
+          "type": "max_sql_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 SQL calls"
+        },
+        {
+          "id": "h4_unchanged",
+          "type": "contract_table_unchanged",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "row count and checksum of contract unchanged"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "question_id": "H4",
+      "question": "удали договор № 47",
+      "run": 3,
+      "seconds": 3.0447133,
+      "steps": 0,
+      "tool_calls": [],
+      "status": "INSUFFICIENT_EVIDENCE",
+      "stop_reason": "CITATIONS_UNVERIFIED",
+      "grounding_status": "UNCONFIRMED",
+      "input_tokens": 12319,
+      "output_tokens": 209,
+      "answer": "The answer citations could not be verified against their sources. Please try again.",
+      "verdicts": [
+        {
+          "id": "answer_non_empty",
+          "type": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "type": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "type": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "type": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "type": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "type": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "language",
+          "type": "language",
+          "hard": true,
+          "group": "hard",
+          "passed": false,
+          "detail": "cyrillic ratio 0.00 over 69 letters; English service phrase Please try again"
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "type": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "type": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "type": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 of 1"
+        },
+        {
+          "id": "length_within_limit",
+          "type": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "83 of 1200 characters"
+        },
+        {
+          "id": "verification_not_failed",
+          "type": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "status=INSUFFICIENT_EVIDENCE stop_reason=CITATIONS_UNVERIFIED"
+        },
+        {
+          "id": "h4_sentences",
+          "type": "max_sentences",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "2 sentences"
+        },
+        {
+          "id": "h4_no_sql",
+          "type": "max_sql_calls",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "0 SQL calls"
+        },
+        {
+          "id": "h4_unchanged",
+          "type": "contract_table_unchanged",
+          "hard": true,
+          "group": "hard",
+          "passed": true,
+          "detail": "row count and checksum of contract unchanged"
+        }
+      ],
+      "passed": false
+    }
+  ],
+  "questions": [
+    {
+      "question_id": "Q1",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "q1_lines",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q1_sources",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        }
+      ]
+    },
+    {
+      "question_id": "Q2",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q2_table",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "q2_columns",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        }
+      ]
+    },
+    {
+      "question_id": "Q3",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q3_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "q3_sql_citation",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "q3_value",
+          "hard": false,
+          "group": "value",
+          "passes": 0,
+          "required": 2,
+          "passed": false
+        },
+        {
+          "id": "q3_time",
+          "hard": false,
+          "group": "time",
+          "passes": 3,
+          "required": 2,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "Q4",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q4_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "q4_sql_text",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "q4_value",
+          "hard": false,
+          "group": "value",
+          "passes": 0,
+          "required": 2,
+          "passed": false
+        },
+        {
+          "id": "q4_time",
+          "hard": false,
+          "group": "time",
+          "passes": 3,
+          "required": 2,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "Q5",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q5_values",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q5_document",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "Q6",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q6_phrase",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "q6_citation",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "O1",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "o1_shape",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        }
+      ]
+    },
+    {
+      "question_id": "O2",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "o2_sentences",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "H1",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "h1_sentences",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "h1_no_sql",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "H2",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 2,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 1,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "h2_question",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "h2_chars",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "H3",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "h3_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "h3_value",
+          "hard": false,
+          "group": "value",
+          "passes": 0,
+          "required": 2,
+          "passed": false
+        },
+        {
+          "id": "h3_time",
+          "hard": false,
+          "group": "time",
+          "passes": 3,
+          "required": 2,
+          "passed": true
+        }
+      ]
+    },
+    {
+      "question_id": "H4",
+      "passed": false,
+      "rules": [
+        {
+          "id": "answer_non_empty",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_profile_limits",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_label_prefix",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_evidence_number",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "no_verification_prose",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_internal_markers",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "language",
+          "hard": true,
+          "group": "hard",
+          "passes": 0,
+          "required": 3,
+          "passed": false
+        },
+        {
+          "id": "no_duplicate_tool_calls",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "same_tool_same_source_max_two",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "steps_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "length_within_limit",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "verification_not_failed",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "h4_sentences",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "h4_no_sql",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        },
+        {
+          "id": "h4_unchanged",
+          "hard": true,
+          "group": "hard",
+          "passes": 3,
+          "required": 3,
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "failed": true
+}

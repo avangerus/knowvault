@@ -43,6 +43,18 @@ const (
 	CodeMountInvalid      ErrorCode = "GOVERNED_QUERY_MOUNT_INVALID"
 	CodeSchemaUnavailable ErrorCode = "GOVERNED_QUERY_SCHEMA_UNAVAILABLE"
 	CodeExternalFailure   ErrorCode = "GOVERNED_QUERY_EXTERNAL_FAILURE"
+	// S3 card 2b's closed query-credential check vocabulary. The first two are
+	// the distinct refusals the card names (wrong database identity, and a role
+	// that can read an excluded column); the third covers a connection that is
+	// not read-only or cannot be reached at all.
+	CodeQueryCredentialDatabaseMismatch ErrorCode = "SOURCE_QUERY_CREDENTIAL_DATABASE_MISMATCH"
+	CodeQueryCredentialColumnPrivilege  ErrorCode = "SOURCE_QUERY_CREDENTIAL_COLUMN_PRIVILEGE"
+	CodeQueryCredentialRejected         ErrorCode = "SOURCE_QUERY_CREDENTIAL_DATABASE_REJECTED"
+	// S3 card 2c's server-owned load-limit refusals. Both are decided before
+	// any external connection is opened, so an over-limit call never reaches
+	// the customer database.
+	CodeSourceSQLConcurrencyLimited ErrorCode = "SOURCE_SQL_CONCURRENCY_LIMITED"
+	CodeSourceSQLRateLimited        ErrorCode = "SOURCE_SQL_RATE_LIMITED"
 )
 
 type Error struct {
@@ -119,6 +131,11 @@ type Config struct {
 	// close a capability. It is set from the mount manifest, never from a
 	// request.
 	PresetOnly bool
+	// Card S3.2d deliberately has no cached-proof field here. The
+	// least-privilege proof is re-run inside the same read-only transaction as
+	// the statement on every execution, so no stored verdict can authorize a
+	// statement: a proof recorded for an earlier role, credential revision or
+	// projection can never stand in for the role that is connected now.
 }
 
 func (config Config) Validate() error {

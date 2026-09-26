@@ -66,9 +66,23 @@ const (
 	// keeps the document-only capability (no dataset profile catalog).
 	StartupStageDatasetProfileMount StartupStage = "DATASET_PROFILE_MOUNT"
 	StartupStageWorkspaceHandler    StartupStage = "WORKSPACE_HANDLER"
-	StartupStageWebUI               StartupStage = "WEB_UI"
-	StartupStageHTTPDispatcher      StartupStage = "HTTP_DISPATCHER"
-	StartupStageHTTPServer          StartupStage = "HTTP_SERVER"
+	// StartupStageWorkspaceContext is ADR-0098 (S2): a failure mounting the
+	// workspace model context store, its deterministic proposer, or any of
+	// the seams between them (installWorkspaceContext, workspacecontext.go)
+	// is a startup failure, not a silently degraded deployment -- this
+	// capability is mandatory once the database and workspace store it
+	// depends on are already mounted, unlike the optional LoadMounted-gated
+	// capabilities above it.
+	StartupStageWorkspaceContext StartupStage = "WORKSPACE_CONTEXT"
+	// StartupStageQuestionReconciliation is 000121: the pre-listener sweep
+	// that finishes Question Runs whose answering process died with the
+	// previous incarnation. It is mandatory because a run left RUNNING is a
+	// user-visible spinner that never ends; a transient database failure here
+	// fails startup rather than serving a conversation that cannot converge.
+	StartupStageQuestionReconciliation StartupStage = "QUESTION_RECONCILIATION"
+	StartupStageWebUI                  StartupStage = "WEB_UI"
+	StartupStageHTTPDispatcher         StartupStage = "HTTP_DISPATCHER"
+	StartupStageHTTPServer             StartupStage = "HTTP_SERVER"
 )
 
 // StartupStageOf returns a stage only for a composition startup failure and
@@ -122,6 +136,8 @@ func knownStartupStage(stage StartupStage) bool {
 		StartupStageMetricCompareMount,
 		StartupStageDatasetProfileMount,
 		StartupStageWorkspaceHandler,
+		StartupStageWorkspaceContext,
+		StartupStageQuestionReconciliation,
 		StartupStageWebUI,
 		StartupStageHTTPDispatcher,
 		StartupStageHTTPServer:

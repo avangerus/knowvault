@@ -35,19 +35,22 @@ export function PendingAction({ state, elapsedSeconds }: { state: PendingActionS
       <div className="pending-action-line">
         <span className="pending-action-label" role="status">
           <span aria-hidden="true" className="search-answer-spinner" />
-          {actionLabels[state.current]}{state.currentRequest ? `: ${state.currentRequest}` : ""}
+          <span className="pending-action-text" title={`${actionLabels[state.current]}${state.currentRequest ? `: ${state.currentRequest}` : ""}`}>
+            {actionLabels[state.current]}{state.currentRequest ? `: ${state.currentRequest}` : ""}
+          </span>
         </span>
         <span aria-label={`Elapsed ${elapsed} seconds`} className="pending-action-elapsed" role="timer">{elapsed}s</span>
       </div>
       {state.completed.length > 0 && (
         <ol className="pending-action-history" aria-label="Completed actions">
-          {state.completed.map((action, index) => (
-            <li key={`${action.kind}-${index}`}>
-              {actionLabels[action.kind]}{action.request ? `: ${action.request}` : ""} · {action.outcome === "failed" ? "failed" : "done"}
-              {action.detail ? ` — ${action.detail}` : ""}
-              {action.durationMS !== undefined ? ` · ${(action.durationMS / 1000).toFixed(1)}s` : ""}
-            </li>
-          ))}
+          {state.completed.map((action, index) => {
+            const line = `${actionLabels[action.kind]}${action.request ? `: ${action.request}` : ""} · ${action.outcome === "failed" ? "failed" : "done"}${action.detail ? ` — ${action.detail}` : ""}${action.durationMS !== undefined ? ` · ${(action.durationMS / 1000).toFixed(1)}s` : ""}`;
+            return (
+              <li key={`${action.kind}-${index}`} title={line}>
+                {line}
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>

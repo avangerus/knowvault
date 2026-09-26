@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"knowvault.local/verified-workspace/internal/platform/buildinfo"
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 )
 
 const (
@@ -221,6 +222,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		status = http.StatusInternalServerError
+		failurelog.Set(w, "system endpoint: response encoding failed")
 		body = []byte(`{"error_code":"RESPONSE_ENCODING_FAILED"}`)
 	}
 	w.WriteHeader(status)

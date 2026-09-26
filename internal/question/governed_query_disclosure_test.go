@@ -217,7 +217,7 @@ func TestAuthorizeGovernedQueryDisclosuresRequiresEveryCurrentAttempt(t *testing
 
 	batchDenied := &governedDisclosureRecorder{errs: []error{errors.New("revoked first read"), nil}}
 	deniedRuns, err := authorizeGovernedQueryDisclosureBatchMany(context.Background(), access, "workspace_live",
-		[]string{runID}, map[string][]governedQueryDependency{runID: dependencies[:2]}, batchDenied)
+		[]string{runID}, map[string][]governedQueryDependency{runID: dependencies[:2]}, batchDenied, nil)
 	if err != nil || !reflect.DeepEqual(deniedRuns, []string{runID}) || batchDenied.calls != 2 {
 		t.Fatalf("batch multi-read reauthorization = denied %v err %v calls %d", deniedRuns, err, batchDenied.calls)
 	}
@@ -268,14 +268,14 @@ func TestAuthorizeGovernedQueryDisclosureBatchSortsDenialsAndAbortsFatal(t *test
 	orderedDependencies["run_governed_alpha"].connectionID = "conn_mounted"
 	orderedDependencies["run_governed_beta"].connectionID = "conn_mounted"
 	denied, err := authorizeGovernedQueryDisclosureBatch(context.Background(), questionAccess(database.ActorKindHuman),
-		"workspace_live", []string{legacy, "run_governed_beta", "run_governed_alpha", "run_governed_beta"}, orderedDependencies, orderedRecorder)
+		"workspace_live", []string{legacy, "run_governed_beta", "run_governed_alpha", "run_governed_beta"}, orderedDependencies, orderedRecorder, nil)
 	if err != nil || denied != nil || !reflect.DeepEqual(orderedRecorder.order, []string{alpha.attemptID, beta.attemptID}) {
 		t.Fatalf("ordered batch = denied %v err %v calls %v", denied, err, orderedRecorder.order)
 	}
 
 	denier := &governedDisclosureRecorder{err: errors.New("denied live attempt")}
 	denied, err = authorizeGovernedQueryDisclosureBatch(context.Background(), questionAccess(database.ActorKindService),
-		"workspace_live", []string{legacy, "run_governed_beta", "run_governed_alpha", "run_governed_beta"}, dependencies, denier)
+		"workspace_live", []string{legacy, "run_governed_beta", "run_governed_alpha", "run_governed_beta"}, dependencies, denier, nil)
 	if err != nil || !reflect.DeepEqual(denied, []string{"run_governed_alpha", "run_governed_beta"}) {
 		t.Fatalf("denials = %v, err = %v, want sorted present runs only", denied, err)
 	}
@@ -285,7 +285,7 @@ func TestAuthorizeGovernedQueryDisclosureBatchSortsDenialsAndAbortsFatal(t *test
 
 	fatal := &governedBatchThenFatal{}
 	denied, err = authorizeGovernedQueryDisclosureBatch(context.Background(), questionAccess(database.ActorKindHuman),
-		"workspace_live", []string{"run_governed_beta", "run_governed_alpha"}, dependencies, fatal)
+		"workspace_live", []string{"run_governed_beta", "run_governed_alpha"}, dependencies, fatal, nil)
 	assertGovernedQuestionRefusal(t, err, CodeUnavailable)
 	if denied != nil || fatal.calls != 2 {
 		t.Fatalf("fatal batch = denied %v calls %d, want nil after two sorted attempts", denied, fatal.calls)
@@ -295,7 +295,7 @@ func TestAuthorizeGovernedQueryDisclosureBatchSortsDenialsAndAbortsFatal(t *test
 	cancel()
 	denied, err = authorizeGovernedQueryDisclosureBatch(canceled, questionAccess(database.ActorKindHuman),
 		"workspace_live", []string{"run_governed_alpha"}, map[string]*governedQueryDependency{"run_governed_alpha": alpha},
-		&governedDisclosureRecorder{})
+		&governedDisclosureRecorder{}, nil)
 	assertGovernedQuestionRefusal(t, err, CodeUnavailable)
 	if denied != nil {
 		t.Fatalf("canceled batch denials = %v, want nil", denied)

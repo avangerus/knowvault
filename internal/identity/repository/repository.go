@@ -235,6 +235,15 @@ func (store *Store) BeginLogin(ctx context.Context, request BeginLoginRequest) (
 	if !request.ExpiresAt.After(now) || request.ExpiresAt.After(now.Add(maxLoginLifetime)) {
 		return LoginAttempt{}, &Error{code: CodeRequestInvalid}
 	}
+	// The durable attempt lifetime is measured by the DATABASE clock that also
+	// writes created_at, never by the application clock that produced the
+	// request. Both instants are stored by the same statement, so a deployment
+	// whose application clock leads the database clock cannot fail the
+	// expires_at <= created_at + maxLoginLifetime bound even though it supplied
+	// exactly the maximum lifetime. The requested remaining lifetime is
+	// preserved exactly; only its reference instant moves to
+	// transaction_timestamp().
+	lifetime := request.ExpiresAt.Sub(now)
 	access, err := database.NewOIDCServiceAccess(string(request.OrganizationID), request.RequestID)
 	if err != nil {
 		return LoginAttempt{}, &Error{code: CodeRequestInvalid}
@@ -255,18 +264,21 @@ func (store *Store) BeginLogin(ctx context.Context, request BeginLoginRequest) (
 		if providerRevision == 0 {
 			return &Error{code: CodeDenied}
 		}
-		if _, execErr := transaction.Exec(transactionContext, `
+		var durableExpiresAt time.Time
+		if queryErr := transaction.QueryRow(transactionContext, `
 			INSERT INTO public.oidc_login_attempt (
 				id, organization_id, provider_id, provider_revision, state_digest,
 				browser_binding_digest, nonce_digest, pkce_verifier_digest, expires_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, transaction_timestamp() + make_interval(secs => $9::double precision))
+			RETURNING expires_at
 		`, request.LoginAttemptID, string(request.OrganizationID), string(request.ProviderID), providerRevision,
-			request.StateDigest.Value(), request.BrowserBindingDigest.Value(), request.NonceDigest.Value(), request.PKCEVerifierDigest.Value(), request.ExpiresAt.UTC()); execErr != nil {
-			return execErr
+			request.StateDigest.Value(), request.BrowserBindingDigest.Value(), request.NonceDigest.Value(), request.PKCEVerifierDigest.Value(),
+			lifetime.Seconds()).Scan(&durableExpiresAt); queryErr != nil {
+			return queryErr
 		}
 		result = LoginAttempt{
 			ID: request.LoginAttemptID, OrganizationID: request.OrganizationID, ProviderID: request.ProviderID,
-			ProviderRevision: providerRevision, ExpiresAt: request.ExpiresAt.UTC(),
+			ProviderRevision: providerRevision, ExpiresAt: durableExpiresAt.UTC(),
 		}
 		return nil
 	})

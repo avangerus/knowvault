@@ -53,8 +53,10 @@ Workspace
 The workspace web UI, versioned HTTP API and authenticated MCP share authorization and evidence services. External agents and built-in questions use the same bounded Question/Planner authority. A model may propose typed operations from a frozen closed catalog; the server alone validates, authorizes, compiles and executes them. The UI contains sections:
 
 ```text
-Search · Sources · Access · Activity log
+Search · Sources · Access · Activity log · Settings
 ```
+
+Settings holds the workspace model context of ADR-0098.
 
 The latest Question Runs are displayed under Search. There is no separate "Answers" section. The Activity Log is intended for security and investigations and does not replace search results.
 
@@ -66,10 +68,10 @@ The pilot covers mounted folders and prepared PostgreSQL views, including suppor
 - Git repository + branch + path scope;
 - mailbox + folder/label scope;
 - selected website area;
-- external PostgreSQL database as a set of DBA-managed business-object views through
+- external PostgreSQL database as selected tables or DBA-managed views through
   first-class source type `POSTGRESQL_QUERY`.
 
-`POSTGRESQL_QUERY` adheres to the accepted ADR-0078 boundary: only immutable structured projections over pre-created DBA views, a separate read-only role, TLS `verify-full`, bounded transaction-consistent full snapshots, and `WORKSPACE_MANAGED`. Product/UI/API/operator/user/model surfaces do not accept or create SQL text. The sole exception is the source owner `internal/source/postgresqlquery` who builds one fixed parameterless `SELECT` solely from trusted structured identifiers and quoted declared columns per ADR-0078; joins and business logic remain in the reviewed source-owned view. The pilot implements this prepared-view snapshot boundary. Separate experimental governed-query code does not broaden the pilot into arbitrary SQL execution.
+`POSTGRESQL_QUERY` adheres to the accepted ADR-0078 boundary as amended by ADR-0097: immutable structured projections over selected base tables with a primary key or pre-created DBA views, a separate read-only role, TLS `verify-full`, bounded transaction-consistent full snapshots, and `WORKSPACE_MANAGED`. Product/UI/operator/user-facing API fields do not accept or create SQL text. The agent source tools of ADR-0097 (`knowvault_source_schema`, `knowvault_source_sql`) are the only SQL input: one read-only statement per call against one enabled source, bounded by a separate query role, a read-only transaction, a plan scope check, limits and audit. The sole exception is the source owner `internal/source/postgresqlquery` who builds one fixed parameterless `SELECT` solely from trusted structured identifiers and quoted declared columns per ADR-0078; joins and business logic remain in the reviewed source-owned view. The pilot implements this prepared-view snapshot boundary. Separate experimental governed-query code does not broaden the pilot into arbitrary SQL execution.
 
 The broader parser design covers PDF, DOCX, PPTX, XLSX, CSV, TXT, Markdown, HTML, JSON, XML, EML, source code, PNG/JPEG and scanned PDFs. Format code and contracts are distinct from pilot qualification: see [Native ingestion](docs/NATIVE-INGEST.md), [parser contracts](docs/PARSER_CONTRACTS.md) and the [connector/format roadmap](docs/CONNECTOR-ROADMAP.md).
 
@@ -98,15 +100,18 @@ The broader parser design covers PDF, DOCX, PPTX, XLSX, CSV, TXT, Markdown, HTML
 ## 7. What is forbidden in 1.0
 
 - unbounded message chains, hidden long-term model memory, or treating an earlier
-  answer as evidence; bounded follow-ups governed by ADR-0096 are allowed;
+  answer as evidence; bounded follow-ups governed by ADR-0096 are allowed; the
+  explicit, audited workspace model context of ADR-0098 is configuration, not
+  memory, and never evidence;
 - arbitrary MCP/tool runtime and unauthenticated public API; only versioned HTTP API and authenticated MCP from ADR-0082 via the common Question/Planner authority are allowed, without SQL input, credentials, or write actions;
 - autonomous actions or writes to external source systems; read-only access by authenticated external MCP agents remains part of the product;
 - reports, timelines, decision log, and commitments;
 - watch, notifications, and automatic recalculation of answers;
 - cross-workspace search;
-- SQL authorship/input on product, UI, API, operator, user, and model surfaces,
-  model-generated SQL, and any database connector outside the precise boundary
-  `POSTGRESQL_QUERY` from ADR-0078. The typed analytics compiler from ADR-0096
+- SQL authorship/input on product UI, operator and user-facing API surfaces, and
+  any database connector outside the `POSTGRESQL_QUERY` boundary of ADR-0078 as
+  amended by ADR-0097; agent-written read-only SQL is allowed only through the
+  ADR-0097 source tools. The typed analytics compiler from ADR-0096
   may emit a parameterized read only from a closed AST and registry-owned
   identifiers; this does not create a SQL input surface;
 - treating planned Slack, Teams, SharePoint, Jira, Notion or CRM integrations as released capabilities; each requires an approved connector and access contract;

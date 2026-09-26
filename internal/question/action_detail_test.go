@@ -38,7 +38,7 @@ func TestActionRequestTextIsBounded(t *testing.T) {
 	long := strings.Repeat("a", 500)
 	got := actionRequestText("knowvault_search", json.RawMessage(`{"query":"`+long+`"}`))
 	runes := []rune(got)
-	if len(runes) != ActionTextMaxRunes+1 || runes[ActionTextMaxRunes] != '…' {
+	if len(runes) != ActionTextMaxRunes || runes[ActionTextMaxRunes-1] != '…' {
 		t.Fatalf("request text not bounded to %d runes: len=%d text=%q", ActionTextMaxRunes, len(runes), got)
 	}
 }
@@ -136,7 +136,7 @@ func TestActionResultTextIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := actionResultText("knowvault_search", true, workspacetools.Result{Structured: payload})
-	if runes := []rune(got); len(runes) > ActionTextMaxRunes+1 {
+	if runes := []rune(got); len(runes) > ActionTextMaxRunes {
 		t.Fatalf("result text not bounded to %d runes: len=%d", ActionTextMaxRunes, len(runes))
 	}
 }

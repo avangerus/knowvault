@@ -490,7 +490,7 @@ func (s *Service) registerPostgreSQLQuery(ctx context.Context, access database.A
 		if err := bind(`SELECT app.source_discovered_scope_display_bind($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, append([]any{access.OrganizationID, discoveredID, displayArtifactID, discoveredID}, envelopeArgs(displayEnvelope)...)...); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT app.postgresql_query_projection_register($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18)`, scopeID, int64(1), connID, request.DatabaseIdentity, request.LineageID, request.ProjectionRevision, request.ContractHash, request.SchemaName, request.RelationName, request.RelationKind, string(columnsJSON), request.EmptySnapshotPolicy, limits.maxRows, limits.maxColumns, limits.maxFieldBytes, limits.maxRowBytes, limits.maxTotalBytes, limits.statementTimeoutMS); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT app.postgresql_query_projection_register($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19)`, scopeID, int64(1), connID, request.DatabaseIdentity, request.LineageID, request.ProjectionRevision, request.ContractHash, request.SchemaName, request.RelationName, request.RelationKind, string(columnsJSON), request.EmptySnapshotPolicy, false, limits.maxRows, limits.maxColumns, limits.maxFieldBytes, limits.maxRowBytes, limits.maxTotalBytes, limits.statementTimeoutMS); err != nil {
 			return err
 		}
 		eventID, err := s.newID("aud")
@@ -1679,7 +1679,7 @@ func (request RegisterRequest) validatePostgreSQLQuery() error {
 	if request.SourceType != "POSTGRESQL_QUERY" || !validName(request.Name) || !validKind(request.Kind) ||
 		!validSchemaID(request.DatabaseIdentity) || !validSchemaID(request.LineageID) || request.ProjectionRevision < 1 ||
 		!validSchemaID(request.SchemaName) || !validSchemaID(request.RelationName) || request.ContractHash == "" ||
-		(request.RelationKind != "VIEW" && request.RelationKind != "MATERIALIZED_VIEW") ||
+		!validPostgreSQLRelationKind(request.RelationKind) ||
 		(request.EmptySnapshotPolicy != "HELD" && request.EmptySnapshotPolicy != "AUTHORITATIVE") {
 		return &Error{code: CodeRequestInvalid}
 	}
@@ -1703,6 +1703,20 @@ func (request RegisterRequest) validatePostgreSQLQuery() error {
 		return &Error{code: CodeRequestInvalid, cause: err}
 	}
 	return nil
+}
+
+// validPostgreSQLRelationKind is the ADR-0097 closed set this surface
+// accepts: the original DBA-reviewed VIEW/MATERIALIZED_VIEW contract, plus an
+// ordinary or partitioned base table. postgresqlquery.Projection.Validate
+// enforces the same set again once the full projection is assembled; this
+// check exists so an unrecognized kind fails before that assembly.
+func validPostgreSQLRelationKind(value string) bool {
+	switch value {
+	case "VIEW", "MATERIALIZED_VIEW", "TABLE", "PARTITIONED_TABLE":
+		return true
+	default:
+		return false
+	}
 }
 
 func (request RegisterRequest) validateRemote() error {

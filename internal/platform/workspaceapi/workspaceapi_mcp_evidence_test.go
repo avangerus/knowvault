@@ -54,7 +54,7 @@ func TestMCPToolsListAdvertisesEvidenceGetTool(t *testing.T) {
 		case "knowvault_question", "knowvault_conversations_list", "knowvault_conversation_get", "knowvault_conversation_archive",
 			"knowvault_confirmation_grant_issue", "knowvault_confirmation_grant_revoke", "knowvault_managed_source_confirm", "knowvault_managed_confirmation_revoke",
 			"knowvault_verify_connection_trust", "knowvault_source_enable", "knowvault_source_sync", "knowvault_governed_query_ask",
-			"knowvault_metric_definitions_list", "knowvault_metric_definition_get", mcpToolSourcesList, mcpToolEvidenceRead, mcpToolWorkspaceList, mcpToolRefresh:
+			"knowvault_metric_definitions_list", "knowvault_metric_definition_get", mcpToolSourcesList, mcpToolEvidenceRead, mcpToolWorkspaceList, mcpToolRefresh, mcpToolWorkspaceContext, mcpToolSourceSchema, mcpToolSourceSQL:
 			// existing, ADR-0087 §1 confirmation tools, the ADR-0087 §2
 			// verify-trust tool, the ADR-0087 §3 enable/sync tools, the
 			// ADR-0089 governed-query ask tool and the R2 Outcome 1
@@ -319,9 +319,9 @@ func mcpEvidenceReadTextHash(text []byte) string {
 
 // TestMCPEvidenceReadAdvertisesClosedPagedSchema proves tools/list advertises
 // knowvault_read with the closed paged schema: exactly the two
-// required selectors plus the optional offset/limit/expected_span_hash members,
-// and no further member (additionalProperties:false); the compatibility name is
-// not advertised.
+// required selectors plus the optional offset/limit/expected_span_hash/outline
+// members, and no further member (additionalProperties:false); the
+// compatibility name is not advertised.
 func TestMCPEvidenceReadAdvertisesClosedPagedSchema(t *testing.T) {
 	harness := newTestHarness(t)
 	response := httptest.NewRecorder()
@@ -372,10 +372,10 @@ func TestMCPEvidenceReadAdvertisesClosedPagedSchema(t *testing.T) {
 		}
 	}
 	properties, ok := schema["properties"].(map[string]any)
-	if !ok || len(properties) != 8 {
+	if !ok || len(properties) != 9 {
 		t.Fatalf("evidence read inputSchema properties=%#v", schema["properties"])
 	}
-	for _, bound := range []string{"workspace_id", "fragment_id", "address", "cursor", "offset", "limit", "expected_span_hash", "include_text_base64"} {
+	for _, bound := range []string{"workspace_id", "fragment_id", "address", "cursor", "offset", "limit", "expected_span_hash", "include_text_base64", "outline"} {
 		if _, ok := properties[bound].(map[string]any); !ok {
 			t.Fatalf("evidence read inputSchema missing property %q: %#v", bound, properties)
 		}

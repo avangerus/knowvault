@@ -7,7 +7,7 @@
   "connection_revision": 1,
   "trust_profile_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "security_epoch": 1,
-  "max_views": 65,
+  "max_views": 1025,
   "max_columns": 256,
   "max_comment_bytes": 65536,
   "statement_timeout_ms": 300000,

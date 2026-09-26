@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 )
 
 const (
@@ -118,6 +120,9 @@ func writeProductionUnavailable(writer http.ResponseWriter) {
 	if writer == nil {
 		return
 	}
+	// The UI root is closed, so no request can be served: name that condition
+	// for the operator instead of leaving the 503 unexplained.
+	failurelog.Set(writer, "web UI: assets root closed")
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(http.StatusServiceUnavailable)
 }
@@ -228,6 +233,7 @@ func staticHandler(assetDirectory string) http.Handler {
 
 func unavailableHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		failurelog.Set(w, "web UI: assets root unavailable")
 		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "user interface is not installed", http.StatusServiceUnavailable)
 	})

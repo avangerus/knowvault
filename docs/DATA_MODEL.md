@@ -585,6 +585,11 @@ question_citation
 question_claim_citation
   organization_id, question_run_id, claim_id, citation_number
 
+question_feedback
+  id, organization_id, question_run_id, workspace_id, created_by,
+  verdict(CORRECT|INCORRECT), comment_artifact_id,
+  created_at, updated_at
+
 model_profile
   id, organization_id, purpose, profile_revision,
   model_id, model_revision, model_artifact_hash,
@@ -626,6 +631,8 @@ Question Run may receive nullable `conversation_id` and `conversation_turn_id` i
 For `model_run`, a unique `(organization_id, question_run_id, purpose, attempt)` applies; failed/retried attempts are retained, and fake calls are prohibited. `model_run_artifact` stores purpose-specific canonical input/output encrypted and with limited retention so that the terminal validator can recalculate hashes from trusted Model Gateway bytes; content does not enter audit/log. Exact rules are defined in `CANONICALIZATION.md`: query embedding is linked to question hash, reranking — to authorized candidate set, generation — to final context, verification — to exact claims/evidence. Selected generation output must be schema-valid and exact-match deterministic projection of final manifest claims/sections; post-verifier silent editing is prohibited. After artifact purge, immutable hashes, ClaimVerification, and deterministic validation remain as provenance, but raw model context is no longer provided. `selected_for_result=true` is permitted only for `SUCCEEDED`; required purposes exact-match immutable `question_model_execution_plan`. Answer span must have `end > start` and canonical UTF-8 boundaries.
 
 Status coupling is a database completion invariant in both directions: `COMPLETED` requires at least one FACT and forbids UNKNOWN; `INSUFFICIENT_EVIDENCE` requires at least one UNKNOWN, FACT optional. Precheck/policy denial ends without an Answer Manifest.
+
+`question_feedback` holds one *current* correctness mark per `(organization_id, question_run_id, created_by)` (`UNIQUE`, enforced by `ON CONFLICT` upsert, not append-only history) on a terminal `COMPLETED`/`INSUFFICIENT_EVIDENCE` run. `verdict` is `CORRECT` or `INCORRECT`; a free-text comment is only accepted by the service when `INCORRECT`, and is stored through the same envelope-encryption boundary as question/answer text (`comment_artifact_id`, ENCRYPTION.md), never as a plain column. Unlike every other owning column in the closed AAD inventory, `comment_artifact_id` is replaceable in place rather than write-once, because the mark itself can change. Row identity (`organization_id`, `id`, `question_run_id`, `workspace_id`, `created_by`, `created_at`) is immutable and there is no DELETE grant; changing a mind means UPDATE, not delete. Visibility mirrors the Question Run it marks: a member reads only their own feedback row, and the workspace OWNER/MANAGER additionally reads every member's row for the error-review report.
 
 Transition to terminal status is performed in a single transaction only after saving claims, citations, corpus snapshot, canonical manifest bytes, manifest hash/signature, and audit event. Corpus snapshots are captured in `started_at`; model runs, principal/ACL authorization, retrieval capture, and deterministic validations are inside `[started_at, completed_at]`; manifest `signature.signed_at` exact-match `completed_at`. Violation of order or trusted interval blocks terminal commit. Repeat `Idempotency-Key` with the same canonical request hash returns the original Question Run; with a different hash returns conflict.
 

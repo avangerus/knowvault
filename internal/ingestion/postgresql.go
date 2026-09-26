@@ -321,12 +321,13 @@ func (h *Handler) verifyPostgreSQLProjection(ctx context.Context, tx database.Tr
 		schemaName, relationName, relationKind                                           string
 		projectionRevision, scopeRevision                                                int64
 		columnsJSON                                                                      []byte
+		queryOnly                                                                        bool
 	)
-	err = tx.QueryRow(ctx, `SELECT status, connection_id, database_identity, lineage_id, projection_revision, contract_version, contract_hash, schema_name, relation_name, relation_kind, columns_json, source_scope_revision FROM public.postgresql_query_projection WHERE organization_id=$1 AND source_scope_id=$2 AND source_scope_revision=$3`, organization, request.ScopeID, request.ScopeRevision).Scan(&status, &connectionID, &databaseIdentity, &lineageID, &projectionRevision, &contractVersion, &contractHash, &schemaName, &relationName, &relationKind, &columnsJSON, &scopeRevision)
+	err = tx.QueryRow(ctx, `SELECT status, connection_id, database_identity, lineage_id, projection_revision, contract_version, contract_hash, schema_name, relation_name, relation_kind, columns_json, source_scope_revision, query_only FROM public.postgresql_query_projection WHERE organization_id=$1 AND source_scope_id=$2 AND source_scope_revision=$3`, organization, request.ScopeID, request.ScopeRevision).Scan(&status, &connectionID, &databaseIdentity, &lineageID, &projectionRevision, &contractVersion, &contractHash, &schemaName, &relationName, &relationKind, &columnsJSON, &scopeRevision, &queryOnly)
 	if err != nil {
 		return err
 	}
-	if status != "ACTIVE" || connectionID != request.Projection.ConnectionID || databaseIdentity != request.Projection.DatabaseIdentity || lineageID != request.Projection.LineageID || projectionRevision != request.Projection.Revision || scopeRevision != request.ScopeRevision || contractVersion != postgresqlquery.ValueContractVersion || contractHash != request.Projection.ContractHash || schemaName != request.Projection.SchemaName || relationName != request.Projection.RelationName || relationKind != request.Projection.RelationKind {
+	if status != "ACTIVE" || connectionID != request.Projection.ConnectionID || databaseIdentity != request.Projection.DatabaseIdentity || lineageID != request.Projection.LineageID || projectionRevision != request.Projection.Revision || scopeRevision != request.ScopeRevision || contractVersion != postgresqlquery.ValueContractVersion || contractHash != request.Projection.ContractHash || schemaName != request.Projection.SchemaName || relationName != request.Projection.RelationName || relationKind != request.Projection.RelationKind || queryOnly != request.Projection.QueryOnly {
 		return failure("PG_QUERY_PROJECTION_DRIFT", nil)
 	}
 	canonicalStored := jsontext.Value(columnsJSON)

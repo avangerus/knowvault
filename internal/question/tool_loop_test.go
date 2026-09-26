@@ -325,7 +325,7 @@ func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: trustedMetricToolName, Outcome: "REFUSED",
 		Result: workspacetools.Result{Text: `{"error":"SNAPSHOT_UNAVAILABLE","date":"2026-09-10"}`},
-	}}}, false); got != refusedMetricComparison {
+	}}}, false, questionLanguageEnglish); got != refusedMetricComparison {
 		t.Fatalf("refused metric comparison fallback = %q; want %q", got, refusedMetricComparison)
 	}
 	if strings.Contains(refusedMetricComparison, "2026-09-10") || strings.Contains(refusedMetricComparison, "access") {
@@ -333,19 +333,29 @@ func TestToolLoopNoDataFallbackForRefusedMetricComparison(t *testing.T) {
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: trustedMetricToolName, Outcome: "REFUSED",
-	}}}, true); got != noWorkspaceData {
+	}}}, true, questionLanguageEnglish); got != noWorkspaceData {
 		t.Fatalf("fallback with successful comparison = %q; want %q", got, noWorkspaceData)
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: liveDataToolName, Outcome: "REFUSED",
 		Result: workspacetools.Result{Text: `{"error":"TOOL_UNAVAILABLE"}`},
-	}}}, false); got != unreadableWorkspaceData {
+	}}}, false, questionLanguageEnglish); got != unreadableWorkspaceData {
 		t.Fatalf("fallback for an unavailable live read = %q; want %q", got, unreadableWorkspaceData)
 	}
 	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
 		Name: "knowvault_search", Outcome: "SUCCEEDED",
-	}}}, false); got != noWorkspaceData {
+	}}}, false, questionLanguageEnglish); got != noWorkspaceData {
 		t.Fatalf("fallback for an empty successful search = %q; want %q", got, noWorkspaceData)
+	}
+	// Card D-5 requirement 4: the same reason produces the Russian text for a
+	// Russian question.
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{}, false, questionLanguageRussian); got != noWorkspaceDataRussian {
+		t.Fatalf("russian fallback = %q; want %q", got, noWorkspaceDataRussian)
+	}
+	if got := toolLoopNoDataFallback(&ToolLoopRecord{Calls: []ToolCallRecord{{
+		Name: trustedMetricToolName, Outcome: "REFUSED",
+	}}}, false, questionLanguageRussian); got != refusedMetricComparisonRussian {
+		t.Fatalf("russian refused-comparison fallback = %q; want %q", got, refusedMetricComparisonRussian)
 	}
 }
 
@@ -373,7 +383,7 @@ func TestInitialToolLoopMessagesKeepHistoryOutOfPersistedTrace(t *testing.T) {
 		Question: priorQuestion,
 		Answer:   priorAnswer,
 		Sources:  []string{priorSource},
-	}}, 32*1024)
+	}}, 32*1024, "")
 	if len(outbound) != 3 || !strings.Contains(outbound[1].Content, priorQuestion) {
 		t.Fatalf("outbound messages do not contain prior question context: %#v", outbound)
 	}
@@ -448,7 +458,8 @@ func TestRecentToolLoopConversationTurnsRequireEarlierTerminalDisplayableRuns(t 
 		// clarification) and the reauthorized citation addresses it used,
 		// never anything the GetBatch map did not already survive on.
 		"answer = run.Clarification",
-		"toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)}",
+		// Its prior SQL comes from the same surviving run's own trace.
+		"toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations), Queries: toolLoopConversationQueries(run.ToolLoop)}",
 	} {
 		if !strings.Contains(helper, required) {
 			t.Fatalf("surviving-run projection is missing %q", required)
@@ -469,7 +480,7 @@ func TestRevokedGovernedPriorQuestionIsOmittedFromNextModelPrompt(t *testing.T) 
 	if len(history) != 1 || history[0].Question != readableQuestion {
 		t.Fatalf("history = %#v, want only the surviving prior run", history)
 	}
-	outbound, _ := initialToolLoopMessages("next model question", history, 32*1024)
+	outbound, _ := initialToolLoopMessages("next model question", history, 32*1024, "")
 	foundReadable, foundRevoked := false, false
 	for _, message := range outbound {
 		foundReadable = foundReadable || strings.Contains(message.Content, readableQuestion)
@@ -522,6 +533,50 @@ func TestToolLoopConversationTurnsFromBatchCarryAnswerAndSources(t *testing.T) {
 	}
 	if want := []string{"kv1:src_policy/v3#f_sla"}; !reflect.DeepEqual(answered.Sources, want) {
 		t.Fatalf("answered turn sources = %#v, want deduplicated %#v", answered.Sources, want)
+	}
+}
+
+
+// A follow-up ("а без дополнительных соглашений?") must refine the prior
+// answer's own selection. The prior run's successful SQL is carried as
+// context -- refused, duplicate, and other tools' calls are not -- and it
+// reaches the model inside the marked, untrusted history message.
+func TestToolLoopConversationTurnsCarryPriorSuccessfulSQL(t *testing.T) {
+	sqlCall := func(statement, outcome string) ToolCallRecord {
+		arguments, err := json.Marshal(map[string]string{"source_id": "conn_gm", "sql": statement})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ToolCallRecord{Name: sourceSQLToolName, Arguments: arguments, Outcome: outcome}
+	}
+	const counted = "SELECT count(*) FROM contract WHERE expiration_date >= current_date"
+	const refused = "SELECT count(*) FROM contract JOIN secret ON true"
+	runs := map[string]Run{"run_count": {
+		Question: "Сколько договоров действует?",
+		Answer:   "Действует 5857 договоров.",
+		ToolLoop: &ToolLoopRecord{Calls: []ToolCallRecord{
+			sqlCall(refused, "REFUSED"),
+			{Name: "knowvault_source_schema", Arguments: json.RawMessage(`{"sql":"not a statement"}`), Outcome: "SUCCEEDED"},
+			sqlCall(counted, "SUCCEEDED"),
+			sqlCall(counted, "SUCCEEDED"),
+			sqlCall("SELECT "+strings.Repeat("x,", toolLoopConversationQueryByteLimit)+"1", "SUCCEEDED"),
+		}},
+	}}
+	history := toolLoopConversationTurnsFromBatch([]string{"run_count"}, runs)
+	if want := []string{counted}; len(history) != 1 || !reflect.DeepEqual(history[0].Queries, want) {
+		t.Fatalf("history = %#v, want only the one successful statement %q", history, counted)
+	}
+	messages := toolLoopHistoryMessages(history, 64*1024)
+	if len(messages) != 1 || !strings.HasPrefix(messages[0].Content, toolLoopHistoryMarker) ||
+		!strings.Contains(messages[0].Content, toolLoopHistoryQueriesLabel+counted) {
+		t.Fatalf("history messages = %#v, want the prior SQL inside the marked context", messages)
+	}
+	// The newest turn keeps its SQL even when its answer must be truncated.
+	history[0].Answer = strings.Repeat("д", 8*1024)
+	messages = toolLoopHistoryMessages(history, 64*1024)
+	if len(messages) != 1 || !strings.Contains(messages[0].Content, counted) ||
+		!strings.HasSuffix(messages[0].Content, toolLoopHistoryTruncationMarker) {
+		t.Fatalf("truncated newest turn lost its SQL: %q", messages[0].Content)
 	}
 }
 

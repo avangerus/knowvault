@@ -43,17 +43,17 @@ func ownerFor(t *testing.T, field OwnerField, resourceID string) OwnerIdentity {
 	return owner
 }
 
-func TestOwnerInventoryHasExactlyTwentySevenTypedSelectors(t *testing.T) {
-	if len(ownerInventory) != 27 {
-		t.Fatalf("owner inventory has %d rows, expected 27", len(ownerInventory))
+func TestOwnerInventoryHasExactlyTwentyEightTypedSelectors(t *testing.T) {
+	if len(ownerInventory) != 28 {
+		t.Fatalf("owner inventory has %d rows, expected 28", len(ownerInventory))
 	}
-	if int(ownerFieldSentinel)-int(ownerFieldInvalid)-1 != 27 {
-		t.Fatalf("typed selector range is not exactly 27")
+	if int(ownerFieldSentinel)-int(ownerFieldInvalid)-1 != 28 {
+		t.Fatalf("typed selector range is not exactly 28")
 	}
-	if len(ownerByField) != 27 {
-		t.Fatalf("owner registry built %d entries, expected 27", len(ownerByField))
+	if len(ownerByField) != 28 {
+		t.Fatalf("owner registry built %d entries, expected 28", len(ownerByField))
 	}
-	seen := make(map[[4]string]bool, 27)
+	seen := make(map[[4]string]bool, 28)
 	for _, definition := range ownerInventory {
 		tuple := [4]string{definition.ownerTable, definition.ownerColumn, definition.resourceType, definition.aadField}
 		if seen[tuple] {

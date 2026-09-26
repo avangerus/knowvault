@@ -1943,6 +1943,20 @@ var migrationSequence = []string{
 	"000107_stage2_source_observed_presence.sql",
 	"000108_stage3_source_freshness_completeness.sql",
 	"000109_stage3_metric_definition_dataset_binding.sql",
+	"000110_stage3_postgresql_query_table_source.sql",
+	"000111_stage4_source_discovery_relation_limit.sql",
+	"000112_stage4_workspace_model_context.sql",
+	"000113_stage4_workspace_context_proposals.sql",
+	"000114_stage4_source_connection_drafts.sql",
+	"000115_stage4_postgresql_query_relation_catalog.sql",
+	"000116_stage4_source_query_credential.sql",
+	"000117_stage4_source_query_credential_control.sql",
+	"000118_stage4_source_query_credential_verification.sql",
+	"000119_stage4_source_query_credential_revision.sql",
+	"000120_stage4_postgresql_query_only_relation.sql",
+	"000121_stage3_question_run_interruption.sql",
+	"000122_stage3_question_feedback.sql",
+	"000123_stage3_question_feedback_owner_and_purge.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert

@@ -200,7 +200,7 @@ func filteredRefusalCases() []filteredRefusalCase {
 		{name: "period invalid bound", code: CodeInvalidValue,
 			mutate: func(r *FilteredProjectionRequest, _ *Limits) { r.Period.Start = "2026-13-40" }},
 		{name: "invalid projection", code: CodeInvalidProjection,
-			mutate: func(r *FilteredProjectionRequest, _ *Limits) { r.Projection.RelationKind = "TABLE" }},
+			mutate: func(r *FilteredProjectionRequest, _ *Limits) { r.Projection.RelationKind = "FOREIGN_TABLE" }},
 		{name: "invalid limits", code: CodeInvalidProjection,
 			mutate: func(_ *FilteredProjectionRequest, l *Limits) { l.MaxRows = 0 }},
 	}

@@ -1,0 +1,461 @@
+package postgres_test
+
+// Card E-1a: one command runs the question set on a synthetic proving
+// environment with the real DeepSeek model channel and judges every answer by
+// the fixed rules in tests/e2e/questions/questions.json.
+//
+//   - TestQuestionSetRealModel requires KNOWVAULT_QUESTION_SET_API_KEY_FILE
+//     (the DeepSeek key file, read only at run time), starts the card's two
+//     PostgreSQL containers, builds the synthetic workspace and the real
+//     governed SQL source, runs every question three times against
+//     deepseek-flash, writes report.md/report.json, and fails when any
+//     question fails.
+//   - TestQuestionSetSmoke runs the same runner against a stub
+//     OpenAI-compatible endpoint, so CI exercises the pipeline without a key.
+
+import (
+	"context"
+	"crypto/x509"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/question"
+
+	"knowvault.local/verified-workspace/tests/e2e/questions"
+)
+
+func loadE1aSet(t *testing.T) *questions.Set {
+	t.Helper()
+	path := filepath.Join(repositoryRoot(t), "tests", "e2e", "questions", "questions.json")
+	set, err := questions.LoadSet(path)
+	if err != nil {
+		t.Fatalf("load question set %s: %v", path, err)
+	}
+	// KNOWVAULT_QUESTION_SET_INSTANCE (1..9) lets two worktrees run the set
+	// at the same time: container names get the instance suffix, host ports
+	// move by ten per instance, and the H5 database's own container, port and
+	// volume move with them (card E-3), so neither run can remove or reuse the
+	// other's database.
+	if value := strings.TrimSpace(os.Getenv("KNOWVAULT_QUESTION_SET_INSTANCE")); value != "" {
+		instance, convErr := strconv.Atoi(value)
+		if convErr != nil || instance < 1 || instance > 9 {
+			t.Fatalf("KNOWVAULT_QUESTION_SET_INSTANCE=%q, want 1..9", value)
+		}
+		set.ApplyInstance(instance)
+	}
+	return set
+}
+
+// TestQuestionSetSmoke proves the runner end to end against a stub model
+// endpoint and the real product database, without a DeepSeek key.
+func TestQuestionSetSmoke(t *testing.T) {
+	ctx := context.Background()
+	admin := resetStage1Database(t)
+	set := loadE1aSet(t)
+	stub := questions.NewStubModel()
+	server := httptest.NewServer(stub)
+	defer server.Close()
+
+	adapter, err := modelgateway.NewLabAdapter(modelgateway.LabAdapterConfig{
+		SchemaVersion: modelgateway.LabAdapterSchemaVersion, Endpoint: server.URL, ModelID: "e1a-stub",
+		MaxOutputTokens: 4096, InsecureLabMode: true, ThinkingMode: modelgateway.ThinkingModeDisabled,
+		ToolLoop: &modelgateway.ToolLoopProfile{
+			ID: "steps-2", MaxTurns: 2, MaxToolCalls: 2, MaxInputBytes: 262144,
+			MaxToolResultBytes: 65536, MaxOutputTokens: 4096, TimeoutSeconds: 120,
+		},
+	})
+	if err != nil {
+		t.Fatalf("stub adapter: %v", err)
+	}
+	defer adapter.Close()
+
+	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
+		SourceIdentity: "pgdb-stub-e1a", WireHTTPQuestions: true,
+		// Card E-2: H5 asks about a database whose tables await confirmation.
+		// The stub run registers that source too, so the whole set including H5
+		// is exercised without a key.
+		H5Source: &set.Environment.UnconfirmedDatabase.Source, H5SourceIdentity: "pgdb-stub-e1a-h5",
+	})
+	env.Questions.EnableGeneration(adapter, nil)
+
+	// Card D-19 result 1: a user without access to the workspace asking through
+	// MCP gets the same refusal as in the chat and no number. The refusal is
+	// decided before any model call, so this runs without a key.
+	t.Run("an outside agent without workspace access gets the chat refusal and no number", func(t *testing.T) {
+		foreign := "ws_card_d19_foreign"
+		e1aSeedForeignWorkspace(t, ctx, admin, foreign)
+		client := e1aNewMCPClient(t, env)
+		refusal := client.e1aMCPDeniedWorkspaceQuestion(t, ctx, foreign, "Сколько договоров действует?", e1aIdempotencyKey("d19-denied-mcp"))
+		t.Logf("MCP refusal over the outside-agent transport: %s", e1aFormatMCPRefusal(refusal))
+		_, chatErr := env.Questions.Create(ctx, database.AccessContext{
+			OrganizationID: regOrg, PrincipalID: regOwner, RequestID: "req_d19_denied_chat",
+		}, question.CreateRequest{
+			WorkspaceID: foreign, Question: "Сколько договоров действует?", IdempotencyKey: e1aIdempotencyKey("d19-denied-chat"),
+		})
+		if chatErr == nil {
+			t.Fatalf("chat path allowed a workspace the user cannot access")
+		}
+		if code := question.CodeOf(chatErr); code != question.CodeDenied && code != question.CodeNotFound {
+			t.Fatalf("chat refusal code=%q, want denied/not-found", code)
+		}
+		if strings.ContainsAny(chatErr.Error(), "0123456789") {
+			t.Fatalf("chat refusal carries a number: %v", chatErr)
+		}
+	})
+
+	runs := e1aRunQuestionSet(t, ctx, env, func(questions.Question) string { return "" })
+	report := questions.NewReport(set, "stub", "go test ./tests/integration/postgres -run TestQuestionSetSmoke", runs, time.Now())
+	if len(runs) != 3*len(set.Questions) {
+		t.Fatalf("runner produced %d runs, want 3 per question (%d)", len(runs), 3*len(set.Questions))
+	}
+	for _, question := range set.Questions {
+		count := 0
+		for _, run := range runs {
+			if run.QuestionID == question.ID {
+				count++
+			}
+		}
+		if count != 3 {
+			t.Fatalf("question %s ran %d times, want 3", question.ID, count)
+		}
+	}
+	if report.InputTokens <= 0 || report.OutputTokens <= 0 {
+		t.Fatalf("stub token usage was not accumulated: %+v", report.Cost)
+	}
+	toolCalls := 0
+	for _, run := range runs {
+		toolCalls += len(run.ToolCalls)
+	}
+	if toolCalls == 0 {
+		t.Fatal("the stub run recorded no tool call, so the tool runtime was never exercised")
+	}
+	// Card E-2: every H5 run carries the product's own read, taken just before
+	// the question is asked, that the database's tables await confirmation.
+	for _, run := range runs {
+		if run.QuestionID != "H5" {
+			continue
+		}
+		if run.DatabaseName == "" || !run.DatabaseAwaitingConfirmation {
+			t.Fatalf("H5 run %d does not record the database awaiting confirmation: %+v", run.Run, run)
+		}
+	}
+	if len(report.Questions) != len(set.Questions) {
+		t.Fatalf("report has %d question verdicts, want %d", len(report.Questions), len(set.Questions))
+	}
+	// Card D-19: Q7 is part of the full run and every one of its runs was asked
+	// through the product's MCP server, judged by the cross-transport rules.
+	q7Runs, q7Rules := 0, map[string]bool{}
+	for _, run := range runs {
+		if run.QuestionID != "Q7" {
+			continue
+		}
+		q7Runs++
+		if run.Via != "mcp" {
+			t.Fatalf("Q7 run %d via=%q, want the MCP surface", run.Run, run.Via)
+		}
+		for _, verdict := range run.Verdicts {
+			q7Rules[verdict.ID] = true
+		}
+	}
+	if q7Runs != 3 {
+		t.Fatalf("Q7 ran %d times, want 3", q7Runs)
+	}
+	for _, id := range []string{"q7_number", "q7_source", "q7_mcp"} {
+		if !q7Rules[id] {
+			t.Fatalf("Q7 runs do not carry the %s rule", id)
+		}
+	}
+	listed := false
+	for _, verdict := range report.Questions {
+		if verdict.QuestionID == "Q7" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatal("the full run report does not list Q7")
+	}
+	dir := t.TempDir()
+	markdownPath, jsonPath, err := questions.WriteReport(dir, report)
+	if err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	for _, path := range []string{markdownPath, jsonPath} {
+		info, statErr := os.Stat(path)
+		if statErr != nil || info.Size() == 0 {
+			t.Fatalf("report file %s is missing or empty: %v", path, statErr)
+		}
+	}
+}
+
+// TestQuestionSetH5KeepsTheRestOfTheSet pins result 2 of card E-2
+// deterministically: with the H5 database prepared, every question other than
+// H5 gets exactly the verdicts it got without it, because H5's database is
+// bound only when the run reaches H5. The stub model makes the two runs
+// comparable answer for answer.
+func TestQuestionSetH5KeepsTheRestOfTheSet(t *testing.T) {
+	ctx := context.Background()
+	set := loadE1aSet(t)
+	stub := questions.NewStubModel()
+	server := httptest.NewServer(stub)
+	defer server.Close()
+
+	runSet := func(t *testing.T, opts e1aEnvOptions) []questions.RunReport {
+		t.Helper()
+		adapter, err := modelgateway.NewLabAdapter(modelgateway.LabAdapterConfig{
+			SchemaVersion: modelgateway.LabAdapterSchemaVersion, Endpoint: server.URL, ModelID: "e1a-stub",
+			MaxOutputTokens: 4096, InsecureLabMode: true, ThinkingMode: modelgateway.ThinkingModeDisabled,
+			ToolLoop: &modelgateway.ToolLoopProfile{
+				ID: "steps-2", MaxTurns: 2, MaxToolCalls: 2, MaxInputBytes: 262144,
+				MaxToolResultBytes: 65536, MaxOutputTokens: 4096, TimeoutSeconds: 120,
+			},
+		})
+		if err != nil {
+			t.Fatalf("stub adapter: %v", err)
+		}
+		defer adapter.Close()
+		env := buildE1aEnvironment(t, ctx, resetStage1Database(t), set, opts)
+		env.Questions.EnableGeneration(adapter, nil)
+		return e1aRunQuestionSet(t, ctx, env, func(questions.Question) string { return "" })
+	}
+
+	without := runSet(t, e1aEnvOptions{SourceIdentity: "pgdb-e2-keep-without"})
+	with := runSet(t, e1aEnvOptions{
+		SourceIdentity: "pgdb-e2-keep-with", H5Source: &set.Environment.UnconfirmedDatabase.Source,
+		H5SourceIdentity: "pgdb-e2-keep-with-h5",
+	})
+
+	key := func(run questions.RunReport) string { return fmt.Sprintf("%s/%d", run.QuestionID, run.Run) }
+	byKey := map[string]questions.RunReport{}
+	for _, run := range without {
+		byKey[key(run)] = run
+	}
+	if len(byKey) != len(without) || len(with) != len(without) {
+		t.Fatalf("runs differ: %d without, %d with", len(without), len(with))
+	}
+	for _, run := range with {
+		before, ok := byKey[key(run)]
+		if !ok {
+			t.Fatalf("run %s is missing from the run without the H5 database", key(run))
+		}
+		if run.QuestionID == "H5" {
+			continue
+		}
+		if run.Passed != before.Passed {
+			t.Fatalf("%s green/red changed from %t to %t when H5 was added", key(run), before.Passed, run.Passed)
+		}
+		if len(run.Verdicts) != len(before.Verdicts) {
+			t.Fatalf("%s verdict count changed from %d to %d", key(run), len(before.Verdicts), len(run.Verdicts))
+		}
+		for index, verdict := range run.Verdicts {
+			if verdict.ID != before.Verdicts[index].ID || verdict.Passed != before.Verdicts[index].Passed {
+				t.Fatalf("%s rule %s changed from %+v to %+v", key(run), verdict.ID, before.Verdicts[index], verdict)
+			}
+		}
+	}
+}
+
+// TestQuestionSetRealModel is the card's one command. It requires the DeepSeek
+// key file and Docker; it is skipped, never silently passed, without the key.
+func TestQuestionSetRealModel(t *testing.T) {
+	keyFile := os.Getenv("KNOWVAULT_QUESTION_SET_API_KEY_FILE")
+	if keyFile == "" {
+		t.Skip("set KNOWVAULT_QUESTION_SET_API_KEY_FILE to the DeepSeek key file to run the real question set")
+	}
+	key, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("read DeepSeek key file: %v", err)
+	}
+	apiKey := string(trimSpaceBytes(key))
+	if apiKey == "" {
+		t.Fatal("the DeepSeek key file is empty")
+	}
+
+	ctx := context.Background()
+	set := loadE1aSet(t)
+	reportDir := os.Getenv("KNOWVAULT_QUESTION_SET_REPORT_DIR")
+	if reportDir == "" {
+		reportDir = filepath.Join(repositoryRoot(t), "tests", "e2e", "questions", "baseline")
+	}
+
+	// The card's two containers. The harness owns and removes both.
+	productURL := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable",
+		set.Environment.ProductPort, set.Environment.ProductDatabase)
+	t.Setenv("KNOWVAULT_TEST_POSTGRES_URL", productURL)
+	e1aEnsureContainer(t, ctx, set.Environment.ProductContainer, set.Environment.ProductPort, set.Environment.ProductDatabase)
+	e1aEnsureContainer(t, ctx, set.Environment.SourceContainer, set.Environment.SourcePort, set.Environment.SourceDatabase)
+
+	// Card E-2: the database H5 asks about. Its synthetic data is seeded, but
+	// its table confirmation is never minted, so the product must answer that
+	// it cannot be read yet. The harness owns and removes this container and
+	// its named volume too; card E-3 makes both per-instance.
+	h5 := set.Environment.UnconfirmedDatabase
+	e1aEnsureContainerWithVolume(t, ctx, h5.Container, h5.Port, h5.Database, h5.Volume)
+	h5AdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
+		h5.AdminUser, h5.AdminPass, h5.Port, h5.Database)
+	h5Admin := e1aOpenSourceAdmin(t, ctx, h5AdminDSN)
+	e1aSeedSourceDatabase(t, ctx, h5Admin, h5.SQL)
+	h5Identity := e1aSourceIdentity(t, ctx, h5AdminDSN)
+
+	sourceAdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
+		set.Environment.SourceAdminUser, set.Environment.SourceAdminPass, set.Environment.SourcePort, set.Environment.SourceDatabase)
+	sourceAdmin := e1aOpenSourceAdmin(t, ctx, sourceAdminDSN)
+	e1aSeedSourceDatabase(t, ctx, sourceAdmin, set.Environment.SourceSQL)
+
+	certDir := t.TempDir()
+	roots := e1aGenerateSourceCerts(t, certDir)
+	e1aEnableSourceTLS(t, ctx, set.Environment.SourceContainer, set.Environment.SourcePort, set.Environment.SourceDatabase, certDir)
+
+	queryDSNFor := func(source questions.SourceSpec) string {
+		return fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=verify-full",
+			source.QueryRole, source.QueryPassword, set.Environment.SourcePort, set.Environment.SourceDatabase)
+	}
+	contractSource := set.Environment.Sources[0]
+	probeDSN := queryDSNFor(contractSource) + "&sslrootcert=" + filepath.Join(certDir, "ca.crt")
+	identity := e1aSourceIdentity(t, ctx, probeDSN)
+
+	credentials := map[string]string{}
+	for _, source := range set.Environment.Sources {
+		credentials[source.ID] = queryDSNFor(source)
+	}
+	sqlExecutor := &e1aSourceSQL{credentials: map[string]string{}, roots: roots}
+	contractChecksum := e1aContractChecksumProbe(t, ctx, sourceAdminDSN)
+
+	admin := resetStage1Database(t)
+	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
+		SourceIdentity: identity, Credentials: credentials, Roots: roots, SourceSQL: sqlExecutor,
+		ContractChecksum: contractChecksum, WireHTTPQuestions: true,
+		H5Source: &h5.Source, H5SourceIdentity: h5Identity,
+	})
+
+	registry, err := e1aModelRegistry(set, apiKey)
+	if err != nil {
+		t.Fatalf("model profile registry: %v", err)
+	}
+	defer registry.Close()
+	env.Questions.EnableGeneration(registry.Default(), nil)
+	env.Questions.EnableGenerationProfiles(registry)
+
+	started := time.Now()
+	runs := e1aRunQuestionSet(t, ctx, env, e1aQuestionProfile)
+	report := questions.NewReport(set, "real", "tests/e2e/questions/run-question-set.sh", runs, started)
+	markdownPath, jsonPath, err := questions.WriteReport(reportDir, report)
+	if err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+	fmt.Printf("E1A REPORT %s\nE1A REPORT %s\n", markdownPath, jsonPath)
+	fmt.Printf("E1A TOTAL seconds=%.2f input_tokens=%d output_tokens=%d cost=%.6f %s\n",
+		report.TotalSeconds, report.InputTokens, report.OutputTokens, report.Cost.Total, report.Cost.Currency)
+	if report.Failed {
+		failed := []string{}
+		for _, question := range report.Questions {
+			if !question.Passed {
+				failed = append(failed, question.QuestionID)
+			}
+		}
+		t.Fatalf("question set failed: %v (see %s)", failed, markdownPath)
+	}
+}
+
+// e1aModelRegistry mounts one profile per distinct step budget, all pointing at
+// the real DeepSeek endpoint.
+func e1aModelRegistry(set *questions.Set, apiKey string) (*modelgateway.ProfileRegistry, error) {
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		return nil, fmt.Errorf("system certificate pool: %w", err)
+	}
+	limits := map[int]bool{}
+	for _, question := range set.Questions {
+		limit := question.MaxSteps
+		if limit < 2 {
+			limit = 2
+		}
+		limits[limit] = true
+	}
+	ordered := []int{}
+	for limit := range limits {
+		ordered = append(ordered, limit)
+	}
+	sortInts(ordered)
+	configs := make([]modelgateway.ProfileConfig, 0, len(ordered))
+	for _, limit := range ordered {
+		// The mounted budget is the question's own step limit plus the
+		// product's finalization reserve (toolLoopResearchCallLimit), so the
+		// model may spend exactly `limit` research calls and the judge, not the
+		// profile ceiling, decides whether the answer exceeded the limit.
+		budget := limit + 3
+		timeout := limit * 60
+		if timeout < 60 {
+			timeout = 60
+		}
+		if timeout > 240 {
+			timeout = 240
+		}
+		configs = append(configs, modelgateway.ProfileConfig{
+			ID:    fmt.Sprintf("steps-%d", limit),
+			Label: fmt.Sprintf("DeepSeek flash, up to %d steps", limit),
+			Config: modelgateway.LabAdapterConfig{
+				SchemaVersion: modelgateway.LabAdapterSchemaVersion,
+				Endpoint:      set.Model.Endpoint, ModelID: set.Model.ModelID,
+				APIKey: apiKey, MaxOutputTokens: 16384, InsecureLabMode: true,
+				ThinkingMode: modelgateway.ThinkingModeDisabled, TrustRoots: pool,
+				ExternalRuntimeWorkspaceIDs: []string{set.Environment.WorkspaceID},
+				ToolLoop: &modelgateway.ToolLoopProfile{
+					ID: fmt.Sprintf("steps-%d", limit), MaxTurns: budget, MaxToolCalls: budget,
+					MaxInputBytes: 262144, MaxToolResultBytes: 65536,
+					MaxOutputTokens: 16384, TimeoutSeconds: timeout,
+				},
+			},
+		})
+	}
+	return modelgateway.NewProfileRegistry("steps-2", configs)
+}
+
+// e1aContractChecksumProbe returns a row-count and content checksum of the
+// synthetic contract table, so H4 can prove a delete request changed nothing.
+func e1aContractChecksumProbe(t *testing.T, ctx context.Context, dsn string) func(context.Context) (string, error) {
+	t.Helper()
+	return func(checksumCtx context.Context) (string, error) {
+		connection, err := pgx.Connect(checksumCtx, dsn)
+		if err != nil {
+			return "", err
+		}
+		defer connection.Close(checksumCtx)
+		var count int64
+		var digest string
+		if err := connection.QueryRow(checksumCtx, `
+			SELECT count(*), coalesce(md5(string_agg(number || '|' || status || '|' || amount::text, ',' ORDER BY id)), '')
+			FROM public.contract`).Scan(&count, &digest); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%d:%s", count, digest), nil
+	}
+}
+
+func trimSpaceBytes(raw []byte) []byte {
+	start, end := 0, len(raw)
+	for start < end && (raw[start] == ' ' || raw[start] == '\n' || raw[start] == '\r' || raw[start] == '\t') {
+		start++
+	}
+	for end > start && (raw[end-1] == ' ' || raw[end-1] == '\n' || raw[end-1] == '\r' || raw[end-1] == '\t') {
+		end--
+	}
+	return raw[start:end]
+}
+
+func sortInts(values []int) {
+	for i := 1; i < len(values); i++ {
+		for j := i; j > 0 && values[j] < values[j-1]; j-- {
+			values[j], values[j-1] = values[j-1], values[j]
+		}
+	}
+}

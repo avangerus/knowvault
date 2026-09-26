@@ -86,6 +86,7 @@ func writeSearchProfileError(writer http.ResponseWriter, err error, requestID st
 		// OWNER of the workspace learns nothing about whether it exists.
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
 	default:
+		setServerFailureCause(writer, "search profile service", string(searchprofile.CodeOf(err)))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }

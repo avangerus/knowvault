@@ -67,7 +67,10 @@ func TestMetadataRejectsUnboundedOrNullViewCollections(t *testing.T) {
 		t.Fatal("null view collection was accepted")
 	}
 	base.Views = []postgresqlquery.ViewDiscovery{}
-	if base.Validate(65) {
+	if !base.Validate(1024) {
+		t.Fatal("validator rejected the durable storage max view bound")
+	}
+	if base.Validate(1025) {
 		t.Fatal("validator accepted a max view bound wider than durable storage")
 	}
 }

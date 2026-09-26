@@ -229,6 +229,7 @@ func handleGovernedAskError(writer http.ResponseWriter, err error, requestID str
 	case governedask.CodeGenerationFailed, governedask.CodeExecutionFailed:
 		writeError(writer, http.StatusUnprocessableEntity, "GOVERNED_QUERY_FAILED", requestID)
 	default:
+		setServerFailureCause(writer, "governed ask service", string(governedask.CodeOf(err)))
 		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
 	}
 }

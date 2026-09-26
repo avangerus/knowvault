@@ -34,6 +34,8 @@ func TestWorkspaceToolRESTAndMCPResolveSameRegistryEntryAndKind(t *testing.T) {
 		{mcpName: "knowvault_read", segment: "read", kind: workspacetools.KindRead, route: endpointWorkspaceToolRead},
 		{mcpName: "knowvault_sources", segment: "sources", kind: workspacetools.KindSources, route: endpointWorkspaceToolSources},
 		{mcpName: "knowvault_refresh", segment: "refresh", kind: workspacetools.KindRefresh, route: endpointWorkspaceToolRefresh},
+		{mcpName: "knowvault_source_schema", segment: "source-schema", kind: workspacetools.KindSourceSchema, route: endpointWorkspaceToolSourceSchema},
+		{mcpName: "knowvault_source_sql", segment: "source-sql", kind: workspacetools.KindSourceSQL, route: endpointWorkspaceToolSourceSQL},
 	}
 	for _, testCase := range cases {
 		byMCP, mcpOK := registry.Lookup(testCase.mcpName)

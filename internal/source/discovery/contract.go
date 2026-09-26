@@ -40,7 +40,7 @@ type Metadata struct {
 }
 
 func (metadata Metadata) validate(maxViews int) bool {
-	return maxViews >= 1 && maxViews <= 64 && metadata.SchemaVersion == MetadataSchemaVersion && validOpaque(metadata.ConnectionID) &&
+	return maxViews >= 1 && maxViews <= 1024 && metadata.SchemaVersion == MetadataSchemaVersion && validOpaque(metadata.ConnectionID) &&
 		metadata.ConnectionRevision >= 1 && metadata.DatabaseOID >= 1 &&
 		validCatalogText(metadata.DatabaseName, 128) && validSHA256(metadata.PrivilegeDigest) &&
 		metadata.Views != nil && len(metadata.Views) <= maxViews
@@ -91,7 +91,7 @@ func resultHash(input resultHashInput) (string, error) {
 		input.ConnectionRevision < 1 || !validSHA256(input.TrustProfileHash) || input.SecurityEpoch < 1 ||
 		!validSHA256(input.DatabaseIdentityHash) || !validSHA256(input.PrivilegeDigest) ||
 		(input.Status != resultSucceeded && input.Status != resultNeedsReview) ||
-		input.ViewCount < 0 || input.ViewCount > 64 || input.PreparedViewCount < 0 ||
+		input.ViewCount < 0 || input.ViewCount > 1024 || input.PreparedViewCount < 0 ||
 		input.NeedsViewCount < 0 || input.PreparedViewCount+input.NeedsViewCount != input.ViewCount ||
 		(input.Status == resultSucceeded && input.NeedsViewCount != 0) || !validSHA256(input.MetadataPlaintextHash) {
 		return "", errMetadataInvalid

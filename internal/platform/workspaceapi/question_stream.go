@@ -59,12 +59,20 @@ func (stream *questionEventStream) action(event question.ActionEvent) error {
 		return errors.New("invalid question action outcome")
 	}
 	// Defense in depth: question.ActionTextMaxRunes is already enforced where
-	// Request/Detail are computed, but the transport re-checks its own wire
-	// bound rather than trusting the caller.
-	if utf8.RuneCountInString(event.Request) > question.ActionTextMaxRunes || utf8.RuneCountInString(event.Detail) > question.ActionTextMaxRunes {
-		return errors.New("question action text exceeds the disclosed bound")
+	// Request/Detail are computed, but the transport re-applies its own wire
+	// bound rather than trusting the caller. It clamps instead of failing: an
+	// error here cancels the whole question, which an over-long step label
+	// must never do.
+	request := clampActionText(event.Request)
+	detail := clampActionText(event.Detail)
+	return stream.write(questionStreamFrame{Type: "action", Sequence: event.Sequence, Phase: phase, Label: label, Request: request, Outcome: outcome, DurationMS: event.DurationMS, Detail: detail}, false)
+}
+
+func clampActionText(value string) string {
+	if utf8.RuneCountInString(value) <= question.ActionTextMaxRunes {
+		return value
 	}
-	return stream.write(questionStreamFrame{Type: "action", Sequence: event.Sequence, Phase: phase, Label: label, Request: event.Request, Outcome: outcome, DurationMS: event.DurationMS, Detail: event.Detail}, false)
+	return string([]rune(value)[:question.ActionTextMaxRunes-1]) + "…"
 }
 
 func (stream *questionEventStream) result(run question.Run) error {

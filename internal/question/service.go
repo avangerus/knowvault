@@ -44,6 +44,7 @@ import (
 	"knowvault.local/verified-workspace/internal/source/evidence"
 	"knowvault.local/verified-workspace/internal/source/ids"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacecontext"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -305,6 +306,12 @@ const (
 	// persistAmbiguousStructuredSourceRefusal for the answer text, which
 	// names every candidate source (this code alone never does).
 	UncertaintyAmbiguousStructuredSource = "AMBIGUOUS_STRUCTURED_SOURCE"
+	// UncertaintyUnverifiedCitations is card D-5's run-level record that some
+	// of the model's claims could not be verified against their sources. The
+	// verified claims are still shown and the run still completes; this signal
+	// is what makes that completion honest instead of silent. It carries only
+	// the Evidence IDs of the citations that did verify, never source text.
+	UncertaintyUnverifiedCitations = "UNVERIFIED_CITATIONS"
 )
 
 const (
@@ -544,6 +551,13 @@ type Service struct {
 	now            func() time.Time
 	newID          func(string) (string, error)
 
+	// runOwner is this process instance's identity on every Question Run it
+	// answers (000121). It is minted once per Service, so several replicas
+	// sharing one database can tell each other's live runs apart, and it is
+	// paired with a heartbeat the run keeps refreshing until it is terminal
+	// (interruption.go). It is never caller-supplied.
+	runOwner string
+
 	// lookupIdempotencyFn and previousTurnQuestionFn are the two governed read
 	// steps of Create. They are nil in production (where the real methods run)
 	// and exist so the protected-independent unit tests can drive Create itself
@@ -600,6 +614,14 @@ type Service struct {
 	verifier           *modelgateway.Verifier
 	generationProfiles *modelgateway.ProfileRegistry
 
+	// ADR-0099 amendment 1: the separate recognition step (answer_kind.go).
+	// answerKindRecognition is off until composition calls
+	// EnableAnswerKindRecognition; while it is off no extra model call is made
+	// and no kind is recorded. kindRecogniser, when set, replaces the
+	// model-backed step (tests, or a composition that mounts its own).
+	answerKindRecognition bool
+	kindRecogniser        KindRecogniser
+
 	// R2 Outcome 2: the server-validated QueryIntent gate. All three are nil
 	// until composition calls EnableQueryIntents (intent_gate.go). Production
 	// composition mounts a real, access-re-checked MetricDefinition catalog
@@ -628,6 +650,64 @@ type Service struct {
 	analyticScalarExecutor  *analyticsource.ScalarExecutor
 	liveDataAsk             GovernedAsk
 	trustedMetricComparison TrustedMetricComparison
+
+	// workspaceContext is the optional ADR-0098 / S2-MODEL-CONTEXT-DESIGN.md
+	// reader the tool loop pins once per run (tool_loop.go,
+	// resolveToolLoopWorkspaceContext). It stays nil until composition calls
+	// EnableWorkspaceContext with the store-backed reader (card A); a nil
+	// value reproduces today's tool loop verbatim -- no WORKSPACE_CONTEXT
+	// block, no added instruction sentence, no ToolLoopRecord.WorkspaceContext.
+	workspaceContext workspacecontext.Reader
+
+	// workspaceContextObserver is the optional S2 card E deterministic
+	// proposer, notified once per completed tool-loop run that pinned a
+	// workspace context (observeWorkspaceContextRun, tool_loop.go). It stays
+	// nil until composition calls EnableWorkspaceContextObserver with the
+	// proposer-backed workspacecontext.RunObserver; a nil value reproduces
+	// today's tool loop verbatim -- no proposal is ever derived.
+	workspaceContextObserver workspacecontext.RunObserver
+}
+
+// EnableWorkspaceContext installs the optional workspace model context
+// reader once (ADR-0098, S2-MODEL-CONTEXT-DESIGN.md "Chat"). Composition
+// calls it only after the store-backed workspacecontext.Reader (card A) is
+// mounted; production wiring lives in composition/runtime.go, not here. A
+// nil Service, a nil reader, a typed-nil reader value, or a second call
+// after a reader is already installed is refused and leaves the slot
+// untouched, so resolveToolLoopWorkspaceContext always pins from the same
+// Reader for the lifetime of the Service.
+func (service *Service) EnableWorkspaceContext(reader workspacecontext.Reader) error {
+	if service == nil || reader == nil || service.workspaceContext != nil {
+		return &Error{code: CodeInvalid}
+	}
+	value := reflect.ValueOf(reader)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return &Error{code: CodeInvalid}
+	}
+	service.workspaceContext = reader
+	return nil
+}
+
+// EnableWorkspaceContextObserver installs the optional deterministic
+// proposer (S2 card E, S2-MODEL-CONTEXT-DESIGN.md "Proposer") once.
+// Composition calls it only after the proposer-backed
+// workspacecontext.RunObserver is mounted; production wiring lives in
+// composition/runtime.go, not here. A nil Service, a nil observer, a
+// typed-nil observer value, or a second call after an observer is already
+// installed is refused and leaves the slot untouched. Per the design, "the
+// proposer runs after a completed run has been persisted" and "errors only
+// reach a metric": observeWorkspaceContextRun (tool_loop.go) never blocks or
+// fails the run it reports on.
+func (service *Service) EnableWorkspaceContextObserver(observer workspacecontext.RunObserver) error {
+	if service == nil || observer == nil || service.workspaceContextObserver != nil {
+		return &Error{code: CodeInvalid}
+	}
+	value := reflect.ValueOf(observer)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return &Error{code: CodeInvalid}
+	}
+	service.workspaceContextObserver = observer
+	return nil
 }
 
 // EnableTrustedMetricComparison installs the optional approved comparison
@@ -701,7 +781,8 @@ func (service *Service) EnableGeneration(adapter *modelgateway.LabAdapter, verif
 }
 
 // New constructs the authority and activates only the seven Question Run and
-// citation owner branches installed by migration 000024.
+// citation owner branches installed by migration 000024, plus the answer
+// feedback comment branch installed by migration 000122.
 func New(db *database.Store, auditStore *audit.Store, codec *artifactcrypto.Codec, viewer *evidence.Viewer) (*Service, error) {
 	return NewWithRetrieval(db, auditStore, codec, viewer, nil)
 }
@@ -769,6 +850,7 @@ func NewWithRetrieval(db *database.Store, auditStore *audit.Store, codec *artifa
 		{artifactcrypto.CitationCitedExcerpt, "app.question_citation_bind_cited_excerpt", "app.question_citation_read_cited_excerpt", citationAuthorize},
 		{artifactcrypto.CitationAnchor, "app.question_citation_bind_anchor", "app.question_citation_read_anchor", citationAuthorize},
 		{artifactcrypto.CitationDeepLink, "app.question_citation_bind_deep_link", "app.question_citation_read_deep_link", citationAuthorize},
+		{artifactcrypto.QuestionFeedbackComment, "app.question_feedback_bind_comment", "app.question_feedback_read_comment", feedbackAuthorize},
 	}
 	bindings := make([]artifactrepository.Binding, 0, len(branches))
 	for _, branch := range branches {
@@ -786,8 +868,16 @@ func NewWithRetrieval(db *database.Store, auditStore *audit.Store, codec *artifa
 	if err != nil {
 		return nil, &Error{code: CodeUnavailable, cause: err}
 	}
+	// The per-process owner identity every run this Service answers records.
+	// Its only use is liveness (000121): a run whose heartbeat stopped proves
+	// its owner is gone, and a live owner's run is never reconciled.
+	runOwner, err := ids.New("proc")
+	if err != nil {
+		return nil, &Error{code: CodeUnavailable, cause: err}
+	}
 	return &Service{db: db, audit: auditStore, admission: auditStore, codec: codec, evidence: viewer, retrieval: executor,
-		retrievalStore: retrievalStore, planner: planner.New(), artifacts: repository, now: time.Now, newID: ids.New}, nil
+		retrievalStore: retrievalStore, planner: planner.New(), artifacts: repository, now: time.Now, newID: ids.New,
+		runOwner: runOwner}, nil
 }
 
 // Create starts and completes one synchronous question run. The initial row
@@ -874,6 +964,13 @@ func (service *Service) Create(ctx context.Context, access database.AccessContex
 	} else if err := service.emitAdmission(runCtx, access, request.WorkspaceID, runID); err != nil {
 		return Run{}, &Error{code: CodeUnavailable, cause: err}
 	}
+	// 000121: from here on this process owns the run it is about to write (and
+	// any run a delegated path writes), and it proves that by refreshing the
+	// run's heartbeat until this Create returns. A crash stops the heartbeat,
+	// which is exactly the proof the startup/periodic reconciler needs to
+	// finish the run; a slow model call keeps it beating and is never touched.
+	stopHeartbeat := service.startRunHeartbeat(runCtx, access, runID, request.WorkspaceID)
+	defer stopHeartbeat()
 	if requestedMode == AnswerModeToolLoop {
 		return service.createToolLoopRun(runCtx, access, request, questionText, runID, conversationID, conversationTurnID, selectedGeneration)
 	}
@@ -1584,6 +1681,11 @@ func (service *Service) readStoredRun(ctx context.Context, access database.Acces
 			result.Question = string(plain)
 			clear(plain)
 		}
+		// Card D-5 requirement 4: the uncertainty and conflict messages follow
+		// the run's own question language, so they are attached only now, after
+		// the question text above was decrypted.
+		result.Uncertainties = attachUncertaintyMessagesForLanguage(result.Uncertainties, result.Question)
+		result.Conflicts = attachConflictMessagesForLanguage(result.Conflicts, result.Question)
 		if answerArtifact.Valid {
 			owner, envelope, fetchErr := service.artifacts.Fetch(txCtx, tx, access, artifactcrypto.AnswerMarkdown, runID)
 			if fetchErr != nil {
@@ -1917,7 +2019,10 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 				GroundingStatus: GroundingUnconfirmed,
 				PlanningStatus:  planningStatus, PlanningOperation: planningOperation,
 				PlanningConfidence: planningConfidence, PlanHash: planHash.String, Clarification: planningClarification.String,
-				Uncertainties: attachUncertaintyMessages(uncertainties), Conflicts: attachConflictMessages(conflicts),
+				// The messages are attached below, once this run's question text
+				// has been decrypted, so they follow the question's own language
+				// (card D-5 requirement 4). Only the closed codes are set here.
+				Uncertainties: uncertainties, Conflicts: conflicts,
 			}
 			refsByRun[runID] = refs
 			order = append(order, runID)
@@ -1994,6 +2099,12 @@ func (service *Service) readStoredRunBatch(ctx context.Context, access database.
 				run.Question = string(plain)
 				clear(plain)
 			}
+			// Card D-5 requirement 4: the uncertainty and conflict messages
+			// follow this run's own question language, so they are attached
+			// after the question text is decrypted -- and only for a run that
+			// survived the readability gate above.
+			run.Uncertainties = attachUncertaintyMessagesForLanguage(run.Uncertainties, run.Question)
+			run.Conflicts = attachConflictMessagesForLanguage(run.Conflicts, run.Question)
 			if refs.answerArtifact.Valid {
 				plain, fetchErr := fetchAndOpenArtifact(txCtx, tx, service, access, artifactcrypto.AnswerMarkdown, runID)
 				if fetchErr != nil {
@@ -2508,12 +2619,13 @@ func (service *Service) start(ctx context.Context, access database.AccessContext
 				conversation_id, conversation_turn_id,
 				question_hash, answer_mode, verification_method, result_status,
 				corpus_status, workspace_scope_hash, policy_revision,
-				planner_status, planner_operation, planner_confidence, planner_plan_hash, planner_clarification
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'RUNNING','COMPLETE',$11,$12,$13,$14,$15,$16,$17)
+				planner_status, planner_operation, planner_confidence, planner_plan_hash, planner_clarification,
+				owner_id, owner_heartbeat_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'RUNNING','COMPLETE',$11,$12,$13,$14,$15,$16,$17,$18,clock_timestamp())
 			RETURNING started_at
 		`, access.OrganizationID, runID, request.WorkspaceID, workspaceRevision, access.PrincipalID,
 			conversationID, conversationTurnID, requestHash, mode, verify, scopeHash, policyRevisionID, planned.Status,
-			planned.Operation, planned.Confidence, planned.PlanHash, planned.Clarification).Scan(&startedAt); err != nil {
+			planned.Operation, planned.Confidence, planned.PlanHash, planned.Clarification, service.runOwner).Scan(&startedAt); err != nil {
 			return err
 		}
 		if _, err := service.retrievalStore.CaptureAccessProvenance(txCtx, tx, access, runID, startedAt); err != nil {
@@ -2950,7 +3062,7 @@ func (service *Service) complete(ctx context.Context, access database.AccessCont
 		// the answer there meant a workspace stopped answering at all the
 		// moment a second, larger source was connected. corpus_status=PARTIAL
 		// and the CORPUS_PARTIAL uncertainty below carry that fact intact.
-		answer = "Insufficient evidence in the connected sources."
+		answer = insufficientEvidenceAnswer(questionLanguage(questionText))
 		citations = nil
 	}
 	// R1: bind each disclosed citation to an exact span of its authorized
@@ -3823,6 +3935,13 @@ type toolLoopConversationTurn struct {
 	// from scratch. An address alone cannot become a citation: it must still
 	// be read again in this run before it can support a new claim.
 	Sources []string
+	// Queries are the SQL statements the prior answer ran successfully
+	// through knowvault_source_sql, in call order. They carry the prior
+	// answer's working definitions (which relations, which filter) so a
+	// follow-up can refine the same selection instead of re-deriving it. Like
+	// Sources they are context only: a statement must be run again in this
+	// run before its result can support a claim.
+	Queries []string
 }
 
 // recentToolLoopConversationTurns loads the most recent readable turns before
@@ -3911,7 +4030,7 @@ func toolLoopConversationTurnsFromBatch(runIDs []string, runs map[string]Run) []
 		if answer == "" {
 			answer = run.Clarification
 		}
-		turns = append(turns, toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)})
+		turns = append(turns, toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations), Queries: toolLoopConversationQueries(run.ToolLoop)})
 	}
 	return turns
 }
@@ -3937,6 +4056,52 @@ func toolLoopConversationSources(citations []Citation) []string {
 		sources = append(sources, citation.Address)
 	}
 	return sources
+}
+
+// toolLoopConversationQueryLimit bounds how many prior statements, and
+// toolLoopConversationQueryByteLimit how long each, one prior turn contributes.
+// The per-run SQL budget is three, so the count bound never drops a statement
+// from a well-formed run.
+const (
+	toolLoopConversationQueryLimit     = 3
+	toolLoopConversationQueryByteLimit = 1024
+)
+
+// toolLoopConversationQueries returns the distinct SQL statements the prior
+// run executed successfully through knowvault_source_sql. A refused statement
+// is left out: it defined nothing the prior answer relied on. A statement
+// longer than toolLoopConversationQueryByteLimit is left out whole rather than
+// cut, so the model never sees a truncated, different selection.
+func toolLoopConversationQueries(record *ToolLoopRecord) []string {
+	if record == nil {
+		return nil
+	}
+	var queries []string
+	seen := map[string]struct{}{}
+	for _, call := range record.Calls {
+		if call.Name != sourceSQLToolName || call.Outcome != "SUCCEEDED" || call.Result.IsError {
+			continue
+		}
+		var arguments struct {
+			SQL string `json:"sql"`
+		}
+		if jsonv2.Unmarshal(call.Arguments, &arguments) != nil {
+			continue
+		}
+		statement := strings.TrimSpace(arguments.SQL)
+		if statement == "" || len(statement) > toolLoopConversationQueryByteLimit {
+			continue
+		}
+		if _, exists := seen[statement]; exists {
+			continue
+		}
+		seen[statement] = struct{}{}
+		queries = append(queries, statement)
+		if len(queries) == toolLoopConversationQueryLimit {
+			break
+		}
+	}
+	return queries
 }
 
 var errPreviousTurnUnreadable = errors.New("question: previous turn not currently readable")
@@ -5134,12 +5299,13 @@ func renderAnswerPlanAtWithReceiptContext(ctx context.Context, workspaceID, ques
 	}
 	citations := make([]Citation, 0, len(selected))
 	var toolReceipt *analytic.Receipt
+	language := questionLanguage(questionText)
 	if planned.Operation == planner.Aggregate {
 		// Every aggregate, including an ungrouped SUM, goes through the same
 		// typed Evidence adapter. There is intentionally no legacy regex
 		// shortcut: the adapter emits a sealed receipt and the caller persists
 		// the exact generic plan/tool provenance for every analytic result.
-		if aggregate, ok := renderAnalyticAggregateContext(ctx, workspaceID, planned, selected, &citations, &toolReceipt); ok {
+		if aggregate, ok := renderAnalyticAggregateContext(ctx, workspaceID, planned, selected, &citations, &toolReceipt, language); ok {
 			return aggregate, citations, toolReceipt
 		}
 		// A ready aggregate is a typed analytic request, not permission to fall
@@ -5223,7 +5389,7 @@ func candidatesHaveNumericEvidence(candidates []candidate) bool {
 	return false
 }
 
-func renderNumericAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, now time.Time) (string, bool) {
+func renderNumericAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, now time.Time, language string) (string, bool) {
 	if planned.Validate() != nil || planned.Status != planner.Ready || planned.Operation != planner.Aggregate || len(selected) == 0 || len(selected) > maxCandidates {
 		return "", false
 	}
@@ -5244,7 +5410,7 @@ func renderNumericAggregate(workspaceID string, planned planner.Plan, selected [
 		// non-sum operations. If the row/column contract cannot be resolved,
 		// return false so renderAnswer emits bounded evidence snippets instead
 		// of silently collapsing the request to a total.
-		return renderAnalyticAggregate(workspaceID, planned, selected, citations, receiptOut)
+		return renderAnalyticAggregate(workspaceID, planned, selected, citations, receiptOut, language)
 	}
 	total := new(big.Rat)
 	maxScale := 0
@@ -5355,11 +5521,11 @@ func renderNumericAggregate(workspaceID string, planned planner.Plan, selected [
 // adapter.  The adapter receives only post-authorized cells; it cannot see SQL
 // text, choose evidence, or manufacture a citation.  Citation material is
 // assembled locally and committed only after the complete result validates.
-func renderAnalyticAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt) (string, bool) {
-	return renderAnalyticAggregateContext(context.Background(), workspaceID, planned, selected, citations, receiptOut)
+func renderAnalyticAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, language string) (string, bool) {
+	return renderAnalyticAggregateContext(context.Background(), workspaceID, planned, selected, citations, receiptOut, language)
 }
 
-func renderAnalyticAggregateContext(ctx context.Context, workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt) (string, bool) {
+func renderAnalyticAggregateContext(ctx context.Context, workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, receiptOut **analytic.Receipt, language string) (string, bool) {
 	if ctx == nil || ctx.Err() != nil {
 		return "", false
 	}
@@ -5447,7 +5613,7 @@ func renderAnalyticAggregateContext(ctx context.Context, workspaceID string, pla
 			answer.WriteString("\n")
 		}
 		if len(result.GroupBy) == 0 {
-			answer.WriteString(aggregateLabel(result.Function) + ": " + bucket.Value)
+			answer.WriteString(aggregateLabel(result.Function, language) + ": " + bucket.Value)
 		} else {
 			answer.WriteString(fmt.Sprintf("%d. %s: %s", index+1, bucket.Key, bucket.Value))
 		}
@@ -5494,7 +5660,7 @@ type aggregateBucket struct {
 	Numbers     []candidate
 }
 
-func renderStructuredAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation) (string, bool) {
+func renderStructuredAggregate(workspaceID string, planned planner.Plan, selected []candidate, citations *[]Citation, language string) (string, bool) {
 	spec := planned.Aggregate
 	if spec == nil || len(selected) == 0 {
 		return "", false
@@ -5674,7 +5840,7 @@ func renderStructuredAggregate(workspaceID string, planned planner.Plan, selecte
 		bucket := buckets[orderedBuckets[index]]
 		value := bucket.Value.FloatString(bucket.Scale)
 		if len(groupColumns) == 0 {
-			answer.WriteString(aggregateLabel(spec.Function) + ": " + value)
+			answer.WriteString(aggregateLabel(spec.Function, language) + ": " + value)
 		} else {
 			answer.WriteString(fmt.Sprintf("%d. %s: %s", index+1, bucket.Key, value))
 		}
@@ -5797,18 +5963,18 @@ func temporalColumn(column string) bool {
 		strings.HasSuffix(lower, "_at") || strings.HasSuffix(lower, "_on")
 }
 
-func aggregateLabel(function string) string {
+func aggregateLabel(function string, language string) string {
 	switch function {
 	case "COUNT":
-		return "Count"
+		return localizedText(language, "\u041a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e", "Count")
 	case "AVG":
-		return "Average"
+		return localizedText(language, "\u0421\u0440\u0435\u0434\u043d\u0435\u0435", "Average")
 	case "MIN":
-		return "Minimum"
+		return localizedText(language, "\u041c\u0438\u043d\u0438\u043c\u0443\u043c", "Minimum")
 	case "MAX":
-		return "Maximum"
+		return localizedText(language, "\u041c\u0430\u043a\u0441\u0438\u043c\u0443\u043c", "Maximum")
 	default:
-		return "Total"
+		return localizedText(language, "\u0418\u0442\u043e\u0433\u043e", "Total")
 	}
 }
 

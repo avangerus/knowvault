@@ -4,9 +4,19 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { BOUND_CLAIM_LABEL, citationGroundingText, KNOWLEDGE_TOOL_LABELS, NO_DATA_IN_WORKSPACE_LABEL, TOOL_CALLS_TITLE, UNBOUND_CLAIM_LABEL } from "./knowledge-labels";
 import { GovernedPresetPanel, type GovernedCatalogAvailability } from "./governed-presets";
+import { askLayoutClass, conversationSidebarStorage, readConversationsCollapsed, writeConversationsCollapsed } from "./conversation-sidebar";
 import { PendingAction, type PendingActionKind, type PendingActionState, type PendingActionStep } from "./pending-action";
 import { toolCallSummary } from "./tool-call-summary";
 import { observationForGeneration, readQuestionStream, type QuestionActionFrame, type QuestionActionLabel } from "./question-stream";
+import {
+  MODEL_CONTEXT_DESCRIPTION_MAX, MODEL_CONTEXT_GLOSSARY_TEXT_MAX, MODEL_CONTEXT_INSTRUCTIONS_MAX,
+  cloneModelContextDocument, decodeModelContext, decodeModelContextProposals, decodeModelContextVersions,
+  fieldErrorsFromServerFields, modelContextAcceptRequest, modelContextPath, modelContextProposalPath,
+  modelContextRestoreRequest, modelContextSaveRequest,
+  workspaceContextUsageLineFromToolLoop,
+  type ModelContext, type ModelContextDocument, type ModelContextProposal,
+  type ModelContextProposalEdits, type ModelContextVersion,
+} from "./model-context";
 
 // ---------------------------------------------------------------------------
 // Icons: inline SVG, one stroke weight, no icon font and no Unicode glyphs
@@ -125,12 +135,22 @@ function IconTable() {
     </svg>
   );
 }
+function IconSettings() {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18.01 5.99l-1.56 1.56M7.55 16.45l-1.56 1.56M18.01 18.01l-1.56-1.56M7.55 7.55 5.99 5.99" stroke="currentColor" strokeLinecap="round" strokeWidth="1.6" />
+    </svg>
+  );
+}
 
 // Exactly three top-level sections (decision 9, anti-SAP): Search is the
 // screen a person actually works in; Sources is the rare "connect data"
 // journey a data owner walks without IT; the audit journal stays within
 // Access as a secondary tab because "who did what" is a property of access.
-type Section = "search" | "sources" | "access";
+// S2 adds Settings beside them: the workspace's own model context, which the
+// same owner who manages sources curates.
+type Section = "search" | "sources" | "access" | "settings";
 
 export type EvidenceQuoteSelector = {
   start: number;
@@ -500,7 +520,7 @@ function metricDefinitionFilters(filters: string[] | undefined): string {
   return filters.join(", ");
 }
 
-type SourceStatus = {
+export type SourceStatus = {
   workspace_source_id: string;
   source_scope_id: string;
   source_scope_revision: number;
@@ -544,6 +564,16 @@ type SourceStatus = {
   // separation-of-duty check would then refuse). Gate the verify-trust
   // action on this field, never on the workspace-wide one.
   can_verify_connection_trust: boolean;
+  // ADR-0097's per-connection "SQL available" state: the connection revision
+  // carries a separate read-only query credential, so knowvault_source_sql can
+  // run for its enabled sources. False means "SQL not configured" and the tool
+  // answers SOURCE_SQL_NOT_CONFIGURED. It is a display fact, never a grant.
+  sql_available?: boolean;
+  // S3 card 4's registration mode of this table: true means "only for SQL
+  // queries (not indexed)". The Sources card renders it as "только SQL" and
+  // shows no sync freshness for the table. A missing field (an older server)
+  // reads as indexed, which is the previous behaviour.
+  query_only?: boolean;
 };
 
 // ADR-0087 §1-§2 operator-visible read: everything needed to build a
@@ -603,6 +633,21 @@ type JournalResponse = {
 
 type ListEnvelope = { workspaces: WorkspaceSummary[] };
 type SourcesEnvelope = { sources: SourceStatus[]; confirmation_context: ConfirmationContext };
+
+// Card D-1: one unfinished PostgreSQL connection the current workspace
+// started. state says where the wizard resumes: trust verification or catalog
+// discovery. It carries no address, credential or trust hash.
+export type SourceConnectionDraft = {
+  connection_id: string;
+  connection_revision: number;
+  connection_name: string;
+  source_type: string;
+  trust_status: "DRAFT" | "VERIFIED" | string;
+  state: "AWAITING_TRUST_VERIFICATION" | "READY_FOR_DISCOVERY" | string;
+  created_at: string;
+};
+
+export type SourceConnectionDraftEnvelope = { drafts: SourceConnectionDraft[] };
 
 type SourceRegisterResponse = {
   connection_id: string;
@@ -808,6 +853,9 @@ type QuestionRun = {
     model: string;
     stop_reason: string;
     all_claims_bound: boolean;
+    // S2: the workspace model context the run matched, strictly decoded by
+    // WorkspaceContextUsage rather than trusted inline.
+    workspace_context?: unknown;
     calls: Array<{
       id: string;
       name: string;
@@ -828,7 +876,7 @@ type QuestionRun = {
 // question) and a turn count from turns[] itself; conversationGet and
 // conversationArchive both answer with this object directly, with no
 // wrapper key.
-type ConversationTurn = {
+export type ConversationTurn = {
   turn_id: string;
   question_run_id: string;
   turn_index: number;
@@ -876,7 +924,7 @@ export function sidebarConversations(conversations: readonly ConversationSummary
 // ---------------------------------------------------------------------------
 
 type ApiOk<T> = { kind: "ok"; value: T; etag?: string };
-type ApiFailure = { kind: "failure"; status: number; code: string; requestId: string; clarification?: string };
+type ApiFailure = { kind: "failure"; status: number; code: string; requestId: string; clarification?: string; fields?: string[] };
 type ApiBroken = { kind: "broken"; status: number };
 type ApiResult<T> = ApiOk<T> | ApiFailure | ApiBroken;
 
@@ -928,13 +976,13 @@ async function apiPost<T>(path: string, body: unknown, idempotencyKey: string): 
     });
     notifySessionExpired(response);
     if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
-    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string } } | null;
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; clarification?: string; fields?: string[] } } | null;
     const code = responseBody?.error?.code;
     // R2 Outcome 2: a typed QueryIntent refusal carries an additive, optional
     // clarification. It is passed through verbatim and never synthesized: an
     // absent field stays undefined, so ClosedOrError falls back to the generic
     // code sentence exactly as before.
-    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", clarification: responseBody?.error?.clarification };
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", clarification: responseBody?.error?.clarification, fields: responseBody?.error?.fields };
     return { kind: "broken", status: response.status };
   } catch {
     return { kind: "broken", status: 0 };
@@ -1059,9 +1107,36 @@ async function apiAction<T>(path: string, idempotencyKey: string): Promise<ApiRe
     });
     notifySessionExpired(response);
     if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
-    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string } } | null;
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; fields?: string[] } } | null;
     const code = responseBody?.error?.code;
-    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "" };
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", fields: responseBody?.error?.fields };
+    return { kind: "broken", status: response.status };
+  } catch {
+    return { kind: "broken", status: 0 };
+  }
+}
+
+// Card D-1: a body-less DELETE that still carries an idempotency key (the same
+// envelope the other source actions use). The discard removes only this
+// workspace's draft pointer; it never deletes the immutable connection.
+async function apiDeleteAction<T>(path: string, idempotencyKey: string): Promise<ApiResult<T>> {
+  try {
+    const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
+    if (csrf.kind !== "ok") return csrf;
+    const response = await fetch(path, {
+      method: "DELETE",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Idempotency-Key": idempotencyKey,
+        "X-KnowVault-CSRF": csrf.value.csrf_token,
+      },
+    });
+    notifySessionExpired(response);
+    if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; fields?: string[] } } | null;
+    const code = responseBody?.error?.code;
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", fields: responseBody?.error?.fields };
     return { kind: "broken", status: response.status };
   } catch {
     return { kind: "broken", status: 0 };
@@ -1072,10 +1147,15 @@ async function apiMutation<T>(method: "POST" | "PUT" | "DELETE", path: string, b
   try {
     const csrf = await apiGet<{ csrf_token: string }>("/api/v1/session/csrf");
     if (csrf.kind !== "ok") return csrf;
+    // HTTP If-Match carries an entity-tag, so its value must be quoted. The
+    // workspace snapshot's ETag already is; a model-context content hash from
+    // the response body is not, and the server correctly refuses an unquoted
+    // tag (card U-1 found that this made every model-context save fail live).
+    const ifMatch = etag.startsWith("\"") && etag.endsWith("\"") ? etag : `"${etag}"`;
     const headers: Record<string, string> = {
       Accept: "application/json",
       "Idempotency-Key": idempotencyKey,
-      "If-Match": etag,
+      "If-Match": ifMatch,
       "X-KnowVault-CSRF": csrf.value.csrf_token,
     };
     const init: RequestInit = { method, cache: "no-store", headers };
@@ -1086,9 +1166,9 @@ async function apiMutation<T>(method: "POST" | "PUT" | "DELETE", path: string, b
     const response = await fetch(path, init);
     notifySessionExpired(response);
     if (response.ok) return { kind: "ok", value: (await response.json()) as T, etag: response.headers.get("ETag") ?? undefined };
-    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string } } | null;
+    const responseBody = (await response.json().catch(() => null)) as { error?: { code?: string; request_id?: string; fields?: string[] } } | null;
     const code = responseBody?.error?.code;
-    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "" };
+    if (code) return { kind: "failure", status: response.status, code, requestId: responseBody?.error?.request_id ?? "", fields: responseBody?.error?.fields };
     return { kind: "broken", status: response.status };
   } catch {
     return { kind: "broken", status: 0 };
@@ -1321,13 +1401,6 @@ function relativeTimeFromNow(value: string | null): string | null {
   if (hours < 24) return `${hours} h ago`;
   const days = Math.round(hours / 24);
   return `${days} d ago`;
-}
-
-const corpusStatusWarnings: Record<string, string> = {
-  PARTIAL: "This answer uses an incomplete dataset. Check the evidence and source status before relying on it.",
-};
-function corpusStatusWarning(status: string): string | null {
-  return corpusStatusWarnings[status] ?? null;
 }
 
 // FIX-2 #4: closed processing_mode vocabulary (question.ProcessingMode*).
@@ -1986,13 +2059,723 @@ function useWorkspaceJournal(
   return [revisionChanged ? idleJournalState : state, loadMore, reloadFirstPage];
 }
 
+// ---------------------------------------------------------------------------
+// S2 card D: Settings — the workspace model context. The view reads one
+// context document, edits it locally, and saves it with the current content
+// hash. Every response is decoded (never trusted as T) and every string is a
+// React text child, so a term containing markup is escaped, not executed.
+// ---------------------------------------------------------------------------
+
+type ModelContextTab = "description" | "instructions" | "glossary" | "sources" | "proposals" | "history";
+
+const modelContextTabLabels: Record<ModelContextTab, string> = {
+  description: "Description",
+  instructions: "Instructions",
+  glossary: "Glossary",
+  sources: "Sources",
+  proposals: "Proposals",
+  history: "History",
+};
+
+const modelContextProposalKindLabels: Record<string, string> = {
+  NEW_TERM: "New term",
+  SYNONYM: "Synonym",
+  DEFINITION_CORRECTION: "Definition correction",
+};
+
+const modelContextChangeKindLabels: Record<string, string> = {
+  EDIT: "Edit",
+  PROPOSAL_ACCEPTED: "Proposal accepted",
+  RESTORE: "Restore",
+};
+
+function modelContextProposalKindLabel(kind: string): string {
+  return modelContextProposalKindLabels[kind] ?? kind;
+}
+
+function modelContextChangeKindLabel(kind: string): string {
+  return modelContextChangeKindLabels[kind] ?? kind;
+}
+
+// A server field path may be indexed (document.glossary[0].term) or bare
+// (document.description); this matches the documented leaf either way and
+// never invents a message for a field the server did not name.
+function modelContextFieldError(errors: Record<string, string>, path: string): string | null {
+  if (errors[path]) return errors[path];
+  const key = Object.keys(errors).find((candidate) => candidate.endsWith(`.${path}`));
+  return key ? errors[key] : null;
+}
+
+function parseSynonymText(text: string): string[] {
+  return text.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+// Card W-2: description, instructions and glossary are each one free-text
+// field with its own save action. Nothing about a term's id, its synonyms-as-
+// chips or its data-location block is rendered here any more: a workspace
+// whose structured records predate the card shows them as the readable text
+// the server projects into the field (model-context.ts).
+function ModelContextPlainTextField({ id, label, value, maxLength, editable, error, onChange, onSave }: {
+  id: string;
+  label: string;
+  value: string;
+  maxLength: number;
+  editable: boolean;
+  error: string | null;
+  onChange: (next: string) => void;
+  onSave?: () => void;
+}) {
+  return (
+    <>
+      <label className="field" htmlFor={id}>
+        <span>{label}</span>
+        <textarea
+          disabled={!editable}
+          id={id}
+          maxLength={maxLength}
+          onChange={(event) => onChange(event.target.value)}
+          value={value}
+        />
+        <small>{value.length} / {maxLength} characters</small>
+        {error && <small className="field-error">{error}</small>}
+      </label>
+      {editable && onSave && (
+        <button className="primary-button" onClick={onSave} type="button">Save</button>
+      )}
+    </>
+  );
+}
+
+function ModelContextProposalCard({ proposal, editable, busy, editing, draft, onChangeDraft, onEdit, onCancelEdit, onAccept, onReject, conversationHref, onOpenConversation }: {
+  proposal: ModelContextProposal;
+  editable: boolean;
+  busy: boolean;
+  editing: boolean;
+  draft: { term: string; synonyms: string; definition: string } | null;
+  onChangeDraft: (next: { term: string; synonyms: string; definition: string }) => void;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onAccept: (edits?: ModelContextProposalEdits) => void;
+  onReject: () => void;
+  conversationHref: (conversationID: string) => string;
+  onOpenConversation?: (conversationID: string) => void;
+}) {
+  return (
+    <article className="model-context-proposal">
+      <header className="model-context-proposal-head">
+        <span className="badge badge-tell">{modelContextProposalKindLabel(proposal.kind)}</span>
+        <span className="state-chip muted">{proposal.occurrences} occurrence{proposal.occurrences === 1 ? "" : "s"}</span>
+      </header>
+      <dl className="model-context-proposal-fields">
+        <div><dt>Candidate term</dt><dd>{proposal.candidate_term}</dd></div>
+        {proposal.target_term !== undefined && proposal.target_term.length > 0 && <div><dt>Target term</dt><dd>{proposal.target_term}</dd></div>}
+        <div><dt>Suggested text</dt><dd>{proposal.suggested_text}</dd></div>
+      </dl>
+      {proposal.examples.length > 0 && (
+        <ul aria-label="Examples" className="model-context-proposal-examples">
+          {proposal.examples.map((example, index) => (
+            <li key={`${example.conversation_id}-${index}`}>
+              <a
+                href={conversationHref(example.conversation_id)}
+                onClick={(event) => {
+                  if (!onOpenConversation) return;
+                  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  onOpenConversation(example.conversation_id);
+                }}
+              >
+                {example.question_excerpt}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {proposal.hidden_examples > 0 && <p className="msg-note">{proposal.hidden_examples} further example{proposal.hidden_examples === 1 ? "" : "s"} are not visible to you.</p>}
+      {editable && (editing && draft ? (
+        <div className="model-context-proposal-edit">
+          <label className="field"><span>Term</span>
+            <input onChange={(event) => onChangeDraft({ ...draft, term: event.target.value })} value={draft.term} />
+          </label>
+          <label className="field"><span>Synonyms, comma separated</span>
+            <input onChange={(event) => onChangeDraft({ ...draft, synonyms: event.target.value })} value={draft.synonyms} />
+          </label>
+          <label className="field"><span>Definition</span>
+            <textarea onChange={(event) => onChangeDraft({ ...draft, definition: event.target.value })} value={draft.definition} />
+          </label>
+          <div className="model-context-proposal-actions">
+            <button className="primary-button" disabled={busy} onClick={() => onAccept({ term: draft.term, synonyms: parseSynonymText(draft.synonyms), definition: draft.definition })} type="button">Accept changes</button>
+            <button className="link-button" disabled={busy} onClick={onCancelEdit} type="button">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="model-context-proposal-actions">
+          <button className="primary-button" disabled={busy} onClick={() => onAccept()} type="button">Accept</button>
+          <button className="secondary-button" disabled={busy} onClick={onEdit} type="button">Edit &amp; accept</button>
+          <button className="secondary-button" disabled={busy} onClick={onReject} type="button">Reject</button>
+        </div>
+      ))}
+    </article>
+  );
+}
+
+// The two mutations the tests assert on are exported as thin transports so the
+// exact If-Match / Idempotency-Key / body a real browser sends can be proven
+// against the pure request descriptors without rendering the container.
+export async function sendModelContextSave(workspaceID: string, context: ModelContext, document: ModelContextDocument): Promise<ApiResult<unknown>> {
+  const request = modelContextSaveRequest(workspaceID, context, document, newIdempotencyKey());
+  return apiMutation<unknown>(request.method, request.path, request.body, request.idempotencyKey, request.ifMatch);
+}
+
+export async function sendModelContextProposalAccept(workspaceID: string, context: ModelContext, proposalID: string, edits?: ModelContextProposalEdits): Promise<ApiResult<unknown>> {
+  const request = modelContextAcceptRequest(workspaceID, context, proposalID, edits, newIdempotencyKey());
+  return apiMutation<unknown>(request.method, request.path, request.body, request.idempotencyKey, request.ifMatch);
+}
+
+export function ModelContextEditorSurface({
+  context, document: modelDocument, proposals, versions, workspaceID,
+  viewedVersion = null,
+  saving = false,
+  busyProposalID = null,
+  restoringVersion = null,
+  saveError = null,
+  fieldErrors = {},
+  notice = null,
+  initialTab,
+  onReload,
+  onChange,
+  onSave,
+  onAccept,
+  onReject,
+  onRestore,
+  onViewVersion,
+  onCloseVersion,
+  onOpenConversation,
+}: {
+  context: ModelContext;
+  document: ModelContextDocument;
+  proposals: ModelContextProposal[];
+  versions: ModelContextVersion[];
+  workspaceID: string;
+  viewedVersion?: number | null;
+  saving?: boolean;
+  busyProposalID?: string | null;
+  restoringVersion?: number | null;
+  saveError?: string | null;
+  fieldErrors?: Record<string, string>;
+  notice?: string | null;
+  initialTab?: ModelContextTab;
+  onReload?: () => void;
+  onChange: (document: ModelContextDocument) => void;
+  onSave?: () => void;
+  onAccept?: (proposalID: string, edits?: ModelContextProposalEdits) => void;
+  onReject?: (proposalID: string) => void;
+  onRestore?: (version: number) => void;
+  onViewVersion?: (version: number) => void;
+  onCloseVersion?: () => void;
+  onOpenConversation?: (conversationID: string) => void;
+}) {
+  const editable = context.editable;
+  const [activeTab, setActiveTab] = useState<ModelContextTab>(initialTab ?? "description");
+  const [editingProposalID, setEditingProposalID] = useState<string | null>(null);
+  const [proposalDraft, setProposalDraft] = useState<{ term: string; synonyms: string; definition: string } | null>(null);
+  const effectiveTab: ModelContextTab = activeTab === "proposals" && !editable ? "description" : activeTab;
+  const tabs: ModelContextTab[] = editable
+    ? ["description", "instructions", "glossary", "sources", "proposals", "history"]
+    : ["description", "instructions", "glossary", "sources", "history"];
+
+  function updateDocument(patch: Partial<ModelContextDocument>) {
+    onChange({ ...modelDocument, ...patch });
+  }
+
+  function beginProposalEdit(proposal: ModelContextProposal) {
+    setEditingProposalID(proposal.proposal_id);
+    setProposalDraft({
+      term: proposal.target_term ?? proposal.candidate_term,
+      synonyms: "",
+      definition: proposal.suggested_text,
+    });
+  }
+
+  const conversationHref = (conversationID: string) => buildSearchHash(workspaceID, conversationID);
+
+  return (
+    <div className="page model-context-page">
+      <header className="model-context-head">
+        <div>
+          <p className="eyebrow">{viewedVersion !== null ? `Version ${viewedVersion}` : "Model context"}</p>
+          <h2>{viewedVersion !== null ? `Version ${viewedVersion} (read-only)` : "Workspace model context"}</h2>
+          <p className="model-context-meta">
+            {context.version === 0 ? "No saved version yet." : `Version ${context.version}`}
+            {context.updated_by ? ` · ${context.updated_by}` : ""}
+          </p>
+        </div>
+        {editable && onSave && (
+          <button className="primary-button" disabled={saving} onClick={onSave} type="button">
+            {saving ? "Saving…" : "Save all"}
+          </button>
+        )}
+      </header>
+      {viewedVersion !== null && (
+        <aside className="plain-note">
+          <span aria-hidden="true"><IconInfo /></span>
+          <div>
+            <p>You are viewing an older version. Restore it to make it current, or go back.</p>
+            {onCloseVersion && <button className="link-button" onClick={onCloseVersion} type="button">Back to current version</button>}
+          </div>
+        </aside>
+      )}
+      {!editable && viewedVersion === null && <p className="evidence-state">You can read this context, but only an owner or manager can change it.</p>}
+      {saveError && (
+        <div className="launch-note" role="alert">
+          <strong>Could not save.</strong>
+          <span>{saveError}</span>
+          {onReload && <button className="link-button" onClick={onReload} type="button">Reload</button>}
+        </div>
+      )}
+      {notice && <p className="msg-warning" role="alert">{notice}</p>}
+      {Object.keys(fieldErrors).length > 0 && (
+        <div className="model-context-field-errors" role="alert">
+          <p>The server rejected these fields:</p>
+          <ul>
+            {Object.entries(fieldErrors).map(([field, message]) => (
+              <li key={field}><code className="mono">{field}</code> — {message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <nav aria-label="Model context sections" className="tabs model-context-tabs" role="tablist">
+        {tabs.map((tab) => (
+          <button
+            aria-controls={`model-context-panel-${tab}`}
+            aria-selected={effectiveTab === tab}
+            className={effectiveTab === tab ? "active" : undefined}
+            id={`model-context-tab-${tab}`}
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            role="tab"
+            tabIndex={effectiveTab === tab ? 0 : -1}
+            type="button"
+          >
+            {modelContextTabLabels[tab]}{tab === "proposals" ? ` (${proposals.length})` : ""}
+          </button>
+        ))}
+      </nav>
+
+      {effectiveTab === "description" && (
+        <section aria-labelledby="model-context-tab-description" className="model-context-panel" id="model-context-panel-description" role="tabpanel" tabIndex={0}>
+          <ModelContextPlainTextField
+            editable={editable}
+            error={modelContextFieldError(fieldErrors, "description")}
+            id="model-context-description"
+            label="Description"
+            maxLength={MODEL_CONTEXT_DESCRIPTION_MAX}
+            onChange={(value) => updateDocument({ description: value })}
+            onSave={onSave}
+            value={modelDocument.description}
+          />
+        </section>
+      )}
+
+      {effectiveTab === "instructions" && (
+        <section aria-labelledby="model-context-tab-instructions" className="model-context-panel" id="model-context-panel-instructions" role="tabpanel" tabIndex={0}>
+          <ModelContextPlainTextField
+            editable={editable}
+            error={modelContextFieldError(fieldErrors, "instructions")}
+            id="model-context-instructions"
+            label="Instructions for the assistant"
+            maxLength={MODEL_CONTEXT_INSTRUCTIONS_MAX}
+            onChange={(value) => updateDocument({ instructions: value })}
+            onSave={onSave}
+            value={modelDocument.instructions}
+          />
+        </section>
+      )}
+
+      {effectiveTab === "glossary" && (
+        <section aria-labelledby="model-context-tab-glossary" className="model-context-panel" id="model-context-panel-glossary" role="tabpanel" tabIndex={0}>
+          <ModelContextPlainTextField
+            editable={editable}
+            error={modelContextFieldError(fieldErrors, "glossary_text")}
+            id="model-context-glossary-text"
+            label="Glossary"
+            maxLength={MODEL_CONTEXT_GLOSSARY_TEXT_MAX}
+            onChange={(value) => updateDocument({ glossary_text: value })}
+            onSave={onSave}
+            value={modelDocument.glossary_text}
+          />
+        </section>
+      )}
+
+      {effectiveTab === "sources" && (
+        <section aria-labelledby="model-context-tab-sources" className="model-context-panel" id="model-context-panel-sources" role="tabpanel" tabIndex={0}>
+          {modelDocument.sources.length === 0 && <p className="evidence-state">No source notes yet.</p>}
+          {modelDocument.sources.map((source, sourceIndex) => (
+            <section className="model-context-source" key={`${source.source_connection_id}-${sourceIndex}`}>
+              <h3>{source.source_connection_id}</h3>
+              <label className="field">
+                <span>Source description</span>
+                <textarea
+                  disabled={!editable}
+                  onChange={(event) => updateDocument({ sources: modelDocument.sources.map((item, itemIndex) => itemIndex === sourceIndex ? { ...item, description: event.target.value } : item) })}
+                  value={source.description ?? ""}
+                />
+              </label>
+              {source.tables.map((table, tableIndex) => (
+                <div className="model-context-table-note" key={`${table.relation}-${tableIndex}`}>
+                  <h4>{table.relation}</h4>
+                  <label className="field">
+                    <span>Table note</span>
+                    <input
+                      disabled={!editable}
+                      onChange={(event) => updateDocument({ sources: modelDocument.sources.map((item, itemIndex) => itemIndex === sourceIndex ? { ...item, tables: item.tables.map((tableItem, tableItemIndex) => tableItemIndex === tableIndex ? { ...tableItem, note: event.target.value } : tableItem) } : item) })}
+                      value={table.note ?? ""}
+                    />
+                  </label>
+                  {table.columns.map((column, columnIndex) => (
+                    <label className="field model-context-column-note" key={`${column.name}-${columnIndex}`}>
+                      <span>{column.name}</span>
+                      <input
+                        disabled={!editable}
+                        onChange={(event) => updateDocument({ sources: modelDocument.sources.map((item, itemIndex) => itemIndex === sourceIndex ? { ...item, tables: item.tables.map((tableItem, tableItemIndex) => tableItemIndex === tableIndex ? { ...tableItem, columns: tableItem.columns.map((columnItem, columnItemIndex) => columnItemIndex === columnIndex ? { ...columnItem, note: event.target.value } : columnItem) } : tableItem) } : item) })}
+                        value={column.note ?? ""}
+                      />
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </section>
+          ))}
+        </section>
+      )}
+
+      {effectiveTab === "proposals" && editable && (
+        <section aria-labelledby="model-context-tab-proposals" className="model-context-panel" id="model-context-panel-proposals" role="tabpanel" tabIndex={0}>
+          {proposals.length === 0 && <p className="evidence-state">No proposals are waiting.</p>}
+          {proposals.map((proposal) => (
+            <ModelContextProposalCard
+              busy={busyProposalID === proposal.proposal_id}
+              conversationHref={conversationHref}
+              draft={editingProposalID === proposal.proposal_id ? proposalDraft : null}
+              editing={editingProposalID === proposal.proposal_id}
+              editable={editable}
+              key={proposal.proposal_id}
+              onAccept={(edits) => { onAccept?.(proposal.proposal_id, edits); setEditingProposalID(null); setProposalDraft(null); }}
+              onCancelEdit={() => { setEditingProposalID(null); setProposalDraft(null); }}
+              onChangeDraft={setProposalDraft}
+              onEdit={() => beginProposalEdit(proposal)}
+              onOpenConversation={onOpenConversation}
+              onReject={() => onReject?.(proposal.proposal_id)}
+              proposal={proposal}
+            />
+          ))}
+        </section>
+      )}
+
+      {effectiveTab === "history" && (
+        <section aria-labelledby="model-context-tab-history" className="model-context-panel" id="model-context-panel-history" role="tabpanel" tabIndex={0}>
+          {versions.length === 0 ? <p className="evidence-state">No saved versions yet.</p> : (
+            <ol className="model-context-history">
+              {versions.map((version) => (
+                <li key={`${version.version}-${version.content_hash}`}>
+                  <div className="model-context-history-main">
+                    <strong>v{version.version}</strong>
+                    <span>{modelContextChangeKindLabel(version.change_kind)}</span>
+                    <span>{version.created_at ?? "—"}</span>
+                    <span>{version.created_by ?? "—"}</span>
+                    {version.proposal_id ? <span className="mono">{version.proposal_id}</span> : null}
+                  </div>
+                  <div className="model-context-history-actions">
+                    <button className="link-button" onClick={() => onViewVersion?.(version.version)} type="button">View</button>
+                    {editable && <button className="secondary-button" disabled={restoringVersion !== null} onClick={() => onRestore?.(version.version)} type="button">{restoringVersion === version.version ? "Restoring…" : "Restore"}</button>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+export function ModelContextSettingsView({ workspaceID, pushToast, onOpenConversation }: {
+  workspaceID: string | null;
+  pushToast: (kind: "success" | "error", text: string) => void;
+  onOpenConversation: (conversationID: string) => void;
+}) {
+  const [contextResult, setContextResult] = useState<ApiResult<ModelContext> | null>(null);
+  const [proposals, setProposals] = useState<ModelContextProposal[]>([]);
+  const [versions, setVersions] = useState<ModelContextVersion[]>([]);
+  const [draft, setDraft] = useState<ModelContextDocument | null>(null);
+  const [viewed, setViewed] = useState<{ version: number; context: ModelContext } | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [busyProposalID, setBusyProposalID] = useState<string | null>(null);
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setViewed(null);
+    setSaveError(null);
+    setNotice(null);
+    setFieldErrors({});
+    if (workspaceID === null) {
+      setContextResult(null);
+      setProposals([]);
+      setVersions([]);
+      setDraft(null);
+      return;
+    }
+    let alive = true;
+    setContextResult(null);
+    setDraft(null);
+    (async () => {
+      const result = await apiGet<unknown>(modelContextPath(workspaceID));
+      if (!alive) return;
+      if (result.kind !== "ok") {
+        setContextResult(result);
+        setProposals([]);
+        setVersions([]);
+        return;
+      }
+      const decoded = decodeModelContext(result.value);
+      if (decoded === null) {
+        setContextResult({ kind: "broken", status: 0 });
+        setProposals([]);
+        setVersions([]);
+        return;
+      }
+      setContextResult({ kind: "ok", value: decoded, etag: result.etag });
+      setDraft(cloneModelContextDocument(decoded.document));
+      if (!decoded.editable) {
+        setProposals([]);
+        setVersions([]);
+        return;
+      }
+      const [proposalReply, versionReply] = await Promise.all([
+        apiGet<unknown>(`${modelContextPath(workspaceID)}/proposals?${new URLSearchParams({ status: "PROPOSED" }).toString()}`),
+        apiGet<unknown>(`${modelContextPath(workspaceID)}/versions`),
+      ]);
+      if (!alive) return;
+      setProposals(proposalReply.kind === "ok" ? decodeModelContextProposals(proposalReply.value) ?? [] : []);
+      setVersions(versionReply.kind === "ok" ? decodeModelContextVersions(versionReply.value) ?? [] : []);
+    })();
+    return () => { alive = false; };
+  }, [workspaceID, reloadToken]);
+
+  function reload() {
+    setReloadToken((token) => token + 1);
+  }
+
+  async function save() {
+    if (workspaceID === null || contextResult?.kind !== "ok" || draft === null) return;
+    setSaving(true);
+    setSaveError(null);
+    setNotice(null);
+    setFieldErrors({});
+    const result = await sendModelContextSave(workspaceID, contextResult.value, draft);
+    setSaving(false);
+    if (result.kind === "ok") {
+      pushToast("success", "Model context saved.");
+      reload();
+      return;
+    }
+    if (result.kind === "failure" && result.status === 412) {
+      // Keep the user's edits: only the hash is stale, so a reload discards work.
+      const message = "Someone changed the context — reload";
+      setSaveError(message);
+      pushToast("error", message);
+      return;
+    }
+    if (result.kind === "failure" && result.status === 400) {
+      const errors = fieldErrorsFromServerFields(result.fields ?? []);
+      setFieldErrors(errors);
+      if (Object.keys(errors).length === 0) setSaveError(closedText(result));
+      return;
+    }
+    const message = closedText(result);
+    setSaveError(message);
+    pushToast("error", message);
+  }
+
+  async function accept(proposalID: string, edits?: ModelContextProposalEdits) {
+    if (workspaceID === null || contextResult?.kind !== "ok") return;
+    setBusyProposalID(proposalID);
+    const result = await sendModelContextProposalAccept(workspaceID, contextResult.value, proposalID, edits);
+    setBusyProposalID(null);
+    if (result.kind === "ok") {
+      pushToast("success", "Proposal accepted.");
+      reload();
+      return;
+    }
+    if (result.kind === "failure" && result.status === 412) {
+      const message = "Someone changed the context — reload";
+      setNotice(message);
+      pushToast("error", message);
+      return;
+    }
+    pushToast("error", closedText(result));
+  }
+
+  async function reject(proposalID: string) {
+    if (workspaceID === null) return;
+    setBusyProposalID(proposalID);
+    const result = await apiAction<{ proposal_id: string; status: string }>(`${modelContextProposalPath(workspaceID, proposalID)}:reject`, newIdempotencyKey());
+    setBusyProposalID(null);
+    if (result.kind === "ok") {
+      pushToast("success", "Proposal rejected.");
+      reload();
+      return;
+    }
+    pushToast("error", closedText(result));
+  }
+
+  async function restore(version: number) {
+    if (workspaceID === null || contextResult?.kind !== "ok") return;
+    if (!window.confirm(`Restore version ${version}? This creates a new version.`)) return;
+    setRestoringVersion(version);
+    const request = modelContextRestoreRequest(workspaceID, contextResult.value, version, newIdempotencyKey());
+    const result = await apiMutation<unknown>(request.method, request.path, request.body, request.idempotencyKey, request.ifMatch);
+    setRestoringVersion(null);
+    if (result.kind === "ok") {
+      pushToast("success", `Version ${version} restored.`);
+      setViewed(null);
+      reload();
+      return;
+    }
+    const message = result.kind === "failure" && result.status === 412 ? "Someone changed the context — reload" : closedText(result);
+    pushToast("error", message);
+  }
+
+  async function viewVersion(version: number) {
+    if (workspaceID === null) return;
+    const result = await apiGet<unknown>(`${modelContextPath(workspaceID)}/versions/${encodeURIComponent(String(version))}`);
+    if (result.kind !== "ok") {
+      pushToast("error", closedText(result));
+      return;
+    }
+    const decoded = decodeModelContext(result.value);
+    if (decoded === null) {
+      pushToast("error", "The server returned an unreadable version.");
+      return;
+    }
+    setViewed({ version, context: decoded });
+  }
+
+  if (workspaceID === null) return <p className="evidence-state">Select a workspace.</p>;
+  if (contextResult === null) return <p className="evidence-state">Loading model context…</p>;
+  if (contextResult.kind !== "ok") return <ClosedOrError result={contextResult} />;
+  if (viewed !== null) {
+    return (
+      <ModelContextEditorSurface
+        context={viewed.context}
+        document={viewed.context.document}
+        key={`viewed-${viewed.version}`}
+        onCloseVersion={() => setViewed(null)}
+        onChange={() => {}}
+        onOpenConversation={onOpenConversation}
+        onViewVersion={(version) => void viewVersion(version)}
+        proposals={[]}
+        versions={versions}
+        viewedVersion={viewed.version}
+        workspaceID={workspaceID}
+      />
+    );
+  }
+  if (draft === null) return <p className="evidence-state">Loading model context…</p>;
+  return (
+    <ModelContextEditorSurface
+      busyProposalID={busyProposalID}
+      context={contextResult.value}
+      document={draft}
+      fieldErrors={fieldErrors}
+      key={`${contextResult.value.version}:${contextResult.value.content_hash}`}
+      notice={notice}
+      onAccept={(proposalID, edits) => void accept(proposalID, edits)}
+      onChange={setDraft}
+      onOpenConversation={onOpenConversation}
+      onReject={(proposalID) => void reject(proposalID)}
+      onReload={reload}
+      onRestore={(version) => void restore(version)}
+      onSave={() => void save()}
+      onViewVersion={(version) => void viewVersion(version)}
+      proposals={proposals}
+      restoringVersion={restoringVersion}
+      saveError={saveError}
+      saving={saving}
+      versions={versions}
+      workspaceID={workspaceID}
+    />
+  );
+}
+
 const sectionCopy: Record<Section, { label: string; hint: string; icon: ComponentType }> = {
   search: { label: "Search", hint: "Search connected data", icon: IconQuestions },
   sources: { label: "Sources", hint: "Connected data and source status", icon: IconSources },
   access: { label: "Access", hint: "Workspace members and activity", icon: IconAccess },
+  settings: { label: "Settings", hint: "Workspace model context", icon: IconSettings },
 };
 
 type Session = "checking" | "signedOut" | "signedIn" | "unavailable";
+
+// ---------------------------------------------------------------------------
+// Build revision: the quiet mark in the top bar names the server process that
+// is actually answering. The value is fetched from that server at run time, so
+// a web bundle shipped beside a newer server can never claim its own build as
+// the running revision, and no number is typed into the bundle. A build
+// without a known revision shows the neutral mark instead of a wrong number.
+// ---------------------------------------------------------------------------
+
+export const BUILD_REVISION_NEUTRAL = "—";
+export const BUILD_REVISION_SHORT_LENGTH = 7;
+
+// shortBuildRevision returns the leading characters of a commit, or null when
+// the build has no known revision and the neutral mark must stand in.
+export function shortBuildRevision(revision: string | null | undefined): string | null {
+  const value = (revision ?? "").trim();
+  if (value === "" || value.toLowerCase() === "unknown") return null;
+  return value.slice(0, BUILD_REVISION_SHORT_LENGTH);
+}
+
+// buildRevisionFromInfo reads the running server's build-info payload. An
+// unexpected or absent field is an unknown revision, never a guess.
+export function buildRevisionFromInfo(payload: unknown): string {
+  const value = (payload as { revision?: unknown } | null | undefined)?.revision;
+  return typeof value === "string" ? value : "";
+}
+
+export function BuildRevisionMark({ revision }: { revision: string | null | undefined }) {
+  const short = shortBuildRevision(revision);
+  return (
+    <span className="build-revision" title="Server revision">
+      {short ?? BUILD_REVISION_NEUTRAL}
+    </span>
+  );
+}
+
+function useBuildRevision(): string {
+  const [revision, setRevision] = useState("");
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/v1/system/build-info", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((payload) => {
+        if (alive) setRevision(buildRevisionFromInfo(payload));
+      })
+      .catch(() => {
+        // A server that cannot report its revision is shown as neutral; a
+        // stale or guessed number would be worse than none.
+        if (alive) setRevision("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return revision;
+}
 
 function App() {
   const [section, setSection] = useState<Section>("search");
@@ -2018,6 +2801,7 @@ function App() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutFailure, setLogoutFailure] = useState<string | null>(null);
   const { toasts, push: pushToastRaw, dismiss: dismissToast, clear: clearToasts } = useToasts();
+  const buildRevision = useBuildRevision();
 
   function setSessionState(next: Session) {
     sessionStateRef.current = next;
@@ -2242,6 +3026,7 @@ function App() {
           <span className="mode-chip"><IconShield />{processingModeLabel(data.snapshot.value.processing_mode)}</span>
         )}
         <div className="top-spacer" />
+        <BuildRevisionMark revision={buildRevision} />
         {session === "signedIn" && (
           <div aria-live="polite" className={health === "up" ? "edge-state online" : "edge-state"} title="Local server status">
             <span aria-hidden="true" />
@@ -2361,6 +3146,21 @@ function App() {
                 workspaceID={selectedWorkspaceID}
               />
             </>
+          )}
+          {session === "signedIn" && !evidenceTarget && section === "settings" && (
+            <ModelContextSettingsView
+              key={selectedWorkspaceID ?? "no-workspace"}
+              onOpenConversation={(conversationID) => {
+                if (!selectedWorkspaceID) return;
+                const hash = buildSearchHash(selectedWorkspaceID, conversationID);
+                setSection("search");
+                setSelectedConversationID(conversationID);
+                window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+                routeHash.current = hash;
+              }}
+              pushToast={pushToast}
+              workspaceID={selectedWorkspaceID}
+            />
           )}
         </section>
       </div>
@@ -2609,10 +3409,15 @@ function SignedOutView() {
 }
 
 // Human-readable copy for a non-COMPLETED question run, without raw status codes.
-function questionStatusMessage(run: QuestionRun): string {
+export function questionStatusMessage(run: QuestionRun): string {
   if (run.tool_loop?.stop_reason === "CLARIFICATION") return run.answer ?? "Please clarify your question.";
   if (run.tool_loop && run.status === "INSUFFICIENT_EVIDENCE") return run.answer ?? NO_DATA_IN_WORKSPACE_LABEL;
   if (run.planning_status === "CLARIFICATION_REQUIRED" && run.clarification) return run.clarification;
+  // 000121: the server finishes a run whose answering process died as
+  // INTERRUPTED. It has no answer at all, so the turn must say so and invite
+  // a retry instead of rendering the generic "not enough evidence" copy (or,
+  // worse, a partial answer as if it were complete).
+  if (run.status === "INTERRUPTED") return "The answer was interrupted before it finished. Ask again to get a complete answer.";
   if (run.status === "COMPLETED") return "";
   return "There is not enough evidence to answer. Try rephrasing your question or check the source status in Sources.";
 }
@@ -2623,10 +3428,10 @@ function exampleQuestions(sources: SourceStatus[]): string[] {
   const names = Array.from(new Set(sources.map((source) => sourceLabel(source)).filter(Boolean)));
   if (names.length === 0) return [];
   const templates = [
-    (name: string) => `What's new in “${name}”?`,
-    (name: string) => `What data is available in “${name}”?`,
-    (name: string) => `When was “${name}” last updated?`,
-    (name: string) => `Summarize what is recorded in “${name}”`,
+    (name: string) => `Что нового в «${name}»?`,
+    (name: string) => `Какие данные есть в «${name}»?`,
+    (name: string) => `Когда обновлялся «${name}»?`,
+    (name: string) => `Кратко: что записано в «${name}»?`,
   ];
   const count = Math.min(4, Math.max(3, names.length));
   const out: string[] = [];
@@ -2697,6 +3502,32 @@ function answerCompletenessLabel(completeness: string | undefined | null): strin
 
 function answerCompletenessIsPartial(completeness: string | undefined | null): boolean {
   return typeof completeness === "string" && completeness.trim() === "PARTIAL";
+}
+
+// Card W-3: the one incomplete-data warning. It appears only when the answer
+// itself rests on incomplete data -- the server's structured AnswerResult
+// completeness says the numbers do not cover the whole source -- so a
+// whole-corpus flag that does not touch this answer (a workspace with one
+// unsynced source while the answer quotes a healthy one) no longer paints a
+// caveat under a complete answer. The text follows the question's language:
+// a Russian question never gets the English sentence.
+const incompleteDataWarningRussian = "Ответ основан на неполных данных. Проверьте доказательства и состояние источников, прежде чем опираться на него.";
+const incompleteDataWarningEnglish = "This answer uses an incomplete dataset. Check the evidence and source status before relying on it.";
+
+// questionIsRussian is the same one-signal language rule the server uses
+// (questionLanguage/containsCyrillic in internal/question/tool_loop_language.go):
+// the question text is the only language signal the answer view has.
+function questionIsRussian(question: string | undefined | null): boolean {
+  return typeof question === "string" && /[\u0400-\u04FF]/.test(question);
+}
+
+// incompleteDataWarning returns the warning this answer must carry, or null.
+// The answer's own completeness is the only trigger; the run's corpus_status
+// is deliberately not consulted, because a PARTIAL corpus belongs to the
+// workspace, not to an answer that read complete data.
+export function incompleteDataWarning(run: Pick<QuestionRun, "question" | "answer_result">): string | null {
+  if (!answerCompletenessIsPartial(run.answer_result?.completeness)) return null;
+  return questionIsRussian(run.question) ? incompleteDataWarningRussian : incompleteDataWarningEnglish;
 }
 
 function answerObservationWindowText(window: AnswerObservationWindow): string {
@@ -2863,9 +3694,11 @@ export function AnswerResultBlock({ result }: { result: AnswerResult }) {
           : "a server calculation using the snapshot"}</p>
       </div>
       <UnifiedAnswerRows result={result} />
-      {answerCompletenessIsPartial(result.completeness) && (
-        <p className="msg-warning">This answer uses an incomplete snapshot. The calculation does not cover the entire source.</p>
-      )}
+      {/* Card W-3: the incomplete-data caveat is rendered once by the answer
+          view (TurnAnswer/QuestionRunAnswer), where the question is known, so
+          it can follow the question's language. Keeping a second hardcoded
+          English line here made a Russian answer carry two English/duplicate
+          caveats; the completeness itself stays visible as a panel row. */}
       {result.keys && result.keys.length > 0 && (
         <ul className="answer-keys">
           {result.keys.map((item) => (
@@ -3309,10 +4142,112 @@ export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitat
 // question surface. The standalone surface keeps the result payload hidden:
 // people can see which governed tools ran and whether they completed without
 // putting row values, ids or hashes into the answer itself.
-function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; showResults?: boolean }) {
-  if (!run.tool_loop || run.tool_loop.calls.length === 0) return null;
+// TXT-2: the collapsed "how it was found" disclosure is the one place a turn
+// discloses both its tool steps and (via `footer`, TurnAnswer only) its
+// evidence-verification status, so the same information is never printed a
+// second time as standalone boxes. Closed by default -- a demo reader should
+// not be shown a wall of trace text before reading the answer.
+// Shape of one run.tool_loop.calls[] entry, narrowed to the fields the
+// knowvault_source_sql helpers below read. It matches QuestionRun's inline
+// call type structurally, so either the wire type or a test literal works.
+type SourceSQLTraceCall = {
+  name: string;
+  arguments?: unknown;
+  outcome: string;
+  result: { text: string; structured?: unknown; is_error?: boolean };
+};
+
+// F2 (2026-09-26 critique): the exact SQL knowvault_source_sql ran is present
+// in call.arguments.sql, but no render path read it, so the chat surface
+// never showed a person the statement behind a database read. Read exactly
+// the literal field the agent's own tool call carried -- never rebuilt or
+// paraphrased.
+function sourceSQLStatement(call: SourceSQLTraceCall): string | null {
+  if (call.name !== "knowvault_source_sql") return null;
+  const args = call.arguments;
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return null;
+  const sql = (args as Record<string, unknown>).sql;
+  return typeof sql === "string" && sql.trim().length > 0 ? sql : null;
+}
+
+function sourceSQLStructuredResult(call: SourceSQLTraceCall): Record<string, unknown> | null {
+  const raw = call.result.structured ?? call.result.text;
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+// The closed, content-free refusal code (ROW_LIMIT, TIMEOUT, ...) of a failed
+// knowvault_source_sql call -- per ADR-0097 the only thing a refusal ever
+// carries. Null for a call that succeeded.
+export function sourceSQLRefusalCode(call: SourceSQLTraceCall): string | null {
+  if (call.name !== "knowvault_source_sql" || call.outcome === "SUCCEEDED") return null;
+  const code = sourceSQLStructuredResult(call)?.error;
+  return typeof code === "string" && code.length > 0 ? code : null;
+}
+
+// A short, bounded preview of a successful knowvault_source_sql call's own
+// returned table -- at most 5 of the rows the provider already sent to the
+// browser in this same API response. Nothing here is fetched or computed;
+// it only projects what call.result.structured already carries.
+export function sourceSQLResultPreview(call: SourceSQLTraceCall): { columns: string[]; rows: Array<Array<string | null>>; rowCount: number; truncated: boolean } | null {
+  if (call.name !== "knowvault_source_sql" || call.outcome !== "SUCCEEDED") return null;
+  const projection = sourceSQLStructuredResult(call);
+  const columns = projection?.columns;
+  const rows = projection?.rows;
+  const rowCount = projection?.row_count;
+  if (!Array.isArray(columns) || !Array.isArray(rows) || typeof rowCount !== "number" || !Number.isFinite(rowCount)) return null;
+  if (!columns.every((column) => typeof column === "string")) return null;
+  const preview = rows.slice(0, 5) as Array<Array<string | null>>;
+  return { columns: columns as string[], rows: preview, rowCount, truncated: rows.length > preview.length };
+}
+
+// The tool-trace disclosure for one knowvault_source_sql call: its exact SQL
+// (refusal or not, per F2/finding 5), the refusal code when it failed, and a
+// bounded preview of the rows when it succeeded. Renders nothing for any
+// other tool or for a source-SQL call with no readable sql argument.
+function ToolTraceSourceSQL({ call }: { call: SourceSQLTraceCall }) {
+  const sql = sourceSQLStatement(call);
+  if (!sql) return null;
+  const refusalCode = sourceSQLRefusalCode(call);
+  const preview = sourceSQLResultPreview(call);
   return (
-    <details className="tool-trace" open>
+    <details className="tool-trace-sql">
+      <summary>SQL</summary>
+      <pre>{sql}</pre>
+      {refusalCode && <p className="tool-trace-sql-refusal">Refused: {refusalCode}</p>}
+      {preview && (
+        <>
+          <table className="tool-trace-sql-result">
+            <thead><tr>{preview.columns.map((column, index) => <th key={`${column}-${index}`} scope="col">{column}</th>)}</tr></thead>
+            <tbody>{preview.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.map((cell, columnIndex) => <td key={columnIndex}>{cell === null ? "NULL" : cell}</td>)}</tr>
+            ))}</tbody>
+          </table>
+          <p className="tool-trace-sql-count">{preview.rowCount} {preview.rowCount === 1 ? "row" : "rows"} returned{preview.truncated ? " (showing first 5)" : ""}</p>
+        </>
+      )}
+    </details>
+  );
+}
+
+export function ToolCallsDisclosure({ run, showResults = true, footer }: { run: QuestionRun; showResults?: boolean; footer?: ReactNode }) {
+  if (!run.tool_loop || run.tool_loop.calls.length === 0) {
+    return footer ? (
+      <details className="tool-trace">
+        <summary>{TOOL_CALLS_TITLE}</summary>
+        {footer}
+      </details>
+    ) : null;
+  }
+  return (
+    <details className="tool-trace">
       <summary>{TOOL_CALLS_TITLE} · {run.tool_loop.calls.length}</summary>
       <ol>
         {run.tool_loop.calls.map((call, index) => {
@@ -3323,19 +4258,33 @@ function ToolCallsDisclosure({ run, showResults = true }: { run: QuestionRun; sh
                 <details>
                   <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
                   <pre>{call.result.text}</pre>
+                  <ToolTraceSourceSQL call={call} />
                 </details>
               ) : (
-                <span>
-                  {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
-                  <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
-                </span>
+                <>
+                  <span>
+                    {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
+                    <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
+                  </span>
+                  <ToolTraceSourceSQL call={call} />
+                </>
               )}
             </li>
           );
         })}
       </ol>
+      {footer}
     </details>
   );
+}
+
+// S2: the model-context usage summary. It is plain React text (never HTML),
+// so a term like "<script>" is escaped by the renderer, and it is shown only
+// when the run's strictly decoded workspace_context actually carries terms.
+export function WorkspaceContextUsage({ toolLoop }: { toolLoop?: unknown }) {
+  const line = workspaceContextUsageLineFromToolLoop(toolLoop);
+  if (line === null) return null;
+  return <p className="workspace-context-usage">{line}</p>;
 }
 
 export function hasLiveDataReceipt(run: Pick<QuestionRun, "status" | "answer_result">): boolean {
@@ -3385,7 +4334,15 @@ export function liveTablePayloadForReceipt(
 ): LiveTablePayload | null {
   const calls = run.tool_loop?.calls ?? [];
   for (const call of calls) {
-    if (call.name !== "knowvault_ask_live_data" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    // F2 (2026-09-26 critique): a LIVE_TABLE citation whose successful read
+    // came from knowvault_source_sql (ADR-0097), not knowvault_ask_live_data,
+    // used to fall through this loop with no match, so the evidence item
+    // always rendered "the table payload is unavailable" even though the
+    // provider's own projection carried the columns and rows. Both tool
+    // names produce the same liveDataProjection shape (source_sql_tool.go's
+    // sourceSQLRetainResult), so both are matched here.
+    if ((call.name !== "knowvault_ask_live_data" && call.name !== "knowvault_source_sql") ||
+      call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
     const raw = call.result.structured ?? call.result.text;
     let value: unknown = raw;
     if (typeof raw === "string") {
@@ -3413,6 +4370,41 @@ export function liveTablePayloadForReceipt(
       rows.some((row) => !Array.isArray(row) || row.length !== columns.length ||
         row.some((cell) => cell !== null && typeof cell !== "string"))) continue;
     return { columns: columns as string[], rows: rows as Array<Array<string | null>>, row_count: rowCount };
+  }
+  return null;
+}
+
+// The exact SQL statement behind one LIVE_TABLE receipt, when that receipt's
+// successful read came from knowvault_source_sql (an agent-authored
+// statement) rather than knowvault_ask_live_data (an administrator-governed
+// query with no agent-written SQL to show). F2/F5 (2026-09-26 critique): a
+// person checking a citation next to "Live result N" could not tell what
+// actually ran; this reads the literal arguments.sql of the one matching call
+// already present in the same API response -- nothing new is fetched.
+export function sourceSQLStatementForReceipt(
+  run: Pick<QuestionRun, "tool_loop">,
+  receipt: LiveTableReceipt,
+): string | null {
+  if (!isLiveTableReceipt(receipt)) return null;
+  for (const call of run.tool_loop?.calls ?? []) {
+    if (call.name !== "knowvault_source_sql" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    const raw = call.result.structured ?? call.result.text;
+    let value: unknown = raw;
+    if (typeof raw === "string") {
+      try {
+        value = JSON.parse(raw) as unknown;
+      } catch {
+        continue;
+      }
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const projection = value as Record<string, unknown>;
+    if (projection.attempt_id !== receipt.execution_id || projection.complete !== true ||
+      projection.result_digest !== receipt.result_digest || projection.receipt_digest !== receipt.receipt_digest) continue;
+    const args = call.arguments;
+    if (typeof args !== "object" || args === null || Array.isArray(args)) continue;
+    const sql = (args as Record<string, unknown>).sql;
+    return typeof sql === "string" && sql.trim().length > 0 ? sql : null;
   }
   return null;
 }
@@ -3486,6 +4478,10 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
   const [showTable, setShowTable] = useState(false);
   const payload = liveTablePayloadForReceipt(run, receipt);
   const comparison = comparisonEvidenceForReceipt(run, receipt);
+  // F2/F5 (2026-09-26 critique): next to the citation it supports, show the
+  // exact SQL knowvault_source_sql ran -- null for an administrator-governed
+  // knowvault_ask_live_data read, which has no agent-written statement.
+  const sql = sourceSQLStatementForReceipt(run, receipt);
   const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
   const readStarted = receipt.observation_window?.started_at;
   const readAt = receipt.observation_window?.completed_at;
@@ -3493,6 +4489,12 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
     <details className="live-result-evidence">
       <summary>Live result {ordinal} · {comparison ? `${comparison.first.date}: ${comparison.first.value} → ${comparison.second.date}: ${comparison.second.value}` : `${receipt.row_count.toLocaleString("en-US")} ${receipt.row_count === 1 ? "row" : "rows"}`}{readAt ? ` · read ${formatTime(readAt)}` : ""}</summary>
       <p>Database read: {readStarted && readAt ? `${formatTime(readStarted)} – ${formatTime(readAt)}` : readAt ? formatTime(readAt) : "time unavailable"}</p>
+      {sql && (
+        <details className="live-result-sql">
+          <summary>SQL executed</summary>
+          <pre>{sql}</pre>
+        </details>
+      )}
       {comparison ? (
         <div className="live-comparison-evidence">
           <p>Metric: {comparison.metric_id} · Unit: {comparison.unit === "unknown" ? "unknown" : comparison.unit} · Coverage: observed snapshots only; full population coverage is unknown.</p>
@@ -3554,7 +4556,9 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   onSelectCitation: (citationID: string) => void;
 }) {
   const statusMessage = questionStatusMessage(run);
-  const corpusWarning = corpusStatusWarning(run.corpus_status);
+  // Card W-3: the answer's own completeness decides the caveat, not the
+  // workspace-wide corpus flag (see incompleteDataWarning).
+  const incompleteWarning = incompleteDataWarning(run);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
   const showGenericHow = run.status === "COMPLETED" && run.planning_operation === "AGGREGATE" && !run.answer_result;
   // R2 Outcome 3: a structured answer is an aggregate reduction (the rowset
@@ -3572,9 +4576,24 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
   // drop — falls back to the old basis-row list below.
   const referencedCitationNumbers = run.answer ? extractCitationNumbers(run.answer) : new Set<number>();
   const leftoverCitations = run.citations.filter((citation) => !referencedCitationNumbers.has(citation.number));
+  // TXT-2: routine "it checked out" verification status is disclosure, not a
+  // warning -- it belongs folded into the one collapsed "how it was found"
+  // panel below, not repeated as its own always-open box. Only a claim or
+  // citation that actually failed verification stays visible on its own.
+  const isAddressBound = run.answer_mode === "TOOL_LOOP" || run.verification_method === "ADDRESS_BOUND";
+  const claimIsNegative = isAddressBound ? !run.tool_loop?.all_claims_bound : run.grounding_status !== "CONFIRMED_BY_FRAGMENT";
+  const ungroundedCitations = run.citations.filter((citation) => citation.grounding_status !== "CONFIRMED_BY_FRAGMENT");
+  const evidenceFooter = run.answer ? (
+    <div className="tool-trace-evidence">
+      <p>{questionClaimGroundingLabel(run)}</p>
+      {run.citations.length > 0 && (
+        <p>{run.citations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.</p>
+      )}
+    </div>
+  ) : null;
   return (
     <>
-      <ToolCallsDisclosure run={run} showResults={false} />
+      <ToolCallsDisclosure footer={evidenceFooter} run={run} showResults={false} />
       {run.understood && <UnderstoodBanner understood={run.understood} />}
       {showGenericHow && <HowObtained run={run} />}
       {run.answer_result ? (
@@ -3589,7 +4608,9 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
         showUnifiedFallback && <UnifiedAnswerRows />
       )}
       {statusMessage ? (
-        <p className="msg-warning">{statusMessage}{run.failure_code ? ` Code: ${run.failure_code}.` : ""}</p>
+        <p className="msg-warning msg-compact" title={`${statusMessage}${run.failure_code ? ` Code: ${run.failure_code}.` : ""}`}>
+          {statusMessage}{run.failure_code ? ` Code: ${run.failure_code}.` : ""}
+        </p>
       ) : (
         <>
           {run.answer && (isQuote ? (
@@ -3599,26 +4620,25 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
             </blockquote>
           ) : (
             <div className="answer-body">
-              <span className="badge badge-tell">paraphrase</span>
               <AnswerBody citations={run.citations} onSelectCitation={onSelectCitation} panelTurnId={panelTurnId} selectedCitationId={selectedCitationId} text={run.answer} turnId={turnId} />
             </div>
           ))}
-          {run.answer && (
-            <p className="msg-note">{questionClaimGroundingLabel(run)}</p>
+          {run.answer && claimIsNegative && (
+            <p className="msg-warning">{questionClaimGroundingLabel(run)}</p>
           )}
-          {run.citations.length > 0 && (
-            <p className="msg-note">
-              {run.citations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.
+          {ungroundedCitations.length > 0 && (
+            <p className="msg-warning">
+              {ungroundedCitations.map((citation) => `Evidence ${citation.number}: ${citationGroundingText(citation.grounding_status)}`).join("; ")}.
             </p>
           )}
           {hasLiveReceipt && run.answer_result?.kind === "LIVE_TABLE" && (
             <LiveTableEvidenceList result={run.answer_result} run={run} />
           )}
-          {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
+          {incompleteWarning && <p className="msg-warning">{incompleteWarning}</p>}
           {run.conflicts.map((item) => (
             <p className="msg-warning" key={item.code}>{item.message ?? "Sources disagree on this question — check the evidence below."}</p>
           ))}
-          {run.uncertainties.filter((item) => !(corpusWarning && item.code === "CORPUS_PARTIAL")).map((item) => (
+          {run.uncertainties.filter((item) => item.code !== "CORPUS_PARTIAL").map((item) => (
             <p className="msg-note" key={item.code}>{item.message ?? item.code}</p>
           ))}
           {run.citations.length === 0 && !hasLiveReceipt ? (
@@ -3645,7 +4665,105 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
           ) : null}
         </>
       )}
+      {(run.status === "COMPLETED" || run.status === "INSUFFICIENT_EVIDENCE") && (
+        <AnswerFeedback questionRunID={run.question_run_id} workspaceID={run.workspace_id} />
+      )}
     </>
+  );
+}
+
+// R1.S10.s1.T4: a per-viewer "Correct" / "Incorrect" mark under a finished
+// answer. One member holds exactly one current mark per answer; resubmitting
+// changes it rather than adding another. INCORRECT requires a comment; the
+// comment is never read back by this endpoint (only the OWNER/MANAGER error
+// review report decrypts it), so the input is cleared, not re-populated,
+// after a successful submission.
+export type QuestionFeedbackState = { marked: boolean; verdict?: "CORRECT" | "INCORRECT"; has_comment?: boolean; updated_at?: string };
+
+export function questionFeedbackPath(workspaceID: string, questionRunID: string): string {
+  return `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/questions/${encodeURIComponent(questionRunID)}:feedback`;
+}
+
+// Pure projection of the current mark's status line, kept separate from the
+// component so it is testable without mounting React or mocking fetch.
+export function feedbackStatusLabel(state: QuestionFeedbackState): string {
+  if (!state.marked) return "";
+  const verdictText = state.verdict === "CORRECT" ? "верно" : "неверно";
+  return `Отмечено: ${verdictText}${state.has_comment ? " (с комментарием)" : ""}.`;
+}
+
+export function AnswerFeedback({ questionRunID, workspaceID }: { questionRunID: string; workspaceID: string }) {
+  const [state, setState] = useState<QuestionFeedbackState | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<QuestionFeedbackState>(questionFeedbackPath(workspaceID, questionRunID)).then((result) => {
+      if (!cancelled && result.kind === "ok") setState(result.value);
+    });
+    return () => { cancelled = true; };
+  }, [questionRunID, workspaceID]);
+
+  async function submit(verdict: "CORRECT" | "INCORRECT") {
+    setBusy(true);
+    setError(null);
+    const result = await apiPostWithoutIdempotency<QuestionFeedbackState>(
+      questionFeedbackPath(workspaceID, questionRunID), { verdict, comment },
+    );
+    setBusy(false);
+    if (result.kind === "ok") {
+      setState(result.value);
+      setEditing(false);
+      setComment("");
+    } else {
+      setError("Не удалось сохранить отзыв. Попробуйте ещё раз.");
+    }
+  }
+
+  // Cancels an in-progress edit and clears whatever comment was typed --
+  // including right after choosing "Неверно", before it is sent.
+  function cancelInput() {
+    setComment("");
+    setEditing(false);
+    setError(null);
+  }
+
+  if (state === null) return null;
+
+  // A fresh (unmarked) answer always shows the form; a marked one shows a
+  // compact status line until "Изменить" is pressed.
+  const showForm = editing || !state.marked;
+
+  return (
+    <div className="answer-feedback">
+      {state.marked && !editing && (
+        <p className="msg-note">
+          {feedbackStatusLabel(state)}{" "}
+          <button className="link-button" onClick={() => setEditing(true)} type="button">Изменить</button>
+        </p>
+      )}
+      {showForm && (
+        <div className="answer-feedback-editing">
+          <textarea
+            className="answer-feedback-comment"
+            onChange={(event) => setComment(event.target.value)}
+            placeholder="Комментарий: обязателен для «неверно», по желанию для «верно»"
+            value={comment}
+          />
+          <div className="answer-feedback-controls">
+            <button disabled={busy} onClick={() => submit("CORRECT")} type="button">Верно</button>
+            <button disabled={busy || comment.trim() === ""} onClick={() => submit("INCORRECT")} type="button">Неверно</button>
+            {(state.marked || comment !== "") && (
+              <button disabled={busy} onClick={cancelInput} type="button">Отмена</button>
+            )}
+          </div>
+        </div>
+      )}
+      {error && <p className="msg-warning">{error}</p>}
+    </div>
   );
 }
 
@@ -3702,6 +4820,27 @@ export function relySourceSummary(sources: SourceStatus[]): RelySourceSummary[] 
   }));
 }
 
+/** The opened Sources control: the workspace's sources with their freshness,
+ * and the way to manage them. This is exactly the content the chat screen's one
+ * control shows when expanded; it is exported so the static render probe can
+ * check the opened control without a browser. */
+export function RelySourceList({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
+  const enabled = relySourceSummary(sources);
+  return (
+    <div className="rely-list">
+      <h3>Workspace sources — {enabled.length}</h3>
+      {enabled.map((source) => (
+        <div className="rely-row" key={source.source_scope_id}>
+          <span aria-hidden="true" className={`dot dot-${source.variant}`} />
+          <span className="rely-name">{source.label}</span>
+          <small>{source.headline}</small>
+        </div>
+      ))}
+      {onManageSources && <button className="text-button rely-manage" onClick={onManageSources} type="button">Manage sources</button>}
+    </div>
+  );
+}
+
 function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onManageSources?: () => void }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -3733,17 +4872,10 @@ function RelyBar({ sources, onManageSources }: { sources: SourceStatus[]; onMana
   return (
     <div className="rely" ref={containerRef}>
       {open && (
-        <div className="rely-list">
-          <h3>Workspace sources — {enabled.length}</h3>
-          {enabled.map((source) => (
-            <div className="rely-row" key={source.source_scope_id}>
-              <span aria-hidden="true" className={`dot dot-${source.variant}`} />
-              <span className="rely-name">{source.label}</span>
-              <small>{source.headline}</small>
-            </div>
-          ))}
-          {onManageSources && <button className="text-button rely-manage" onClick={() => { setOpen(false); onManageSources(); }} type="button">Manage sources</button>}
-        </div>
+        <RelySourceList
+          onManageSources={onManageSources ? () => { setOpen(false); onManageSources(); } : undefined}
+          sources={sources}
+        />
       )}
       <button aria-expanded={open} className="rely-summary" onClick={() => setOpen((value) => !value)} type="button">
         <IconSources /><span>Sources: <b>{enabled.length}</b>{attention > 0 && <span className="rely-warn"> · need attention: {attention}</span>}</span>
@@ -3910,72 +5042,221 @@ function evidenceAddressDisplay(address: unknown): string | null {
   }
 }
 
-// Source text is never passed through answer typography or citation parsing.
-function EvidenceText({ text, highlight }: { text: string; highlight?: VerifiedEvidenceQuote | null }) {
-  const [raw, setRaw] = useState(false);
-  const readable = evidenceDocumentTitle(text) !== null && !/^\s*(?:```|~~~|\|)|\t/m.test(text);
-  if (highlight) {
-    const runes = Array.from(text);
-    return (
-      <>
-        <p className="evidence-quote-confirmed">The exact quote is highlighted in the verified evidence.</p>
-        <pre className="doc-text evidence-quote-text">
-          {runes.slice(0, highlight.start).join("")}
-          <mark className="evidence-verified-quote">{highlight.text}</mark>
-          {runes.slice(highlight.end).join("")}
-        </pre>
-      </>
-    );
+// ---------------------------------------------------------------------------
+// Card W-7: the source of an answer reads like a document. This is a tiny
+// renderer for the Markdown an extraction stores -- headings, tables, fenced
+// and inline code, lists, quotes. It only ever builds React elements: there is
+// no HTML string and no dangerouslySetInnerHTML, so document text can never
+// become markup.
+// ---------------------------------------------------------------------------
+
+type SourceBlock =
+  | { kind: "heading"; level: number; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "table"; header: string[]; rows: string[][] }
+  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "quote"; text: string }
+  | { kind: "paragraph"; text: string };
+
+const SOURCE_HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+const SOURCE_FENCE = /^[ \t]*(```|~~~)/;
+const SOURCE_TABLE_ROW = /^[ \t]*\|/;
+const SOURCE_BULLET = /^[ \t]*[-*+][ \t]+(.*)$/;
+const SOURCE_ORDERED = /^[ \t]*\d+[.)][ \t]+(.*)$/;
+const SOURCE_QUOTE = /^[ \t]*>[ \t]?(.*)$/;
+const SOURCE_HEADING_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6"] as const;
+
+function sourceTableCells(line: string): string[] {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function sourceTableSeparator(line: string): boolean {
+  if (!SOURCE_TABLE_ROW.test(line)) return false;
+  const cells = sourceTableCells(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
+function startsSourceTable(lines: string[], index: number): boolean {
+  return SOURCE_TABLE_ROW.test(lines[index] ?? "")
+    && index + 1 < lines.length
+    && sourceTableSeparator(lines[index + 1]);
+}
+
+function isMarkdownSource(text: string): boolean {
+  const lines = text.split(/\r\n?|\n/);
+  return lines.some((line, index) => SOURCE_HEADING.test(line) || SOURCE_FENCE.test(line) || startsSourceTable(lines, index)
+    || SOURCE_BULLET.test(line) || SOURCE_ORDERED.test(line) || SOURCE_QUOTE.test(line));
+}
+
+function parseSourceBlocks(text: string): SourceBlock[] {
+  const lines = text.split(/\r\n?|\n/);
+  const blocks: SourceBlock[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (line.trim() === "") { index += 1; continue; }
+    const fence = line.match(SOURCE_FENCE);
+    if (fence) {
+      const marker = fence[1];
+      const body: string[] = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith(marker)) { body.push(lines[index]); index += 1; }
+      if (index < lines.length) index += 1;
+      blocks.push({ kind: "code", text: body.join("\n") });
+      continue;
+    }
+    const heading = line.match(SOURCE_HEADING);
+    if (heading) {
+      blocks.push({ kind: "heading", level: heading[1].length, text: heading[2] });
+      index += 1;
+      continue;
+    }
+    if (startsSourceTable(lines, index)) {
+      const header = sourceTableCells(line);
+      index += 2;
+      const rows: string[][] = [];
+      while (index < lines.length && SOURCE_TABLE_ROW.test(lines[index])) { rows.push(sourceTableCells(lines[index])); index += 1; }
+      blocks.push({ kind: "table", header, rows });
+      continue;
+    }
+    const bullet = line.match(SOURCE_BULLET);
+    const ordered = line.match(SOURCE_ORDERED);
+    if (bullet || ordered) {
+      const orderedList = ordered !== null && bullet === null;
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = lines[index].match(orderedList ? SOURCE_ORDERED : SOURCE_BULLET);
+        if (!item) break;
+        items.push(item[1]);
+        index += 1;
+      }
+      blocks.push({ kind: "list", ordered: orderedList, items });
+      continue;
+    }
+    const quote = line.match(SOURCE_QUOTE);
+    if (quote) {
+      const parts: string[] = [];
+      while (index < lines.length) {
+        const current = lines[index].match(SOURCE_QUOTE);
+        if (!current) break;
+        parts.push(current[1]);
+        index += 1;
+      }
+      blocks.push({ kind: "quote", text: parts.join("\n") });
+      continue;
+    }
+    const paragraph: string[] = [];
+    while (index < lines.length && lines[index].trim() !== "") {
+      const current = lines[index];
+      if (SOURCE_HEADING.test(current) || SOURCE_FENCE.test(current) || startsSourceTable(lines, index)
+        || SOURCE_BULLET.test(current) || SOURCE_ORDERED.test(current) || SOURCE_QUOTE.test(current)) break;
+      paragraph.push(current);
+      index += 1;
+    }
+    blocks.push({ kind: "paragraph", text: paragraph.join(" ") });
   }
+  return blocks;
+}
+
+const SOURCE_INLINE = /(\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|\*[^*\n]+\*|_[^_\n]+_)/g;
+
+function SourceInline({ text }: { text: string }) {
   return (
     <>
-      {readable && <button aria-pressed={raw} className="text-button evidence-text-toggle" onClick={() => setRaw((value) => !value)} type="button">{raw ? "Formatted view" : "Source text"}</button>}
-      {!readable || raw ? <pre className={readable ? "doc-text" : "doc-text doc-code"}>{text}</pre> : (
-        <div className="doc-readable">
-          {text.split(/\r\n?|\n/).map((line, index) => {
-            const heading = line.match(/^#{1,6}[ \t]+(.*)$/);
-            const content = (heading?.[1] ?? line).split(/(\*\*[^*]+\*\*)/g).map((part, partIndex) => part.startsWith("**") && part.endsWith("**") ? <strong key={partIndex}>{part.slice(2, -2)}</strong> : part);
-            return heading ? <h3 key={index}>{content}</h3> : line.length > 0 ? <p key={index}>{content}</p> : null;
-          })}
-        </div>
-      )}
+      {text.split(SOURCE_INLINE).map((part, index) => {
+        if (/^(\*\*|__)[\s\S]+(\*\*|__)$/.test(part) && part.length > 4) return <strong key={index}>{part.slice(2, -2)}</strong>;
+        if (/^`[\s\S]+`$/.test(part)) return <code key={index}>{part.slice(1, -1)}</code>;
+        if (/^(\*|_)[\s\S]+(\*|_)$/.test(part) && part.length > 2) return <em key={index}>{part.slice(1, -1)}</em>;
+        return part;
+      })}
     </>
   );
 }
 
-function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = false }: {
+// Source text is never passed through answer typography or citation parsing.
+// A fragment without Markdown structure stays literal, monospaced text.
+function SourceDocumentBody({ text }: { text: string }) {
+  if (!isMarkdownSource(text)) return <pre className="doc-text">{text}</pre>;
+  return (
+    <div className="doc-readable">
+      {parseSourceBlocks(text).map((block, index) => {
+        if (block.kind === "heading") {
+          const Tag = SOURCE_HEADING_TAGS[Math.min(Math.max(block.level, 1), 6) - 1];
+          return <Tag key={index}><SourceInline text={block.text} /></Tag>;
+        }
+        if (block.kind === "code") return <pre className="doc-code-block" key={index}><code>{block.text}</code></pre>;
+        if (block.kind === "table") {
+          return (
+            <div className="doc-table-scroll" key={index}>
+              <table>
+                <thead><tr>{block.header.map((cell, cellIndex) => <th key={cellIndex}><SourceInline text={cell} /></th>)}</tr></thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {block.header.map((_, cellIndex) => <td key={cellIndex}><SourceInline text={row[cellIndex] ?? ""} /></td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (block.kind === "list") {
+          const items = block.items.map((item, itemIndex) => <li key={itemIndex}><SourceInline text={item} /></li>);
+          return block.ordered ? <ol key={index}>{items}</ol> : <ul key={index}>{items}</ul>;
+        }
+        if (block.kind === "quote") return <blockquote className="doc-quote" key={index}><SourceInline text={block.text} /></blockquote>;
+        return <p key={index}><SourceInline text={block.text} /></p>;
+      })}
+    </div>
+  );
+}
+
+// Card W-7 result 3: every address, id, hash, anchor, JSON and version or
+// extraction field lives behind this one control. The body is only rendered
+// once the control is open, so a static first screen really has none of them.
+function EvidenceDetails({ defaultOpen = false, children }: { defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details className="evi-provenance" open={open}>
+      <summary onClick={(event) => { event.preventDefault(); setOpen((value) => !value); }}>Details</summary>
+      {open && <div className="evi-details-body">{children}</div>}
+    </details>
+  );
+}
+
+export function EvidenceDocument({ evidence, highlight = null, detailsOpen = false, citedAddress }: {
   evidence: EvidenceData;
   highlight?: VerifiedEvidenceQuote | null;
-  provenanceOpen?: boolean;
+  detailsOpen?: boolean;
+  citedAddress?: string;
 }) {
   const technicalFragment = tryParseTechnicalFragment(evidence.text);
   const isRowLike = Boolean(evidence.rowset || technicalFragment);
   const structuredAddress = evidenceAddressDisplay(evidence.address);
   return (
-    <>
-      {evidence.is_current_version === false && <p className="evidence-currentness evidence-version-warning">This version is no longer current</p>}
-      {evidence.is_current_version === true && <p className="evidence-currentness">Current version</p>}
-      <p className="chip chip-ex">{isRowLike ? "snapshot row" : "extracted text"}</p>
-      {evidence.rowset && <RowsetTable rowset={evidence.rowset} />}
-      {technicalFragment ? (
-        <>
-          {highlight
-            ? <EvidenceText key={`${evidence.fragment_id}:${highlight.start}:${highlight.end}`} highlight={highlight} text={evidence.text} />
-            : <p className="doc-text">{summarizeTechnicalFragment(technicalFragment)}</p>}
-          <details className="evi-provenance">
-            <summary>Show technical details</summary>
-            <pre className="mono">{evidence.text}</pre>
-          </details>
-        </>
-      ) : (
-        <EvidenceText key={`${evidence.fragment_id}:${highlight?.start ?? ""}:${highlight?.end ?? ""}`} highlight={highlight} text={evidence.text} />
+    <div className="evidence-document">
+      {highlight && (
+        <figure className="evidence-quote">
+          <figcaption>Quoted fragment</figcaption>
+          <blockquote>{highlight.text}</blockquote>
+        </figure>
       )}
-      <details className="evi-provenance" open={provenanceOpen || undefined}>
-        <summary>Provenance</summary>
+      {evidence.is_current_version === false && (
+        <p className="evidence-currentness evidence-version-warning">This version is no longer current</p>
+      )}
+      {evidence.rowset
+        ? <RowsetTable rowset={evidence.rowset} />
+        : technicalFragment
+          ? <p className="doc-text">{summarizeTechnicalFragment(technicalFragment)}</p>
+          : <SourceDocumentBody text={evidence.text} />}
+      <EvidenceDetails defaultOpen={detailsOpen}>
         <dl>
+          <div><dt>Kind</dt><dd>{isRowLike ? "snapshot row" : "extracted text"}</dd></div>
           <div><dt>Fragment</dt><dd className="mono">{evidence.fragment_id}</dd></div>
           <div><dt>Anchor</dt><dd className="mono">{evidence.anchor}</dd></div>
           {evidence.canonical_address && <div><dt>Canonical address</dt><dd className="mono">{evidence.canonical_address}</dd></div>}
+          {citedAddress && citedAddress !== evidence.canonical_address && <div><dt>Cited address</dt><dd className="mono">{citedAddress}</dd></div>}
           {structuredAddress && <div><dt>Structured address</dt><dd className="mono">{structuredAddress}</dd></div>}
           <div><dt>Source version</dt><dd className="mono">{evidence.provenance.source_version_id}</dd></div>
           <div><dt>External version</dt><dd className="mono">{evidence.provenance.external_version_key}</dd></div>
@@ -3986,12 +5267,43 @@ function EvidenceFragmentPresentation({ evidence, highlight, provenanceOpen = fa
             <div><dt>Current version</dt><dd>{evidence.is_current_version ? "Yes" : "No"}</dd></div>
           )}
         </dl>
-      </details>
-    </>
+        {technicalFragment && <pre className="mono">{evidence.text}</pre>}
+      </EvidenceDetails>
+    </div>
   );
 }
 
-export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onOpenEvidence, onSelectCitation }: {
+// Card W-7: the opened source as the standalone evidence route shows it: the
+// document's name, its path, the quoted fragment that supports the answer and
+// the document text. No technical field is on this first screen.
+export function EvidenceSourceView({ evidence, highlight = null, detailsOpen = false, workspaceName, returnHref, onReturn }: {
+  evidence: EvidenceData;
+  highlight?: VerifiedEvidenceQuote | null;
+  detailsOpen?: boolean;
+  workspaceName: string;
+  returnHref: string;
+  onReturn: (event: ReactMouseEvent<HTMLAnchorElement>) => void;
+}) {
+  return (
+    <article aria-label="Source evidence" className="evidence-source-page">
+      <header className="page-top-bar evidence-source-topbar">
+        <div>
+          <p className="eyebrow">{workspaceName}</p>
+          <h1>{evidenceSourceFilename(evidence.source_path) ?? "Source"}</h1>
+          {evidence.source_path && (
+            <div className="source-address evidence-source-path"><span>Source path</span><code>{evidence.source_path}</code></div>
+          )}
+        </div>
+        <a className="secondary-button evidence-source-return" href={returnHref} onClick={onReturn}>Back to search</a>
+      </header>
+      <div className="evidence-source-body">
+        <EvidenceDocument evidence={evidence} highlight={highlight} detailsOpen={detailsOpen} />
+      </div>
+    </article>
+  );
+}
+
+export type EvidencePanelProps = {
   workspaceID: string | null;
   target: PanelTarget;
   turnsByID: Map<string, ConversationTurn>;
@@ -4001,7 +5313,41 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
   onToggleFullscreen: () => void;
   onOpenEvidence: (hash: string) => void;
   onSelectCitation: (turnID: string, citationID: string) => void;
-}) {
+  // Card W-8: closing the panel is one action. When the chat screen hands the
+  // panel this callback it also renders the control that closes it; the
+  // standalone render (and the search surface's own read) simply passes none.
+  onClose?: () => void;
+};
+
+// Card W-8: the evidence region of the chat screen behind one control. Closed,
+// it renders only the control that opens the panel, so the panel takes no
+// column. Open, it renders the panel itself with the same control in its
+// header, so one action closes it. The static render of this component is the
+// chat screen's two evidence states.
+export function AnswerEvidence({ open, onToggle, ...panel }: EvidencePanelProps & { open: boolean; onToggle: () => void }) {
+  if (!open) {
+    return (
+      <div className="evidence-dock">
+        <button
+          aria-expanded={false}
+          className="evidence-toggle"
+          onClick={onToggle}
+          type="button"
+        >
+          <IconExpand />
+          <span>Show evidence</span>
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="evidence-dock evidence-dock-open">
+      <EvidencePanel {...panel} onClose={onToggle} />
+    </div>
+  );
+}
+
+export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConnection, allSources, fullscreen, onToggleFullscreen, onOpenEvidence, onSelectCitation, onClose }: EvidencePanelProps) {
   const turn = target && "turnId" in target ? turnsByID.get(target.turnId) ?? null : null;
   const citations = turn?.question_run?.citations ?? [];
   const activeCitationID = target && "citationId" in target ? target.citationId : null;
@@ -4052,6 +5398,23 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
     return () => { alive = false; };
   }, [requestPath]);
 
+  // Card W-7: the panel shows the quoted fragment that supports the answer,
+  // rechecked against the fetched fragment exactly as the standalone source
+  // page does, so the first screen is the document rather than a debug dump.
+  const quoteSelectorKey = quoteSelector
+    ? `${quoteSelector.start}:${quoteSelector.end}:${quoteSelector.text_hash}:${quoteSelector.source_version_id}:${quoteSelector.extraction_id}:${quoteSelector.anchor}`
+    : "";
+  const [verifiedPanelQuote, setVerifiedPanelQuote] = useState<VerifiedEvidenceQuote | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setVerifiedPanelQuote(null);
+    if (evidence?.kind !== "ok" || !fragmentID || !quoteSelector) return () => { alive = false; };
+    void verifyEvidenceQuoteSelector(evidence.value, fragmentID, quoteSelector).then((verified) => {
+      if (alive) setVerifiedPanelQuote(verified);
+    });
+    return () => { alive = false; };
+  }, [evidence, fragmentID, quoteSelectorKey]);
+
   async function copyEvidencePageLink() {
     if (!evidencePageURL || !navigator.clipboard?.writeText) {
       setCopyLinkStatus("Copying is not available in this browser.");
@@ -4076,7 +5439,21 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
 
   if (target === null) {
     return (
-      <aside aria-label="Answer evidence" className="evi">
+      <aside aria-label="Answer evidence" className="evi" id="answer-evidence">
+        <header className="evi-h">
+          <div className="t">
+            <b>Answer evidence</b>
+            <span>The sources behind an answer appear here.</span>
+          </div>
+          <div className="evi-actions">
+            {onClose && (
+              <button aria-controls="answer-evidence" aria-expanded={true} className="evidence-toggle" onClick={onClose} type="button">
+                <IconCollapse />
+                <span>Hide evidence</span>
+              </button>
+            )}
+          </div>
+        </header>
         <div className="evi-idle">
           <p>Ask a question to view the source text behind the answer here. Select a previous turn to return to its evidence, or select a citation to open that fragment.</p>
           {allSources.some((source) => source.enabled) && (
@@ -4097,7 +5474,7 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
   }
 
   return (
-    <aside aria-label="Answer evidence" className={fullscreen ? "evi evi-full" : "evi"}>
+    <aside aria-label="Answer evidence" className={fullscreen ? "evi evi-full" : "evi"} id="answer-evidence">
       <header className="evi-h">
         <div className="t">
           <b>{evidence?.kind === "ok" ? evidenceSourceFilename(evidence.value.source_path) ?? provenanceName : fragmentID ? "Checking source…" : liveResultRun ? "Live database evidence" : "Evidence unavailable"}</b>
@@ -4110,20 +5487,29 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
               document prose. */}
           <span>{evidence?.kind === "ok" ? `${isRowLike ? "snapshot row" : "extracted text"} · observed ${formatTime(evidence.value.provenance.observed_at)}` : ""}</span>
         </div>
-        {evidence?.kind === "ok" && (
-          <div className="evi-actions">
-            {evidencePageURL && <a className="lnk" href={evidencePageURL} onClick={(event) => {
-              if (!shouldHandleInAppEvidenceClick(event)) return;
-              event.preventDefault();
-              onOpenEvidence(new URL(evidencePageURL).hash);
-            }}>Open separately</a>}
-            {evidencePageURL && <button className="lnk" onClick={() => void copyEvidencePageLink()} type="button">Copy link</button>}
+        <div className="evi-actions">
+          {evidence?.kind === "ok" && evidencePageURL && <a className="lnk" href={evidencePageURL} onClick={(event) => {
+            if (!shouldHandleInAppEvidenceClick(event)) return;
+            event.preventDefault();
+            onOpenEvidence(new URL(evidencePageURL).hash);
+          }}>Open separately</a>}
+          {evidence?.kind === "ok" && evidencePageURL && <button className="lnk" onClick={() => void copyEvidencePageLink()} type="button">Copy link</button>}
+          {evidence?.kind === "ok" && (
             <button aria-expanded={fullscreen} className="lnk" onClick={onToggleFullscreen} ref={expandButtonRef} type="button">
               {fullscreen ? <IconCollapse /> : <IconExpand />}
               {fullscreen ? "Collapse" : "Full screen"}
             </button>
-          </div>
-        )}
+          )}
+          {/* Card W-8: the close control is in the header whether or not the
+              fragment has loaded, so an open panel can always be put away in
+              one action. */}
+          {onClose && (
+            <button aria-controls="answer-evidence" aria-expanded={true} className="evidence-toggle" onClick={onClose} type="button">
+              <IconCollapse />
+              <span>Hide evidence</span>
+            </button>
+          )}
+        </div>
       </header>
       {copyLinkStatus && <p aria-live="polite" className="evi-action-status" role="status">{copyLinkStatus}</p>}
 
@@ -4136,9 +5522,6 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
 
       {activeCitation && (
         <p className="msg-note">Evidence {activeCitation.number}: {citationGroundingText(activeCitation.grounding_status)}.</p>
-      )}
-      {activeCitation?.address && (
-        <details className="source-address"><summary>Source address</summary><code>{activeCitation.address}</code></details>
       )}
       {evidence?.kind === "ok" && evidence.value.source_path && (
         <div className="source-address"><span>Source path</span><code>{evidence.value.source_path}</code></div>
@@ -4187,7 +5570,7 @@ export function EvidencePanel({ workspaceID, target, turnsByID, sourceNameByConn
           </p>
         )}
         {fragmentID && evidence?.kind === "ok" && (
-          <EvidenceFragmentPresentation evidence={evidence.value} />
+          <EvidenceDocument citedAddress={activeCitation?.address} evidence={evidence.value} highlight={verifiedPanelQuote} />
         )}
       </div>
     </aside>
@@ -4238,16 +5621,23 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
   }, [target, onAccessDenied]);
 
   const evidence = pageState.kind === "ready" ? pageState.evidence : null;
-  const sourceName = evidence ? evidenceSourceFilename(evidence.source_path) ?? "Source" : "Source evidence";
+  if (evidence) {
+    return (
+      <EvidenceSourceView
+        evidence={evidence}
+        highlight={verifiedQuote}
+        onReturn={onReturn}
+        returnHref={returnHref}
+        workspaceName={workspaceName}
+      />
+    );
+  }
   return (
     <article aria-label="Source evidence" className="evidence-source-page">
       <header className="page-top-bar evidence-source-topbar">
         <div>
           <p className="eyebrow">{workspaceName}</p>
-          <h1>{sourceName}</h1>
-          {evidence?.source_path && (
-            <div className="source-address evidence-source-path"><span>Source path</span><code>{evidence.source_path}</code></div>
-          )}
+          <h1>Source evidence</h1>
         </div>
         <a className="secondary-button evidence-source-return" href={returnHref} onClick={onReturn}>Back to search</a>
       </header>
@@ -4257,7 +5647,6 @@ function EvidenceSourcePage({ target, workspaceName, returnHref, onReturn, onAcc
           <p className="evi-denied" role="status"><IconInfo />Evidence unavailable.</p>
         )}
         {pageState.kind === "failed" && <p className="evidence-state" role="status">Could not load evidence.</p>}
-        {evidence && <EvidenceFragmentPresentation evidence={evidence} highlight={verifiedQuote} provenanceOpen />}
       </div>
     </article>
   );
@@ -4350,6 +5739,11 @@ export function AskSurface({ active, onOpenEvidence, onOpenSources, onConversati
       <header className="ask-page-header">
         <h1>Ask</h1>
         <div className="ask-page-actions">
+          {/* Card W-5: this is the chat screen's one control for the workspace's
+              sources — the count, how many need attention, and, opened, the
+              per-source list with the way to manage them. The question composer
+              used to render a second copy of the same summary, so the screen
+              showed two controls for one fact; only this one remains. */}
           {askSources && <RelyBar onManageSources={onOpenSources} sources={askSources} />}
         </div>
       </header>
@@ -4384,7 +5778,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   workspaceID: string;
 }) {
   const statusMessage = questionStatusMessage(run);
-  const corpusWarning = corpusStatusWarning(run.corpus_status);
+  const incompleteWarning = incompleteDataWarning(run);
   const isQuote = run.verification_method === "BYTE_EXACT_CITATION";
   const text = run.answer ?? run.clarification;
   const liveResult = run.answer_result;
@@ -4415,6 +5809,7 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
   };
   return (
     <>
+      <WorkspaceContextUsage toolLoop={run.tool_loop} />
       <ToolCallsDisclosure run={run} showResults={false} />
       {statusMessage ? <p className="msg-warning">{statusMessage}</p> : hasLiveReceipt ? (
         <div className="answer-body live-calculation-answer">
@@ -4460,7 +5855,6 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
           </blockquote>
         ) : (
           <div className="answer-body">
-            <span className="badge badge-tell">paraphrase</span>
             <AnswerBody citations={run.citations} onSelectCitation={selectCitation} panelTurnId={null} selectedCitationId={null} text={text} turnId={run.question_run_id} />
           </div>
         )
@@ -4477,9 +5871,9 @@ function QuestionRunAnswer({ onOpenEvidence, run, workspaceID }: {
         </div>
       )}
       {text && (!hasLiveReceipt || hasDocumentGroundedContext) && <p className="msg-note">{questionClaimGroundingLabel(run)}</p>}
-      {corpusWarning && <p className="msg-warning">{corpusWarning}</p>}
+      {incompleteWarning && <p className="msg-warning">{incompleteWarning}</p>}
       {run.conflicts.map((item) => item.message ? <p className="msg-warning" key={item.code}>{item.message}</p> : null)}
-      {run.uncertainties.map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
+      {run.uncertainties.filter((item) => item.code !== "CORPUS_PARTIAL").map((item) => item.message ? <p className="msg-note" key={item.code}>{item.message}</p> : null)}
       {run.citations.length > 0 && (
         <ul aria-label="Answer sources" className="search-pilot-citations">
           {run.citations.map((citation) => {
@@ -4707,8 +6101,20 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const [pendingElapsedSeconds, setPendingElapsedSeconds] = useState(0);
   const [archiving, setArchiving] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
+  // Card W-6: the conversation list can be put away. The initial value is the
+  // person's remembered choice, read once from local storage; every toggle
+  // writes it back, so a reload shows the list as they left it. A browser with
+  // no local storage reads as the default expanded list.
+  const [conversationsCollapsed, setConversationsCollapsed] = useState(
+    () => readConversationsCollapsed(conversationSidebarStorage()),
+  );
   const [panelTarget, setPanelTarget] = useState<PanelTarget>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  // Card W-8: the evidence panel of the chat screen is not shown until the
+  // person asks for it. `evidenceOpen` is that ask: the screen's own control
+  // sets it, and opening an answer's evidence link sets it too. While it is
+  // false the panel is not in the tree at all, so the chat takes its width.
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const flowRef = useRef<HTMLDivElement | null>(null);
   // Every workspace switch, logout or first-page refresh bumps the generation,
@@ -4810,6 +6216,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     setConversation(null);
     setLocalTurns([]);
     setPanelTarget(null);
+    setFullscreen(false);
+    setEvidenceOpen(false);
   }, [initialConversationID]);
 
   // First page of the topics list. Server pagination replaces the old
@@ -4970,6 +6378,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
       setLastFailure(null);
       setPendingQuestion(null);
       setPanelTarget(null);
+      setFullscreen(false);
+      setEvidenceOpen(false);
       setTopicsCursor(null);
       setTopicsContinuation("idle");
       setSubmitting(false);
@@ -5057,6 +6467,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     setLastFailure(null);
     setPendingQuestion(null);
     setPanelTarget(null);
+    setFullscreen(false);
+    setEvidenceOpen(false);
     setSubmitting(false);
     setArchiving(false);
     setQuestion("");
@@ -5153,6 +6565,8 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         setLastFailure(null);
         setPendingQuestion(null);
         setPanelTarget(null);
+        setFullscreen(false);
+        setEvidenceOpen(false);
         setTopicsCursor(null);
         setTopicsContinuation("idle");
         setSubmitting(false);
@@ -5233,6 +6647,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     if (conversation?.kind !== "ok" || conversation.value.turns.length === 0) return;
     setPanelTarget(null);
     setFullscreen(false);
+    setEvidenceOpen(false);
   }, [conversation]);
 
   const remoteTurns = conversation?.kind === "ok" ? conversation.value.turns : [];
@@ -5259,10 +6674,25 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     dismissFootnoteTooltip();
     setPanelTarget({ turnId: turn.turn_id, citationId: firstAnswerCitation(turn.question_run) });
     setFullscreen(false);
+    setEvidenceOpen(true);
   }
 
   function selectCitation(turn: ConversationTurn, citationID: string) {
     setPanelTarget({ turnId: turn.turn_id, citationId: citationID });
+    setEvidenceOpen(true);
+  }
+
+  // Card W-8: the chat screen's one evidence control both opens the panel and,
+  // once it is open, closes it. Closing also drops the fullscreen variant, so
+  // the chat takes the freed width back in the same action.
+  function closeEvidence() {
+    setEvidenceOpen(false);
+    setFullscreen(false);
+  }
+
+  function toggleEvidence() {
+    if (evidenceOpen) closeEvidence();
+    else setEvidenceOpen(true);
   }
 
   async function submitQuestion(event: FormEvent) {
@@ -5327,6 +6757,7 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
       setLocalTurns((current) => [...current, turn]);
       setPanelTarget(null);
       setFullscreen(false);
+      setEvidenceOpen(false);
       if (result.value.conversation_id && result.value.conversation_id !== selectedConversationID) {
         setSelectedConversationID(result.value.conversation_id);
         routedConversationRef.current = result.value.conversation_id;
@@ -5378,7 +6809,17 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
     setQuestion("");
     setPanelTarget(null);
     setFullscreen(false);
+    setEvidenceOpen(false);
     focusComposer();
+  }
+
+  // Card W-6: one action hides the conversation list, one action shows it
+  // again. The choice is written to local storage before the state update, so
+  // the rendered screen and the remembered choice can never disagree.
+  function toggleConversations() {
+    const next = !conversationsCollapsed;
+    writeConversationsCollapsed(conversationSidebarStorage(), next);
+    setConversationsCollapsed(next);
   }
 
   function selectConversation(conversationID: string) {
@@ -5438,8 +6879,12 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
   const currentTitle = selectedConversationID !== null && conversation?.kind === "ok" ? conversationTitle(conversation.value) : null;
 
   return (
-    <div className={fullscreen ? "ask-layout ask-layout-full" : "ask-layout"}>
-      <section aria-label="Conversations" className="topics">
+    <div className={`${askLayoutClass(fullscreen && evidenceOpen, conversationsCollapsed)}${evidenceOpen ? " ask-layout-evidence" : ""}`}>
+      {/* Card W-6: the conversation list is dropped from the tree when the
+          person put it away, so the freed column really goes to the chat and
+          its answer and no stale list stays reachable behind a hidden node. */}
+      {!conversationsCollapsed && (
+      <section aria-label="Conversations" className="topics" id="ask-conversations">
         <h2>Conversations</h2>
         <label className="sidebar-search">
           <span className="sr-only">Search conversations</span>
@@ -5540,8 +6985,25 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
         <button className="topics-new" onClick={startNewConversation} type="button"><IconPlus />New conversation</button>
       </section>
+      )}
 
       <section aria-live="polite" className="talk">
+        {/* Card W-6: one control, always on screen, that hides the conversation
+            list and brings it back. It lives in the chat column so it is
+            reachable in both states; its own visible label is the accessible
+            name and aria-expanded reports which state is showing. */}
+        <div className="conversations-control">
+          <button
+            aria-controls={conversationsCollapsed ? undefined : "ask-conversations"}
+            aria-expanded={!conversationsCollapsed}
+            className="conversations-toggle"
+            onClick={toggleConversations}
+            type="button"
+          >
+            {conversationsCollapsed ? <IconExpand /> : <IconCollapse />}
+            <span>{conversationsCollapsed ? "Show conversations" : "Hide conversations"}</span>
+          </button>
+        </div>
         <div className="flow" ref={flowRef}>
           {currentTitle && (
             <header className="flow-head">
@@ -5604,7 +7066,6 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
 
         <div className="foot">
-          <RelyBar sources={allSources} />
           <form className="question-composer" onSubmit={submitQuestion}>
             <label className="sr-only" htmlFor="ask-question">Question</label>
             <textarea
@@ -5634,7 +7095,11 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
         </div>
       </section>
 
-      <EvidencePanel
+      {/* Card W-8: the chat screen's one evidence control. Closed, it is the
+          only evidence affordance on the screen and the panel is not in the
+          tree at all; open, the same control sits in the panel header and
+          closes it, so the chat takes the freed width in one action. */}
+      <AnswerEvidence
         allSources={allSources}
         fullscreen={fullscreen}
         onOpenEvidence={onOpenEvidence}
@@ -5642,7 +7107,9 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
           const turn = turnsByID.get(turnID);
           if (turn) selectCitation(turn, citationID);
         }}
+        onToggle={toggleEvidence}
         onToggleFullscreen={() => setFullscreen((value) => !value)}
+        open={evidenceOpen}
         sourceNameByConnection={sourceNameByConnection}
         target={panelTarget}
         turnsByID={turnsByID}
@@ -5657,6 +7124,10 @@ function AskView({ onOpenEvidence, onConversationChange, initialConversationID, 
 function sourceHeadline(source: SourceStatus): string {
   if (!source.enabled) return "Disabled";
   if (source.confirmation_state !== "ACTIVE") return confirmationStateLabel(source.confirmation_state);
+  // S3 card 4: a query-only relation is registered for SQL only. It has no
+  // sync run and therefore no freshness to report, so its state is the mode
+  // itself rather than a sync label.
+  if (source.query_only === true) return "только SQL";
   if (source.job_status === "PENDING") return (source.job_attempt_count ?? 0) > 0 ? "Waiting to retry" : "Queued";
   if (source.job_status === "RUNNING") return "Updating";
   if (source.job_status === "DEAD") return "Update failed";
@@ -5684,12 +7155,207 @@ function sourceLabel(source: SourceStatus): string {
 function sourceCardVariant(source: SourceStatus): "ready" | "attention" | "updating" | "disconnected" {
   if (!source.enabled) return "disconnected";
   if (source.confirmation_state !== "ACTIVE") return "attention";
+  // A query-only table never syncs, so it carries no sync failure or
+  // freshness: its registration mode is the whole state.
+  if (source.query_only === true) return "ready";
   if (source.job_status === "DEAD" || source.sync_status === "FAILED" || source.sync_error_code
     || (source.quarantined ?? 0) > 0 || (source.job_last_error_code && source.job_status !== "SUCCEEDED")
     || source.freshness_state === "STALE") return "attention";
   if (source.job_status === "PENDING" || source.job_status === "RUNNING" || source.sync_status === "RUNNING") return "updating";
   if (source.job_status && source.job_status !== "SUCCEEDED") return "attention";
   return source.sync_status === "SUCCEEDED" && source.freshness_state === "FRESH" ? "ready" : "attention";
+}
+
+// Card S5.1: a PostgreSQL connection is one card in Sources. The page already
+// loads one row per registered table — the same per-scope projection
+// knowvault_sources serves over MCP — so the card is built from that data:
+// tables are grouped by connection inside the caller's authorized workspace
+// list, and the summary rolls up per-table facts the existing read already
+// carries. No new server field and no second request are introduced.
+export type SourceConnectionGroup = {
+  connection_id: string;
+  connection_name: string;
+  source_type: string;
+  tables: SourceStatus[];
+};
+
+// A table is indexed once one of its runs completed successfully: that run is
+// exactly the moment the server publishes last_successful_sync_at for the
+// scope, so the count is derived from server facts rather than a guess about
+// published fragments (an empty table legitimately publishes none).
+export function sourceTableIndexed(source: SourceStatus): boolean {
+  return source.last_successful_sync_at !== null && source.last_successful_sync_at !== undefined;
+}
+
+// S3 card 4: a query-only table is registered "only for SQL queries (not
+// indexed)". It is enabled and usable, but it never runs a sync and never
+// publishes a fragment, so the Sources surface must not claim freshness for
+// it.
+export function sourceTableQueryOnly(source: SourceStatus): boolean {
+  return source.query_only === true;
+}
+
+export type SourceConnectionState = "disabled" | "awaiting_confirmation" | "failed" | "updating" | "active";
+
+function sourceTableFailed(source: SourceStatus): boolean {
+  return source.sync_status === "FAILED" || source.job_status === "DEAD"
+    || Boolean(source.sync_error_code)
+    || (Boolean(source.job_last_error_code) && source.job_status !== "SUCCEEDED");
+}
+
+function sourceTableUpdating(source: SourceStatus): boolean {
+  return source.job_status === "PENDING" || source.job_status === "RUNNING" || source.sync_status === "RUNNING";
+}
+
+// The connection's state is the most blocking state among its tables: an
+// unconfirmed table keeps the whole connection awaiting confirmation, and a
+// failed table is never hidden behind the healthy ones.
+export function sourceConnectionState(group: SourceConnectionGroup): SourceConnectionState {
+  if (group.tables.length === 0 || group.tables.every((table) => !table.enabled)) return "disabled";
+  if (group.tables.some((table) => table.confirmation_state !== "ACTIVE")) return "awaiting_confirmation";
+  if (group.tables.some(sourceTableFailed)) return "failed";
+  if (group.tables.some(sourceTableUpdating)) return "updating";
+  return "active";
+}
+
+// The freshness a connection shows is the least fresh state among its tables:
+// one stale table means the connection's data is stale, and a table that never
+// completed a successful run leaves the roll-up unknown rather than fresh.
+export function sourceConnectionFreshnessState(group: SourceConnectionGroup): string {
+  if (group.tables.length === 0) return "UNKNOWN";
+  let unknown = false;
+  let indexed = 0;
+  for (const table of group.tables) {
+    // S3 card 4: a query-only table has no sync run at all, so it must not
+    // drag the connection's freshness down (nor up).
+    if (sourceTableQueryOnly(table)) continue;
+    indexed += 1;
+    if (table.freshness_state === "STALE") return "STALE";
+    if (table.freshness_state !== "FRESH") unknown = true;
+  }
+  if (indexed === 0) return "UNKNOWN";
+  return unknown ? "UNKNOWN" : "FRESH";
+}
+
+export function sourceConnectionLastSuccessfulSyncAt(group: SourceConnectionGroup): string | null {
+  let latest: string | null = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  for (const table of group.tables) {
+    if (!table.last_successful_sync_at) continue;
+    const time = new Date(table.last_successful_sync_at).getTime();
+    if (Number.isNaN(time) || time <= latestTime) continue;
+    latestTime = time;
+    latest = table.last_successful_sync_at;
+  }
+  return latest;
+}
+
+export type SourceConnectionSummary = {
+  connection_id: string;
+  connection_name: string;
+  source_type: string;
+  tables: SourceStatus[];
+  table_count: number;
+  indexed_count: number;
+  last_successful_sync_at: string | null;
+  freshness_state: string;
+  state: SourceConnectionState;
+  state_label: string;
+  variant: "ready" | "attention" | "updating" | "disconnected";
+  // ADR-0097: every table of one connection answers with the same connection
+  // revision, so the connection's SQL state is the flag any of its tables
+  // carries. A missing field (an older server) reads as "not configured",
+  // which fails closed.
+  sql_available: boolean;
+  // S3 card 4: the connection's query-only roll-up. query_only_count is the
+  // number of registered tables that are SQL-only; query_only is true only
+  // when every table is SQL-only, in which case the card shows no sync
+  // freshness at all.
+  query_only_count: number;
+  query_only: boolean;
+};
+
+const sourceConnectionStateLabels: Record<SourceConnectionState, string> = {
+  disabled: "Disabled",
+  awaiting_confirmation: "Awaiting confirmation",
+  failed: "Failed",
+  updating: "Updating",
+  active: "Active",
+};
+
+// Draft is the fourth connection state the Sources surface names; it is served
+// by the workspace source-drafts read and rendered by SourceConnectionDraftList
+// exactly as before, so it is deliberately not re-derived here.
+export function sourceConnectionSummary(group: SourceConnectionGroup): SourceConnectionSummary {
+  const state = sourceConnectionState(group);
+  const freshness = sourceConnectionFreshnessState(group);
+  const queryOnlyCount = group.tables.filter(sourceTableQueryOnly).length;
+  const allQueryOnly = group.tables.length > 0 && queryOnlyCount === group.tables.length;
+  // A connection whose tables are all SQL-only has no sync run to report: its
+  // state is the registration mode, never "status unconfirmed".
+  const variant = allQueryOnly && state === "active" ? "ready"
+    : state === "active" && freshness !== "FRESH" ? "attention"
+      : state === "disabled" ? "disconnected"
+        : state === "updating" ? "updating"
+          : state === "active" ? "ready" : "attention";
+  const stateLabel = allQueryOnly && state === "active" ? "только SQL"
+    : state === "active" && freshness !== "FRESH"
+      ? (freshness === "STALE" ? "Data is stale" : "Status unconfirmed")
+      : sourceConnectionStateLabels[state];
+  return {
+    connection_id: group.connection_id,
+    connection_name: group.connection_name,
+    source_type: group.source_type,
+    tables: group.tables,
+    table_count: group.tables.length,
+    indexed_count: group.tables.filter(sourceTableIndexed).length,
+    last_successful_sync_at: sourceConnectionLastSuccessfulSyncAt(group),
+    freshness_state: freshness,
+    state,
+    state_label: stateLabel,
+    variant,
+    sql_available: group.tables.some((table) => table.sql_available === true),
+    query_only_count: queryOnlyCount,
+    query_only: allQueryOnly,
+  };
+}
+
+export type SourceCardEntry =
+  | { kind: "connection"; key: string; group: SourceConnectionGroup }
+  | { kind: "source"; key: string; source: SourceStatus };
+
+// Every PostgreSQL scope of one connection becomes one connection entry; every
+// other source type keeps its own single card. Grouping only ever touches the
+// already-authorized list handed to it, so a workspace can never see another
+// workspace's connection.
+export function sourceCardEntries(sources: readonly SourceStatus[]): SourceCardEntry[] {
+  const entries: SourceCardEntry[] = [];
+  const groups = new Map<string, SourceConnectionGroup>();
+  for (const source of sources) {
+    if (source.source_type !== "POSTGRESQL_QUERY") {
+      entries.push({ kind: "source", key: source.source_scope_id, source });
+      continue;
+    }
+    const existing = groups.get(source.connection_id);
+    if (existing) {
+      existing.tables.push(source);
+      continue;
+    }
+    const group: SourceConnectionGroup = {
+      connection_id: source.connection_id, connection_name: source.connection_name,
+      source_type: source.source_type, tables: [source],
+    };
+    groups.set(source.connection_id, group);
+    entries.push({ kind: "connection", key: `connection:${source.connection_id}`, group });
+  }
+  return entries;
+}
+
+export function sourceTableLabel(source: SourceStatus): string {
+  if (source.postgresql_schema_name && source.postgresql_relation_name) {
+    return `${source.postgresql_schema_name}.${source.postgresql_relation_name}`;
+  }
+  return source.connection_name;
 }
 
 // When a source needs an operator action the viewer cannot themselves take,
@@ -5712,6 +7378,105 @@ function sourceBlockedNote(source: SourceStatus, canManage: boolean, confirmatio
     return "A workspace owner or manager can enable this source.";
   }
   return null;
+}
+
+// Card S3.4b: the tables of one connection that are actually awaiting a
+// confirmation decision. It is exactly the state whose per-table row action is
+// "Confirm" (NEEDS_GRANT or NEEDS_CONFIRMATION), never a table that awaits
+// trust verification, activation or enabling -- so "confirm all" can never name
+// a table the operator would not confirm one at a time. The list is the
+// already-authorized server projection, so the bulk action never reveals
+// another workspace's table.
+export function sourceTablesAwaitingConfirmation(group: SourceConnectionGroup): SourceStatus[] {
+  return group.tables.filter((table) =>
+    table.confirmation_state === "NEEDS_GRANT" || table.confirmation_state === "NEEDS_CONFIRMATION");
+}
+
+// Distinct PostgreSQL schemas of the connection that still have at least one
+// table awaiting confirmation, sorted, so a large catalog can be confirmed one
+// schema at a time from the same card.
+export function sourceSchemasAwaitingConfirmation(group: SourceConnectionGroup): string[] {
+  const schemas = new Set<string>();
+  for (const table of sourceTablesAwaitingConfirmation(group)) {
+    if (table.postgresql_schema_name) schemas.add(table.postgresql_schema_name);
+  }
+  return [...schemas].sort((left, right) => left.localeCompare(right));
+}
+
+// The exact awaiting tables a confirmation action would name: every schema when
+// the empty schema is selected, otherwise only that schema's tables.
+export function sourceTablesAwaitingConfirmationInSchema(group: SourceConnectionGroup, schema: string): SourceStatus[] {
+  const pending = sourceTablesAwaitingConfirmation(group);
+  if (schema === "") return pending;
+  return pending.filter((table) => table.postgresql_schema_name === schema);
+}
+
+export type SourceConfirmBatchTable = {
+  workspace_source_id: string;
+  source_scope_id: string;
+  source_scope_revision: number;
+  scope_config_hash: string;
+};
+
+// The one closed batch-confirmation body: the shared grant/warning/policy tuple
+// plus one exact binding tuple per named table. It carries nothing a single
+// confirmation would not carry.
+export function confirmBatchRequestBody(
+  tables: readonly SourceStatus[],
+  workspaceRevision: number,
+  workspaceConfigurationHash: string,
+  grant: { grant_id: string; grant_revision: number; grant_hash: string },
+  warningContractHash: string,
+  expectedPolicyRevision: string,
+): {
+  workspace_revision: number;
+  workspace_configuration_hash: string;
+  confirmation_actor_grant_id: string;
+  confirmation_actor_grant_revision: number;
+  confirmation_actor_grant_hash: string;
+  warning_contract_hash: string;
+  expected_policy_revision: string;
+  tables: SourceConfirmBatchTable[];
+} {
+  return {
+    workspace_revision: workspaceRevision,
+    workspace_configuration_hash: workspaceConfigurationHash,
+    confirmation_actor_grant_id: grant.grant_id,
+    confirmation_actor_grant_revision: grant.grant_revision,
+    confirmation_actor_grant_hash: grant.grant_hash,
+    warning_contract_hash: warningContractHash,
+    expected_policy_revision: expectedPolicyRevision,
+    tables: tables.map((table) => ({
+      workspace_source_id: table.workspace_source_id,
+      source_scope_id: table.source_scope_id,
+      source_scope_revision: table.source_scope_revision,
+      scope_config_hash: table.scope_config_hash,
+    })),
+  };
+}
+
+export type SourceConfirmBatchOutcome = {
+  confirmed_count: number;
+  refused_count: number;
+  results: Array<{
+    source_scope_id: string;
+    outcome: "CONFIRMED" | "REFUSED" | string;
+    reason_code?: string;
+    confirmation_id?: string;
+    confirmation_hash?: string;
+  }>;
+};
+
+// The one operator-facing sentence the batch action reports: how many tables
+// were confirmed and, for the refused ones, their closed reason codes. A
+// refusal never hides the confirmations that did happen.
+export function confirmBatchOutcomeSummary(outcome: SourceConfirmBatchOutcome): string {
+  const confirmed = Number.isFinite(outcome.confirmed_count) ? outcome.confirmed_count : 0;
+  const refused = outcome.results.filter((row) => row.outcome !== "CONFIRMED");
+  const confirmedLabel = `${confirmed} table${confirmed === 1 ? "" : "s"} confirmed`;
+  if (refused.length === 0) return `${confirmedLabel}.`;
+  const codes = [...new Set(refused.map((row) => row.reason_code ?? "REFUSED"))].sort();
+  return `${confirmedLabel}, ${outcome.refused_count} refused (${codes.join(", ")}).`;
 }
 
 // These are last-run counters, not the size of the retained corpus. Missing
@@ -5806,7 +7571,222 @@ function LatestProcessingNote({ source }: { source: SourceStatus }) {
   );
 }
 
-function SourcesView({ state, role, onChanged, pushToast }: {
+// Card S3.2b: the organization OWNER's control over one PostgreSQL source
+// connection's SQL query credential (ADR-0097). It accepts only the opaque
+// 'cred' reference the server resolves from its mounted credentials; no DSN,
+// password or other secret value is entered or returned here. The control is
+// rendered by SourceConnectionCard only for an OWNER.
+export function SourceQueryCredentialControl({ connectionID, sqlAvailable, busy = false, onSet, onClear }: {
+  connectionID: string;
+  sqlAvailable: boolean;
+  busy?: boolean;
+  onSet: (connectionID: string, credentialReference: string) => void;
+  onClear: (connectionID: string) => void;
+}) {
+  const [reference, setReference] = useState("");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const trimmed = reference.trim();
+    if (trimmed === "" || busy) return;
+    onSet(connectionID, trimmed);
+  };
+  return (
+    <form className="source-sql-control" onSubmit={submit}>
+      <label className="source-sql-control-field">
+        <span>Query credential reference</span>
+        <input
+          autoComplete="off"
+          disabled={busy}
+          onChange={(event) => setReference(event.target.value)}
+          placeholder="cred_…"
+          spellCheck={false}
+          value={reference}
+        />
+      </label>
+      <button className="secondary-button" disabled={busy || reference.trim() === ""} type="submit">Save</button>
+      {sqlAvailable && (
+        <button className="secondary-button" disabled={busy} onClick={() => onClear(connectionID)} type="button">Clear</button>
+      )}
+    </form>
+  );
+}
+
+// Card S5.1: the one card a database connection gets in Sources. Its collapsed
+// body carries the connection state, the registered/indexed table counts and
+// the rolled-up freshness; its expansion lists each registered table with its
+// own state, and renderTableExtra keeps the per-table actions reachable, so no
+// operator control is lost by folding the rows into one card.
+export type SourceConfirmBatchControl = {
+  canConfirm: boolean;
+  busy: boolean;
+  summary: string | null;
+  onConfirm: (tables: SourceStatus[]) => void;
+};
+
+// Card S5.1: the one card a database connection gets in Sources. Its collapsed
+// body carries the connection state, the registered/indexed table counts and
+// the rolled-up freshness; its expansion lists each registered table with its
+// own state, and renderTableExtra keeps the per-table actions reachable, so no
+// operator control is lost by folding the rows into one card.
+//
+// Card S3.4b adds the bulk confirmation control: when the viewer may confirm
+// and the connection still has tables awaiting confirmation, the card offers
+// "all schemas" or one schema and confirms every awaiting table in that choice
+// with one request. Its outcome summary is rendered next to it.
+export function SourceConnectionCard({ group, renderTableExtra, canConfigureSQL = false, sqlControl, confirmBatch }: {
+  group: SourceConnectionGroup;
+  renderTableExtra?: (source: SourceStatus) => ReactNode;
+  canConfigureSQL?: boolean;
+  sqlControl?: ReactNode;
+  confirmBatch?: SourceConfirmBatchControl;
+}) {
+  const summary = sourceConnectionSummary(group);
+  const [confirmSchema, setConfirmSchema] = useState("");
+  const awaiting = sourceTablesAwaitingConfirmation(group);
+  const awaitingInSchema = sourceTablesAwaitingConfirmationInSchema(group, confirmSchema);
+  return (
+    <li className={`source-row source-row-connection source-row-${summary.variant}`}>
+      <span className={`dot dot-${summary.variant}`} aria-hidden="true" />
+      <div className="source-row-main">
+        <div className="source-title-row">
+          <b>{summary.connection_name}</b>
+          <span className={`state-chip ${summary.variant}`}><span aria-hidden="true" />{summary.state_label}</span>
+        </div>
+        <p className="source-type">PostgreSQL · {summary.table_count} table{summary.table_count === 1 ? "" : "s"} · {summary.indexed_count} indexed{summary.query_only_count > 0 ? ` · ${summary.query_only_count} only SQL` : ""}</p>
+        {summary.query_only ? (
+          <p className="source-note source-success-time">No sync freshness: registered only for SQL queries.</p>
+        ) : (
+          <p className="source-note source-success-time">
+            Last successful update: {summary.last_successful_sync_at ? formatTime(summary.last_successful_sync_at) : "no information"}
+            {" · "}Freshness: {freshnessStateLabel(summary.freshness_state)}
+          </p>
+        )}
+        <p className="source-note source-sql-availability">
+          {summary.sql_available ? "SQL available" : "SQL not configured"}
+        </p>
+        {canConfigureSQL && sqlControl}
+        {confirmBatch?.canConfirm && awaiting.length > 0 && (
+          <div className="source-confirm-batch" role="group" aria-label="Confirm tables awaiting confirmation">
+            <label className="source-confirm-batch-field">
+              <span>Tables awaiting confirmation</span>
+              <select
+                disabled={confirmBatch.busy}
+                onChange={(event) => setConfirmSchema(event.target.value)}
+                value={confirmSchema}
+              >
+                <option value="">All schemas ({awaiting.length})</option>
+                {sourceSchemasAwaitingConfirmation(group).map((schema) => (
+                  <option key={schema} value={schema}>
+                    {schema} ({sourceTablesAwaitingConfirmationInSchema(group, schema).length})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="primary-button source-confirm-batch-action"
+              disabled={confirmBatch.busy || awaitingInSchema.length === 0}
+              onClick={() => confirmBatch.onConfirm(awaitingInSchema)}
+              type="button"
+            >
+              {confirmBatch.busy ? "Confirming…" : `Confirm all ${awaitingInSchema.length}`}
+            </button>
+          </div>
+        )}
+        {confirmBatch?.summary && (
+          <p className="source-note source-confirm-batch-summary" role="status">{confirmBatch.summary}</p>
+        )}
+        <details className="source-connection-tables">
+          <summary>Tables ({summary.table_count})</summary>
+          <ul className="source-table-rows">
+            {group.tables.map((table) => {
+              const error = sourceProcessingError(table);
+              return (
+                <li className="source-table" key={table.source_scope_id}>
+                  <div className="source-title-row">
+                    <b>{sourceTableLabel(table)}</b>
+                    <span className={`state-chip ${sourceCardVariant(table)}`}><span aria-hidden="true" />{sourceHeadline(table)}</span>
+                  </div>
+                  {table.query_only !== true && (
+                    <p className="source-note source-success-time">
+                      Last successful update: {table.last_successful_sync_at ? formatTime(table.last_successful_sync_at) : "no information"}
+                    </p>
+                  )}
+                  {table.query_only === true && (
+                    <p className="source-note source-success-time">Registered only for SQL queries; rows are not indexed.</p>
+                  )}
+                  {error && <p className="source-processing-warning" role="status">{error}</p>}
+                  {renderTableExtra?.(table)}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      </div>
+    </li>
+  );
+}
+
+// Card D-1: one unfinished connection the current workspace started. The row
+// shows the server-derived state and offers exactly two actions: continue in
+// the wizard, or delete this workspace's draft pointer.
+const SourceConnectionDraftLocale = {
+  heading: "Unfinished connections",
+  hint: "A connection you started but have not added to this workspace yet.",
+  state: {
+    AWAITING_TRUST_VERIFICATION: "Needs trust verification",
+    READY_FOR_DISCOVERY: "Ready to find tables",
+  } as Record<string, string>,
+  continueLabel: "Continue",
+  discardLabel: "Delete",
+  discardingLabel: "Deleting…",
+  discardConfirm: (name: string): string => `Delete the draft connection “${name}”? It disappears from this workspace; the connection record itself is kept.`,
+};
+
+export function sourceConnectionDraftStateLabel(draft: SourceConnectionDraft): string {
+  return SourceConnectionDraftLocale.state[draft.state] ?? draft.state;
+}
+
+export function SourceConnectionDraftList({ drafts, busyID, canManage = true, onContinue, onDiscard }: {
+  drafts: readonly SourceConnectionDraft[];
+  busyID: string | null;
+  canManage?: boolean;
+  onContinue: (draft: SourceConnectionDraft) => void;
+  onDiscard: (draft: SourceConnectionDraft) => void;
+}) {
+  if (drafts.length === 0) return null;
+  return (
+    <section className="source-drafts" aria-label={SourceConnectionDraftLocale.heading}>
+      <h3>{SourceConnectionDraftLocale.heading}</h3>
+      <p className="source-drafts-hint">{SourceConnectionDraftLocale.hint}</p>
+      <ul className="source-rows">
+        {drafts.map((draft) => (
+          <li className="source-row source-row-draft" key={draft.connection_id}>
+            <span className="dot dot-draft" aria-hidden="true" />
+            <div className="source-row-main">
+              <div className="source-title-row">
+                <b>{draft.connection_name}</b>
+                <span className="state-chip draft"><span aria-hidden="true" />{sourceConnectionDraftStateLabel(draft)}</span>
+              </div>
+              <p className="source-type">PostgreSQL · draft connection</p>
+            </div>
+            {canManage && (
+              <div className="source-row-actions">
+                <button className="primary-button source-draft-continue" disabled={busyID !== null} onClick={() => onContinue(draft)} type="button">
+                  {SourceConnectionDraftLocale.continueLabel}
+                </button>
+                <button className="link-button quiet-disable source-draft-discard" disabled={busyID !== null} onClick={() => onDiscard(draft)} type="button">
+                  {busyID === draft.connection_id ? SourceConnectionDraftLocale.discardingLabel : SourceConnectionDraftLocale.discardLabel}
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function SourcesView({ state, role, onChanged, pushToast }: {
   state: WorkspaceDataState;
   role: string;
   onChanged: () => void;
@@ -5822,19 +7802,142 @@ function SourcesView({ state, role, onChanged, pushToast }: {
   const [verifyingSourceID, setVerifyingSourceID] = useState<string | null>(null);
   const [verifyIdentity, setVerifyIdentity] = useState("");
   const [verifyAttestedBy, setVerifyAttestedBy] = useState("");
+  // Card D-1: this workspace's unfinished connections, loaded by their own
+  // read route so the sources envelope and the MCP sources projection keep
+  // their existing shape. draftsVersion forces a re-read after a discard.
+  const [draftsResult, setDraftsResult] = useState<ApiResult<SourceConnectionDraftEnvelope> | null>(null);
+  const [draftsVersion, setDraftsVersion] = useState(0);
+  const [draftBusyID, setDraftBusyID] = useState<string | null>(null);
+  // Card S3.2b: the connection whose SQL credential control is mid-request.
+  const [sqlCredentialBusyID, setSqlCredentialBusyID] = useState<string | null>(null);
+  // Card S3.4b: the connection whose bulk confirmation is mid-request, and the
+  // one outcome summary that connection last reported.
+  const [confirmBatchBusyID, setConfirmBatchBusyID] = useState<string | null>(null);
+  const [confirmBatchSummary, setConfirmBatchSummary] = useState<{ connectionID: string; text: string } | null>(null);
+  const [continuedDraft, setContinuedDraft] = useState<SourceConnectionDraft | null>(null);
   const snapshot = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.value : null;
   const etag = state.phase === "loaded" && state.snapshot.kind === "ok" ? state.snapshot.etag : undefined;
   const confirmationContext = state.phase === "loaded" && state.sources.kind === "ok" ? state.sources.value.confirmation_context : null;
   const canManage = role === "OWNER" || role === "MANAGER";
+  const workspaceID = snapshot?.id ?? null;
+
+  useEffect(() => {
+    if (workspaceID === null) {
+      setDraftsResult(null);
+      return;
+    }
+    let alive = true;
+    void apiGet<SourceConnectionDraftEnvelope>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}/source-drafts`).then((result) => {
+      if (alive) setDraftsResult(result);
+    });
+    return () => { alive = false; };
+  }, [workspaceID, draftsVersion]);
+  const drafts = draftsResult?.kind === "ok" ? draftsResult.value.drafts : [];
+
+  // Card D-1: discarding deletes only this workspace's draft pointer. The
+  // server keeps the immutable connection lineage, so the action is safe to
+  // retry and never targets another workspace.
+  async function discardDraft(draft: SourceConnectionDraft) {
+    if (snapshot === null || draftBusyID !== null) return;
+    if (!window.confirm(SourceConnectionDraftLocale.discardConfirm(draft.connection_name))) return;
+    setDraftBusyID(draft.connection_id);
+    setMutationResult(null);
+    const result = await apiDeleteAction<{ connection_id: string; discarded: boolean }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/source-drafts/${encodeURIComponent(draft.connection_id)}`,
+      newIdempotencyKey(),
+    );
+    setDraftBusyID(null);
+    if (result.kind === "ok") {
+      pushToast("success", `Draft connection “${draft.connection_name}” deleted.`);
+      setDraftsVersion((current) => current + 1);
+    } else {
+      setMutationResult(result);
+      pushToast("error", closedText(result));
+    }
+  }
+
+  // Card S3.2b: the OWNER sets or clears one connection's opaque SQL query
+  // credential reference. The request carries only the reference the server
+  // resolves from its mounted credentials; a DSN or a password is never sent.
+  // The server validates the reference against the source's database identity
+  // and its excluded columns before anything changes, so a failed check is one
+  // closed code and no change.
+  async function setSourceQueryCredential(connectionID: string, credentialReference: string) {
+    if (!snapshot || sqlCredentialBusyID !== null) return;
+    setSqlCredentialBusyID(connectionID);
+    setMutationResult(null);
+    const result = await apiPost<{ connection_id: string; sql_available: boolean }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/source-connections/${encodeURIComponent(connectionID)}:set-query-credential`,
+      { credential_reference: credentialReference },
+      newIdempotencyKey(),
+    );
+    setSqlCredentialBusyID(null);
+    setMutationResult(result);
+    if (result.kind === "ok") {
+      pushToast("success", "SQL query credential updated.");
+      onChanged();
+    } else {
+      pushToast("error", closedText(result));
+    }
+  }
+
+  async function clearSourceQueryCredential(connectionID: string) {
+    if (!snapshot || sqlCredentialBusyID !== null) return;
+    setSqlCredentialBusyID(connectionID);
+    setMutationResult(null);
+    const result = await apiPost<{ connection_id: string; sql_available: boolean }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/source-connections/${encodeURIComponent(connectionID)}:clear-query-credential`,
+      {},
+      newIdempotencyKey(),
+    );
+    setSqlCredentialBusyID(null);
+    setMutationResult(result);
+    if (result.kind === "ok") {
+      pushToast("success", "SQL query credential cleared.");
+      onChanged();
+    } else {
+      pushToast("error", closedText(result));
+    }
+  }
+
+  // ADR-0087 §1: the caller's live workspace.source.confirm grant, or a freshly
+  // issued self-targeted one when the caller is an organization OWNER/ADMIN.
+  // A freshly issued grant always starts at revision 1 (the repository never
+  // issues any other starting revision), so it can be chained into the confirm
+  // call without a second read. Both confirmation actions -- one table and a
+  // whole batch -- reuse this one grant path, so they cannot diverge.
+  async function ensureConfirmationGrant(): Promise<SelfConfirmationGrant | null> {
+    if (!snapshot || !etag || !confirmationContext) return null;
+    if (confirmationContext.self_grant) return confirmationContext.self_grant;
+    if (!confirmationContext.can_issue_confirmation_grant) {
+      setMutationResult({ kind: "failure", status: 403, code: "CONFIRMATION_GRANT_REQUIRES_ORG_OWNER_OR_ADMIN", requestId: "" });
+      pushToast("error", "Only an organization owner or administrator can issue a confirmation grant.");
+      return null;
+    }
+    const configurationHash = etag.replace(/^"|"$/g, "");
+    const issue = await apiPost<{ result_id: string; result_hash: string }>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/confirmation-grants`,
+      {
+        expected_workspace_revision: snapshot.revision,
+        expected_workspace_configuration_hash: configurationHash,
+        target_principal_id: confirmationContext.viewer_principal_id,
+        ttl_seconds: 3600,
+        expected_policy_revision: confirmationContext.expected_policy_revision,
+      },
+      newIdempotencyKey(),
+    );
+    if (issue.kind !== "ok") {
+      setMutationResult(issue);
+      pushToast("error", closedText(issue));
+      return null;
+    }
+    return { grant_id: issue.value.result_id, grant_revision: 1, grant_hash: issue.value.result_hash, valid_until: "" };
+  }
 
   // ADR-0087 §1: confirm a pending WORKSPACE_MANAGED binding. If the caller
   // already holds a live workspace.source.confirm grant (confirmationContext.
   // self_grant) it is reused as-is; otherwise, if the caller is an
-  // organization OWNER/ADMIN, a fresh self-targeted grant is issued first. A
-  // freshly issued grant always starts at revision 1 (the repository never
-  // issues any other starting revision), so it can be chained into the
-  // confirm call without a second read. Both calls are the exact REST actions
-  // ADR-0053/0087 already accepted; no new write surface is introduced here.
+  // organization OWNER/ADMIN, a fresh self-targeted grant is issued first.
   async function confirmSource(source: SourceStatus) {
     if (!snapshot || !etag || mutatingSourceID !== null || !confirmationContext) return;
     if (!window.confirm(
@@ -5844,32 +7947,10 @@ function SourcesView({ state, role, onChanged, pushToast }: {
     setMutatingSourceID(source.source_scope_id);
     setMutationResult(null);
     const configurationHash = etag.replace(/^"|"$/g, "");
-    let grant = confirmationContext.self_grant;
+    const grant = await ensureConfirmationGrant();
     if (!grant) {
-      if (!confirmationContext.can_issue_confirmation_grant) {
-        setMutatingSourceID(null);
-        setMutationResult({ kind: "failure", status: 403, code: "CONFIRMATION_GRANT_REQUIRES_ORG_OWNER_OR_ADMIN", requestId: "" });
-        pushToast("error", "Only an organization owner or administrator can issue a confirmation grant.");
-        return;
-      }
-      const issue = await apiPost<{ result_id: string; result_hash: string }>(
-        `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/confirmation-grants`,
-        {
-          expected_workspace_revision: snapshot.revision,
-          expected_workspace_configuration_hash: configurationHash,
-          target_principal_id: confirmationContext.viewer_principal_id,
-          ttl_seconds: 3600,
-          expected_policy_revision: confirmationContext.expected_policy_revision,
-        },
-        newIdempotencyKey(),
-      );
-      if (issue.kind !== "ok") {
-        setMutatingSourceID(null);
-        setMutationResult(issue);
-        pushToast("error", closedText(issue));
-        return;
-      }
-      grant = { grant_id: issue.value.result_id, grant_revision: 1, grant_hash: issue.value.result_hash, valid_until: "" };
+      setMutatingSourceID(null);
+      return;
     }
     const confirmation = await apiPost<unknown>(
       `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/managed-source-confirmations`,
@@ -5895,6 +7976,45 @@ function SourcesView({ state, role, onChanged, pushToast }: {
       onChanged();
     } else {
       pushToast("error", closedText(confirmation));
+    }
+  }
+
+  // Card S3.4b: confirm every selected table of one connection in one request.
+  // The server confirms each table through the unchanged individual command and
+  // returns one closed per-table outcome, so a refusal never hides the
+  // confirmations that did happen. One grant is issued for the whole batch.
+  async function confirmTableBatch(connectionID: string, tables: SourceStatus[]) {
+    if (!snapshot || !etag || confirmBatchBusyID !== null || !confirmationContext || tables.length === 0) return;
+    if (!window.confirm(
+      `Confirm access to ${tables.length} table${tables.length === 1 ? "" : "s"}? ` +
+      "Workspace members can then access their fragments without the source's native ACLs (" +
+      confirmationContext.warning_contract.warning_version + "). Continue?",
+    )) return;
+    setConfirmBatchBusyID(connectionID);
+    setMutationResult(null);
+    const configurationHash = etag.replace(/^"|"$/g, "");
+    const grant = await ensureConfirmationGrant();
+    if (!grant) {
+      setConfirmBatchBusyID(null);
+      return;
+    }
+    const result = await apiPost<SourceConfirmBatchOutcome>(
+      `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/managed-source-confirmations:batch`,
+      confirmBatchRequestBody(
+        tables, snapshot.revision, configurationHash, grant,
+        confirmationContext.warning_contract.warning_contract_hash, confirmationContext.expected_policy_revision,
+      ),
+      newIdempotencyKey(),
+    );
+    setConfirmBatchBusyID(null);
+    setMutationResult(result);
+    if (result.kind === "ok") {
+      const summary = confirmBatchOutcomeSummary(result.value);
+      setConfirmBatchSummary({ connectionID, text: summary });
+      pushToast("success", summary);
+      onChanged();
+    } else {
+      pushToast("error", closedText(result));
     }
   }
 
@@ -6062,16 +8182,65 @@ function SourcesView({ state, role, onChanged, pushToast }: {
     return null;
   }
 
+  // The inline attestation form and the one primary action per row are shared
+  // by the document rows and by each table row inside a connection card, so
+  // folding a connection into one card never removes an operator control.
+  function renderVerifyForm(source: SourceStatus) {
+    if (verifyingSourceID !== source.source_scope_id) return null;
+    return (
+      <div className="verify-trust-form">
+        <label className="field"><span>Connector identity</span><input maxLength={512} onChange={(event) => setVerifyIdentity(event.target.value)} value={verifyIdentity} /></label>
+        <label className="field"><span>Verified by</span><input maxLength={256} onChange={(event) => setVerifyAttestedBy(event.target.value)} value={verifyAttestedBy} /></label>
+        <div className="verify-trust-actions">
+          <button className="secondary-button" disabled={mutatingSourceID !== null} onClick={() => { setVerifyingSourceID(null); setVerifyIdentity(""); setVerifyAttestedBy(""); }} type="button">Cancel</button>
+          <button className="primary-button" disabled={mutatingSourceID !== null || !verifyIdentity.trim() || !verifyAttestedBy.trim()} onClick={() => void verifyTrust(source)} type="button">
+            {mutatingSourceID === source.source_scope_id ? "Checking…" : "Confirm verification"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderRowActions(source: SourceStatus) {
+    return (
+      <div className="source-row-actions">
+        {renderPrimaryAction(source)}
+        {canManage && snapshot && etag && source.workspace_source_id && source.confirmation_state === "ACTIVE" && (
+          <button className="link-button quiet-disable" disabled={mutatingSourceID !== null} onClick={() => void toggleSource(source)} type="button">Disable</button>
+        )}
+      </div>
+    );
+  }
+
+  // The per-table body a connection card expands to: the blocked note, the
+  // attestation form and the row actions each table row carried when every
+  // table was its own card.
+  function renderTableExtra(source: SourceStatus): ReactNode {
+    return (
+      <>
+        {sourceBlockedNote(source, canManage, confirmationContext) && (
+          <p className="source-note">{sourceBlockedNote(source, canManage, confirmationContext)}</p>
+        )}
+        {renderVerifyForm(source)}
+        {renderRowActions(source)}
+      </>
+    );
+  }
+
   const loadedSources = state.phase === "loaded" && state.sources.kind === "ok" ? state.sources.value.sources : null;
   const activeSources = loadedSources?.filter((source) => source.enabled) ?? [];
   const disabledSources = loadedSources?.filter((source) => !source.enabled) ?? [];
-  const attentionCount = activeSources.filter((source) => sourceCardVariant(source) === "attention").length;
+  // Card S5.1: one entry per PostgreSQL connection, one per document source.
+  const cardEntries = sourceCardEntries(activeSources);
+  const attentionCount = cardEntries.filter((entry) => entry.kind === "connection"
+    ? sourceConnectionSummary(entry.group).variant === "attention"
+    : sourceCardVariant(entry.source) === "attention").length;
   return (
     <div className="page sources-page">
       <section className="page-intro split-intro">
         <div>
           {loadedSources && <dl className="sources-summary" aria-label="Source summary">
-            <div><dt>Sources</dt><dd>{loadedSources.length}</dd></div>
+            <div><dt>Sources</dt><dd>{cardEntries.length + disabledSources.length}</dd></div>
             <div className={attentionCount > 0 ? "sources-summary-attention" : undefined}><dt>Need attention</dt><dd>{attentionCount}</dd></div>
             {disabledSources.length > 0 && <div><dt>Disabled</dt><dd>{disabledSources.length}</dd></div>}
           </dl>}
@@ -6081,6 +8250,16 @@ function SourcesView({ state, role, onChanged, pushToast }: {
           <button className="primary-button" onClick={() => setCatalogOpen(true)} type="button">Connect source</button>
         )}
       </section>
+
+      {drafts.length > 0 && (
+        <SourceConnectionDraftList
+          busyID={draftBusyID}
+          canManage={canManage}
+          drafts={drafts}
+          onContinue={(draft) => setContinuedDraft(draft)}
+          onDiscard={(draft) => void discardDraft(draft)}
+        />
+      )}
 
       {state.phase === "idle" && <p className="evidence-state">Select a workspace.</p>}
       {state.phase === "loading" && <p className="evidence-state">Loading sources…</p>}
@@ -6096,38 +8275,44 @@ function SourcesView({ state, role, onChanged, pushToast }: {
         ) : (
           <>
             <ul className="source-rows">
-              {activeSources.map((source) => (
-                <li className={`source-row source-row-${sourceCardVariant(source)}`} key={source.source_scope_id}>
-                  <span className={`dot dot-${sourceCardVariant(source)}`} aria-hidden="true" />
+              {cardEntries.map((entry) => entry.kind === "connection" ? (
+                <SourceConnectionCard
+                  canConfigureSQL={role === "OWNER"}
+                  confirmBatch={{
+                    canConfirm: Boolean(canManage && snapshot && etag && confirmationContext),
+                    busy: confirmBatchBusyID === entry.group.connection_id,
+                    summary: confirmBatchSummary?.connectionID === entry.group.connection_id ? confirmBatchSummary.text : null,
+                    onConfirm: (tables) => void confirmTableBatch(entry.group.connection_id, tables),
+                  }}
+                  group={entry.group}
+                  key={entry.key}
+                  renderTableExtra={(source) => renderTableExtra(source)}
+                  sqlControl={
+                    <SourceQueryCredentialControl
+                      busy={sqlCredentialBusyID === entry.group.connection_id}
+                      connectionID={entry.group.connection_id}
+                      onClear={(connectionID) => void clearSourceQueryCredential(connectionID)}
+                      onSet={(connectionID, reference) => void setSourceQueryCredential(connectionID, reference)}
+                      sqlAvailable={entry.group.tables.some((table) => table.sql_available === true)}
+                    />
+                  }
+                />
+              ) : (
+                <li className={`source-row source-row-${sourceCardVariant(entry.source)}`} key={entry.key}>
+                  <span className={`dot dot-${sourceCardVariant(entry.source)}`} aria-hidden="true" />
                   <div className="source-row-main">
                     <div className="source-title-row">
-                      <b>{sourceLabel(source)}</b>
-                      <span className={`state-chip ${sourceCardVariant(source)}`}><span aria-hidden="true" />{sourceHeadline(source)}</span>
+                      <b>{sourceLabel(entry.source)}</b>
+                      <span className={`state-chip ${sourceCardVariant(entry.source)}`}><span aria-hidden="true" />{sourceHeadline(entry.source)}</span>
                     </div>
-                    <p className="source-type">{sourceTypeLabel(source)}</p>
-                    <LatestProcessingNote source={source} />
-                    {sourceBlockedNote(source, canManage, confirmationContext) && (
-                      <p className="source-note">{sourceBlockedNote(source, canManage, confirmationContext)}</p>
+                    <p className="source-type">{sourceTypeLabel(entry.source)}</p>
+                    <LatestProcessingNote source={entry.source} />
+                    {sourceBlockedNote(entry.source, canManage, confirmationContext) && (
+                      <p className="source-note">{sourceBlockedNote(entry.source, canManage, confirmationContext)}</p>
                     )}
-                    {verifyingSourceID === source.source_scope_id && (
-                      <div className="verify-trust-form">
-                        <label className="field"><span>Connector identity</span><input maxLength={512} onChange={(event) => setVerifyIdentity(event.target.value)} value={verifyIdentity} /></label>
-                        <label className="field"><span>Verified by</span><input maxLength={256} onChange={(event) => setVerifyAttestedBy(event.target.value)} value={verifyAttestedBy} /></label>
-                        <div className="verify-trust-actions">
-                          <button className="secondary-button" disabled={mutatingSourceID !== null} onClick={() => { setVerifyingSourceID(null); setVerifyIdentity(""); setVerifyAttestedBy(""); }} type="button">Cancel</button>
-                          <button className="primary-button" disabled={mutatingSourceID !== null || !verifyIdentity.trim() || !verifyAttestedBy.trim()} onClick={() => void verifyTrust(source)} type="button">
-                            {mutatingSourceID === source.source_scope_id ? "Checking…" : "Confirm verification"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    {renderVerifyForm(entry.source)}
                   </div>
-                  <div className="source-row-actions">
-                    {renderPrimaryAction(source)}
-                    {canManage && snapshot && etag && source.workspace_source_id && source.confirmation_state === "ACTIVE" && (
-                      <button className="link-button quiet-disable" disabled={mutatingSourceID !== null} onClick={() => void toggleSource(source)} type="button">Disable</button>
-                    )}
-                  </div>
+                  {renderRowActions(entry.source)}
                 </li>
               ))}
             </ul>
@@ -6177,6 +8362,16 @@ function SourcesView({ state, role, onChanged, pushToast }: {
           onBack={() => setConnectType(null)}
           onClose={() => { setCatalogOpen(false); setConnectType(null); }}
           onCompleted={(message) => { setCatalogOpen(false); setConnectType(null); onChanged(); if (message) pushToast("success", message); }}
+          snapshot={snapshot}
+        />
+      )}
+      {continuedDraft && snapshot && etag && (
+        <PostgreSQLOnboardingDialog
+          etag={etag}
+          initialDraft={continuedDraft}
+          onBack={() => setContinuedDraft(null)}
+          onClose={() => setContinuedDraft(null)}
+          onCompleted={(message) => { setContinuedDraft(null); setDraftsVersion((current) => current + 1); onChanged(); if (message) pushToast("success", message); }}
           snapshot={snapshot}
         />
       )}
@@ -6658,7 +8853,7 @@ type PostgreSQLConnectionBootstrapResponse = {
 
 type SourceDiscoveryRequestResponse = { request_id: string; created: boolean };
 
-type SourceDiscoveryColumn = {
+export type SourceDiscoveryColumn = {
   ordinal: number;
   name: string;
   type_name: string;
@@ -6669,17 +8864,32 @@ type SourceDiscoveryColumn = {
   max_bytes?: number;
   comment?: string;
   roles: string[];
+  primary_key: boolean;
 };
 
-type SourceDiscoveryView = {
+// Card D-1: a column the server observed but cannot project into the query
+// connector's value contract (for example a PostGIS geometry). It is shown
+// with a reason and is never part of the registration projection.
+export type SourceDiscoveryExcludedColumn = {
+  ordinal: number;
+  name: string;
+  type_name: string;
+  logical_type?: string;
+  primary_key?: boolean;
+  reason: string;
+};
+
+export type SourceDiscoveryView = {
   view_id: string;
   schema_name: string;
   relation_name: string;
   relation_kind: string;
   comment?: string;
+  approx_row_count: number;
   status: string;
   interpretation?: string;
   columns: SourceDiscoveryColumn[];
+  excluded_columns?: SourceDiscoveryExcludedColumn[];
 };
 
 type SourceDiscoveryResponse = {
@@ -6695,6 +8905,14 @@ type SourceDiscoveryResponse = {
   views: SourceDiscoveryView[];
 };
 
+// ADR-0097: the register route accepts an optional narrowing body naming
+// EVIDENCE-role ordinals to exclude, valid only for a TABLE/PARTITIONED_TABLE
+// selection. Sending no exclusions (undefined body) registers the table
+// unnarrowed, exactly like the original view flow. S3 card 4 adds the optional
+// mode: INDEXED (the default, omitted) or QUERY_ONLY ("only for SQL queries,
+// not indexed").
+export type SourceDiscoveryRegisterInput = { excluded_columns?: number[]; mode?: string };
+
 type PostgreSQLOnboardingPhase =
   | "connection"
   | "bootstrapping"
@@ -6703,7 +8921,6 @@ type PostgreSQLOnboardingPhase =
   | "discovering"
   | "catalog"
   | "registering"
-  | "binding"
   | "done";
 
 // PostgreSQL onboarding is intentionally server-led: the browser submits only
@@ -6774,7 +8991,7 @@ const postgresOnboardingLocale = {
     emptyHint: "Check the connection permissions or ask an administrator to prepare a view.",
     summary: (prepared: number, total: number): string => `${prepared} of ${total} ready`,
     expires: "Catalog expires",
-    viewKind: { VIEW: "View", MATERIALIZED_VIEW: "Materialized view" },
+    viewKind: { VIEW: "View", MATERIALIZED_VIEW: "Materialized view", TABLE: "Table", PARTITIONED_TABLE: "Partitioned table" },
     prepared: "Ready to connect",
     needsInterpretation: "Needs clarification",
     interpretationPrefix: "Reason",
@@ -6784,7 +9001,29 @@ const postgresOnboardingLocale = {
       MALFORMED_BUSINESS_OBJECT_CONTRACT: "business object contract is malformed",
       UNSUPPORTED_TYPE: "column type is not supported",
       INVALID_IDENTIFIER: "view identifier is invalid",
+      NO_PRIMARY_KEY: "table has no primary key",
     },
+    // Card D-1: a base table column the server cannot project is listed with
+    // its own reason instead of blocking the whole table. The copy is a closed
+    // vocabulary, never server-supplied text.
+    excludedHeading: "Not included",
+    excludedNote: "These columns are not read from the table.",
+    excludedReasons: {
+      UNSUPPORTED_TYPE: "column type cannot be read by the query connector",
+    } as Record<string, string>,
+    rowCountUnknown: "Row count unknown",
+    rowCountLabel: (count: number): string => `~${count.toLocaleString("en-US")} rows`,
+    filterLabel: "Filter tables",
+    filterPlaceholder: "Schema or table name",
+    sortLabel: "Sort by",
+    sortName: "Name",
+    sortRows: "Row count",
+    selectAll: "Select all ready",
+    clearSelection: "Clear selection",
+    selectedCount: (count: number): string => count === 0 ? "No tables selected" : count === 1 ? "1 table selected" : `${count} tables selected`,
+    noSelection: "Select at least one table before adding.",
+    keyColumn: "Key",
+    registerSelected: "Add selected tables",
     columns: "Columns and metadata",
     noColumns: "Column metadata was not provided.",
     logicalTypes: {
@@ -6816,16 +9055,25 @@ const postgresOnboardingLocale = {
     maxBytes: "Byte limit",
     bytes: "bytes",
     noComment: "No comment.",
-    register: "Add view",
-    registering: "Adding…",
-    noActionHint: "This view cannot be connected automatically.",
+    noActionHint: "This table or view cannot be connected automatically.",
+    // S3 card 4: the registration mode. A partitioned table or a relation with
+    // more than 1,000,000 estimated rows is offered query-only by default.
+    modeQueryOnly: "Only for SQL queries (not indexed)",
+    modeQueryOnlyHint: "Rows are not copied into search; the table stays available to SQL queries.",
+    modeIndexedHint: "Rows are copied into search and can be cited.",
+    modeBulkQueryOnly: "Only SQL for selected",
+    modeBulkIndexed: "Index selected",
+    selectSchemaLabel: "Select a schema",
+    selectSchemaPlaceholder: "All schemas",
     back: "Edit connection",
   },
   completion: {
-    registering: "Registering the selected view…",
-    binding: "Binding the source to the workspace…",
-    doneHeading: "View added",
-    doneText: "The view was added to the workspace as a draft. Confirm access and enable it in the source list.",
+    resultsEyebrow: "Registration",
+    registering: "Adding the selected tables…",
+    doneHeading: "Registration complete",
+    resultsSummary: (success: number, total: number): string => `${success} of ${total} table${total === 1 ? "" : "s"} added.`,
+    resultSuccessDetail: "Added to the workspace as a draft. Confirm access and enable it in the source list.",
+    retryFailed: "Retry failed tables",
     done: "Done",
   },
   errors: {
@@ -6842,7 +9090,221 @@ function postgresDiscoveryStatusLabel(status: string): string {
 }
 
 function postgresRelationKindLabel(kind: string): string {
-  return postgresOnboardingLocale.discovery.viewKind[kind as keyof typeof postgresOnboardingLocale.discovery.viewKind] ?? postgresOnboardingLocale.discovery.viewKind.VIEW;
+  return postgresOnboardingLocale.discovery.viewKind[kind as keyof typeof postgresOnboardingLocale.discovery.viewKind] ?? kind;
+}
+
+function postgresApproxRowCountLabel(approxRowCount: number): string {
+  if (approxRowCount < 0) return postgresOnboardingLocale.discovery.rowCountUnknown;
+  return postgresOnboardingLocale.discovery.rowCountLabel(approxRowCount);
+}
+
+// ADR-0097: only a base/partitioned table's projection can narrow columns;
+// the original five-column VIEW/MATERIALIZED_VIEW contract is server-fixed.
+function postgresSupportsColumnExclusion(relationKind: string): boolean {
+  return relationKind === "TABLE" || relationKind === "PARTITIONED_TABLE";
+}
+
+// S3 card 4: the row estimate above which a relation is offered query-only by
+// default. It matches the server-side product rule (1,000,000 rows).
+export const POSTGRES_QUERY_ONLY_ROW_THRESHOLD = 1_000_000;
+
+// A partitioned table, or a relation whose pg_class row estimate is above the
+// threshold, is offered "only for SQL queries (not indexed)" by default; every
+// other relation is offered indexed. The administrator can switch either way.
+export function postgresDefaultRegistrationMode(view: SourceDiscoveryView): string {
+  if (view.relation_kind === "PARTITIONED_TABLE") return "QUERY_ONLY";
+  return view.approx_row_count > POSTGRES_QUERY_ONLY_ROW_THRESHOLD ? "QUERY_ONLY" : "INDEXED";
+}
+
+// The effective mode of one table: the administrator's explicit choice when
+// present, otherwise the server-consistent default for its kind and size.
+export function postgresEffectiveRegistrationMode(
+  view: SourceDiscoveryView,
+  modeByView: ReadonlyMap<string, string>,
+): string {
+  return modeByView.get(view.view_id) ?? postgresDefaultRegistrationMode(view);
+}
+
+// The distinct schemas that contain at least one ready relation, so a large
+// catalog can be registered one schema at a time from the same server-issued
+// page without a second network call.
+export function postgresSelectableSchemas(views: readonly SourceDiscoveryView[]): string[] {
+  const schemas = new Set<string>();
+  for (const view of views) {
+    if (view.status === "PREPARED") schemas.add(view.schema_name);
+  }
+  return [...schemas].sort((left, right) => left.localeCompare(right));
+}
+
+export function postgresIsColumnExcludable(column: SourceDiscoveryColumn): boolean {
+  return !column.primary_key;
+}
+
+// A primary-key column can never be excluded (the server refuses it and the
+// identity of every row depends on it); toggling one is a silent no-op so a
+// stray click can never produce an invalid registration request.
+export function postgresToggleExcludedColumn(excluded: readonly number[], column: SourceDiscoveryColumn): number[] {
+  if (!postgresIsColumnExcludable(column)) return [...excluded];
+  return excluded.includes(column.ordinal)
+    ? excluded.filter((ordinal) => ordinal !== column.ordinal)
+    : [...excluded, column.ordinal].sort((left, right) => left - right);
+}
+
+export type PostgresViewSortKey = "name" | "rows";
+
+export function postgresViewDisplayName(view: SourceDiscoveryView): string {
+  return `${view.schema_name}.${view.relation_name}`;
+}
+
+// The large-database result set (a "hundreds of tables" GM-sized catalog)
+// needs a client-side filter and a predictable sort; both operate on the
+// same server-issued view list, never a second network call.
+export function postgresFilterAndSortViews(
+  views: readonly SourceDiscoveryView[],
+  query: string,
+  sort: PostgresViewSortKey,
+): SourceDiscoveryView[] {
+  const needle = query.trim().toLowerCase();
+  const matched = needle === "" ? [...views] : views.filter((view) => postgresViewDisplayName(view).toLowerCase().includes(needle));
+  return matched.sort((left, right) => {
+    if (sort === "rows") {
+      const leftRows = left.approx_row_count < 0 ? -1 : left.approx_row_count;
+      const rightRows = right.approx_row_count < 0 ? -1 : right.approx_row_count;
+      if (leftRows !== rightRows) return rightRows - leftRows;
+    }
+    return postgresViewDisplayName(left).localeCompare(postgresViewDisplayName(right));
+  });
+}
+
+export type PostgresRegistrationRequest = { view: SourceDiscoveryView; body: SourceDiscoveryRegisterInput | undefined };
+
+// Card S3.4b: one register call per ticked table, each carrying only that
+// table's own excluded ordinals (sorted for a stable, testable request body)
+// and its registration mode. A table with neither exclusions nor a query-only
+// mode gets an empty body, exactly like the original single-view flow; a
+// query-only table sends mode=QUERY_ONLY. Anything not PREPARED or not ticked
+// is silently dropped, so a stale selection can never reach the network layer.
+export function postgresRegistrationPlan(
+  views: readonly SourceDiscoveryView[],
+  selected: ReadonlySet<string>,
+  excludedColumnsByView: ReadonlyMap<string, readonly number[]>,
+  modeByView: ReadonlyMap<string, string> = new Map(),
+): PostgresRegistrationRequest[] {
+  return views
+    .filter((view) => view.status === "PREPARED" && selected.has(view.view_id))
+    .map((view) => {
+      const excluded = [...(excludedColumnsByView.get(view.view_id) ?? [])].sort((left, right) => left - right);
+      const mode = postgresEffectiveRegistrationMode(view, modeByView);
+      const body: SourceDiscoveryRegisterInput = {};
+      if (excluded.length > 0) body.excluded_columns = excluded;
+      if (mode === "QUERY_ONLY") body.mode = "QUERY_ONLY";
+      return { view, body: Object.keys(body).length > 0 ? body : undefined };
+    });
+}
+
+// Card S3.4b: the server accepts at most this many tables in one register-batch
+// request, so the wizard chunks a larger selection rather than sending one
+// request per table.
+export const POSTGRES_REGISTRATION_BATCH_LIMIT = 200;
+
+export type SourceDiscoveryRegisterBatchResponse = {
+  registered_count: number;
+  refused_count: number;
+  results: Array<{
+    view_id: string;
+    outcome: "REGISTERED" | "REFUSED" | string;
+    reason_code?: string;
+    registration?: SourceRegisterResponse;
+  }>;
+};
+
+// The one server request body for a batch of ticked tables: each item carries
+// only that table's view_id and the same two narrowing choices the single-view
+// route accepted. A table with neither is registered with its default mode.
+export function postgresRegistrationBatchBody(requests: readonly PostgresRegistrationRequest[]): {
+  items: Array<{ view_id: string; excluded_columns?: number[]; mode?: string }>;
+} {
+  return {
+    items: requests.map(({ view, body }) => {
+      const item: { view_id: string; excluded_columns?: number[]; mode?: string } = { view_id: view.view_id };
+      if (body?.excluded_columns) item.excluded_columns = body.excluded_columns;
+      if (body?.mode) item.mode = body.mode;
+      return item;
+    }),
+  };
+}
+
+type PostgresRegistrationOutcome = { view: SourceDiscoveryView; status: "pending" | "success" | "failure"; detail: string };
+
+// Card S3.4b: registers the plan one bounded batch at a time, then binds each
+// successfully registered scope to the workspace. Binding carries the workspace
+// revision forward from one successful bind to the next (each bind advances
+// it), with a single re-fetch-and-retry on a revision conflict -- the same
+// recovery submitConnection's caller used to get from withRevisionRetry, just
+// carried across the whole batch instead of one call. A refused table (for
+// example one without a declared primary key) reports its reason code and never
+// stops the others.
+async function runPostgresRegistrationPlan(
+  discoveryRequestID: string,
+  workspaceID: string,
+  plan: readonly PostgresRegistrationRequest[],
+  startEtag: string,
+  startRevision: number,
+  onOutcome: (outcome: PostgresRegistrationOutcome) => void,
+): Promise<void> {
+  let workspaceEtag = startEtag;
+  let workspaceRevision = startRevision;
+
+  for (let offset = 0; offset < plan.length; offset += POSTGRES_REGISTRATION_BATCH_LIMIT) {
+    const chunk = plan.slice(offset, offset + POSTGRES_REGISTRATION_BATCH_LIMIT);
+    const batch = await apiPostWithoutIdempotency<SourceDiscoveryRegisterBatchResponse>(
+      `/api/v1/sources/discovery/${encodeURIComponent(discoveryRequestID)}:register-batch`,
+      postgresRegistrationBatchBody(chunk),
+    );
+    if (batch.kind !== "ok") {
+      const detail = closedText(batch);
+      for (const { view } of chunk) onOutcome({ view, status: "failure", detail });
+      continue;
+    }
+    const byViewID = new Map(batch.value.results.map((row) => [row.view_id, row] as const));
+    for (const { view } of chunk) {
+      const row = byViewID.get(view.view_id);
+      if (!row || row.outcome !== "REGISTERED" || !row.registration) {
+        onOutcome({ view, status: "failure", detail: row?.reason_code ?? "REGISTRATION_REFUSED" });
+        continue;
+      }
+      const registration = row.registration;
+
+      const bindOnce = (workEtag: string, workRevision: number) => apiMutation<WorkspaceSnapshot>(
+        "POST",
+        `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/sources`,
+        {
+          expected_workspace_revision: workRevision,
+          source_scope_id: registration.source_scope_id,
+          source_scope_revision: registration.revision,
+          scope_config_hash: registration.scope_config_hash,
+          access_mode: registration.access_mode,
+        },
+        newIdempotencyKey(),
+        workEtag,
+      );
+
+      let binding = await bindOnce(workspaceEtag, workspaceRevision);
+      if (binding.kind === "failure" && (binding.code === "WORKSPACE_REVISION_CONFLICT" || binding.code === "CONFLICT")) {
+        const refreshed = await apiGet<WorkspaceSnapshot>(`/api/v1/workspaces/${encodeURIComponent(workspaceID)}`);
+        if (refreshed.kind === "ok" && refreshed.etag) binding = await bindOnce(refreshed.etag, refreshed.value.revision);
+      }
+
+      if (binding.kind !== "ok") {
+        onOutcome({ view, status: "failure", detail: closedText(binding) });
+        continue;
+      }
+
+      workspaceEtag = binding.etag ?? workspaceEtag;
+      workspaceRevision = binding.value.revision;
+      onOutcome({ view, status: "success", detail: "" });
+    }
+  }
 }
 
 function postgresLogicalTypeLabel(type: string): string {
@@ -6858,18 +9320,65 @@ function postgresInterpretationLabel(reason: string | undefined): string {
   return postgresOnboardingLocale.discovery.interpretations[reason as keyof typeof postgresOnboardingLocale.discovery.interpretations] ?? postgresOnboardingLocale.discovery.needsInterpretation;
 }
 
-function PostgreSQLDiscoveredColumn({ column }: { column: SourceDiscoveryColumn }) {
+// Card D-1: the operator-facing reason an observed column was excluded from
+// the projection. Unknown reasons fail closed to the generic unsupported-type
+// copy rather than rendering server text.
+export function postgresExcludedReasonLabel(reason: string): string {
+  return postgresOnboardingLocale.discovery.excludedReasons[reason] ?? postgresOnboardingLocale.discovery.interpretations.UNSUPPORTED_TYPE;
+}
+
+// Card D-1: one observed base-table column the server cannot project. It is
+// display-only metadata with a reason -- no checkbox, no role, no comment --
+// so the operator sees exactly why a column is missing from the connection.
+export function PostgreSQLExcludedColumn({ column }: { column: SourceDiscoveryExcludedColumn }) {
+  return (
+    <li className="postgres-column-card postgres-column-auto-excluded">
+      <div className="postgres-column-name">
+        <span className="postgres-column-ordinal">{column.ordinal}</span>
+        <code>{column.name}</code>
+        {column.primary_key && <span className="postgres-column-key-badge">{postgresOnboardingLocale.discovery.keyColumn}</span>}
+      </div>
+      <div className="postgres-column-details">
+        <span>{column.type_name}</span>
+        <span className="postgres-column-exclusion-reason">
+          {postgresOnboardingLocale.discovery.excludedHeading}: {postgresExcludedReasonLabel(column.reason)}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+export function PostgreSQLDiscoveredColumn({ view, column, excluded, onToggleExcluded, disabled }: {
+  view: SourceDiscoveryView;
+  column: SourceDiscoveryColumn;
+  excluded: boolean;
+  onToggleExcluded: (view: SourceDiscoveryView, column: SourceDiscoveryColumn) => void;
+  disabled: boolean;
+}) {
   const details: string[] = [postgresLogicalTypeLabel(column.logical_type)];
   details.push(column.nullable ? postgresOnboardingLocale.discovery.nullable : postgresOnboardingLocale.discovery.required);
   if (column.precision !== undefined) details.push(`${postgresOnboardingLocale.discovery.precision}: ${column.precision}`);
   if (column.scale !== undefined) details.push(`${postgresOnboardingLocale.discovery.scale}: ${column.scale}`);
   if (column.max_bytes !== undefined) details.push(`${postgresOnboardingLocale.discovery.maxBytes}: ${column.max_bytes} ${postgresOnboardingLocale.discovery.bytes}`);
+  // A table that cannot be selected at all (NEEDS_INTERPRETATION) offers no
+  // per-column exclusion either -- there is nothing a checkbox here could do.
+  const canExclude = view.status === "PREPARED" && postgresSupportsColumnExclusion(view.relation_kind);
 
   return (
-    <li className="postgres-column-card">
+    <li className={excluded ? "postgres-column-card postgres-column-excluded" : "postgres-column-card"}>
       <div className="postgres-column-name">
+        {canExclude && (
+          <input
+            aria-label={`Show column ${column.name}`}
+            checked={!excluded}
+            disabled={disabled || column.primary_key}
+            onChange={() => onToggleExcluded(view, column)}
+            type="checkbox"
+          />
+        )}
         <span className="postgres-column-ordinal">{column.ordinal}</span>
         <code>{column.name}</code>
+        {column.primary_key && <span className="postgres-column-key-badge">{postgresOnboardingLocale.discovery.keyColumn}</span>}
       </div>
       <div className="postgres-column-details">
         <span>{column.type_name}</span>
@@ -6881,31 +9390,60 @@ function PostgreSQLDiscoveredColumn({ column }: { column: SourceDiscoveryColumn 
   );
 }
 
-function PostgreSQLDiscoveredViewCard({ view, actionDisabled, onRegister }: {
+export function PostgreSQLDiscoveredViewCard({ view, selected, disabled, onToggleSelected, excludedColumns, onToggleColumn, mode, onToggleMode }: {
   view: SourceDiscoveryView;
-  actionDisabled: boolean;
-  onRegister: (view: SourceDiscoveryView) => void;
+  selected: boolean;
+  disabled: boolean;
+  onToggleSelected: (view: SourceDiscoveryView) => void;
+  excludedColumns: readonly number[];
+  onToggleColumn: (view: SourceDiscoveryView, column: SourceDiscoveryColumn) => void;
+  // S3 card 4: the effective registration mode ("INDEXED" or "QUERY_ONLY")
+  // and the administrator's toggle. Both are optional so existing callers that
+  // only render the catalog keep working; a missing mode is simply not shown.
+  mode?: string;
+  onToggleMode?: (view: SourceDiscoveryView) => void;
 }) {
   const prepared = view.status === "PREPARED";
   return (
     <article className={prepared ? "postgres-view-card postgres-view-prepared" : "postgres-view-card postgres-view-needs-interpretation"}>
       <header className="postgres-view-card-header">
+        {prepared && (
+          <input
+            aria-label={`Select ${postgresViewDisplayName(view)}`}
+            checked={selected}
+            className="postgres-view-select"
+            disabled={disabled}
+            onChange={() => onToggleSelected(view)}
+            type="checkbox"
+          />
+        )}
         <div className="postgres-view-title">
           <span className="postgres-view-kind">{postgresRelationKindLabel(view.relation_kind)}</span>
           <h4><code>{view.schema_name}.{view.relation_name}</code></h4>
+          <p className="postgres-view-rowcount">{postgresApproxRowCountLabel(view.approx_row_count)}</p>
           {view.comment && <p>{view.comment}</p>}
         </div>
         <div className="postgres-view-action">
           <span className={prepared ? "postgres-view-status postgres-view-status-prepared" : "postgres-view-status postgres-view-status-needs-interpretation"}>
             {postgresDiscoveryStatusLabel(view.status)}
           </span>
-          {prepared && (
-            <button className="primary-button" disabled={actionDisabled} onClick={() => onRegister(view)} type="button">
-              {actionDisabled ? postgresOnboardingLocale.discovery.registering : postgresOnboardingLocale.discovery.register}
-            </button>
-          )}
         </div>
       </header>
+
+      {prepared && mode !== undefined && (
+        <label className="postgres-view-mode">
+          <input
+            checked={mode === "QUERY_ONLY"}
+            disabled={disabled || !onToggleMode}
+            onChange={() => onToggleMode?.(view)}
+            type="checkbox"
+          />
+          <span>
+            <strong>{postgresOnboardingLocale.discovery.modeQueryOnly}</strong>
+            <small>{mode === "QUERY_ONLY" ? postgresOnboardingLocale.discovery.modeQueryOnlyHint : postgresOnboardingLocale.discovery.modeIndexedHint}</small>
+          </span>
+        </label>
+      )}
 
       {!prepared && (
         <p className="postgres-view-interpretation">
@@ -6913,44 +9451,83 @@ function PostgreSQLDiscoveredViewCard({ view, actionDisabled, onRegister }: {
         </p>
       )}
 
-      <div className="postgres-columns-heading">
-        <strong>{postgresOnboardingLocale.discovery.columns}</strong>
-        <span>{view.columns.length}</span>
-      </div>
-      {view.columns.length > 0
-        ? <ul className="postgres-column-list">{view.columns.map((column) => <PostgreSQLDiscoveredColumn column={column} key={`${view.view_id}-${column.ordinal}-${column.name}`} />)}</ul>
-        : <p className="postgres-no-columns">{postgresOnboardingLocale.discovery.noColumns}</p>}
+      <details className="postgres-columns-details">
+        <summary className="postgres-columns-heading">
+          <strong>{postgresOnboardingLocale.discovery.columns}</strong>
+          <span>{view.columns.length}</span>
+        </summary>
+        {view.columns.length > 0
+          ? (
+            <ul className="postgres-column-list">
+              {view.columns.map((column) => (
+                <PostgreSQLDiscoveredColumn
+                  column={column}
+                  disabled={disabled}
+                  excluded={excludedColumns.includes(column.ordinal)}
+                  key={`${view.view_id}-${column.ordinal}-${column.name}`}
+                  onToggleExcluded={onToggleColumn}
+                  view={view}
+                />
+              ))}
+            </ul>
+          )
+          : <p className="postgres-no-columns">{postgresOnboardingLocale.discovery.noColumns}</p>}
+        {(view.excluded_columns?.length ?? 0) > 0 && (
+          <div className="postgres-excluded-columns">
+            <p className="postgres-excluded-note">{postgresOnboardingLocale.discovery.excludedNote}</p>
+            <ul className="postgres-column-list">
+              {view.excluded_columns?.map((column) => (
+                <PostgreSQLExcludedColumn column={column} key={`${view.view_id}-excluded-${column.ordinal}-${column.name}`} />
+              ))}
+            </ul>
+          </div>
+        )}
+      </details>
     </article>
   );
 }
 
-function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onCompleted }: {
+export function PostgreSQLOnboardingDialog({ snapshot, etag, initialDraft, onBack, onClose, onCompleted }: {
   snapshot: WorkspaceSnapshot;
   etag: string;
+  // Card D-1: reopening the wizard from a draft resumes at the state the
+  // server reports instead of starting over. A draft whose trust material was
+  // already verified continues at catalog discovery; one still awaiting
+  // verification continues at the trust step.
+  initialDraft?: SourceConnectionDraft | null;
   onBack: () => void;
   onClose: () => void;
   onCompleted: (message?: string) => void;
 }) {
-  const [phase, setPhase] = useState<PostgreSQLOnboardingPhase>("connection");
-  const [name, setName] = useState("");
+  const [phase, setPhase] = useState<PostgreSQLOnboardingPhase>(initialDraft ? "verifying" : "connection");
+  const [name, setName] = useState(initialDraft?.connection_name ?? "");
   const [databaseIdentity, setDatabaseIdentity] = useState("");
   const [lineageID, setLineageID] = useState("");
   const [credentialReference, setCredentialReference] = useState("");
-  const [connectionID, setConnectionID] = useState<string | null>(null);
+  const [connectionID, setConnectionID] = useState<string | null>(initialDraft?.connection_id ?? null);
   const [connectionCopy, setConnectionCopy] = useState<{ id: string; copied: boolean } | null>(null);
   const [attestedConnectorIdentity, setAttestedConnectorIdentity] = useState("");
   const [attestedBy, setAttestedBy] = useState("");
-  const [trustVerified, setTrustVerified] = useState(false);
+  const [trustVerified, setTrustVerified] = useState(initialDraft?.state === "READY_FOR_DISCOVERY");
   const [discoveryRequestID, setDiscoveryRequestID] = useState<string | null>(null);
   const [discovery, setDiscovery] = useState<SourceDiscoveryResponse | null>(null);
-  const [selectedViewID, setSelectedViewID] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [sortKey, setSortKey] = useState<PostgresViewSortKey>("name");
+  const [selectedViewIDs, setSelectedViewIDs] = useState<ReadonlySet<string>>(new Set());
+  const [excludedColumnsByView, setExcludedColumnsByView] = useState<ReadonlyMap<string, readonly number[]>>(new Map());
+  const [modeByView, setModeByView] = useState<ReadonlyMap<string, string>>(new Map());
+  const [registrationResults, setRegistrationResults] = useState<PostgresRegistrationOutcome[]>([]);
   const [result, setResult] = useState<ApiResult<unknown> | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [discoveryFailure, setDiscoveryFailure] = useState<"failed" | "expired" | null>(null);
 
-  const busy = phase === "bootstrapping" || phase === "verifying-submit" || phase === "discovering" || phase === "registering" || phase === "binding";
+  const busy = phase === "bootstrapping" || phase === "verifying-submit" || phase === "discovering" || phase === "registering";
   const dialogRef = useModalDialog(onClose, busy);
-  const showingCatalog = discovery !== null && (phase === "catalog" || phase === "registering" || phase === "binding");
+  const showingCatalog = discovery !== null && phase === "catalog";
+  const showingResults = phase === "registering" || phase === "done";
+  const filteredViews = discovery ? postgresFilterAndSortViews(discovery.views, filterQuery, sortKey) : [];
+  const registrationSuccessCount = registrationResults.filter((row) => row.status === "success").length;
+  const registrationFailureCount = registrationResults.filter((row) => row.status === "failure").length;
 
   async function copyConnectionID() {
     if (!connectionID) return;
@@ -7002,25 +9579,18 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
     };
   }, [discoveryRequestID]);
 
-  // Workspace binding is conditional on the source registration result. The
-  // same revision retry used by the other source types keeps a stale sheet
-  // from submitting an old workspace revision after a concurrent edit.
-  async function withRevisionRetry<T>(
-    run: (workspaceEtag: string, workspaceRevision: number) => Promise<ApiResult<T>>,
-  ): Promise<ApiResult<T>> {
-    const first = await run(etag, snapshot.revision);
-    if (first.kind !== "failure" || (first.code !== "WORKSPACE_REVISION_CONFLICT" && first.code !== "CONFLICT")) return first;
-    const refreshed = await apiGet<WorkspaceSnapshot>(`/api/v1/workspaces/${encodeURIComponent(snapshot.id)}`);
-    if (refreshed.kind !== "ok" || !refreshed.etag) return first;
-    return run(refreshed.etag, refreshed.value.revision);
-  }
-
   async function requestDiscovery() {
     if (!connectionID) return;
     setFormError(null);
     setResult(null);
     setDiscoveryFailure(null);
     setDiscoveryRequestID(null);
+    setFilterQuery("");
+    setSortKey("name");
+    setSelectedViewIDs(new Set());
+    setExcludedColumnsByView(new Map());
+    setModeByView(new Map());
+    setRegistrationResults([]);
     setPhase("discovering");
     const request = await apiAction<SourceDiscoveryRequestResponse>(
       `/api/v1/sources/connections/${encodeURIComponent(connectionID)}:discover`,
@@ -7049,6 +9619,7 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
       name: name.trim(),
       database_identity: databaseIdentity.trim(),
       lineage_id: lineageID.trim(),
+      workspace_id: snapshot.id,
     };
     if (credentialReference.trim()) body.credential_reference = credentialReference.trim();
 
@@ -7102,45 +9673,102 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
     await requestDiscovery();
   }
 
-  async function registerView(view: SourceDiscoveryView) {
-    if (view.status !== "PREPARED" || !discoveryRequestID || busy || phase !== "catalog") return;
-    setSelectedViewID(view.view_id);
-    setResult(null);
-    setPhase("registering");
-    const registration = await apiPostWithoutIdempotency<SourceRegisterResponse>(
-      `/api/v1/sources/discovery/${encodeURIComponent(discoveryRequestID)}/views/${encodeURIComponent(view.view_id)}:register`,
-    );
-    if (registration.kind !== "ok") {
-      setSelectedViewID(null);
-      setResult(registration);
-      setPhase("catalog");
+  function toggleViewSelected(view: SourceDiscoveryView) {
+    if (view.status !== "PREPARED" || busy) return;
+    setSelectedViewIDs((current) => {
+      const next = new Set(current);
+      if (next.has(view.view_id)) next.delete(view.view_id); else next.add(view.view_id);
+      return next;
+    });
+  }
+
+  function toggleColumnExcluded(view: SourceDiscoveryView, column: SourceDiscoveryColumn) {
+    if (busy) return;
+    setExcludedColumnsByView((current) => {
+      const next = new Map(current);
+      next.set(view.view_id, postgresToggleExcludedColumn(next.get(view.view_id) ?? [], column));
+      return next;
+    });
+  }
+
+  function selectAllReadyViews() {
+    if (!discovery || busy) return;
+    setSelectedViewIDs(new Set(discovery.views.filter((view) => view.status === "PREPARED").map((view) => view.view_id)));
+  }
+
+  function selectSchemaViews(schema: string) {
+    if (!discovery || busy || !schema) return;
+    setSelectedViewIDs(new Set(discovery.views
+      .filter((view) => view.status === "PREPARED" && view.schema_name === schema)
+      .map((view) => view.view_id)));
+  }
+
+  function toggleViewMode(view: SourceDiscoveryView) {
+    if (busy) return;
+    setModeByView((current) => {
+      const next = new Map(current);
+      next.set(view.view_id, postgresEffectiveRegistrationMode(view, current) === "QUERY_ONLY" ? "INDEXED" : "QUERY_ONLY");
+      return next;
+    });
+  }
+
+  // Bulk mode applies to the current selection, so "select all ready" or one
+  // schema followed by one click registers the whole batch in query-only mode.
+  function applyModeToSelection(mode: string) {
+    if (!discovery || busy) return;
+    setModeByView((current) => {
+      const next = new Map(current);
+      for (const view of discovery.views) {
+        if (view.status === "PREPARED" && selectedViewIDs.has(view.view_id)) next.set(view.view_id, mode);
+      }
+      return next;
+    });
+  }
+
+  function clearViewSelection() {
+    if (busy) return;
+    setSelectedViewIDs(new Set());
+  }
+
+  async function confirmRegistration() {
+    if (!discovery || !discoveryRequestID || busy || phase !== "catalog") return;
+    const plan = postgresRegistrationPlan(discovery.views, selectedViewIDs, excludedColumnsByView, modeByView);
+    if (plan.length === 0) {
+      setFormError(postgresOnboardingLocale.discovery.noSelection);
       return;
     }
 
-    setPhase("binding");
-    const binding = await withRevisionRetry<WorkspaceSnapshot>((workspaceEtag, workspaceRevision) =>
-      apiMutation<WorkspaceSnapshot>(
-        "POST",
-        `/api/v1/workspaces/${encodeURIComponent(snapshot.id)}/sources`,
-        {
-          expected_workspace_revision: workspaceRevision,
-          source_scope_id: registration.value.source_scope_id,
-          source_scope_revision: registration.value.revision,
-          scope_config_hash: registration.value.scope_config_hash,
-          access_mode: registration.value.access_mode,
-        },
-        newIdempotencyKey(),
-        workspaceEtag,
-      ));
-    if (binding.kind !== "ok") {
-      setSelectedViewID(null);
-      setResult(binding);
-      setPhase("catalog");
-      return;
-    }
+    setFormError(null);
+    setResult(null);
+    setRegistrationResults(plan.map(({ view }) => ({ view, status: "pending", detail: "" })));
+    setPhase("registering");
+
+    await runPostgresRegistrationPlan(
+      discoveryRequestID,
+      snapshot.id,
+      plan,
+      etag,
+      snapshot.revision,
+      (outcome) => setRegistrationResults((current) => current.map((row) => (row.view.view_id === outcome.view.view_id ? outcome : row))),
+    );
 
     setPhase("done");
-    onCompleted(postgresOnboardingLocale.completion.doneText);
+  }
+
+  function retryFailedRegistrations() {
+    const failedViewIDs = new Set(registrationResults.filter((row) => row.status === "failure").map((row) => row.view.view_id));
+    setSelectedViewIDs(failedViewIDs);
+    setRegistrationResults([]);
+    setResult(null);
+    setPhase("catalog");
+  }
+
+  function finishRegistration() {
+    if (registrationSuccessCount > 0) {
+      onCompleted(postgresOnboardingLocale.completion.resultsSummary(registrationSuccessCount, registrationResults.length));
+    } else {
+      onClose();
+    }
   }
 
   const activeStep = phase === "connection" || phase === "bootstrapping" ? "connection" : phase === "verifying" || phase === "verifying-submit" ? "verification" : phase === "discovering" ? "discovery" : showingCatalog ? "selection" : "finish";
@@ -7281,7 +9909,7 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
             {result && result.kind !== "ok" && !(result.kind === "failure" && result.status === 403) && <ClosedOrError result={result} />}
             <footer className="sheet-footer postgres-footer">
               <button className="secondary-button" disabled={busy} onClick={() => { setFormError(null); setResult(null); setPhase("connection"); }} type="button">{postgresOnboardingLocale.trust.back}</button>
-              <button className="primary-button" disabled={busy || !attestedConnectorIdentity.trim() || !attestedBy.trim()} type="submit">
+              <button className="primary-button" disabled={busy || (!trustVerified && (!attestedConnectorIdentity.trim() || !attestedBy.trim()))} type="submit">
                 {phase === "verifying-submit" ? postgresOnboardingLocale.trust.submitting : trustVerified ? postgresOnboardingLocale.trust.retryDiscovery : postgresOnboardingLocale.trust.submit}
               </button>
             </footer>
@@ -7309,34 +9937,107 @@ function PostgreSQLOnboardingDialog({ snapshot, etag, onBack, onClose, onComplet
                 <p>{postgresOnboardingLocale.discovery.emptyHint}</p>
               </div>
             ) : (
-              <div className="postgres-view-grid">
-                {discovery.views.map((view) => (
-                  <PostgreSQLDiscoveredViewCard
-                    actionDisabled={busy}
-                    key={view.view_id}
-                    onRegister={(candidate) => void registerView(candidate)}
-                    view={view}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="postgres-catalog-toolbar">
+                  <label className="postgres-filter-field">
+                    <span>{postgresOnboardingLocale.discovery.filterLabel}</span>
+                    <input
+                      onChange={(event) => setFilterQuery(event.target.value)}
+                      placeholder={postgresOnboardingLocale.discovery.filterPlaceholder}
+                      type="search"
+                      value={filterQuery}
+                    />
+                  </label>
+                  <label className="postgres-sort-field">
+                    <span>{postgresOnboardingLocale.discovery.sortLabel}</span>
+                    <select onChange={(event) => setSortKey(event.target.value as PostgresViewSortKey)} value={sortKey}>
+                      <option value="name">{postgresOnboardingLocale.discovery.sortName}</option>
+                      <option value="rows">{postgresOnboardingLocale.discovery.sortRows}</option>
+                    </select>
+                  </label>
+                  <div className="postgres-selection-controls">
+                    <span>{postgresOnboardingLocale.discovery.selectedCount(selectedViewIDs.size)}</span>
+                    <button className="link-button" disabled={busy} onClick={selectAllReadyViews} type="button">{postgresOnboardingLocale.discovery.selectAll}</button>
+                    <label className="postgres-schema-field">
+                      <span>{postgresOnboardingLocale.discovery.selectSchemaLabel}</span>
+                      <select disabled={busy} onChange={(event) => selectSchemaViews(event.target.value)} value="">
+                        <option value="">{postgresOnboardingLocale.discovery.selectSchemaPlaceholder}</option>
+                        {postgresSelectableSchemas(discovery.views).map((schema) => (
+                          <option key={schema} value={schema}>{schema}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={() => applyModeToSelection("QUERY_ONLY")} type="button">{postgresOnboardingLocale.discovery.modeBulkQueryOnly}</button>
+                    <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={() => applyModeToSelection("INDEXED")} type="button">{postgresOnboardingLocale.discovery.modeBulkIndexed}</button>
+                    <button className="link-button" disabled={busy || selectedViewIDs.size === 0} onClick={clearViewSelection} type="button">{postgresOnboardingLocale.discovery.clearSelection}</button>
+                  </div>
+                </div>
+
+                <div className="postgres-view-grid">
+                  {filteredViews.map((view) => (
+                    <PostgreSQLDiscoveredViewCard
+                      disabled={busy}
+                      excludedColumns={excludedColumnsByView.get(view.view_id) ?? []}
+                      key={view.view_id}
+                      mode={postgresEffectiveRegistrationMode(view, modeByView)}
+                      onToggleColumn={toggleColumnExcluded}
+                      onToggleMode={toggleViewMode}
+                      onToggleSelected={toggleViewSelected}
+                      selected={selectedViewIDs.has(view.view_id)}
+                      view={view}
+                    />
+                  ))}
+                </div>
+              </>
             )}
 
-            {phase === "registering" && selectedViewID && <p className="postgres-progress" role="status">{postgresOnboardingLocale.completion.registering}</p>}
-            {phase === "binding" && <p className="postgres-progress" role="status">{postgresOnboardingLocale.completion.binding}</p>}
+            {formError && <aside className="plain-note evidence-denied"><span aria-hidden="true"><IconInfo /></span><p>{formError}</p></aside>}
             {result && result.kind !== "ok" && <ClosedOrError result={result} />}
 
             <footer className="sheet-footer postgres-footer">
               <button className="secondary-button" disabled={busy} onClick={onBack} type="button">{postgresOnboardingLocale.discovery.back}</button>
+              <button className="primary-button" disabled={busy || selectedViewIDs.size === 0} onClick={() => void confirmRegistration()} type="button">
+                {postgresOnboardingLocale.discovery.registerSelected}
+              </button>
             </footer>
           </div>
         )}
 
-        {phase === "done" && (
-          <div className="postgres-wizard postgres-complete" role="status">
-            <span aria-hidden="true"><IconCheckCircle /></span>
-            <h3>{postgresOnboardingLocale.completion.doneHeading}</h3>
-            <p>{postgresOnboardingLocale.completion.doneText}</p>
-            <button className="primary-button" onClick={onClose} type="button">{postgresOnboardingLocale.completion.done}</button>
+        {showingResults && (
+          <div className="postgres-wizard postgres-results-view" role="status">
+            <header className="postgres-catalog-header">
+              <div>
+                <p className="eyebrow">{postgresOnboardingLocale.completion.resultsEyebrow}</p>
+                <h3>{phase === "registering" ? postgresOnboardingLocale.completion.registering : postgresOnboardingLocale.completion.doneHeading}</h3>
+                <p>{postgresOnboardingLocale.completion.resultsSummary(registrationSuccessCount, registrationResults.length)}</p>
+              </div>
+            </header>
+
+            <ul className="postgres-results-list">
+              {registrationResults.map((row) => (
+                <li className={`postgres-result-row postgres-result-${row.status}`} key={row.view.view_id}>
+                  <span aria-hidden="true">
+                    {row.status === "success" ? <IconCheckCircle /> : row.status === "failure" ? <IconAlertTriangle /> : <span className="postgres-result-spinner" />}
+                  </span>
+                  <div>
+                    <code>{postgresViewDisplayName(row.view)}</code>
+                    {row.status === "failure" && <p>{row.detail}</p>}
+                    {row.status === "success" && <p>{postgresOnboardingLocale.completion.resultSuccessDetail}</p>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <footer className="sheet-footer postgres-footer">
+              {phase === "done" && registrationFailureCount > 0 && (
+                <button className="secondary-button" onClick={retryFailedRegistrations} type="button">{postgresOnboardingLocale.completion.retryFailed}</button>
+              )}
+              {phase === "done" && (
+                <button className="primary-button" onClick={finishRegistration} type="button">
+                  {registrationSuccessCount > 0 ? postgresOnboardingLocale.completion.done : postgresOnboardingLocale.close}
+                </button>
+              )}
+            </footer>
           </div>
         )}
       </section>

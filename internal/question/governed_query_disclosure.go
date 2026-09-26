@@ -6,7 +6,31 @@ import (
 
 	"knowvault.local/verified-workspace/internal/governedask"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
+
+// SourceSQLAttemptDisclosure is the content-free identity of one agent-authored
+// SQL receipt (ADR-0097) being reauthorized at answer-read time. It carries no
+// SQL, row or credential, exactly like the governed-ask disclosure.
+type SourceSQLAttemptDisclosure struct {
+	AttemptID             string
+	ConnectionID          string
+	SQLHash               string
+	ExposedSchemaRevision int64
+	ResultDigest          string
+}
+
+// sourceSQLAttemptReauthorizer re-checks, when a stored answer is read, that
+// the current caller may still read the workspace source an agent-authored SQL
+// receipt came from. The production workspaceapi.Handler implements it by
+// delegating to the injected source service's own repository boundary, so a
+// deployment without a mounted ADR-0089 governed-ask service can still disclose
+// its SQL-citing answers. It is discovered on the installed
+// workspacetools.Runtime exactly like every other optional capability, so no
+// new composition install path is required.
+type sourceSQLAttemptReauthorizer interface {
+	ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure SourceSQLAttemptDisclosure) error
+}
 
 // governedAttemptReauthorizer is the private governed-ask capability needed by
 // Question: it combines the existing workspace ask operation with current
@@ -140,12 +164,119 @@ func (service *Service) authorizeGovernedQueryDisclosures(
 	questionRunID string,
 	dependencies []governedQueryDependency,
 ) error {
+	return authorizeGovernedQueryDisclosuresByKind(ctx, access, workspaceID, questionRunID, dependencies,
+		service.liveDataReauthorizer(), service.sourceSQLReauthorizer())
+}
+
+// liveDataReauthorizer and sourceSQLReauthorizer resolve the two optional
+// read-time authorities from the capabilities composition already installed.
+// Both fail closed when their capability is absent, so a stored dependency is
+// never disclosed without a current authorization check.
+func (service *Service) liveDataReauthorizer() governedAttemptReauthorizer {
+	if service == nil {
+		return nil
+	}
+	reauthorizer, _ := service.liveDataAsk.(governedAttemptReauthorizer)
+	return reauthorizer
+}
+
+func (service *Service) sourceSQLReauthorizer() sourceSQLAttemptReauthorizer {
+	if service == nil {
+		return nil
+	}
+	reauthorizer, _ := service.tools.(sourceSQLAttemptReauthorizer)
+	return reauthorizer
+}
+
+// authorizeGovernedQueryDisclosuresByKind partitions the run's dependencies by
+// their read surface and applies each surface's own current-authorization
+// check: the mounted ADR-0089 governed ask for an administrator live-table
+// read, and the source boundary for ADR-0097's agent-authored SQL.
+func authorizeGovernedQueryDisclosuresByKind(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID string,
+	questionRunID string,
+	dependencies []governedQueryDependency,
+	live governedAttemptReauthorizer,
+	source sourceSQLAttemptReauthorizer,
+) error {
 	if len(dependencies) == 0 {
 		return nil
 	}
-	var reauthorizer governedAttemptReauthorizer
-	if service != nil {
-		reauthorizer, _ = service.liveDataAsk.(governedAttemptReauthorizer)
+	liveDependencies := make([]governedQueryDependency, 0, len(dependencies))
+	sourceDependencies := make([]governedQueryDependency, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		if dependency.kind == governedQueryKindSourceSQL {
+			sourceDependencies = append(sourceDependencies, dependency)
+			continue
+		}
+		liveDependencies = append(liveDependencies, dependency)
 	}
-	return authorizeGovernedQueryDisclosures(ctx, access, workspaceID, questionRunID, dependencies, reauthorizer)
+	if err := authorizeGovernedQueryDisclosures(ctx, access, workspaceID, questionRunID, liveDependencies, live); err != nil {
+		return err
+	}
+	return authorizeSourceSQLDisclosures(ctx, access, workspaceID, questionRunID, sourceDependencies, source)
+}
+
+func authorizeSourceSQLDisclosures(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID string,
+	questionRunID string,
+	dependencies []governedQueryDependency,
+	reauthorizer sourceSQLAttemptReauthorizer,
+) error {
+	if len(dependencies) == 0 {
+		return nil
+	}
+	denied := false
+	for _, dependency := range dependencies {
+		dependency := dependency
+		if err := authorizeSourceSQLDisclosureOne(ctx, access, workspaceID, questionRunID, &dependency, reauthorizer); err != nil {
+			if CodeOf(err) == CodeNotFound {
+				denied = true
+				continue
+			}
+			return err
+		}
+	}
+	if denied {
+		return &Error{code: CodeNotFound}
+	}
+	return nil
+}
+
+func authorizeSourceSQLDisclosureOne(
+	ctx context.Context,
+	access database.AccessContext,
+	workspaceID string,
+	questionRunID string,
+	dependency *governedQueryDependency,
+	reauthorizer sourceSQLAttemptReauthorizer,
+) error {
+	if scalarInterfaceIsNil(ctx) || access.Validate() != nil ||
+		!validOpaque(workspaceID) || !validOpaque(questionRunID) ||
+		!dependency.validForRun(questionRunID) || dependency.kind != governedQueryKindSourceSQL ||
+		scalarInterfaceIsNil(reauthorizer) {
+		return &Error{code: CodeUnavailable}
+	}
+	if ctx.Err() != nil {
+		return &Error{code: CodeUnavailable}
+	}
+	callErr := reauthorizer.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, SourceSQLAttemptDisclosure{
+		AttemptID: dependency.attemptID, ConnectionID: dependency.connectionID,
+		SQLHash: dependency.sqlHash, ExposedSchemaRevision: dependency.exposedSchemaRevision,
+		ResultDigest: dependency.resultDigest,
+	})
+	if ctx.Err() != nil || errors.Is(callErr, context.Canceled) || errors.Is(callErr, context.DeadlineExceeded) {
+		return &Error{code: CodeUnavailable}
+	}
+	if callErr == nil {
+		return nil
+	}
+	if errors.Is(callErr, workspacetools.ErrUnavailable) {
+		return &Error{code: CodeUnavailable}
+	}
+	return &Error{code: CodeNotFound}
 }

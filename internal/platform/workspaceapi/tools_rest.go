@@ -26,8 +26,14 @@ package workspaceapi
 // or MCP route.
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"regexp"
 	"sort"
@@ -37,8 +43,10 @@ import (
 
 	"knowvault.local/verified-workspace/internal/address"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/question"
 	"knowvault.local/verified-workspace/internal/source/registration"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacecontext"
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
@@ -70,12 +78,18 @@ func (handler *Handler) workspaceToolDispatch(writer http.ResponseWriter, reques
 	case workspacetools.KindRead:
 		handler.workspaceToolRead(writer, request, access, requestID, endpoint.workspaceID,
 			endpoint.readFragmentID, endpoint.readAddress, endpoint.readOffset, endpoint.readLimit,
-			endpoint.readExpectedSpanHash, endpoint.readCursor)
+			endpoint.readExpectedSpanHash, endpoint.readCursor, endpoint.readOutline)
 	case workspacetools.KindSources:
 		handler.workspaceToolSources(writer, request, access, requestID, endpoint.workspaceID)
 	case workspacetools.KindRefresh:
 		handler.workspaceToolRefresh(writer, request, access, requestID, endpoint.workspaceID,
 			endpoint.refreshSourceScopeID, endpoint.refreshOffset, endpoint.refreshLimit)
+	case workspacetools.KindWorkspaceContext:
+		handler.workspaceToolWorkspaceContext(writer, request, access, requestID, endpoint.workspaceID)
+	case workspacetools.KindSourceSchema:
+		handler.workspaceToolSourceSchema(writer, request, access, requestID, endpoint.workspaceID)
+	case workspacetools.KindSourceSQL:
+		handler.workspaceToolSourceSQL(writer, request, access, requestID, endpoint.workspaceID)
 	default:
 		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
 	}
@@ -419,7 +433,7 @@ func writeEvidenceSpanRefusal(writer http.ResponseWriter, requestID string) {
 // viewer's single content-free 404 NOT_FOUND with no workspace-id echo. A
 // service mounted without the whole-object capability fails closed 503
 // SERVICE_UNAVAILABLE, exactly like the other capability-gated routes.
-func (handler *Handler) workspaceToolRead(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, fragmentID, rawAddress string, offset, limit int64, expectedSpanHash string, cursor *string) {
+func (handler *Handler) workspaceToolRead(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, fragmentID, rawAddress string, offset, limit int64, expectedSpanHash string, cursor *string, outline bool) {
 	if code, _ := emptyBody(writer, request); code != "" {
 		writeError(writer, statusForMutationCode(code), code, requestID)
 		return
@@ -471,6 +485,10 @@ func (handler *Handler) workspaceToolRead(writer http.ResponseWriter, request *h
 	}
 	if cursor != nil {
 		handler.workspaceToolReadWholeObject(writer, request, access, requestID, workspaceID, fragmentID, selector, refVersionID, *cursor, limit, expectedSpanHash)
+		return
+	}
+	if outline {
+		handler.workspaceToolReadOutline(writer, request, access, requestID, workspaceID, fragmentID, selector, refVersionID, expectedSpanHash)
 		return
 	}
 	fragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)
@@ -728,6 +746,71 @@ func (handler *Handler) workspaceToolReadWholeObject(writer http.ResponseWriter,
 	}
 	if pageURL := handler.evidenceFragmentPageURL(workspaceID, object.Fragment); pageURL != "" {
 		projection["source_page_url"] = pageURL
+	}
+	writeJSON(writer, http.StatusOK, projection)
+}
+
+// workspaceToolReadOutline is the outline mode of the REST knowvault_read
+// parity (R1.S9.s1.T1), dispatched when the request carried outline=true. It
+// resolves the whole source version through the identical optional
+// EvidenceWholeObject capability the cursor mode composes, so authorization,
+// the audit journal and the content-free denial are the canonical ones and no
+// second read path exists. It returns the addressed document's ordered
+// Markdown heading list (level, text, canonical_address, gist) instead of a
+// text page, with no fragment text disclosed: an orientation projection, not
+// evidence a caller may cite without reading the addressed fragment.
+func (handler *Handler) workspaceToolReadOutline(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, fragmentID string, selector *address.Address, refVersionID, expectedSpanHash string) {
+	_, ok := handler.evidenceWholeObjectCapability()
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	object, err := handler.readEvidenceObjectSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)
+	if err != nil || object.Fragment.FragmentID == "" {
+		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
+		return
+	}
+	if selector != nil {
+		if selector.Source != object.Fragment.SourceObjectID || selector.Object != object.Fragment.FragmentID || !mcpReadAddressVersionMatches(*selector, object.Fragment.SourceVersionID, refVersionID) {
+			writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
+			return
+		}
+		if !handler.verifyAddressSpan(object.Fragment.Text, *selector) && !handler.verifyAddressSpan(object.Text, *selector) {
+			writeEvidenceSpanRefusal(writer, requestID)
+			return
+		}
+	}
+	if expectedSpanHash != "" && expectedSpanHash != object.Fragment.EvidenceTextHash {
+		writeEvidenceSpanRefusal(writer, requestID)
+		return
+	}
+	canonicalAddress, addressErr := handler.canonicalEvidenceWholeAddress(object)
+	if addressErr != nil {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	headings, truncated := extractOutlineHeadings(object.Text)
+	entries := make([]outlineEntry, 0, len(headings))
+	for _, heading := range headings {
+		headingAddress, addrErr := handler.outlineHeadingAddress(object, heading.Offset)
+		if addrErr != nil {
+			writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+			return
+		}
+		entries = append(entries, outlineEntry{
+			Level: heading.Level, Text: heading.Text, CanonicalAddress: headingAddress, Gist: heading.Gist,
+		})
+	}
+	projection := map[string]any{
+		"headings":           entries,
+		"truncated":          truncated,
+		"fragment_count":     object.FragmentCount,
+		"address":            mcpEvidenceAddress(object.Fragment),
+		"canonical_address":  canonicalAddress.String(),
+		"is_current_version": object.Fragment.IsCurrentVersion,
+	}
+	if object.Fragment.SourcePath != "" {
+		projection["source_path"] = object.Fragment.SourcePath
 	}
 	writeJSON(writer, http.StatusOK, projection)
 }
@@ -1019,4 +1102,253 @@ func (handler *Handler) workspaceToolRefresh(writer http.ResponseWriter, request
 		return
 	}
 	writeJSON(writer, http.StatusOK, workspaceRefreshProjection(page))
+}
+
+// Bounds for the knowvault_workspace_context / tools/workspace-context filter
+// argument (S2-CONTRACT.md "Tool parity", "MCP"): terms narrows the rendered
+// glossary to the entries workspacecontext.MatchTerms recognizes among the
+// supplied terms, and section narrows which of rules/glossary/sources are
+// populated. description and notice are always present. The per-term length
+// bound is this surface's own defensive cap (the contract states only the
+// count bound); it is not the document schema's own maxTermChars.
+const (
+	maxWorkspaceContextToolTerms     = 10
+	maxWorkspaceContextToolTermChars = 200
+)
+
+const workspaceContextToolNotice = "context, not evidence"
+
+// workspaceContextToolArguments is the closed knowvault_workspace_context /
+// tools/workspace-context argument envelope: both optional.
+type workspaceContextToolArguments struct {
+	Terms   []string `json:"terms"`
+	Section string   `json:"section"`
+}
+
+func validWorkspaceContextToolTerms(terms []string) bool {
+	if len(terms) > maxWorkspaceContextToolTerms {
+		return false
+	}
+	for _, term := range terms {
+		count := utf8.RuneCountInString(term)
+		if count == 0 || count > maxWorkspaceContextToolTermChars || !utf8.ValidString(term) {
+			return false
+		}
+	}
+	return true
+}
+
+func validWorkspaceContextToolSection(section string) bool {
+	switch section {
+	case "", "all", "glossary", "rules", "sources":
+		return true
+	default:
+		return false
+	}
+}
+
+// decodeWorkspaceContextToolArguments reads the tools/workspace-context POST
+// body. Unlike the other six workspace tool-parity routes (whose optional
+// arguments travel in the query string and whose POST body must be empty),
+// this route's filter is JSON per S2-CONTRACT.md, and every field is
+// optional: an absent or empty body is the zero-value envelope (no
+// narrowing), exactly like an omitted MCP terms/section argument.
+func decodeWorkspaceContextToolArguments(writer http.ResponseWriter, request *http.Request) (workspaceContextToolArguments, string) {
+	if request.Body == nil || request.Body == http.NoBody {
+		return workspaceContextToolArguments{}, ""
+	}
+	if headerPresent(request.Header, "Content-Encoding") {
+		return workspaceContextToolArguments{}, "REQUEST_INVALID"
+	}
+	body := http.MaxBytesReader(writer, request.Body, maxBodyBytes)
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			return workspaceContextToolArguments{}, "PAYLOAD_TOO_LARGE"
+		}
+		return workspaceContextToolArguments{}, "REQUEST_INVALID"
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return workspaceContextToolArguments{}, ""
+	}
+	contentType, ok := exactHeader(request.Header, "Content-Type")
+	mediaType, _, mediaErr := mime.ParseMediaType(contentType)
+	if !ok || mediaErr != nil || mediaType != jsonContentType || trimmed[0] != '{' {
+		return workspaceContextToolArguments{}, "REQUEST_INVALID"
+	}
+	var arguments workspaceContextToolArguments
+	if err := jsonv2.Unmarshal(trimmed, &arguments, jsonv2.RejectUnknownMembers(true), jsontext.AllowDuplicateNames(false)); err != nil {
+		return workspaceContextToolArguments{}, "REQUEST_INVALID"
+	}
+	return arguments, ""
+}
+
+// workspaceContextAccessOf narrows a database.AccessContext to the caller
+// identity workspacecontext.Reader needs, without internal/workspacecontext
+// importing internal/platform/database (see that package's Access doc).
+func workspaceContextAccessOf(access database.AccessContext) workspacecontext.Access {
+	return workspacecontext.Access{OrganizationID: access.OrganizationID, PrincipalID: access.PrincipalID, RequestID: access.RequestID}
+}
+
+// workspaceContextToolResult is the single shared core both the MCP
+// knowvault_workspace_context tool and its REST tools/workspace-context
+// parity route dispatch through, so the projection is the same
+// implementation, not a re-derivation. available is false only when
+// composition mounted no workspacecontext.Reader (EnableWorkspaceContext was
+// never called), exactly like the other optional capabilities. err is the
+// Reader's own error: an unknown, foreign or non-member workspace collapses
+// to the caller's single content-free not-found, exactly as the other
+// knowledge tools already do (ADR-0098 changes no authorization) -- neither
+// transport distinguishes it from any other Reader failure, so no existence
+// oracle is added. On success, the read is reported to
+// question.ObserveWorkspaceContextRead (internal/question/tool_runtime.go)
+// for the content-free workspace.model_context_read audit action.
+func (handler *Handler) workspaceContextToolResult(ctx context.Context, access database.AccessContext, workspaceID string, terms []string, section string) (map[string]any, bool, error) {
+	if handler.workspaceContext == nil {
+		return nil, false, nil
+	}
+	version, err := handler.workspaceContext.Current(ctx, workspaceContextAccessOf(access), workspaceID)
+	if err != nil {
+		return nil, true, err
+	}
+	question.ObserveWorkspaceContextRead(ctx, access, workspaceID, version.Number)
+	return workspaceContextToolProjection(version.Document, version.Number, version.ContentHash, terms, section), true, nil
+}
+
+// workspaceContextToolProjection renders the exact
+// {version, content_hash, description, rules, glossary, sources, notice}
+// shape S2-CONTRACT.md "Tool parity" and "MCP" both specify. A non-empty
+// terms narrows glossary to the entries workspacecontext.MatchTerms
+// recognizes among them (the identical case-insensitive, NFC, ё=е,
+// whole-token matching the chat's WORKSPACE_CONTEXT_JSON block uses); section
+// narrows which of rules/glossary/sources are populated ("all" or empty
+// keeps every section). description and notice are always present.
+func workspaceContextToolProjection(doc workspacecontext.Document, version int64, contentHash string, terms []string, section string) map[string]any {
+	glossary := doc.Glossary
+	if len(terms) > 0 {
+		glossary = workspaceContextMatchedGlossary(doc, terms)
+	}
+	rules := doc.Rules
+	sources := doc.Sources
+	switch section {
+	case "glossary":
+		rules, sources = nil, nil
+	case "rules":
+		glossary, sources = nil, nil
+	case "sources":
+		glossary, rules = nil, nil
+	}
+	return map[string]any{
+		"version":      version,
+		"content_hash": contentHash,
+		"description":  doc.Description,
+		"rules":        workspaceContextToolRules(rules),
+		"glossary":     workspaceContextToolGlossary(glossary),
+		"sources":      workspaceContextToolSources(sources),
+		"notice":       workspaceContextToolNotice,
+	}
+}
+
+// workspaceContextMatchedGlossary narrows doc.Glossary to the entries
+// workspacecontext.MatchTerms recognizes among terms, in glossary order. The
+// terms are joined one per line before matching so an unrelated adjacency
+// between two supplied terms can never create a spurious cross-term match.
+func workspaceContextMatchedGlossary(doc workspacecontext.Document, terms []string) []workspacecontext.Term {
+	matches := workspacecontext.MatchTerms(doc, strings.Join(terms, "\n"))
+	matchedIDs := make(map[string]bool, len(matches))
+	for _, match := range matches {
+		matchedIDs[match.TermID] = true
+	}
+	narrowed := make([]workspacecontext.Term, 0, len(matchedIDs))
+	for _, term := range doc.Glossary {
+		if matchedIDs[term.ID] {
+			narrowed = append(narrowed, term)
+		}
+	}
+	return narrowed
+}
+
+func workspaceContextToolRules(rules []workspacecontext.Rule) []any {
+	projected := make([]any, 0, len(rules))
+	for _, rule := range rules {
+		projected = append(projected, map[string]any{"id": rule.ID, "text": rule.Text})
+	}
+	return projected
+}
+
+func workspaceContextToolGlossary(terms []workspacecontext.Term) []any {
+	projected := make([]any, 0, len(terms))
+	for _, term := range terms {
+		locations := make([]any, 0, len(term.DataLocations))
+		for _, location := range term.DataLocations {
+			locations = append(locations, map[string]any{
+				"source_connection_id": location.SourceConnectionID,
+				"relation":             location.Relation,
+				"column":               location.Column,
+				"hint":                 location.Hint,
+			})
+		}
+		synonyms := make([]any, 0, len(term.Synonyms))
+		for _, synonym := range term.Synonyms {
+			synonyms = append(synonyms, synonym)
+		}
+		projected = append(projected, map[string]any{
+			"id": term.ID, "term": term.Term, "synonyms": synonyms,
+			"definition": term.Definition, "data_locations": locations,
+		})
+	}
+	return projected
+}
+
+func workspaceContextToolSources(sources []workspacecontext.Source) []any {
+	projected := make([]any, 0, len(sources))
+	for _, source := range sources {
+		tables := make([]any, 0, len(source.Tables))
+		for _, table := range source.Tables {
+			columns := make([]any, 0, len(table.Columns))
+			for _, column := range table.Columns {
+				columns = append(columns, map[string]any{"name": column.Name, "note": column.Note})
+			}
+			tables = append(tables, map[string]any{"relation": table.Relation, "note": table.Note, "columns": columns})
+		}
+		projected = append(projected, map[string]any{
+			"source_connection_id": source.SourceConnectionID, "description": source.Description, "tables": tables,
+		})
+	}
+	return projected
+}
+
+// workspaceToolWorkspaceContext is the REST parity of the MCP
+// knowvault_workspace_context tool (ADR-0098). It dispatches through the
+// identical workspaceContextToolResult core the MCP tool composes, so a REST
+// client and an MCP client observe byte-identical JSON. The optional
+// terms/section filter travels in the JSON body (this route is POST-only);
+// an unparsable or over-bound body is REQUEST_INVALID before the capability
+// is touched. An unknown, foreign or non-member workspace is the Reader's
+// single content-free 404 NOT_FOUND with no document content and no
+// workspace-id echo. A composition mounted without the capability fails
+// closed as 503 SERVICE_UNAVAILABLE, exactly like the other capability-gated
+// routes.
+func (handler *Handler) workspaceToolWorkspaceContext(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	arguments, code := decodeWorkspaceContextToolArguments(writer, request)
+	if code != "" {
+		writeError(writer, statusForMutationCode(code), code, requestID)
+		return
+	}
+	if !validWorkspaceContextToolTerms(arguments.Terms) || !validWorkspaceContextToolSection(arguments.Section) {
+		writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
+		return
+	}
+	result, available, err := handler.workspaceContextToolResult(request.Context(), access, workspaceID, arguments.Terms, arguments.Section)
+	if !available {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	if err != nil {
+		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
 }

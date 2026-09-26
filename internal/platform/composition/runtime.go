@@ -22,6 +22,7 @@ import (
 	"knowvault.local/verified-workspace/internal/platform/browserauth"
 	"knowvault.local/verified-workspace/internal/platform/buildinfo"
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/platform/failurelog"
 	"knowvault.local/verified-workspace/internal/platform/httpauth"
 	"knowvault.local/verified-workspace/internal/platform/httpserver"
 	"knowvault.local/verified-workspace/internal/platform/metriccomparemount"
@@ -348,6 +349,28 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}
+	// 000121: before the listener can exist, finish every Question Run whose
+	// answering process died with the previous incarnation. The tenant-wide
+	// scan is database-gated and compare-and-set, so a run a live replica is
+	// still answering (or a slow model call) is never touched. A failure here
+	// is a startup failure: serving a conversation with an unfinishable
+	// spinner is the exact defect this stage prevents.
+	startupReconcileRequest, err := newStartupRequestID()
+	if err != nil {
+		return fail(StartupStageQuestionReconciliation)
+	}
+	if _, err := questions.ReconcileInterruptedRuns(ctx, database.AccessContext{
+		OrganizationID: string(config.OrganizationID()), PrincipalID: questionReconcilePrincipal,
+		RequestID: startupReconcileRequest,
+	}); err != nil {
+		return fail(StartupStageQuestionReconciliation)
+	}
+	// The same sweep keeps running for the lifetime of the composed runtime so
+	// a run that crashed too recently for the startup grace window still
+	// converges. It is retired by the runtime's own cleanup stack.
+	if stopReconcile := startQuestionReconcileLoop(questions, string(config.OrganizationID())); stopReconcile != nil {
+		acquired.push(stopReconcile)
+	}
 	// R1.1 (micro-card C): the trusted analytic DatasetProfile catalog is
 	// wired only behind its own explicit administrator mount
 	// (analyticcatalog.LoadMounted), exactly like the generation mount
@@ -440,6 +463,10 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		}
 		questions.EnableGeneration(generationAdapter, generationVerifier)
 		questions.EnableGenerationProfiles(generationProfiles)
+		// ADR-0099 amendment 1: with a model adapter mounted, every question
+		// run recognises its kind in a separate short model call and records
+		// it. Without a mount the step stays off and no extra call is made.
+		questions.EnableAnswerKindRecognition()
 	}
 	// ADR-0089: the governed-query ask service is wired only behind its own
 	// explicit administrator mount (governedquery.LoadMountedConfig), exactly
@@ -503,7 +530,7 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}
-	workspaceHandler, err := workspaceapi.NewWithServiceAccess(authenticator, workspaceStore, sources, relationViewer, questions, conversations, accessCodes, string(config.OrganizationID()))
+	workspaceHandler, err := workspaceapi.NewWithServiceAccess(authenticator, workspaceStore, newSourceServiceWithSQL(sources, workspaceStore, auditStore, secrets), relationViewer, questions, conversations, accessCodes, string(config.OrganizationID()))
 	if err != nil {
 		return fail(StartupStageWorkspaceHandler)
 	}
@@ -519,6 +546,13 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 	}
 	questions.EnableToolLoop(workspaceHandler)
 	workspaceHandler.EnableGovernedQuery(governedAskService)
+	// ADR-0098 (S2): the workspace model context store, its deterministic
+	// proposer and every seam between them (see workspacecontext.go's own
+	// doc comment) -- mandatory once workspaceHandler and questions both
+	// exist, not another optional LoadMounted-gated capability.
+	if err := installWorkspaceContext(databaseStore, workspaceStore, auditStore, questions, workspaceHandler); err != nil {
+		return fail(StartupStageWorkspaceContext)
+	}
 	// EMB-1: the operator command that moves this tenant onto the mounted
 	// embedding profile. It is composed on every start — a deployment with no
 	// embedding mount still answers the status route, reporting an unavailable
@@ -597,8 +631,11 @@ func NewProduction(ctx context.Context, config Config, info buildinfo.Info) (*Ru
 		return fail(StartupStageHTTPDispatcher)
 	}
 	// D7-8: the mandatory security header set wraps the whole application
-	// boundary, including the dispatcher's own 404 responses.
-	handler := apphttp.WithSecurityHeaders(dispatcher)
+	// boundary, including the dispatcher's own 404 responses. Inside it, the
+	// D-12 failure log owns exactly one content-free line for every 5xx the
+	// dispatcher's branches answer, so an operator can see why a request
+	// failed from the server log alone.
+	handler := apphttp.WithSecurityHeaders(failurelog.WithFailureLog(dispatcher))
 	serverConfig := httpserver.DefaultConfig()
 	serverConfig.Address = config.HTTPAddress()
 	// GEN-2 (ADR-0088): the default 60s http.Server.WriteTimeout covers the

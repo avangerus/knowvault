@@ -40,7 +40,7 @@ func TestRenderAnswerAggregatesStructuredNumericEvidence(t *testing.T) {
 		testAggregateCandidate("fragment_01ARZ3NDEKTSV4RRFFQ69G5FAW", "row_b", "tonnes = 7.125"),
 	}
 	answer, citations := renderAnswer("ws_demo", "\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043e\u0442\u0445\u043e\u0434\u043e\u0432?", selected)
-	if answer != "Total: 19.470" || len(citations) != 2 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 19.470" || len(citations) != 2 {
 		t.Fatalf("answer=%q citations=%d", answer, len(citations))
 	}
 }
@@ -85,7 +85,7 @@ func TestUngroupedAggregateUsesSealedGenericToolReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	answer, citations, receipt := renderAnswerPlanAtWithReceipt("ws_demo", "\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u043e\u0442\u0445\u043e\u0434\u043e\u0432?", planned, selected, time.Unix(1, 0).UTC())
-	if answer != "Total: 19.470" || len(citations) != 2 {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 19.470" || len(citations) != 2 {
 		t.Fatalf("answer=%q citations=%d", answer, len(citations))
 	}
 	if receipt == nil || receipt.Status != "SUCCEEDED" || receipt.ToolID == "" || receipt.PlanHash != planned.PlanHash || receipt.ReceiptHash == "" {
@@ -153,7 +153,7 @@ func TestJSONPathAggregateKeepsNumericFieldsDistinctAndEvidenceBound(t *testing.
 		t.Fatal(err)
 	}
 	answer, citations, receipt := renderAnswerPlanAtWithReceipt("ws_demo", "\u0441\u043a\u043e\u043b\u044c\u043a\u043e payload metrics", planned, selected, time.Unix(1, 0).UTC())
-	if answer != "Total: 20.0" || len(citations) != 2 || receipt == nil || receipt.Status != "SUCCEEDED" {
+	if answer != "\u0418\u0442\u043e\u0433\u043e: 20.0" || len(citations) != 2 || receipt == nil || receipt.Status != "SUCCEEDED" {
 		t.Fatalf("answer=%q citations=%d receipt=%+v", answer, len(citations), receipt)
 	}
 	for _, citation := range citations {

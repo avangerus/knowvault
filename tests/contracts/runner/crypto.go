@@ -38,6 +38,7 @@ var aadOwnerInventory = []aadOwnerRule{
 	{"question_citation.deep_link_artifact_id", "question_citation", "deep_link_artifact_id", "SOURCE_DEEPLINK", "DEEPLINK", "question_citation.id"},
 	{"model_run_artifact.input_artifact_id", "model_run_artifact", "input_artifact_id", "MODEL_ARTIFACT", "CANONICAL_INPUT", "model_run_artifact.model_run_id"},
 	{"model_run_artifact.output_artifact_id", "model_run_artifact", "output_artifact_id", "MODEL_ARTIFACT", "CANONICAL_OUTPUT", "model_run_artifact.model_run_id"},
+	{"question_feedback.comment_artifact_id", "question_feedback", "comment_artifact_id", "QUESTION_FEEDBACK", "COMMENT_TEXT", "question_feedback.id"},
 }
 
 func aadRuleByOwner(ownerTable, ownerColumn string) *aadOwnerRule {
@@ -97,7 +98,7 @@ func validateAADOwnerBinding(aad map[string]any) error {
 
 func deriveAADResourceID(rule aadOwnerRule, ownerKey map[string]any) (string, error) {
 	switch rule.ResourceIDSource {
-	case "external_identity.id", "source_discovery_result.id", "source_discovered_scope.id", "source_object.id", "acl_snapshot.id", "evidence_fragment.id", "search_chunk.id", "question_run.id", "question_claim.id", "question_citation.id":
+	case "external_identity.id", "source_discovery_result.id", "source_discovered_scope.id", "source_object.id", "acl_snapshot.id", "evidence_fragment.id", "search_chunk.id", "question_run.id", "question_claim.id", "question_citation.id", "question_feedback.id":
 		if stringValue(ownerKey["id"]) == "" {
 			return "", fail("ENCRYPTED_ARTIFACT_AAD_OWNER_KEY_INVALID", rule.Title)
 		}
