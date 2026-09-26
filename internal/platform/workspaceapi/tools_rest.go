@@ -78,7 +78,7 @@ func (handler *Handler) workspaceToolDispatch(writer http.ResponseWriter, reques
 	case workspacetools.KindRead:
 		handler.workspaceToolRead(writer, request, access, requestID, endpoint.workspaceID,
 			endpoint.readFragmentID, endpoint.readAddress, endpoint.readOffset, endpoint.readLimit,
-			endpoint.readExpectedSpanHash, endpoint.readCursor)
+			endpoint.readExpectedSpanHash, endpoint.readCursor, endpoint.readOutline)
 	case workspacetools.KindSources:
 		handler.workspaceToolSources(writer, request, access, requestID, endpoint.workspaceID)
 	case workspacetools.KindRefresh:
@@ -433,7 +433,7 @@ func writeEvidenceSpanRefusal(writer http.ResponseWriter, requestID string) {
 // viewer's single content-free 404 NOT_FOUND with no workspace-id echo. A
 // service mounted without the whole-object capability fails closed 503
 // SERVICE_UNAVAILABLE, exactly like the other capability-gated routes.
-func (handler *Handler) workspaceToolRead(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, fragmentID, rawAddress string, offset, limit int64, expectedSpanHash string, cursor *string) {
+func (handler *Handler) workspaceToolRead(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, fragmentID, rawAddress string, offset, limit int64, expectedSpanHash string, cursor *string, outline bool) {
 	if code, _ := emptyBody(writer, request); code != "" {
 		writeError(writer, statusForMutationCode(code), code, requestID)
 		return
@@ -485,6 +485,10 @@ func (handler *Handler) workspaceToolRead(writer http.ResponseWriter, request *h
 	}
 	if cursor != nil {
 		handler.workspaceToolReadWholeObject(writer, request, access, requestID, workspaceID, fragmentID, selector, refVersionID, *cursor, limit, expectedSpanHash)
+		return
+	}
+	if outline {
+		handler.workspaceToolReadOutline(writer, request, access, requestID, workspaceID, fragmentID, selector, refVersionID, expectedSpanHash)
 		return
 	}
 	fragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)
@@ -742,6 +746,71 @@ func (handler *Handler) workspaceToolReadWholeObject(writer http.ResponseWriter,
 	}
 	if pageURL := handler.evidenceFragmentPageURL(workspaceID, object.Fragment); pageURL != "" {
 		projection["source_page_url"] = pageURL
+	}
+	writeJSON(writer, http.StatusOK, projection)
+}
+
+// workspaceToolReadOutline is the outline mode of the REST knowvault_read
+// parity (R1.S9.s1.T1), dispatched when the request carried outline=true. It
+// resolves the whole source version through the identical optional
+// EvidenceWholeObject capability the cursor mode composes, so authorization,
+// the audit journal and the content-free denial are the canonical ones and no
+// second read path exists. It returns the addressed document's ordered
+// Markdown heading list (level, text, canonical_address, gist) instead of a
+// text page, with no fragment text disclosed: an orientation projection, not
+// evidence a caller may cite without reading the addressed fragment.
+func (handler *Handler) workspaceToolReadOutline(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, fragmentID string, selector *address.Address, refVersionID, expectedSpanHash string) {
+	_, ok := handler.evidenceWholeObjectCapability()
+	if !ok {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	object, err := handler.readEvidenceObjectSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)
+	if err != nil || object.Fragment.FragmentID == "" {
+		writeError(writer, http.StatusNotFound, "NOT_FOUND", requestID)
+		return
+	}
+	if selector != nil {
+		if selector.Source != object.Fragment.SourceObjectID || selector.Object != object.Fragment.FragmentID || !mcpReadAddressVersionMatches(*selector, object.Fragment.SourceVersionID, refVersionID) {
+			writeError(writer, http.StatusBadRequest, "REQUEST_INVALID", requestID)
+			return
+		}
+		if !handler.verifyAddressSpan(object.Fragment.Text, *selector) && !handler.verifyAddressSpan(object.Text, *selector) {
+			writeEvidenceSpanRefusal(writer, requestID)
+			return
+		}
+	}
+	if expectedSpanHash != "" && expectedSpanHash != object.Fragment.EvidenceTextHash {
+		writeEvidenceSpanRefusal(writer, requestID)
+		return
+	}
+	canonicalAddress, addressErr := handler.canonicalEvidenceWholeAddress(object)
+	if addressErr != nil {
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	headings, truncated := extractOutlineHeadings(object.Text)
+	entries := make([]outlineEntry, 0, len(headings))
+	for _, heading := range headings {
+		headingAddress, addrErr := handler.outlineHeadingAddress(object, heading.Offset)
+		if addrErr != nil {
+			writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+			return
+		}
+		entries = append(entries, outlineEntry{
+			Level: heading.Level, Text: heading.Text, CanonicalAddress: headingAddress, Gist: heading.Gist,
+		})
+	}
+	projection := map[string]any{
+		"headings":           entries,
+		"truncated":          truncated,
+		"fragment_count":     object.FragmentCount,
+		"address":            mcpEvidenceAddress(object.Fragment),
+		"canonical_address":  canonicalAddress.String(),
+		"is_current_version": object.Fragment.IsCurrentVersion,
+	}
+	if object.Fragment.SourcePath != "" {
+		projection["source_path"] = object.Fragment.SourcePath
 	}
 	writeJSON(writer, http.StatusOK, projection)
 }
