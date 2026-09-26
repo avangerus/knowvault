@@ -42,17 +42,16 @@ func loadE1aSet(t *testing.T) *questions.Set {
 		t.Fatalf("load question set %s: %v", path, err)
 	}
 	// KNOWVAULT_QUESTION_SET_INSTANCE (1..9) lets two worktrees run the set
-	// at the same time: container names get the instance suffix and both
-	// host ports move by ten per instance.
+	// at the same time: container names get the instance suffix, host ports
+	// move by ten per instance, and the H5 database's own container, port and
+	// volume move with them (card E-3), so neither run can remove or reuse the
+	// other's database.
 	if value := strings.TrimSpace(os.Getenv("KNOWVAULT_QUESTION_SET_INSTANCE")); value != "" {
 		instance, convErr := strconv.Atoi(value)
 		if convErr != nil || instance < 1 || instance > 9 {
 			t.Fatalf("KNOWVAULT_QUESTION_SET_INSTANCE=%q, want 1..9", value)
 		}
-		set.Environment.ProductContainer += fmt.Sprintf("-%d", instance)
-		set.Environment.SourceContainer += fmt.Sprintf("-%d", instance)
-		set.Environment.ProductPort += 10 * instance
-		set.Environment.SourcePort += 10 * instance
+		set.ApplyInstance(instance)
 	}
 	return set
 }
@@ -297,9 +296,10 @@ func TestQuestionSetRealModel(t *testing.T) {
 
 	// Card E-2: the database H5 asks about. Its synthetic data is seeded, but
 	// its table confirmation is never minted, so the product must answer that
-	// it cannot be read yet. The harness owns and removes this container too.
+	// it cannot be read yet. The harness owns and removes this container and
+	// its named volume too; card E-3 makes both per-instance.
 	h5 := set.Environment.UnconfirmedDatabase
-	e1aEnsureContainer(t, ctx, h5.Container, h5.Port, h5.Database)
+	e1aEnsureContainerWithVolume(t, ctx, h5.Container, h5.Port, h5.Database, h5.Volume)
 	h5AdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
 		h5.AdminUser, h5.AdminPass, h5.Port, h5.Database)
 	h5Admin := e1aOpenSourceAdmin(t, ctx, h5AdminDSN)

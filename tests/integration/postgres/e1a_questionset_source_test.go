@@ -60,13 +60,38 @@ func e1aDockerQuiet(args ...string) {
 // that removes exactly this harness's container.
 func e1aEnsureContainer(t *testing.T, ctx context.Context, name string, port int, databaseName string) func() {
 	t.Helper()
+	return e1aEnsureContainerWithVolume(t, ctx, name, port, databaseName, "")
+}
+
+// e1aEnsureContainerWithVolume is e1aEnsureContainer for a container whose data
+// lives in the named volume, so the harness owns the volume as a resource of
+// its own: a stale volume is removed before the run and the volume is removed
+// with the container when it ends. Card E-3 gives the H5 database such a
+// per-instance volume, so two runs never share or remove each other's data.
+func e1aEnsureContainerWithVolume(t *testing.T, ctx context.Context, name string, port int, databaseName, volume string) func() {
+	t.Helper()
 	e1aDockerQuiet("rm", "-f", "-v", name)
-	e1aDocker(t, "run", "-d", "--name", name,
-		"-e", "POSTGRES_DB="+databaseName,
+	if volume != "" {
+		e1aDockerQuiet("volume", "rm", "-f", volume)
+	}
+	args := []string{
+		"run", "-d", "--name", name,
+		"-e", "POSTGRES_DB=" + databaseName,
 		"-e", "POSTGRES_PASSWORD=postgres",
-		"-p", fmt.Sprintf("%d:5432", port),
-		"postgres:18.4")
-	remove := func() { e1aDockerQuiet("rm", "-f", "-v", name) }
+	}
+	if volume != "" {
+		// The pinned image declares /var/lib/postgresql as its data volume
+		// (PGDATA=/var/lib/postgresql/18/docker).
+		args = append(args, "-v", volume+":/var/lib/postgresql")
+	}
+	args = append(args, "-p", fmt.Sprintf("%d:5432", port), "postgres:18.4")
+	e1aDocker(t, args...)
+	remove := func() {
+		e1aDockerQuiet("rm", "-f", "-v", name)
+		if volume != "" {
+			e1aDockerQuiet("volume", "rm", "-f", volume)
+		}
+	}
 	t.Cleanup(remove)
 	e1aWaitPostgres(t, ctx, fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", port, databaseName))
 	return remove
