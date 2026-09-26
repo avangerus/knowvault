@@ -29,12 +29,13 @@ import (
 	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
-// The two reasons a workspace database cannot be read. They select the remedy
-// the plain answer names: confirming the tables, or making the database
-// reachable.
+// The three reasons a workspace database cannot be read right now. They select
+// the remedy the plain answer names: confirming the tables, making the database
+// reachable, or waiting until the database's shared load limit frees up.
 const (
 	unreadableSourceReasonTablesUnconfirmed = "TABLES_UNCONFIRMED"
 	unreadableSourceReasonNotReachable      = "NOT_REACHABLE"
+	unreadableSourceReasonBusy              = "SOURCE_BUSY"
 )
 
 // unreadableDatabase is one workspace PostgreSQL source the question names and
@@ -86,12 +87,12 @@ func (service *Service) unreadableDatabaseForQuestion(ctx context.Context, scope
 		}
 	}
 	for _, source := range named {
-		readable, known, probeErr := service.probeSourceReadable(ctx, scope, source.ConnectionID)
+		reason, unreadable, probeErr := service.probeSourceReadable(ctx, scope, source.ConnectionID)
 		if probeErr != nil {
 			return nil, probeErr
 		}
-		if known && !readable {
-			return &unreadableDatabase{Name: source.Name, ConnectionID: source.ConnectionID, Reason: unreadableSourceReasonNotReachable}, nil
+		if unreadable {
+			return &unreadableDatabase{Name: source.Name, ConnectionID: source.ConnectionID, Reason: reason}, nil
 		}
 	}
 	return nil, nil
@@ -142,26 +143,33 @@ func unreadableSourceReason(source toolLoopOverviewSource) (string, bool) {
 	return "", false
 }
 
-// probeSourceReadable runs the optional live readiness check for one source.
-// known is false when the runtime carries no probe capability (or the mounted
-// capability is unavailable), in which case the caller keeps the stored-state
-// decision and does not turn an unknown into "cannot be read".
-func (service *Service) probeSourceReadable(ctx context.Context, scope workspacetools.Scope, connectionID string) (readable, known bool, err error) {
+// probeSourceReadable runs the optional live readiness check for one source and
+// returns the reason it cannot be read right now. The empty reason with
+// readable=false means "no failure known": a runtime that does not carry the
+// probe capability, or whose mount reports the capability unavailable, leaves
+// the stored-state decision alone and never turns an unknown into "cannot be
+// read". A check the shared load limit refused is reported as busy, so the
+// plain answer names the taken limit rather than claiming the database is
+// unreachable.
+func (service *Service) probeSourceReadable(ctx context.Context, scope workspacetools.Scope, connectionID string) (reason string, unreadable bool, err error) {
 	probe, ok := service.tools.(sourceReadabilityProbe)
 	if !ok || connectionID == "" {
-		return false, false, nil
+		return "", false, nil
 	}
 	probeErr := probe.ProbeSourceReadable(ctx, scope.Access, scope.WorkspaceID, connectionID)
 	if probeErr == nil {
-		return true, true, nil
+		return "", false, nil
 	}
 	if errors.Is(probeErr, workspacetools.ErrScopeChanged) {
-		return false, false, probeErr
+		return "", false, probeErr
 	}
 	if errors.Is(probeErr, workspacetools.ErrUnavailable) {
-		return false, false, nil
+		return "", false, nil
 	}
-	return false, true, nil
+	if errors.Is(probeErr, workspacetools.ErrSourceBusy) {
+		return unreadableSourceReasonBusy, true, nil
+	}
+	return unreadableSourceReasonNotReachable, true, nil
 }
 
 // completeUnreadableDatabaseRun persists the server-rendered answer of a run
@@ -187,24 +195,35 @@ func (service *Service) completeUnreadableDatabaseRun(parent context.Context, ac
 
 // renderUnreadableDatabaseAnswer is the whole user-visible answer for a
 // database that cannot be read: at most two sentences, naming the database by
-// its own human name and naming what makes it readable. It contains no count,
-// no empty result and no technical identifier.
+// its own human name and naming what makes it readable (the tables confirmed,
+// the database reachable, or the taken load limit freeing up). It contains no
+// count, no empty result and no technical identifier.
 func renderUnreadableDatabaseAnswer(language, name, reason string) string {
 	name = singleLine(name)
 	if language == questionLanguageRussian {
-		if reason == unreadableSourceReasonTablesUnconfirmed {
+		switch reason {
+		case unreadableSourceReasonTablesUnconfirmed:
 			return "База «" + name + "» пока не читается, потому что её таблицы ещё не подтверждены. " +
 				"Подтвердите её таблицы, и база станет доступна для чтения."
+		case unreadableSourceReasonBusy:
+			return "База «" + name + "» сейчас занята — её предел одновременных обращений исчерпан. " +
+				"Повторите вопрос чуть позже."
+		default:
+			return "База «" + name + "» пока не читается — она не отвечает. " +
+				"Чтобы её читать, база данных должна быть доступна."
 		}
-		return "База «" + name + "» пока не читается — она не отвечает. " +
-			"Чтобы её читать, база данных должна быть доступна."
 	}
-	if reason == unreadableSourceReasonTablesUnconfirmed {
+	switch reason {
+	case unreadableSourceReasonTablesUnconfirmed:
 		return "The database «" + name + "» cannot be read yet, because its tables have not been confirmed. " +
 			"Confirm its tables and the database will become readable."
+	case unreadableSourceReasonBusy:
+		return "The database «" + name + "» is busy right now — its limit of simultaneous reads is taken. " +
+			"Ask the question again a little later."
+	default:
+		return "The database «" + name + "» cannot be read yet — it is not reachable. " +
+			"The database must be reachable before its data can be read."
 	}
-	return "The database «" + name + "» cannot be read yet — it is not reachable. " +
-		"The database must be reachable before its data can be read."
 }
 
 // questionNamesSource reports whether the question uses a source's own human

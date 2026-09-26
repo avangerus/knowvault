@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"knowvault.local/verified-workspace/internal/modelgateway"
 	"knowvault.local/verified-workspace/internal/platform/database"
@@ -57,8 +58,8 @@ const d18ClosedPort = 55629
 
 // d18Question is one question of the card's run table.
 type d18Question struct {
-	ID    string
-	Text  string
+	ID   string
+	Text string
 	// WantsSentence is true for a question about the database that cannot be
 	// read: the answer must be the plain sentence and make no SQL call.
 	WantsSentence bool
@@ -570,4 +571,253 @@ func d18HasStandaloneNumber(answer, number string) bool {
 		}
 	}
 	return false
+}
+
+// TestD18ReadableDatabaseContract proves card D-18 result 3, deterministically
+// and outside the question set: finding out whether the H5 database can be read
+// is an access like any other. With the tables confirmed and the database
+// answering but the shared load limit already taken, asking the H5 question
+// reports the database as busy and opens no further connection. Every
+// readability check that is attempted leaves one governed-query audit record
+// naming the database and the asking user; with the audit store failing, the
+// answer never claims the database is readable and no SQL tool call is made.
+//
+// It runs the real product database and a real H5 database in the card's own
+// container but the scripted model channel, because the routes under test are
+// decided before any model turn.
+func TestD18ReadableDatabaseContract(t *testing.T) {
+	ctx := context.Background()
+	set := loadE1aSet(t)
+	container, port := d18Container(), d18Port()
+	productURL := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", port, "knowvault_test")
+	t.Setenv("KNOWVAULT_TEST_POSTGRES_URL", productURL)
+	remove := e1aEnsureContainer(t, ctx, container, port, "knowvault_test")
+	defer remove()
+
+	adminConnection, err := pgx.Connect(ctx, productURL)
+	if err != nil {
+		t.Fatalf("connect product admin: %v", err)
+	}
+	defer adminConnection.Close(ctx)
+	for _, databaseName := range []string{"knowvault_source", "knowvault_h5"} {
+		if _, err := adminConnection.Exec(ctx, "CREATE DATABASE "+databaseName); err != nil {
+			t.Fatalf("create database %s: %v", databaseName, err)
+		}
+	}
+
+	certDir := t.TempDir()
+	roots := e1aGenerateSourceCerts(t, certDir)
+	e1aEnableSourceTLS(t, ctx, container, port, "knowvault_test", certDir)
+
+	sourceAdminDSN := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", port, "knowvault_source")
+	sourceAdmin := e1aOpenSourceAdmin(t, ctx, sourceAdminDSN)
+	e1aSeedSourceDatabase(t, ctx, sourceAdmin, set.Environment.SourceSQL)
+
+	h5 := set.Environment.UnconfirmedDatabase
+	h5AdminDSN := fmt.Sprintf("postgres://postgres:postgres@localhost:%d/%s?sslmode=disable", port, "knowvault_h5")
+	h5Admin := e1aOpenSourceAdmin(t, ctx, h5AdminDSN)
+	e1aSeedSourceDatabase(t, ctx, h5Admin, h5.SQL)
+
+	queryDSN := func(role, password, databaseName string) string {
+		return fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=verify-full", role, password, port, databaseName)
+	}
+	identityDSN := func(role, password, databaseName string) string {
+		return queryDSN(role, password, databaseName) + "&sslrootcert=" + filepath.Join(certDir, "ca.crt")
+	}
+	contractSource := set.Environment.Sources[0]
+	sourceIdentity := e1aSourceIdentity(t, ctx, identityDSN(contractSource.QueryRole, contractSource.QueryPassword, "knowvault_source"))
+	h5Identity := e1aSourceIdentity(t, ctx, h5AdminDSN)
+
+	credentials := map[string]string{}
+	for _, source := range set.Environment.Sources {
+		credentials[source.ID] = queryDSN(source.QueryRole, source.QueryPassword, "knowvault_source")
+	}
+	sqlExecutor := &e1aSourceSQL{credentials: map[string]string{}, roots: roots}
+
+	// buildConfirmed rebuilds the product database and binds the H5 database
+	// with its tables confirmed, its activation READY, its trust verified and
+	// its query credential pointing at the real, answering H5 database.
+	buildConfirmed := func(t *testing.T) *e1aEnvironment {
+		t.Helper()
+		admin := resetStage1Database(t)
+		env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
+			SourceIdentity: sourceIdentity, Credentials: credentials, Roots: roots, SourceSQL: sqlExecutor,
+			H5Source: &h5.Source, H5SourceIdentity: h5Identity, ConfirmH5Source: true,
+		})
+		env.e1aBindH5Source(t, ctx)
+		reference, referenceErr := ids.New("cred")
+		if referenceErr != nil {
+			t.Fatal(referenceErr)
+		}
+		sqlExecutor.credentials[reference] = queryDSN(h5.Source.QueryRole, h5.Source.QueryPassword, "knowvault_h5")
+		if err := env.Authority.SetSourceQueryCredential(ctx, regOwnerAccess("req_d18_contract_cred"),
+			regWorkspace, env.H5SourceID, reference); err != nil {
+			t.Fatalf("configure H5 query credential: %v", err)
+		}
+		return env
+	}
+	askH5 := func(t *testing.T, env *e1aEnvironment, label string) (question.Run, error) {
+		t.Helper()
+		access := database.AccessContext{OrganizationID: regOrg, PrincipalID: regOwner, RequestID: "req_d18_contract_" + label}
+		return env.Questions.Create(ctx, access, question.CreateRequest{
+			WorkspaceID: regWorkspace, Question: h5QuestionText(set),
+			IdempotencyKey: e1aIdempotencyKey("d18-contract-" + label),
+		})
+	}
+	countSQLCalls := func(run question.Run) int {
+		calls := 0
+		if run.ToolLoop == nil {
+			return calls
+		}
+		for _, call := range run.ToolLoop.Calls {
+			if !call.System && call.Name == "knowvault_source_sql" {
+				calls++
+			}
+		}
+		return calls
+	}
+
+	t.Run("a taken load limit opens no connection and answers busy", func(t *testing.T) {
+		env := buildConfirmed(t)
+		sqlExecutor.busy = map[string]bool{env.H5SourceID: true}
+		sqlExecutor.readinessAttempts = 0
+		sqlExecutor.auditUnavailable = false
+		env.Questions.EnableGeneration(d18StubAdapter(t), nil)
+
+		run, createErr := askH5(t, env, "busy")
+		if createErr != nil {
+			t.Fatalf("ask H5 while its limit is taken: %v", createErr)
+		}
+		if sqlExecutor.readinessAttempts != 0 {
+			t.Fatalf("a refused readiness check opened %d connections, want 0", sqlExecutor.readinessAttempts)
+		}
+		if calls := countSQLCalls(run); calls != 0 {
+			t.Fatalf("H5 made %d SQL calls while busy, want 0", calls)
+		}
+		if !d18ContainsFold(run.Answer, "Заявки") || !d18ContainsFold(run.Answer, "занята") {
+			t.Fatalf("busy answer does not name the database and the taken limit: %q", run.Answer)
+		}
+		if d18HasUnreadableSentence(run.Answer) {
+			t.Fatalf("busy answer uses the cannot-be-read sentence: %q", run.Answer)
+		}
+		if !d18SentenceCountAtMost(run.Answer, 2) {
+			t.Fatalf("busy answer is longer than two sentences: %q", run.Answer)
+		}
+		if d18HasStandaloneZero(run.Answer) {
+			t.Fatalf("busy answer presents an empty result: %q", run.Answer)
+		}
+	})
+
+	t.Run("a readability check leaves one audit record naming database and user", func(t *testing.T) {
+		env := buildConfirmed(t)
+		sqlExecutor.busy = nil
+		sqlExecutor.readinessAttempts = 0
+		sqlExecutor.auditUnavailable = false
+		env.Questions.EnableGeneration(d18StubAdapter(t), nil)
+
+		before := d18ReadinessAudits(t, ctx, env.Admin, env.H5SourceID)
+		// The scripted model's answer is irrelevant: the readability check runs
+		// before the answering loop, so its record must exist either way.
+		_, _ = askH5(t, env, "audit")
+		if sqlExecutor.readinessAttempts != 1 {
+			t.Fatalf("readiness connections = %d, want exactly 1", sqlExecutor.readinessAttempts)
+		}
+		after := d18ReadinessAudits(t, ctx, env.Admin, env.H5SourceID)
+		if len(after) != len(before)+1 {
+			t.Fatalf("readiness audit records = %d, want one more than %d", len(after), len(before))
+		}
+		check := after[len(after)-1]
+		if check.Outcome != "SUCCESS" {
+			t.Fatalf("answering database readiness audit outcome = %q, want SUCCESS", check.Outcome)
+		}
+		if check.Principal != regOwner {
+			t.Fatalf("readiness audit asking user = %q, want %s", check.Principal, regOwner)
+		}
+		if check.Digest == "" {
+			t.Fatal("readiness audit record carries no result digest; it is not the query record shape")
+		}
+	})
+
+	t.Run("an unwritable audit record makes the check fail", func(t *testing.T) {
+		env := buildConfirmed(t)
+		sqlExecutor.busy = nil
+		sqlExecutor.readinessAttempts = 0
+		sqlExecutor.auditUnavailable = true
+		defer func() { sqlExecutor.auditUnavailable = false }()
+		env.Questions.EnableGeneration(d18StubAdapter(t), nil)
+
+		run, createErr := askH5(t, env, "audit-failure")
+		if createErr != nil {
+			t.Fatalf("ask H5 with a failing audit store: %v", createErr)
+		}
+		if !d18HasUnreadableSentence(run.Answer) {
+			t.Fatalf("a check whose audit record could not be written claims the database is readable: %q", run.Answer)
+		}
+		if calls := countSQLCalls(run); calls != 0 {
+			t.Fatalf("the failed check's run made %d SQL calls, want 0", calls)
+		}
+		if d18HasStandaloneZero(run.Answer) {
+			t.Fatalf("a check whose audit record could not be written presents an empty result: %q", run.Answer)
+		}
+	})
+}
+
+// d18StubAdapter mounts the scripted model channel the deterministic contract
+// runs use. The routes under test are decided before any model turn, so the
+// channel only has to exist with a tool-loop profile.
+func d18StubAdapter(t *testing.T) *modelgateway.LabAdapter {
+	t.Helper()
+	server := httptest.NewServer(questions.NewStubModel())
+	t.Cleanup(server.Close)
+	adapter, err := modelgateway.NewLabAdapter(modelgateway.LabAdapterConfig{
+		SchemaVersion: modelgateway.LabAdapterSchemaVersion, Endpoint: server.URL, ModelID: "d18-contract-stub",
+		MaxOutputTokens: 4096, InsecureLabMode: true, ThinkingMode: modelgateway.ThinkingModeDisabled,
+		ToolLoop: &modelgateway.ToolLoopProfile{
+			ID: "steps-4", MaxTurns: 7, MaxToolCalls: 7, MaxInputBytes: 262144,
+			MaxToolResultBytes: 65536, MaxOutputTokens: 4096, TimeoutSeconds: 120,
+		},
+	})
+	if err != nil {
+		t.Fatalf("stub adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	return adapter
+}
+
+// d18ReadinessAudit is one persisted readability check's content-free facts.
+type d18ReadinessAudit struct {
+	Outcome   string
+	Principal string
+	Digest    string
+}
+
+// d18ReadinessAudits reads the audit journal's readiness records for one source
+// connection, in sequence order.
+func d18ReadinessAudits(t *testing.T, ctx context.Context, admin *pgxpool.Pool, connectionID string) []d18ReadinessAudit {
+	t.Helper()
+	rows, err := admin.Query(ctx, `
+		SELECT outcome, COALESCE(actor_principal_id, ''),
+		       COALESCE(metadata_json->>'governed_query_result_digest', '')
+		  FROM public.audit_event
+		 WHERE organization_id = $1
+		   AND action = 'source.governed_query_attempted'
+		   AND metadata_json->>'governed_query_purpose' = 'readiness'
+		   AND metadata_json->>'governed_query_connection_id' = $2
+		 ORDER BY sequence`, regOrg, connectionID)
+	if err != nil {
+		t.Fatalf("read readiness audit records: %v", err)
+	}
+	defer rows.Close()
+	audits := []d18ReadinessAudit{}
+	for rows.Next() {
+		var record d18ReadinessAudit
+		if err := rows.Scan(&record.Outcome, &record.Principal, &record.Digest); err != nil {
+			t.Fatalf("scan readiness audit record: %v", err)
+		}
+		audits = append(audits, record)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read readiness audit records: %v", err)
+	}
+	return audits
 }

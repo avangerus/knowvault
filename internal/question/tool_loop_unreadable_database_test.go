@@ -129,10 +129,14 @@ func TestRenderUnreadableDatabaseAnswer(t *testing.T) {
 			[]string{"Заявки", "подтвержд", "таблиц", "не чита"}},
 		{questionLanguageRussian, unreadableSourceReasonNotReachable,
 			[]string{"Заявки", "не отвеча", "доступна"}},
+		{questionLanguageRussian, unreadableSourceReasonBusy,
+			[]string{"Заявки", "занята"}},
 		{questionLanguageEnglish, unreadableSourceReasonTablesUnconfirmed,
 			[]string{"Заявки", "cannot be read", "confirmed", "tables"}},
 		{questionLanguageEnglish, unreadableSourceReasonNotReachable,
 			[]string{"Заявки", "cannot be read", "reachable"}},
+		{questionLanguageEnglish, unreadableSourceReasonBusy,
+			[]string{"Заявки", "busy"}},
 	}
 	for _, test := range cases {
 		answer := renderUnreadableDatabaseAnswer(test.language, "Заявки", test.reason)
@@ -238,6 +242,15 @@ func TestUnreadableDatabaseForQuestion(t *testing.T) {
 		found, err := service.unreadableDatabaseForQuestion(context.Background(), workspacetools.Scope{}, &ToolLoopRecord{}, "Сколько заявок в базе «Заявки»?")
 		if err != nil || found == nil || found.Reason != unreadableSourceReasonNotReachable {
 			t.Fatalf("found=%+v err=%v, want the unreachable database", found, err)
+		}
+	})
+
+	t.Run("a named database whose load limit is taken is reported as busy", func(t *testing.T) {
+		runtime := &d18Runtime{envelope: d18Envelope(t, d18Source(nil)), probeErr: workspacetools.ErrSourceBusy}
+		service := &Service{tools: runtime}
+		found, err := service.unreadableDatabaseForQuestion(context.Background(), workspacetools.Scope{}, &ToolLoopRecord{}, "Сколько заявок в базе «Заявки»?")
+		if err != nil || found == nil || found.Reason != unreadableSourceReasonBusy {
+			t.Fatalf("found=%+v err=%v, want the busy database", found, err)
 		}
 	})
 

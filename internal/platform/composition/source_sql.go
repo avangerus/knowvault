@@ -34,6 +34,7 @@ import (
 	"knowvault.local/verified-workspace/internal/source/ids"
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 // newSourceServiceWithSQL composes the production source facade with the
@@ -225,16 +226,37 @@ func (executor sourceSQLExecutor) SourceSQL(ctx context.Context, access database
 	}, nil
 }
 
+// sourceReadabilitySQL and sourceReadabilityPurpose are the one constant,
+// server-authored statement a readability check runs and its bounded audit
+// purpose note. Neither is a request field.
+const (
+	sourceReadabilitySQL     = "SELECT 1"
+	sourceReadabilityPurpose = "readiness"
+)
+
 // SourceReadable is card D-18's live readability check for one workspace
 // source: the source's connection answers and its least-privilege query role
 // still works. It opens the source with the source's own query credential and
 // runs one server-authored constant statement through the same governed
 // execution path the tool uses, so a closed port, a repointed credential or a
 // revoked role is reported before the answering model runs. It discloses no
-// row and writes no governed-query attempt: it is a readiness check, never an
-// agent-authored read.
+// row: it is a readiness check, never an agent-authored read.
+//
+// Card D-18 result 3 makes finding out whether the source can be read an access
+// to that database like any other. The check therefore:
+//
+//   - takes the same shared load limit before any credential is resolved or any
+//     external connection is opened, and a check the limit refuses opens no
+//     connection at all and reports the source as busy (workspacetools
+//     .ErrSourceBusy), never as unreachable;
+//   - appends exactly one content-free source.governed_query_attempted record
+//     through the same auditAttempt boundary a query of that source uses, with
+//     the same purpose note shape; and
+//   - counts as failed when that record cannot be written, exactly as a query
+//     returns no rows when its record cannot be written.
 func (executor sourceSQLExecutor) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
-	if executor.workspaces == nil || executor.resolver == nil || executor.roots == nil || ctx == nil || ctx.Err() != nil {
+	if executor.workspaces == nil || executor.resolver == nil || executor.roots == nil || executor.auditor == nil ||
+		ctx == nil || ctx.Err() != nil {
 		return errors.New("SOURCE_READABILITY_UNAVAILABLE")
 	}
 	target, err := executor.workspaces.SourceQuery(ctx, access, workspaceID, connectionID)
@@ -244,22 +266,43 @@ func (executor sourceSQLExecutor) SourceReadable(ctx context.Context, access dat
 	if target.ActivationStatus != sourceActivationReady || !target.TrustVerified || target.QueryCredentialReference == "" {
 		return errors.New("SOURCE_READABILITY_NOT_READY")
 	}
-	dsn, resolveErr := executor.resolver.ResolveReference(ctx, target.QueryCredentialReference)
-	if resolveErr != nil || dsn == "" {
-		return errors.New("SOURCE_READABILITY_UNRESOLVED")
+	// The limit is taken before the credential is resolved, so an over-limit
+	// check never reaches the customer database.
+	release, limitCode := executor.limiter.acquire(target.SourceID, access.PrincipalID)
+	if limitCode != "" {
+		if _, auditErr := executor.auditAttempt(ctx, access, workspaceID, target, sourceReadabilityPurpose, governedquery.Attempt{}, limitCode); auditErr != nil {
+			return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+		}
+		return workspacetools.ErrSourceBusy
 	}
-	roots, rootsErr := executor.roots.NewCertPool()
-	if rootsErr != nil || roots == nil || len(roots.Subjects()) == 0 {
-		return errors.New("SOURCE_READABILITY_UNRESOLVED")
+	defer release()
+
+	attempt := governedquery.Attempt{}
+	code := ""
+	if dsn, resolveErr := executor.resolver.ResolveReference(ctx, target.QueryCredentialReference); resolveErr != nil || dsn == "" {
+		code = string(governedquery.CodeDatabaseRejected)
+	} else if roots, rootsErr := executor.roots.NewCertPool(); rootsErr != nil || roots == nil || len(roots.Subjects()) == 0 {
+		code = string(governedquery.CodeDatabaseRejected)
+	} else {
+		var execErr error
+		_, attempt, execErr = governedquery.ExecuteScoped(ctx, governedquery.Config{
+			ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
+			DSN: dsn, TrustRoots: roots, Limits: executor.limits,
+		}, governedquery.ScopedParams{
+			SQLText: sourceReadabilitySQL, Purpose: sourceReadabilityPurpose,
+			Schema: governedquery.ScopedSchema{Relations: sourceSQLRelations(target)},
+		})
+		code = sourceSQLRefusalCode(execErr)
 	}
-	_, _, execErr := governedquery.ExecuteScoped(ctx, governedquery.Config{
-		ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
-		DSN: dsn, TrustRoots: roots, Limits: executor.limits,
-	}, governedquery.ScopedParams{
-		SQLText: "SELECT 1", Purpose: "readiness",
-		Schema: governedquery.ScopedSchema{Relations: sourceSQLRelations(target)},
-	})
-	return execErr
+	// One content-free attempt event per check, whether it succeeded or not; a
+	// failed append is a failed check, never a silent pass.
+	if _, auditErr := executor.auditAttempt(ctx, access, workspaceID, target, sourceReadabilityPurpose, attempt, code); auditErr != nil {
+		return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+	}
+	if code != "" {
+		return errors.New("SOURCE_READABILITY_FAILED")
+	}
+	return nil
 }
 
 // refuseAudited renders one closed load-limit refusal after appending its
