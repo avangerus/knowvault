@@ -284,6 +284,10 @@ const (
 	toolLoopHistoryQuestionLabel = "Previous user question:\n"
 	toolLoopHistorySourcesLabel  = "\nPrevious answer's sources (re-read one before citing it again):\n"
 	toolLoopHistoryAnswerLabel   = "\nPrevious answer:\n"
+	// toolLoopHistoryQueriesLabel introduces the SQL the previous answer ran.
+	// A follow-up that narrows or questions that answer keeps its selection
+	// unless the user changes it; the statement is still re-run before citing.
+	toolLoopHistoryQueriesLabel = "\nPrevious answer's SQL (its selection and definitions; keep them unless the user changes them, and run again before citing):\n"
 	// toolLoopHistoryTruncationMarker is appended after a previous answer cut
 	// short to fit the newest prior turn inside the history budget. It is
 	// itself part of the untrusted, marked context, never evidence.
@@ -353,6 +357,10 @@ func toolLoopHistoryTurnBody(turn toolLoopConversationTurn) string {
 		body.WriteString(toolLoopHistorySourcesLabel)
 		body.WriteString(strings.ToValidUTF8(strings.Join(turn.Sources, ", "), "�"))
 	}
+	if len(turn.Queries) > 0 {
+		body.WriteString(toolLoopHistoryQueriesLabel)
+		body.WriteString(strings.ToValidUTF8(strings.Join(turn.Queries, "\n"), "�"))
+	}
 	if turn.Answer != "" {
 		body.WriteString(toolLoopHistoryAnswerLabel)
 		body.WriteString(strings.ToValidUTF8(turn.Answer, "�"))
@@ -378,6 +386,10 @@ func toolLoopHistoryTruncatedNewestTurn(turn toolLoopConversationTurn, remaining
 	if len(turn.Sources) > 0 {
 		fixed.WriteString(toolLoopHistorySourcesLabel)
 		fixed.WriteString(strings.ToValidUTF8(strings.Join(turn.Sources, ", "), "�"))
+	}
+	if len(turn.Queries) > 0 {
+		fixed.WriteString(toolLoopHistoryQueriesLabel)
+		fixed.WriteString(strings.ToValidUTF8(strings.Join(turn.Queries, "\n"), "�"))
 	}
 	fixedContent := fixed.String()
 	if len(fixedContent) > remaining {
