@@ -1931,7 +1931,16 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	// requires every assistant tool_calls message to be followed immediately by
 	// its tool messages, and a user message in between makes the whole request
 	// invalid.
-	rejectAnswer := func(answer *toolAnswer) (code, hint string) {
+	// valueGateRepairUsed caps the value-gate repair (below) at one attempt for
+	// the whole run: the model corrects its wording once, with the exact
+	// values that were not found in the cited result named for it; a claim
+	// that still disagrees with its own cited result after that is never
+	// rejected again here. It is dropped or left unconfirmed by the citation-
+	// binding pass instead, the same way a claim with a failed document
+	// citation already is.
+	valueGateRepairUsed := false
+	valueGateExemptDates := toolLoopValueGateExemptDates(questionText, run.StartedAt)
+	rejectAnswer := func(answer *toolAnswer, forcedFinalTurn bool) (code, hint string) {
 		text := toolLoopAnswerText(*answer)
 		if marker := toolLoopAnswerInternalMarkerInText(text); marker != "" {
 			return "SUBMIT_ANSWER_INTERNAL_MARKER", toolLoopInternalMarkerRepairInstruction(language)
@@ -1951,6 +1960,25 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		pattern := toolLoopTechnicalNamePattern(toolLoopTechnicalVocabulary(record))
 		if issue := toolLoopAnswerPresentationIssue(text, pattern); issue != "" {
 			return issue, toolLoopPresentationRepairInstruction(language)
+		}
+		// Value gate: a claim that cites a live read (knowvault_source_sql,
+		// knowvault_ask_live_data) must not put a calendar date or a 4+ digit
+		// number in its own words that its cited result never produced -- the
+		// defect class where a tool result held expiration_date 2040-12-31 and
+		// the answer said "31.12.2024". Only the forced final turn (no further
+		// turn is available to ask for a rewrite) and a run that already spent
+		// its one attempt skip this so the answer can still be produced; the
+		// citation-binding pass below still drops or unconfirms the offending
+		// claim either way.
+		if !forcedFinalTurn && !valueGateRepairUsed {
+			for _, claim := range answer.Claims {
+				value, kind := toolLoopClaimValueGateViolation(claim, run.ID, liveDataState.executions, valueGateExemptDates)
+				if value == "" {
+					continue
+				}
+				valueGateRepairUsed = true
+				return submitAnswerValueMismatchCode, toolLoopValueGateRepairInstruction(language, value, kind)
+			}
 		}
 		// Card D-16: a plain_overview answer must end with a concrete next
 		// question about the same subject, and it is submitted as this route's
@@ -2129,7 +2157,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				call := response.Message.ToolCalls[0]
 				answer, ok, code := parseSubmitAnswerArgumentsDetailed(json.RawMessage(call.Function.Arguments))
 				if ok {
-					if rejection, hint := rejectAnswer(&answer); rejection != "" {
+					if rejection, hint := rejectAnswer(&answer, forcedFinalTurn); rejection != "" {
 						if forcedFinalTurn {
 							// Card D-16: a missing next question is a soft
 							// requirement. On the forced final turn the answer
@@ -2200,7 +2228,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 		answer, formatCode := parseToolAnswerDetailed(response.Message.Content)
 		if formatCode == "" {
-			if rejection, hint := rejectAnswer(&answer); hint != "" {
+			if rejection, hint := rejectAnswer(&answer, forcedFinalTurn); hint != "" {
 				if forcedFinalTurn {
 					// Card D-16: as above, a missing next question is soft on
 					// the forced final turn.
@@ -2347,6 +2375,17 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				claimVerifiedCount++
 			}
 			liveReferences, liveOrdinals, liveReferencesBound := bindToolLiveReadReferences(run.ID, claim.LiveReads, liveDataState.executions)
+			if liveReferencesBound && len(liveReferences) > 0 {
+				// Value gate, second half: the model already had its one chance
+				// (in rejectAnswer, above) to rewrite a claim whose own dates or
+				// large numbers disagreed with its cited live result. A claim
+				// that still disagrees is treated exactly like a live read that
+				// failed to bind cryptographically -- it is never presented as
+				// confirmed by a result it does not match.
+				if value, _ := toolLoopClaimValueGateViolation(claim, run.ID, liveDataState.executions, valueGateExemptDates); value != "" {
+					liveReferencesBound = false
+				}
+			}
 			claimSupported, liveOnlyKept := toolLoopClaimKept(
 				len(claim.Citations) > 0, claimVerifiedCount, true, len(liveReferences), liveReferencesBound,
 			)
