@@ -128,3 +128,32 @@ func TestToolLoopUnverifiedLiveAnswerClearsPersistedProof(t *testing.T) {
 		t.Fatalf("fallback left a persisted proof beside the failure text: %+v", record)
 	}
 }
+
+// Critique 26.09 finding 4: an overview names what the user can get answers
+// from. A source the workspace switched off (the demo policy folder, the three
+// superseded GM bindings) is configuration, not knowledge; the usable database
+// stays, and a row without an enabled member is not dropped.
+func TestToolLoopOverviewKeepsOnlyUsableSources(t *testing.T) {
+	raw := json.RawMessage(`{"sources":[
+		{"connection_id":"conn_dictionary","connection_name":"GM governed data dictionary","source_type":"FOLDER","enabled":true,"activation_status":"READY"},
+		{"connection_id":"conn_policy","connection_name":"Fictional deployment support policy","source_type":"FOLDER","enabled":false,"activation_status":"READY"},
+		{"connection_id":"conn_gm","connection_name":"GM","source_type":"POSTGRESQL_QUERY","postgresql_relation_name":"contract","enabled":true,"activation_status":"READY"},
+		{"connection_id":"conn_gm","connection_name":"GM","source_type":"POSTGRESQL_QUERY","postgresql_relation_name":"client","enabled":false,"activation_status":"DRAFT"},
+		{"connection_id":"conn_revoked","connection_name":"Revoked archive","source_type":"FOLDER","enabled":true,"activation_status":"REVOKED"},
+		{"connection_id":"conn_old_shape","connection_name":"Old inventory row","source_type":"FOLDER"}
+	]}`)
+	usable := usableOverviewSources(toolLoopOverviewSourcesFromResult(raw))
+	names := toolLoopOverviewSourceNames(usable)
+	if got := strings.Join(names, " | "); got != "GM governed data dictionary | GM | Old inventory row" {
+		t.Fatalf("overview names = %q, want the dictionary, the GM database and the row without an enabled member", got)
+	}
+	for _, source := range usable {
+		if source.Relation == "client" {
+			t.Fatal("a switched-off binding of the database stayed in the overview")
+		}
+	}
+	text := toolLoopSourcesOverviewText(questionLanguageRussian, names)
+	if strings.Contains(text, "Fictional deployment support policy") || !strings.Contains(text, "«GM»") {
+		t.Fatalf("sources overview text names a disabled source or omits the database:\n%s", text)
+	}
+}
