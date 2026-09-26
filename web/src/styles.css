@@ -527,6 +527,12 @@ ul.answer-keys li:last-child { border-bottom: none; }
    the element's title attribute. */
 .msg-compact { max-width: 64ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.answer-feedback { margin: 10px 0 0; }
+.answer-feedback-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.answer-feedback-controls button { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-sm); padding: 5px 12px; font-size: var(--fs-caption); cursor: pointer; }
+.answer-feedback-controls button:disabled { color: var(--ink-tertiary); cursor: default; }
+.answer-feedback-comment { display: block; width: 100%; max-width: 64ch; margin-top: 8px; min-height: 56px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px; font-size: var(--fs-caption); font-family: inherit; resize: vertical; }
+
 /* TXT-2: verification status folded into the collapsed tool-trace disclosure
    instead of its own always-visible box (see ToolCallsDisclosure `footer`). */
 .tool-trace-evidence { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }

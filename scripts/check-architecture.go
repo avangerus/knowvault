@@ -8738,7 +8738,7 @@ func loadEncryptedArtifactOwnerTuples(root string) ([]string, []string) {
 	return result, nil
 }
 
-// checkEncryptedArtifactOwnerParity proves the closed 26-branch owner inventory
+// checkEncryptedArtifactOwnerParity proves the closed 28-branch owner inventory
 // is set-equal across all four sources of truth: the AAD schema (already
 // reduced to ownerTuples), the SQL owner-validation function (checked by
 // checkArtifactOutboxMigration), the typed Go runtime registry and the
@@ -8803,7 +8803,7 @@ func compareOwnerInventory(source string, schemaSet map[string]bool, other map[s
 		}
 	}
 	if len(other) != len(schemaSet) {
-		problems = append(problems, "encrypted artifact "+source+" owner inventory count does not equal the accepted 26-branch schema")
+		problems = append(problems, "encrypted artifact "+source+" owner inventory count does not equal the accepted 28-branch schema")
 	}
 	return problems
 }

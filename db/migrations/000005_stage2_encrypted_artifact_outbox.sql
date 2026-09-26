@@ -87,7 +87,8 @@ AS $$
         ('question_citation', 'anchor_artifact_id', 'CITATION_ANCHOR', 'CANONICAL_ANCHOR'),
         ('question_citation', 'deep_link_artifact_id', 'SOURCE_DEEPLINK', 'DEEPLINK'),
         ('model_run_artifact', 'input_artifact_id', 'MODEL_ARTIFACT', 'CANONICAL_INPUT'),
-        ('model_run_artifact', 'output_artifact_id', 'MODEL_ARTIFACT', 'CANONICAL_OUTPUT')
+        ('model_run_artifact', 'output_artifact_id', 'MODEL_ARTIFACT', 'CANONICAL_OUTPUT'),
+        ('question_feedback', 'comment_artifact_id', 'QUESTION_FEEDBACK', 'COMMENT_TEXT')
     );
 $$;
 

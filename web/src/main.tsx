@@ -4665,7 +4665,108 @@ function TurnAnswer({ run, turnId, panelTurnId, selectedCitationId, onSelectCita
           ) : null}
         </>
       )}
+      {(run.status === "COMPLETED" || run.status === "INSUFFICIENT_EVIDENCE") && (
+        <AnswerFeedback questionRunID={run.question_run_id} workspaceID={run.workspace_id} />
+      )}
     </>
+  );
+}
+
+// R1.S10.s1.T4: a per-viewer "Correct" / "Incorrect" mark under a finished
+// answer. One member holds exactly one current mark per answer; resubmitting
+// changes it rather than adding another. INCORRECT requires a comment; the
+// comment is never read back by this endpoint (only the OWNER/MANAGER error
+// review report decrypts it), so the input is cleared, not re-populated,
+// after a successful submission.
+export type QuestionFeedbackState = { marked: boolean; verdict?: "CORRECT" | "INCORRECT"; has_comment?: boolean; updated_at?: string };
+
+export function questionFeedbackPath(workspaceID: string, questionRunID: string): string {
+  return `/api/v1/workspaces/${encodeURIComponent(workspaceID)}/questions/${encodeURIComponent(questionRunID)}:feedback`;
+}
+
+// Pure projection of the current mark's status line, kept separate from the
+// component so it is testable without mounting React or mocking fetch.
+export function feedbackStatusLabel(state: QuestionFeedbackState): string {
+  if (!state.marked) return "";
+  const verdictText = state.verdict === "CORRECT" ? "верно" : "неверно";
+  return `Отмечено: ${verdictText}${state.has_comment ? " (с комментарием)" : ""}.`;
+}
+
+export function AnswerFeedback({ questionRunID, workspaceID }: { questionRunID: string; workspaceID: string }) {
+  const [state, setState] = useState<QuestionFeedbackState | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<QuestionFeedbackState>(questionFeedbackPath(workspaceID, questionRunID)).then((result) => {
+      if (!cancelled && result.kind === "ok") setState(result.value);
+    });
+    return () => { cancelled = true; };
+  }, [questionRunID, workspaceID]);
+
+  async function submit(verdict: "CORRECT" | "INCORRECT", commentText: string) {
+    setBusy(true);
+    setError(null);
+    const result = await apiPostWithoutIdempotency<QuestionFeedbackState>(
+      questionFeedbackPath(workspaceID, questionRunID), { verdict, comment: commentText },
+    );
+    setBusy(false);
+    if (result.kind === "ok") {
+      setState(result.value);
+      setEditing(false);
+      setComment("");
+    } else {
+      setError("Не удалось сохранить отзыв. Попробуйте ещё раз.");
+    }
+  }
+
+  if (state === null) return null;
+
+  if (!editing) {
+    return (
+      <div className="answer-feedback">
+        {state.marked ? (
+          <p className="msg-note">
+            {feedbackStatusLabel(state)}{" "}
+            <button className="link-button" onClick={() => setEditing(true)} type="button">Изменить</button>
+          </p>
+        ) : (
+          <div className="answer-feedback-controls">
+            <button disabled={busy} onClick={() => submit("CORRECT", "")} type="button">Верно</button>
+            <button disabled={busy} onClick={() => setEditing(true)} type="button">Неверно</button>
+          </div>
+        )}
+        {error && <p className="msg-warning">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="answer-feedback answer-feedback-editing">
+      <div className="answer-feedback-controls">
+        <button disabled={busy} onClick={() => submit("CORRECT", "")} type="button">Верно</button>
+        <button
+          disabled={busy || comment.trim() === ""}
+          onClick={() => submit("INCORRECT", comment)}
+          type="button"
+        >
+          Отправить: неверно
+        </button>
+        {state.marked && (
+          <button disabled={busy} onClick={() => setEditing(false)} type="button">Отмена</button>
+        )}
+      </div>
+      <textarea
+        className="answer-feedback-comment"
+        onChange={(event) => setComment(event.target.value)}
+        placeholder="Что именно не так? (обязательно для «неверно»)"
+        value={comment}
+      />
+      {error && <p className="msg-warning">{error}</p>}
+    </div>
   );
 }
 

@@ -46,6 +46,7 @@ const (
 	CitationDeepLink
 	ModelRunInput
 	ModelRunOutput
+	QuestionFeedbackComment
 	ownerFieldSentinel
 )
 
@@ -93,6 +94,7 @@ var ownerInventory = []ownerDefinition{
 	{field: CitationDeepLink, ownerTable: "question_citation", ownerColumn: "deep_link_artifact_id", resourceType: "SOURCE_DEEPLINK", aadField: "DEEPLINK"},
 	{field: ModelRunInput, ownerTable: "model_run_artifact", ownerColumn: "input_artifact_id", resourceType: "MODEL_ARTIFACT", aadField: "CANONICAL_INPUT"},
 	{field: ModelRunOutput, ownerTable: "model_run_artifact", ownerColumn: "output_artifact_id", resourceType: "MODEL_ARTIFACT", aadField: "CANONICAL_OUTPUT"},
+	{field: QuestionFeedbackComment, ownerTable: "question_feedback", ownerColumn: "comment_artifact_id", resourceType: "QUESTION_FEEDBACK", aadField: "COMMENT_TEXT"},
 }
 
 type ownerTuple struct {

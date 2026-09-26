@@ -373,8 +373,8 @@ func TestEncryptedArtifactOwnerParityGuardRejectsRegistryAndDocDrift(t *testing.
 	if len(ownerProblems) != 0 {
 		t.Fatal(ownerProblems)
 	}
-	if len(ownerTuples) != 27 {
-		t.Fatalf("accepted owner inventory is %d branches, expected 27", len(ownerTuples))
+	if len(ownerTuples) != 28 {
+		t.Fatalf("accepted owner inventory is %d branches, expected 28", len(ownerTuples))
 	}
 	// Baseline: schema, SQL function, Go registry and documentation all agree.
 	if problems := checkEncryptedArtifactOwnerParity("..", ownerTuples); len(problems) != 0 {

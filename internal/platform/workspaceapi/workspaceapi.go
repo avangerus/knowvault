@@ -314,6 +314,21 @@ type QuestionService interface {
 	StructuredRowset(ctx context.Context, access database.AccessContext, workspaceID, fragmentID, scope string) (*question.RowsetEvidence, error)
 }
 
+// QuestionFeedbackService is the narrow answer-feedback capability
+// (R1.S10.s1.T4). It is satisfied by the production *question.Service and
+// reached only by a type assertion on handler.questions; a QuestionService
+// that does not implement it fails the feedback/report routes closed as a
+// content-free SERVICE_UNAVAILABLE rather than silently no-oping the mark or
+// bypassing the workspace.read_content / workspace.manage policy gates that
+// live in internal/question.
+type QuestionFeedbackService interface {
+	SubmitFeedback(ctx context.Context, access database.AccessContext, workspaceID, runID string, verdict question.FeedbackVerdict, comment string) (question.Feedback, error)
+	OwnFeedback(ctx context.Context, access database.AccessContext, workspaceID, runID string) (question.Feedback, bool, error)
+	FeedbackReport(ctx context.Context, access database.AccessContext, workspaceID string) ([]question.FeedbackReportEntry, error)
+}
+
+var _ QuestionFeedbackService = (*question.Service)(nil)
+
 // ConversationService is the single lifecycle/read authority.  It returns
 // metadata and opaque Question Run links; handlers enrich those links only via
 // the existing QuestionService disclosure gate.
@@ -716,6 +731,14 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.questionCreate(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointQuestionGet:
 		handler.questionGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.questionRunID)
+	case endpointQuestionFeedback:
+		if request.Method == http.MethodGet {
+			handler.questionFeedbackGet(writer, request, access, requestID, endpoint.workspaceID, endpoint.questionRunID)
+		} else {
+			handler.questionFeedbackSubmit(writer, request, access, requestID, endpoint.workspaceID, endpoint.questionRunID)
+		}
+	case endpointQuestionFeedbackReport:
+		handler.questionFeedbackReport(writer, request, access, requestID, endpoint.workspaceID)
 	case endpointConversationList:
 		handler.conversationList(writer, request, access, requestID, endpoint.workspaceID, endpoint.conversationPaginated, endpoint.conversationPageLimit, endpoint.conversationCursor)
 	case endpointConversationGet:
@@ -1039,6 +1062,17 @@ const (
 	// per-view outcome, so registering hundreds of discovered tables from the
 	// wizard is one server request per batch instead of one request per table.
 	endpointSourceDiscoveryRegisterBatch
+	// endpointQuestionFeedback is R1.S10.s1.T4's answer-feedback mark
+	// (GET/POST /api/v1/workspaces/{workspace_id}/questions/{question_run_id}:feedback).
+	// GET returns the caller's own current mark, if any; POST sets or changes
+	// it. Access mirrors the answer's own visibility (workspace.read_content).
+	endpointQuestionFeedback
+	// endpointQuestionFeedbackReport is the workspace OWNER/MANAGER
+	// error-review report
+	// (GET /api/v1/workspaces/{workspace_id}/questions:feedback-report): every
+	// member's current feedback with the question, the answer and the
+	// decrypted comment.
+	endpointQuestionFeedbackReport
 	// endpointKindSentinel is not a route. It is the upper bound the OpenAPI
 	// drift gate iterates to (openapi_drift_test.go), so ADR-0086's ARC-007
 	// "CI forbids drift" is enforced by construction: a new endpoint kind
@@ -2310,6 +2344,16 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 	if len(parts) == 2 && parts[1] == "questions" && validOpaqueID(parts[0]) {
 		return endpoint{kind: endpointQuestionCreate, workspaceID: parts[0]}, ""
 	}
+	if len(parts) == 2 && parts[1] == "questions:feedback-report" && validOpaqueID(parts[0]) {
+		return endpoint{kind: endpointQuestionFeedbackReport, workspaceID: parts[0]}, ""
+	}
+	if len(parts) == 3 && parts[1] == "questions" && validOpaqueID(parts[0]) && strings.HasSuffix(parts[2], ":feedback") {
+		runID := strings.TrimSuffix(parts[2], ":feedback")
+		if validOpaqueID(runID) {
+			return endpoint{kind: endpointQuestionFeedback, workspaceID: parts[0], questionRunID: runID}, ""
+		}
+		return endpoint{}, "NOT_FOUND"
+	}
 	if len(parts) == 3 && parts[1] == "questions" && validOpaqueID(parts[0]) && validOpaqueID(parts[2]) {
 		return endpoint{kind: endpointQuestionGet, workspaceID: parts[0], questionRunID: parts[2]}, ""
 	}
@@ -2392,9 +2436,9 @@ func parseEndpointPath(request *http.Request) (endpoint, string) {
 func methodAllowed(endpoint endpoint, method string) bool {
 	switch endpoint.kind {
 	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
-		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals, endpointWorkspaceSourceDrafts:
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals, endpointWorkspaceSourceDrafts, endpointQuestionFeedbackReport:
 		return method == http.MethodGet
-	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh, endpointQuestionFeedback:
 		return method == http.MethodGet || method == http.MethodPost
 	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
 		// ADR-0098's tool-parity route is POST-only (S2-CONTRACT.md "Tool
@@ -2427,9 +2471,9 @@ func methodAllowed(endpoint endpoint, method string) bool {
 func allowedMethods(endpoint endpoint) string {
 	switch endpoint.kind {
 	case endpointCSRF, endpointWorkspaceList, endpointWorkspaceGet, endpointEvidenceGet, endpointWorkspaceAuditEvents, endpointQuestionGet, endpointConversationList, endpointConversationGet, endpointSearchProfile, endpointSourceConnectors, endpointMemberCandidates, endpointSourceDiscoveryGet, endpointMetricDefinitions, endpointMetricDefinitionGet,
-		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals:
+		endpointModelContextGet, endpointModelContextVersions, endpointModelContextVersionGet, endpointModelContextProposals, endpointQuestionFeedbackReport:
 		return http.MethodGet
-	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh:
+	case endpointWorkspaceSources, endpointAccessCodes, endpointWorkspaceToolListObjects, endpointWorkspaceToolSearch, endpointWorkspaceToolGrep, endpointWorkspaceToolRelated, endpointWorkspaceToolRead, endpointWorkspaceToolSources, endpointWorkspaceToolRefresh, endpointQuestionFeedback:
 		return http.MethodGet + ", " + http.MethodPost
 	case endpointWorkspaceToolWorkspaceContext, endpointWorkspaceToolSourceSchema, endpointWorkspaceToolSourceSQL:
 		return http.MethodPost
@@ -4386,6 +4430,126 @@ func (handler *Handler) questionGet(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(writer, http.StatusOK, run)
+}
+
+// questionFeedbackBody is the closed submit/change body: verdict is
+// mandatory, comment is mandatory only when verdict is INCORRECT and ignored
+// (cleared) otherwise. The comment is never echoed back.
+type questionFeedbackBody struct {
+	Verdict *string `json:"verdict"`
+	Comment *string `json:"comment"`
+}
+
+// questionFeedbackResponse is the caller's own current mark, or Marked=false
+// when none exists yet.
+type questionFeedbackResponse struct {
+	Marked     bool   `json:"marked"`
+	Verdict    string `json:"verdict,omitempty"`
+	HasComment bool   `json:"has_comment,omitempty"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
+}
+
+func feedbackResponseFrom(feedback question.Feedback) questionFeedbackResponse {
+	return questionFeedbackResponse{Marked: true, Verdict: string(feedback.Verdict), HasComment: feedback.HasComment,
+		UpdatedAt: feedback.UpdatedAt.Format(time.RFC3339)}
+}
+
+func (handler *Handler) questionFeedbackCapability() (QuestionFeedbackService, bool) {
+	capability, ok := handler.questions.(QuestionFeedbackService)
+	return capability, ok
+}
+
+func (handler *Handler) questionFeedbackGet(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, runID string) {
+	capability, ok := handler.questionFeedbackCapability()
+	if !ok {
+		setServerFailureCause(writer, "question service capability missing", "QuestionFeedbackService")
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	feedback, found, err := capability.OwnFeedback(request.Context(), access, workspaceID, runID)
+	if err != nil {
+		handleQuestionError(writer, err, requestID, false)
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusOK, questionFeedbackResponse{Marked: false})
+		return
+	}
+	writeJSON(writer, http.StatusOK, feedbackResponseFrom(feedback))
+}
+
+func (handler *Handler) questionFeedbackSubmit(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID, runID string) {
+	capability, ok := handler.questionFeedbackCapability()
+	if !ok {
+		setServerFailureCause(writer, "question service capability missing", "QuestionFeedbackService")
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	var body questionFeedbackBody
+	if code := decodeJSON(writer, request, &body); code != "" {
+		writeValidationError(writer, request, requestID, code, nil)
+		return
+	}
+	if body.Verdict == nil || (*body.Verdict != string(question.FeedbackCorrect) && *body.Verdict != string(question.FeedbackIncorrect)) {
+		writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"verdict"})
+		return
+	}
+	comment := ""
+	if body.Comment != nil {
+		comment = *body.Comment
+	}
+	feedback, err := capability.SubmitFeedback(request.Context(), access, workspaceID, runID, question.FeedbackVerdict(*body.Verdict), comment)
+	if err != nil {
+		if question.CodeOf(err) == question.CodeInvalid {
+			writeValidationError(writer, request, requestID, "REQUEST_INVALID", []string{"comment"})
+			return
+		}
+		handleQuestionError(writer, err, requestID, false)
+		return
+	}
+	writeJSON(writer, http.StatusOK, feedbackResponseFrom(feedback))
+}
+
+// questionFeedbackReportEntryResponse is one row of the OWNER/MANAGER
+// error-review report: the exact question/answer/comment text the mark
+// refers to, decrypted only for this authorized read.
+type questionFeedbackReportEntryResponse struct {
+	QuestionRunID     string `json:"question_run_id"`
+	Question          string `json:"question"`
+	Answer            string `json:"answer"`
+	Verdict           string `json:"verdict"`
+	Comment           string `json:"comment,omitempty"`
+	AuthorPrincipalID string `json:"author_principal_id"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+type questionFeedbackReportResponse struct {
+	WorkspaceID string                                `json:"workspace_id"`
+	Entries     []questionFeedbackReportEntryResponse `json:"entries"`
+}
+
+func (handler *Handler) questionFeedbackReport(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string) {
+	capability, ok := handler.questionFeedbackCapability()
+	if !ok {
+		setServerFailureCause(writer, "question service capability missing", "QuestionFeedbackService")
+		writeError(writer, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", requestID)
+		return
+	}
+	entries, err := capability.FeedbackReport(request.Context(), access, workspaceID)
+	if err != nil {
+		handleQuestionError(writer, err, requestID, false)
+		return
+	}
+	response := questionFeedbackReportResponse{WorkspaceID: workspaceID, Entries: make([]questionFeedbackReportEntryResponse, 0, len(entries))}
+	for _, entry := range entries {
+		response.Entries = append(response.Entries, questionFeedbackReportEntryResponse{
+			QuestionRunID: entry.QuestionRunID, Question: entry.Question, Answer: entry.Answer,
+			Verdict: string(entry.Verdict), Comment: entry.Comment, AuthorPrincipalID: entry.AuthorPrincipalID,
+			CreatedAt: entry.CreatedAt.Format(time.RFC3339), UpdatedAt: entry.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(writer, http.StatusOK, response)
 }
 
 func (handler *Handler) conversationList(writer http.ResponseWriter, request *http.Request, access database.AccessContext, requestID, workspaceID string, paginated bool, limit int, cursor string) {
