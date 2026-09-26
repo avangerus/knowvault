@@ -12,6 +12,12 @@ var (
 	ErrUnavailable  = errors.New("workspace tools unavailable")
 	ErrScopeChanged = errors.New("workspace tools scope changed")
 	ErrArguments    = errors.New("invalid workspace tool arguments")
+	// ErrSourceBusy reports that a workspace source's shared load limit is fully
+	// taken, so a readiness check was refused instead of opening another
+	// connection to that database (card D-18 result 3). The question route reads
+	// it as "the database is busy right now", never as "the database cannot be
+	// read".
+	ErrSourceBusy = errors.New("workspace source busy")
 )
 
 // Scope is supplied by the question authority, never by model-generated args.

@@ -36,6 +36,7 @@ import (
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	"knowvault.local/verified-workspace/internal/source/registration"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 // e1aDocker runs one docker CLI command and fails the test on a non-zero exit.
@@ -317,6 +318,17 @@ func (service e1aSourceService) ReauthorizeSourceSQLAttempt(ctx context.Context,
 	return service.sql.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, disclosure)
 }
 
+// SourceReadable is card D-18's live readability check, mirroring the
+// production delegation. A harness without an SQL executor cannot check a
+// source, so it reports the capability unavailable instead of claiming the
+// source cannot be read.
+func (service e1aSourceService) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	if service.sql == nil {
+		return workspacetools.ErrUnavailable
+	}
+	return service.sql.SourceReadable(ctx, access, workspaceID, connectionID)
+}
+
 // e1aSourceSQL is the harness's mirror of the production source SQL executor:
 // authorization through the workspace repository, a reference-to-DSN map in
 // place of the mounted secret provider, the one governedquery execution path
@@ -326,6 +338,19 @@ type e1aSourceSQL struct {
 	auditor     *audit.Store
 	credentials map[string]string
 	roots       *x509.CertPool
+	// busy is card D-18 result 3's "shared load limit already taken": the
+	// source connection ids whose readiness check the test has refused. It
+	// mirrors the production limiter's refusal without a real limiter, because
+	// the question set's long runs would otherwise trip the production rate
+	// bound and change answers the card does not touch.
+	busy map[string]bool
+	// readinessAttempts counts the readiness checks that would have opened a
+	// connection. The result-3 test holds the limit and asserts it does not
+	// grow while the source is busy.
+	readinessAttempts int
+	// auditUnavailable makes every audit append fail, so a test can prove a
+	// check whose record cannot be written counts as failed.
+	auditUnavailable bool
 }
 
 func (executor *e1aSourceSQL) SourceSQL(ctx context.Context, access database.AccessContext, workspaceID string, request workspaceapi.SourceSQLRequest) (workspaceapi.SourceSQLResult, error) {
@@ -374,6 +399,59 @@ func (executor *e1aSourceSQL) SourceSQL(ctx context.Context, access database.Acc
 	}, nil
 }
 
+// SourceReadable mirrors the production readiness check: it authorizes the
+// source through the workspace repository, refuses a non-READY or untrusted
+// source, takes the shared load limit before resolving the credential, and runs
+// one server-authored constant statement through the same governed execution
+// path. Like the production check it appends exactly one content-free
+// governed-query attempt record and counts as failed when that record cannot be
+// written.
+func (executor *e1aSourceSQL) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	if executor == nil || executor.workspaces == nil || executor.auditor == nil {
+		return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+	}
+	target, err := executor.workspaces.SourceQuery(ctx, access, workspaceID, connectionID)
+	if err != nil {
+		return err
+	}
+	if target.ActivationStatus != "READY" || !target.TrustVerified || target.QueryCredentialReference == "" {
+		return errors.New("SOURCE_READABILITY_NOT_READY")
+	}
+	if executor.busy[target.SourceID] {
+		// The load limit is already taken: no credential is resolved, so no
+		// connection is opened, and the refusal is still audited.
+		if _, auditErr := executor.auditAttempt(ctx, access, workspaceID, target, "readiness",
+			governedquery.Attempt{}, string(governedquery.CodeSourceSQLConcurrencyLimited)); auditErr != nil {
+			return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+		}
+		return workspacetools.ErrSourceBusy
+	}
+	executor.readinessAttempts++
+	attempt := governedquery.Attempt{}
+	code := ""
+	dsn, ok := executor.credentials[target.QueryCredentialReference]
+	if !ok || dsn == "" {
+		code = string(governedquery.CodeDatabaseRejected)
+	} else {
+		var execErr error
+		_, attempt, execErr = governedquery.ExecuteScoped(ctx, governedquery.Config{
+			ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
+			DSN: dsn, TrustRoots: executor.roots, Limits: e1aSourceSQLLimits(),
+		}, governedquery.ScopedParams{
+			SQLText: "SELECT 1", Purpose: "readiness",
+			Schema: governedquery.ScopedSchema{Relations: e1aScopedRelations(target)},
+		})
+		code = e1aSourceSQLRefusalCode(execErr)
+	}
+	if _, auditErr := executor.auditAttempt(ctx, access, workspaceID, target, "readiness", attempt, code); auditErr != nil {
+		return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+	}
+	if code != "" {
+		return errors.New("SOURCE_READABILITY_FAILED")
+	}
+	return nil
+}
+
 func (executor *e1aSourceSQL) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {
 	if executor == nil || executor.workspaces == nil || executor.auditor == nil {
 		return errors.New("SOURCE_SQL_REAUTHORIZATION_UNAVAILABLE")
@@ -396,6 +474,9 @@ func (executor *e1aSourceSQL) ReauthorizeSourceSQLAttempt(ctx context.Context, a
 
 func (executor *e1aSourceSQL) auditAttempt(ctx context.Context, access database.AccessContext, workspaceID string,
 	target workspacerepository.SourceQuerySource, purpose string, attempt governedquery.Attempt, refusalCode string) (string, error) {
+	if executor.auditUnavailable {
+		return "", errors.New("SOURCE_SQL_AUDIT_UNAVAILABLE")
+	}
 	eventID, err := ids.New("gqat")
 	if err != nil {
 		return "", err

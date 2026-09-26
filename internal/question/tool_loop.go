@@ -1596,6 +1596,23 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 		return service.completeShortKindRun(parent, access, run, questionText, record, shortKind, subjects)
 	}
+	// Card D-18: a data question about a database of this workspace that cannot
+	// be read right now (its tables await confirmation, or its connection does
+	// not answer) gets one plain, server-rendered answer naming the database
+	// and what makes it readable. The route runs before the answering model and
+	// before any tool is mounted, so the run records no knowvault_source_sql
+	// call and presents no empty result; the recognised kind is unchanged,
+	// whichever state the database is in. Every other question keeps the
+	// ordinary full loop.
+	if unreadable, unreadableErr := service.unreadableDatabaseForQuestion(ctx, scope, record, questionText); unreadableErr != nil {
+		if errors.Is(unreadableErr, workspacetools.ErrScopeChanged) {
+			record.StopReason = toolScopeChangedStopReason
+			return persistScopeChanged()
+		}
+		return &Error{code: CodeDenied, cause: unreadableErr}
+	} else if unreadable != nil {
+		return service.completeUnreadableDatabaseRun(parent, access, run, questionText, record, *unreadable)
+	}
 	catalog, err := service.tools.Catalog(ctx, scope)
 	if err != nil {
 		if errors.Is(err, workspacetools.ErrScopeChanged) {
@@ -1684,7 +1701,7 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		// never inventories or reads document content itself: the model reads
 		// what the subject needs with the knowledge tools it was given.
 		builtOverview, overviewErr = service.buildPlainOverviewOrientation(ctx, scope, record, language, workspaceContextDescription)
-	} else if overviewClass := toolLoopOverviewQuestionClass(questionText); overviewClass != toolLoopOverviewClassNone {
+	} else if overviewClass := toolLoopOverviewClassForRun(service.answerKindRecognition, AnswerKind(record.AnswerKind), questionText); overviewClass != toolLoopOverviewClassNone {
 		builtOverview, overviewErr = service.buildToolLoopOverview(ctx, scope, record, language, workspaceContextDescription, overviewClass)
 	}
 	if overviewErr != nil {
