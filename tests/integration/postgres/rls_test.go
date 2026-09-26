@@ -1956,6 +1956,7 @@ var migrationSequence = []string{
 	"000120_stage4_postgresql_query_only_relation.sql",
 	"000121_stage3_question_run_interruption.sql",
 	"000122_stage3_question_feedback.sql",
+	"000123_stage3_question_feedback_owner_and_purge.sql",
 }
 
 // migrationHistoricalConfirmationAuthority is the last migration of the inert
