@@ -42,7 +42,12 @@ func TestUnreadableSourceReason(t *testing.T) {
 		{name: "not ready", source: d18Source(func(s *toolLoopOverviewSource) { s.ActivationStatus = "FAILED" }), want: unreadableSourceReasonNotReachable, unread: true},
 		{name: "draft", source: d18Source(func(s *toolLoopOverviewSource) { s.ActivationStatus = "DRAFT" }), want: unreadableSourceReasonNotReachable, unread: true},
 		{name: "untrusted", source: d18Source(func(s *toolLoopOverviewSource) { s.TrustVerified = boolPointer(false) }), want: unreadableSourceReasonNotReachable, unread: true},
-		{name: "no query access", source: d18Source(func(s *toolLoopOverviewSource) { s.SQLAvailable = boolPointer(false) }), want: unreadableSourceReasonNotReachable, unread: true},
+		// Card D-18 result 2: a source with no query access configured is not
+		// one of the two states this route speaks about (tables unconfirmed,
+		// database not answering). It is left to the live probe, so a workspace
+		// whose sources exist but were never given a credential keeps the
+		// ordinary route its questions had before the card.
+		{name: "no query access is left to the live probe", source: d18Source(func(s *toolLoopOverviewSource) { s.SQLAvailable = boolPointer(false) }), unread: false},
 		{name: "absent facts are not a failure", source: d18Source(func(s *toolLoopOverviewSource) {
 			s.Confirmed, s.TrustVerified, s.SQLAvailable = nil, nil, nil
 		}), unread: false},

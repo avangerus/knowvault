@@ -67,11 +67,11 @@ func (service *Service) unreadableDatabaseForQuestion(ctx context.Context, scope
 	if service == nil || service.tools == nil || record == nil || strings.TrimSpace(questionText) == "" {
 		return nil, nil
 	}
-	result, err := service.invokeOverviewTool(ctx, scope, record, "knowvault_sources", json.RawMessage(`{}`))
+	result, err := service.readSourceInventory(ctx, scope)
 	if err != nil {
 		// A changed scope is returned unchanged so the caller fails closed; the
-		// overview reader already folds every other failure into an empty
-		// result, which simply leaves this route off.
+		// inventory reader folds every other failure into an empty result, which
+		// simply leaves this route off.
 		return nil, err
 	}
 	if result.IsError {
@@ -120,7 +120,10 @@ func namedPostgreSQLSources(questionText string, sources []toolLoopOverviewSourc
 // absent member is treated as "no information" and never as a failure, so an
 // older inventory shape cannot turn a readable source into an unreadable one.
 // A source that passes this check may still be unreachable; the live probe
-// decides that.
+// decides that. A source with no query access configured is deliberately not
+// classified here: that is a different state with a different remedy from the
+// two this route speaks about (confirm the tables, make the database
+// reachable), and the live probe is what decides whether the database answers.
 func unreadableSourceReason(source toolLoopOverviewSource) (string, bool) {
 	if source.SourceType != "POSTGRESQL_QUERY" {
 		return "", false
@@ -137,10 +140,30 @@ func unreadableSourceReason(source toolLoopOverviewSource) (string, bool) {
 	if source.TrustVerified != nil && !*source.TrustVerified {
 		return unreadableSourceReasonNotReachable, true
 	}
-	if source.SQLAvailable != nil && !*source.SQLAvailable {
-		return unreadableSourceReasonNotReachable, true
-	}
 	return "", false
+}
+
+// readSourceInventory performs the workspace's own source-inventory read that
+// decides this route. Unlike the overview orientation it is not part of the
+// run's answer and is never recorded in the run's tool trace: it is a
+// pre-answer check, and a failed read ("no inventory here") must not leave a
+// failed system call in a run whose answer the model itself produces. The read
+// still goes through the same authorized workspace tools runtime, so its
+// admission, audit and read-only guarantees are exactly the existing ones. A
+// scope change is returned unchanged so the caller fails closed; every other
+// failure degrades to an empty result.
+func (service *Service) readSourceInventory(ctx context.Context, scope workspacetools.Scope) (workspacetools.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return workspacetools.Result{}, err
+	}
+	result, err := service.tools.Invoke(ctx, scope, "knowvault_sources", json.RawMessage(`{}`))
+	if err != nil {
+		if errors.Is(err, workspacetools.ErrScopeChanged) {
+			return workspacetools.Result{}, err
+		}
+		return workspacetools.Result{IsError: true}, nil
+	}
+	return result, nil
 }
 
 // probeSourceReadable runs the optional live readiness check for one source and
