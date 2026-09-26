@@ -353,15 +353,24 @@ func verifyRoleResourceLimits(ctx context.Context, tx pgx.Tx) error {
 // large object. The large-object ACL is checked directly (the lo_* functions
 // are PUBLIC-executable by default, so the ACL is what actually gates a read);
 // with lo_compat_privileges off that is exactly the owner-or-grant rule
-// PostgreSQL applies.
+// PostgreSQL applies. The rule is read from the ACL itself rather than through
+// has_largeobject_privilege, which exists only from PostgreSQL 16: customer
+// databases are older (GM runs PostgreSQL 13). A NULL ACL is the owner-only
+// default, so the owner check covers it.
 func verifyNoLargeObjectRead(ctx context.Context, tx pgx.Tx) error {
 	var found bool
 	err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		    SELECT 1
 		    FROM pg_catalog.pg_largeobject_metadata AS large_object
-		    WHERE has_largeobject_privilege(current_user, large_object.oid, 'SELECT')
-		       OR has_largeobject_privilege(current_user, large_object.oid, 'UPDATE')
+		    WHERE pg_catalog.pg_has_role(current_user, large_object.lomowner, 'USAGE')
+		       OR EXISTS (
+		           SELECT 1
+		           FROM pg_catalog.aclexplode(large_object.lomacl) AS object_grant
+		           WHERE object_grant.privilege_type IN ('SELECT', 'UPDATE')
+		             AND (object_grant.grantee = 0
+		                  OR pg_catalog.pg_has_role(current_user, object_grant.grantee, 'USAGE'))
+		       )
 		)`).Scan(&found)
 	if err != nil {
 		return &Error{code: CodeQueryCredentialRejected, cause: err}
