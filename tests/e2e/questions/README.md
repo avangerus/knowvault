@@ -92,9 +92,10 @@ confirmed instead of awaiting confirmation, the harness fails, because the
 question would no longer test the "cannot be read yet" answer.
 
 The database is a separate `environment.unconfirmed_database` block, not a
-fourth entry in `environment.sources`, and the shared environment builder binds
-it only when a caller asks for it, so the interface walkthrough and every other
-test keep the workspace they had.
+fourth entry in `environment.sources`, and the run binds it only when it reaches
+`H5` (`H5` stays the last question): every other question is asked in exactly
+the workspace it had before, and the interface walkthrough and every other test
+keep the workspace they had.
 
 ## Tests
 

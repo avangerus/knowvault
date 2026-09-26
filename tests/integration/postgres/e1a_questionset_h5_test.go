@@ -15,8 +15,56 @@ import (
 	"testing"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/source/registration"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+
+	"knowvault.local/verified-workspace/tests/e2e/questions"
 )
+
+// e1aH5Deferred is the H5 database the shared builder was asked for but has not
+// bound yet. Binding it changes the workspace's source list, so the run binds
+// it only when it reaches H5; every other question is then asked in exactly the
+// workspace it had before the card.
+type e1aH5Deferred struct {
+	registrations *registration.Service
+	source        questions.SourceSpec
+	identity      string
+	confirm       bool
+	bound         bool
+}
+
+// e1aBindH5Source registers and binds the H5 database once, mints its table
+// confirmation only when the caller asked for a confirmed database, and records
+// the product connection it got.
+func (env *e1aEnvironment) e1aBindH5Source(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if env == nil || env.h5 == nil || env.h5.bound {
+		return
+	}
+	h5 := env.h5
+	request := registration.RegisterRequest{
+		SourceType: "POSTGRESQL_QUERY", Name: h5.source.Name, Kind: "business-objects",
+		DatabaseIdentity: h5.identity, LineageID: h5.source.LineageID, ProjectionRevision: 1,
+		ContractHash: sourceContractHash(h5.source), SchemaName: env.Set.Environment.SourceSchema,
+		RelationName: h5.source.Table, RelationKind: "TABLE", EmptySnapshotPolicy: "HELD",
+		Columns: sourceColumns(env.Set, h5.source),
+	}
+	registered, err := h5.registrations.Register(ctx, regOwnerAccess("req_e1a_h5_source"), request)
+	if err != nil {
+		t.Fatalf("register H5 source %s: %v (code=%s)", h5.source.Table, err, registration.CodeOf(err))
+	}
+	sourceFixture := seedRegistrationWorkspaceBinding(t, ctx, env.Admin, registered.SourceScopeID,
+		e1aScopeConfigHash(t, ctx, env.Admin, registered.SourceScopeID), mustID(t, "binding"))
+	if h5.confirm {
+		e1aMintConfirmation(t, ctx, sourceFixture)
+	}
+	verifyIsolationTrust(t, ctx, env.Admin, registered.ConnectionID)
+	e1aActivateSource(t, ctx, env.Admin, registered.SourceScopeID)
+	env.H5SourceID = registered.ConnectionID
+	env.H5SourceName = h5.source.Name
+	env.SourceConnectionIDs[h5.source.ID] = registered.ConnectionID
+	h5.bound = true
+}
 
 // e1aH5Confirmation is the harness's read of the product's own source status
 // for the database H5 asks about.
@@ -107,6 +155,7 @@ func TestQuestionSetH5DatabaseConfirmedFailsHarness(t *testing.T) {
 		env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
 			SourceIdentity: "pgdb-e2-unconfirmed", H5Source: &h5, H5SourceIdentity: "pgdb-e2-unconfirmed-h5",
 		})
+		env.e1aBindH5Source(t, ctx)
 		confirmation, err := e1aReadH5Confirmation(ctx, env)
 		if err != nil || !confirmation.Awaiting {
 			t.Fatalf("unconfirmed H5 environment = %#v err=%v, want accepted awaiting confirmation", confirmation, err)
@@ -119,6 +168,7 @@ func TestQuestionSetH5DatabaseConfirmedFailsHarness(t *testing.T) {
 			SourceIdentity: "pgdb-e2-confirmed", H5Source: &h5, H5SourceIdentity: "pgdb-e2-confirmed-h5",
 			ConfirmH5Source: true,
 		})
+		env.e1aBindH5Source(t, ctx)
 		if _, err := e1aReadH5Confirmation(ctx, env); err == nil {
 			t.Fatal("the harness accepted a confirmed H5 database; want a harness failure")
 		}

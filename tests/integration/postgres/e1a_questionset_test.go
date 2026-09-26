@@ -113,6 +113,16 @@ func TestQuestionSetSmoke(t *testing.T) {
 	if toolCalls == 0 {
 		t.Fatal("the stub run recorded no tool call, so the tool runtime was never exercised")
 	}
+	// Card E-2: every H5 run carries the product's own read, taken just before
+	// the question is asked, that the database's tables await confirmation.
+	for _, run := range runs {
+		if run.QuestionID != "H5" {
+			continue
+		}
+		if run.DatabaseName == "" || !run.DatabaseAwaitingConfirmation {
+			t.Fatalf("H5 run %d does not record the database awaiting confirmation: %+v", run.Run, run)
+		}
+	}
 	if len(report.Questions) != len(set.Questions) {
 		t.Fatalf("report has %d question verdicts, want %d", len(report.Questions), len(set.Questions))
 	}
