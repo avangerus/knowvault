@@ -168,7 +168,7 @@ func (service *Service) buildPlainOverviewOrientation(ctx context.Context, scope
 	if err != nil {
 		return nil, err
 	}
-	topics, err := service.plainOverviewTopics(ctx, scope, record, toolLoopOverviewSourcesFromResult(sourcesResult.Structured))
+	topics, err := service.plainOverviewTopics(ctx, scope, record, usableOverviewSources(toolLoopOverviewSourcesFromResult(sourcesResult.Structured)))
 	if err != nil {
 		return nil, err
 	}

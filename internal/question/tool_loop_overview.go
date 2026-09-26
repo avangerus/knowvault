@@ -248,7 +248,7 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 	if err != nil {
 		return nil, err
 	}
-	sources := toolLoopOverviewSourcesFromResult(sourcesResult.Structured)
+	sources := usableOverviewSources(toolLoopOverviewSourcesFromResult(sourcesResult.Structured))
 
 	if class == toolLoopOverviewClassSources || class == toolLoopOverviewClassDatabase {
 		names := toolLoopOverviewSourceNames(sources)
@@ -350,6 +350,22 @@ func (service *Service) buildToolLoopOverview(ctx context.Context, scope workspa
 		return nil, nil
 	}
 	return overview, nil
+}
+
+// usableOverviewSources keeps the sources a user can actually get answers
+// from: a source the workspace switched off or whose activation was revoked is
+// configuration, not knowledge, so no overview names it or describes it. A
+// source whose inventory row carries no enabled member counts as enabled (an
+// absent member is "no information", never a failure).
+func usableOverviewSources(sources []toolLoopOverviewSource) []toolLoopOverviewSource {
+	usable := make([]toolLoopOverviewSource, 0, len(sources))
+	for _, source := range sources {
+		if !source.Enabled || source.ActivationStatus == "REVOKED" {
+			continue
+		}
+		usable = append(usable, source)
+	}
+	return usable
 }
 
 // toolLoopOverviewSourceNames returns each source's human display name,
@@ -472,7 +488,7 @@ func toolLoopOverviewSourcesFromResult(raw json.RawMessage) []toolLoopOverviewSo
 			SourceType             string `json:"source_type"`
 			PostgreSQLSchemaName   string `json:"postgresql_schema_name"`
 			PostgreSQLRelationName string `json:"postgresql_relation_name"`
-			Enabled                bool   `json:"enabled"`
+			Enabled                *bool  `json:"enabled"`
 			ActivationStatus       string `json:"activation_status"`
 			TrustVerified          *bool  `json:"trust_verified"`
 			Confirmed              *bool  `json:"confirmed"`
@@ -498,7 +514,7 @@ func toolLoopOverviewSourcesFromResult(raw json.RawMessage) []toolLoopOverviewSo
 		sources = append(sources, toolLoopOverviewSource{
 			Name: name, ConnectionID: source.ConnectionID, SourceType: source.SourceType,
 			Schema: source.PostgreSQLSchemaName, Relation: source.PostgreSQLRelationName,
-			Enabled: source.Enabled, ActivationStatus: source.ActivationStatus,
+			Enabled: source.Enabled == nil || *source.Enabled, ActivationStatus: source.ActivationStatus,
 			SyncStatus: source.SyncStatus, FreshnessState: source.FreshnessState,
 			ObjectsSeen: source.ObjectsSeen, ObjectsIngested: source.ObjectsIngested,
 			Confirmed: source.Confirmed, TrustVerified: source.TrustVerified, SQLAvailable: source.SQLAvailable,
