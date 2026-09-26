@@ -63,6 +63,16 @@ contract number `N`), the universal rules, and the questions with their own
 checks. The rule engine and the runner read it and contain no second copy of
 the questions or expectations.
 
+A question may name the surface the runner must ask it through (`via: "mcp"`,
+card D-19) and the question it must match in the same full run
+(`compares_to`). The judge's `number_equals_peer` rule is green only when both
+answers state the same number and `source_equals_peer` only when both cite the
+same governed live source; `mcp_transport_recorded` requires the run to have
+arrived through the product's MCP server and the product's own
+`question.created` record to carry the MCP transport's request id. Q7 is Q3's
+count question asked through MCP, so a full run answers it over the MCP
+transport and compares it with the chat's Q3 of the same run index.
+
 Every answer must pass the universal hard rules: non-empty text, no
 `profile limits` / `could not be completed`, no short label followed by a colon
 at the start of a line, no `Evidence 1`-style marker, no prose claiming a
@@ -85,6 +95,14 @@ asks a count question about its data; it is green only when the answer is at
 most two sentences, names «Заявки», says the database cannot be read yet, says
 that confirming its tables is what makes it readable, and the run recorded no
 `knowvault_source_sql` call. A bare zero count or a "no records" answer is red.
+
+The two statements are judged by `stems_in_same_sentence`: one sentence must
+carry a stem from `texts` and a stem from `with`, in any order and any
+grammatical form, so «не читается» and «прочитать пока нельзя», «таблицы не
+подтверждены» and «как только таблицы подтвердят» are all accepted. The stems
+are data in `questions.json`; the engine only matches them, folded to lower case
+with ё written as е. A stem of three letters or fewer is matched as a whole
+word, so the negation `не` is not found inside `менее`.
 
 The one command reads the product's own source status immediately before asking
 each `H5` run and records it in the report; if the database's tables are

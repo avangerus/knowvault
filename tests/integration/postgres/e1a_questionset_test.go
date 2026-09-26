@@ -28,6 +28,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"knowvault.local/verified-workspace/internal/modelgateway"
+	"knowvault.local/verified-workspace/internal/platform/database"
+	"knowvault.local/verified-workspace/internal/question"
 
 	"knowvault.local/verified-workspace/tests/e2e/questions"
 )
@@ -79,13 +81,38 @@ func TestQuestionSetSmoke(t *testing.T) {
 	defer adapter.Close()
 
 	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
-		SourceIdentity: "pgdb-stub-e1a",
+		SourceIdentity: "pgdb-stub-e1a", WireHTTPQuestions: true,
 		// Card E-2: H5 asks about a database whose tables await confirmation.
 		// The stub run registers that source too, so the whole set including H5
 		// is exercised without a key.
 		H5Source: &set.Environment.UnconfirmedDatabase.Source, H5SourceIdentity: "pgdb-stub-e1a-h5",
 	})
 	env.Questions.EnableGeneration(adapter, nil)
+
+	// Card D-19 result 1: a user without access to the workspace asking through
+	// MCP gets the same refusal as in the chat and no number. The refusal is
+	// decided before any model call, so this runs without a key.
+	t.Run("an outside agent without workspace access gets the chat refusal and no number", func(t *testing.T) {
+		foreign := "ws_card_d19_foreign"
+		e1aSeedForeignWorkspace(t, ctx, admin, foreign)
+		client := e1aNewMCPClient(t, env)
+		refusal := client.e1aMCPDeniedWorkspaceQuestion(t, ctx, foreign, "Сколько договоров действует?", e1aIdempotencyKey("d19-denied-mcp"))
+		t.Logf("MCP refusal over the outside-agent transport: %s", e1aFormatMCPRefusal(refusal))
+		_, chatErr := env.Questions.Create(ctx, database.AccessContext{
+			OrganizationID: regOrg, PrincipalID: regOwner, RequestID: "req_d19_denied_chat",
+		}, question.CreateRequest{
+			WorkspaceID: foreign, Question: "Сколько договоров действует?", IdempotencyKey: e1aIdempotencyKey("d19-denied-chat"),
+		})
+		if chatErr == nil {
+			t.Fatalf("chat path allowed a workspace the user cannot access")
+		}
+		if code := question.CodeOf(chatErr); code != question.CodeDenied && code != question.CodeNotFound {
+			t.Fatalf("chat refusal code=%q, want denied/not-found", code)
+		}
+		if strings.ContainsAny(chatErr.Error(), "0123456789") {
+			t.Fatalf("chat refusal carries a number: %v", chatErr)
+		}
+	})
 
 	runs := e1aRunQuestionSet(t, ctx, env, func(questions.Question) string { return "" })
 	report := questions.NewReport(set, "stub", "go test ./tests/integration/postgres -run TestQuestionSetSmoke", runs, time.Now())
@@ -125,6 +152,38 @@ func TestQuestionSetSmoke(t *testing.T) {
 	}
 	if len(report.Questions) != len(set.Questions) {
 		t.Fatalf("report has %d question verdicts, want %d", len(report.Questions), len(set.Questions))
+	}
+	// Card D-19: Q7 is part of the full run and every one of its runs was asked
+	// through the product's MCP server, judged by the cross-transport rules.
+	q7Runs, q7Rules := 0, map[string]bool{}
+	for _, run := range runs {
+		if run.QuestionID != "Q7" {
+			continue
+		}
+		q7Runs++
+		if run.Via != "mcp" {
+			t.Fatalf("Q7 run %d via=%q, want the MCP surface", run.Run, run.Via)
+		}
+		for _, verdict := range run.Verdicts {
+			q7Rules[verdict.ID] = true
+		}
+	}
+	if q7Runs != 3 {
+		t.Fatalf("Q7 ran %d times, want 3", q7Runs)
+	}
+	for _, id := range []string{"q7_number", "q7_source", "q7_mcp"} {
+		if !q7Rules[id] {
+			t.Fatalf("Q7 runs do not carry the %s rule", id)
+		}
+	}
+	listed := false
+	for _, verdict := range report.Questions {
+		if verdict.QuestionID == "Q7" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatal("the full run report does not list Q7")
 	}
 	dir := t.TempDir()
 	markdownPath, jsonPath, err := questions.WriteReport(dir, report)
@@ -274,8 +333,8 @@ func TestQuestionSetRealModel(t *testing.T) {
 	admin := resetStage1Database(t)
 	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
 		SourceIdentity: identity, Credentials: credentials, Roots: roots, SourceSQL: sqlExecutor,
-		ContractChecksum: contractChecksum,
-		H5Source:         &h5.Source, H5SourceIdentity: h5Identity,
+		ContractChecksum: contractChecksum, WireHTTPQuestions: true,
+		H5Source: &h5.Source, H5SourceIdentity: h5Identity,
 	})
 
 	registry, err := e1aModelRegistry(set, apiKey)

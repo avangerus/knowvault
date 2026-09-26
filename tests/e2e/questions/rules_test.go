@@ -293,6 +293,59 @@ func TestH5CompliantAnswerPassesAndFailureModesFail(t *testing.T) {
 	}
 }
 
+// TestH5AcceptsAnyCorrectWording pins the second pass of card E-2: H5 must be
+// green for any correct wording and order of the two statements — the database
+// cannot be read yet, and confirming its tables makes it readable — and red for
+// an answer that does not make them.
+func TestH5AcceptsAnyCorrectWording(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "H5")
+
+	correct := []string{
+		"База «Заявки» пока не читается, потому что её таблицы ещё не подтверждены. Подтвердите её таблицы, и база станет доступна для чтения.",
+		"База «Заявки» недоступна для чтения. Чтобы её прочитать, подтвердите таблицы.",
+		"Сейчас базу «Заявки» прочитать нельзя, её таблицы ждут подтверждения. Как только таблицы подтвердят, база станет доступна.",
+		"Прочитать её пока нельзя. Нужно подтвердить таблицы базы «Заявки».",
+		"База «Заявки» не открывается: таблицы не подтверждены. Подтверждение таблиц сделает её читаемой.",
+		"Доступ к базе «Заявки» закрыт. Дождитесь подтверждения её таблиц.",
+		"Чтение базы «Заявки» пока невозможно. Таблицы нужно подтвердить.",
+		"Нет доступа к базе «Заявки»; чтобы читать её, подтвердите её таблицы.",
+		"База «Заявки» ещё не готова к чтению: её таблицы не подтверждены. Как только таблицы подтвердят, она откроется.",
+	}
+	for _, answer := range correct {
+		for _, verdict := range Evaluate(set, question, h5Observation(answer)) {
+			if !verdict.Passed {
+				t.Fatalf("H5 rejected a correct answer %q at rule %s: %s", answer, verdict.ID, verdict.Detail)
+			}
+		}
+	}
+
+	wrong := []string{
+		"В базе «Заявки» 5 заявок, таблицы подтверждены.",
+		"База «Заявки» пока не читается.",
+		"Подтвердите таблицы базы «Заявки», и она откроется.",
+		"Таблицы базы «Заявки» ждут подтверждения.",
+		"База «Заявки» не читается, в ней 0 заявок. Таблицы ждут подтверждения.",
+		"В базе «Заявки» нет записей. Таблицы не подтверждены.",
+		// "менее" contains the letters "не" but is not the negation, so an
+		// answer that says the database can be read must stay red.
+		"Прочитать базу «Заявки» можно, в ней менее 5 заявок, таблицы подтверждены.",
+		"Доступ к базе «Заявки» открыт, таблицы подтверждены.",
+	}
+	for _, answer := range wrong {
+		failed := ""
+		for _, verdict := range Evaluate(set, question, h5Observation(answer)) {
+			if !verdict.Passed && verdict.Hard {
+				failed = verdict.ID + ": " + verdict.Detail
+				break
+			}
+		}
+		if failed == "" {
+			t.Fatalf("H5 accepted a wrong answer %q", answer)
+		}
+	}
+}
+
 // TestReportShowsH5DatabaseAwaitingConfirmation: the report states, per H5 run,
 // what the harness read from the product just before asking.
 func TestReportShowsH5DatabaseAwaitingConfirmation(t *testing.T) {
@@ -319,5 +372,133 @@ func TestCitationDocument(t *testing.T) {
 	}
 	if verdict, ok := ruleByID(verdicts, "q5_values"); !ok || !verdict.Passed {
 		t.Fatalf("q5_values = %#v, want PASS", verdict)
+	}
+}
+
+// mcpQ7Observation is the canned Q7 (MCP) run the card's parity rule judges:
+// a live-table count answer with the product's own record of the run and the
+// peer (Q3) answer of the same run.
+func mcpQ7Observation(answer, peerAnswer string) Observation {
+	live := func() (string, string) { return "LIVE_TABLE", "sha256:" + strings.Repeat("a", 64) }
+	ownKind, ownReceipt := live()
+	peerKind, peerReceipt := live()
+	return Observation{
+		QuestionID: "Q7", QuestionText: "Сколько договоров действует?", QuestionLang: "ru",
+		Answer: answer, Status: "COMPLETED", StopReason: "ANSWER", GroundingStatus: "CONFIRMED_BY_FRAGMENT",
+		LiveResultKind: ownKind, LiveResultReceipt: ownReceipt, LiveResultSourceID: "conn_contract",
+		ViaMCP: true, MCPRecorded: true, StatusFieldName: "status",
+		Peer: &PeerObservation{
+			QuestionID: "Q3", Answer: peerAnswer,
+			LiveResultKind: peerKind, LiveResultReceipt: peerReceipt, LiveResultSourceID: "conn_contract",
+		},
+	}
+}
+
+// TestQ7NumberEqualsQ3InSameRun is card D-19 result 2: a stubbed MCP answer
+// carrying Q3's number is green, an answer carrying a different number is red.
+func TestQ7NumberEqualsQ3InSameRun(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "Q7")
+
+	equal := mcpQ7Observation("По данным источника договоров действующих 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	verdicts := Evaluate(set, question, equal)
+	for _, verdict := range verdicts {
+		if !verdict.Passed {
+			t.Fatalf("equal-number MCP answer failed %s: %s", verdict.ID, verdict.Detail)
+		}
+	}
+
+	different := mcpQ7Observation("По данным источника договоров действующих 5. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	verdicts = Evaluate(set, question, different)
+	number, ok := ruleByID(verdicts, "q7_number")
+	if !ok || number.Passed {
+		t.Fatalf("q7_number = %#v, want FAIL when the MCP number differs from Q3's in the same run", number)
+	}
+	if !strings.Contains(number.Detail, "Q7=5") || !strings.Contains(number.Detail, "Q3=3") {
+		t.Fatalf("q7_number detail = %q, want both numbers", number.Detail)
+	}
+	for _, verdict := range verdicts {
+		if verdict.ID == "q7_number" {
+			continue
+		}
+		if !verdict.Passed && verdict.Hard {
+			t.Fatalf("only q7_number should differ, hard rule %s failed: %s", verdict.ID, verdict.Detail)
+		}
+	}
+}
+
+// TestQ7SourceMustMatchQ3 is card D-19 result 1: the MCP answer must cite the
+// same live source as Q3 in the same run.
+func TestQ7SourceMustMatchQ3(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "Q7")
+
+	other := mcpQ7Observation("Действующих договоров 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	other.Peer.LiveResultSourceID = "conn_other"
+	if verdict, ok := ruleByID(Evaluate(set, question, other), "q7_source"); !ok || verdict.Passed {
+		t.Fatalf("q7_source = %#v, want FAIL when the live source differs from Q3's", verdict)
+	}
+
+	missing := mcpQ7Observation("Действующих договоров 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	missing.LiveResultSourceID = ""
+	if verdict, ok := ruleByID(Evaluate(set, question, missing), "q7_source"); !ok || verdict.Passed {
+		t.Fatalf("q7_source = %#v, want FAIL with no live source", verdict)
+	}
+}
+
+// TestQ7TransportMustBeRecorded: a run without the product's own MCP record is
+// not a question asked through MCP, so the hard rule must reject it.
+func TestQ7TransportMustBeRecorded(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "Q7")
+	observation := mcpQ7Observation("Действующих договоров 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	observation.MCPRecorded = false
+	if verdict, ok := ruleByID(Evaluate(set, question, observation), "q7_mcp"); !ok || verdict.Passed {
+		t.Fatalf("q7_mcp = %#v, want FAIL without the product's MCP record", verdict)
+	}
+}
+
+// TestSignificantNumberDropsCitationMarkers: the reference number inside
+// "[Результат 1]" is not the answer's own number.
+func TestSignificantNumberDropsCitationMarkers(t *testing.T) {
+	for _, testCase := range []struct {
+		answer string
+		want   int
+		ok     bool
+	}{
+		{"Действующих договоров 3. [Результат 1]", 3, true},
+		{"[Результат 1] Действующих договоров 5.", 5, true},
+		{"Данных нет. [1]", 0, false},
+	} {
+		got, ok := SignificantNumber(testCase.answer)
+		if ok != testCase.ok || got != testCase.want {
+			t.Fatalf("SignificantNumber(%q) = %d/%t, want %d/%t", testCase.answer, got, ok, testCase.want, testCase.ok)
+		}
+	}
+}
+
+// TestReportShowsMCPParity pins the cross-transport evidence the card's report
+// needs: the question, the run, green/red, the number and the source.
+func TestReportShowsMCPParity(t *testing.T) {
+	number, peerNumber := 3, 3
+	report := Report{
+		Title: "mcp parity test",
+		Runs: []RunReport{{
+			QuestionID: "Q7", Run: 1, Via: "mcp", MCPRequestID: "req_mcp_1", MCPRecorded: true,
+			Answer: "Действующих договоров 3. [Результат 1]", Number: &number,
+			PeerQuestionID: "Q3", PeerNumber: &peerNumber,
+			LiveResultSourceID: "conn_contract", PeerLiveResultSourceID: "conn_contract",
+		}},
+	}
+	markdown := RenderMarkdown(report)
+	for _, want := range []string{
+		"## MCP parity (card D-19)",
+		"| Q7 | 1 | 3 | Q3 | 3 | conn_contract | conn_contract | yes (`req_mcp_1`) |",
+		"- Via: `mcp`; MCP request id `req_mcp_1`",
+		"- Number: 3; peer Q3 number: 3;",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("report does not contain %q:\n%s", want, markdown)
+		}
 	}
 }

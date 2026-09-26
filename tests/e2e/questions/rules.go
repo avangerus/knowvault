@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -184,7 +185,16 @@ type Question struct {
 	MaxChars    int     `json:"max_chars"`
 	Expectation string  `json:"expectation"`
 	ValueNote   string  `json:"value_note"`
-	Checks      []Check `json:"checks"`
+	// Via names the surface the runner must ask this question through: empty
+	// is the chat/service path, "mcp" is the product's MCP server the way an
+	// outside agent asks it. The question set owns the choice, so a new
+	// transport question is data and not harness code.
+	Via string `json:"via,omitempty"`
+	// ComparesTo names the question whose answer this question must match in
+	// the same full run: the same number and the same live source. It is the
+	// cross-transport parity hook (card D-19 Q7 against Q3).
+	ComparesTo string  `json:"compares_to,omitempty"`
+	Checks     []Check `json:"checks"`
 }
 
 // Check is one per-question rule. Group is "hard" unless it names a value or
@@ -196,9 +206,15 @@ type Check struct {
 	Group string   `json:"group"`
 	Text  string   `json:"text"`
 	Texts []string `json:"texts"`
-	Min   int      `json:"min"`
-	Max   int      `json:"max"`
-	Value string   `json:"value"`
+	// With is the second stem group of stems_in_same_sentence: the check passes
+	// when one sentence carries a stem from Texts and a stem from With, in any
+	// order and any grammatical form. H5 uses it so that a correct statement of
+	// "cannot be read yet" or of "confirming the tables makes it readable" is
+	// accepted however the answer words or orders it.
+	With []string `json:"with,omitempty"`
+	Min  int      `json:"min"`
+	Max  int      `json:"max"`
+	Value string  `json:"value"`
 }
 
 // LoadSet reads and validates the data file.
@@ -247,6 +263,14 @@ func ParseSet(raw []byte) (*Set, error) {
 		if question.Language != "ru" && question.Language != "en" {
 			return nil, fmt.Errorf("question %s has unsupported language %q", question.ID, question.Language)
 		}
+		if question.Via != "" && question.Via != "mcp" {
+			return nil, fmt.Errorf("question %s has unsupported via %q", question.ID, question.Via)
+		}
+	}
+	for _, question := range set.Questions {
+		if question.ComparesTo != "" && !seen[question.ComparesTo] {
+			return nil, fmt.Errorf("question %s compares to unknown question %q", question.ID, question.ComparesTo)
+		}
 	}
 	return &set, nil
 }
@@ -276,6 +300,17 @@ type ToolCall struct {
 	MainArgument string
 }
 
+// PeerObservation is the same-run projection of the question a question's
+// compares_to names. The judge uses it for the cross-transport parity checks
+// (card D-19: Q7 asked through MCP must give Q3's number and live source).
+type PeerObservation struct {
+	QuestionID         string
+	Answer             string
+	LiveResultKind     string
+	LiveResultSourceID string
+	LiveResultReceipt  string
+}
+
 // Observation is everything the judge knows about one run.
 type Observation struct {
 	QuestionID        string
@@ -297,6 +332,20 @@ type Observation struct {
 	// a LIVE_TABLE result with its receipt digest.
 	LiveResultKind    string
 	LiveResultReceipt string
+	// LiveResultSourceID is the workspace source the run's governed live read
+	// ran against; empty for a non-live answer and for an administrator-
+	// governed read that is bound by result_digest alone.
+	LiveResultSourceID string
+	// ViaMCP is true when this run was asked through the product's MCP server
+	// rather than the chat/service path.
+	ViaMCP bool
+	// MCPRecorded is true when the product's own durable record ties this run
+	// to the MCP HTTP request (the run's question.created audit event carries
+	// the MCP transport's request id).
+	MCPRecorded bool
+	// Peer is the same-run observation of Question.ComparesTo; nil when the
+	// question stands alone or the peer run is missing.
+	Peer *PeerObservation
 	// StatusFieldName is the response field the verification rule reads; it is
 	// reported so the report names the exact field.
 	StatusFieldName string
@@ -342,10 +391,26 @@ type RunReport struct {
 	// DatabaseName and DatabaseAwaitingConfirmation are read from the product
 	// just before this run's question was asked. They are set for H5, which
 	// asks about a database whose tables await confirmation.
-	DatabaseName                 string        `json:"database_name,omitempty"`
-	DatabaseAwaitingConfirmation bool          `json:"database_awaiting_confirmation,omitempty"`
-	Verdicts                     []RuleVerdict `json:"verdicts"`
-	Passed                       bool          `json:"passed"`
+	DatabaseName                 string `json:"database_name,omitempty"`
+	DatabaseAwaitingConfirmation bool   `json:"database_awaiting_confirmation,omitempty"`
+	// Via names the surface this run was asked through: empty for the
+	// chat/service path, "mcp" for the product's MCP server (card D-19).
+	Via string `json:"via,omitempty"`
+	// MCPRequestID is the product request id of the MCP HTTP call, and
+	// MCPRecorded is true when the product's own record of the run ties it to
+	// that request id.
+	MCPRequestID string `json:"mcp_request_id,omitempty"`
+	MCPRecorded  bool   `json:"mcp_recorded,omitempty"`
+	// LiveResultSourceID is the workspace source the run's governed live read
+	// ran against; Number and PeerNumber are the answers' significant numbers
+	// for the report's cross-transport parity row.
+	LiveResultSourceID     string        `json:"live_result_source_id,omitempty"`
+	PeerQuestionID         string        `json:"peer_question_id,omitempty"`
+	PeerLiveResultSourceID string        `json:"peer_live_result_source_id,omitempty"`
+	Number                 *int          `json:"number,omitempty"`
+	PeerNumber             *int          `json:"peer_number,omitempty"`
+	Verdicts               []RuleVerdict `json:"verdicts"`
+	Passed                 bool          `json:"passed"`
 }
 
 // QuestionVerdict is the 3-of-3 / 2-of-3 aggregate for one question.
@@ -623,6 +688,14 @@ func evaluateCheck(set *Set, question Question, check Check, observation Observa
 		} else {
 			result.Detail = "no empty result"
 		}
+	case "stems_in_same_sentence":
+		// The answer states one thought in any wording or word order: one
+		// sentence must carry a stem from Texts and a stem from With. H5 uses
+		// it for "cannot be read yet" and for "confirming the tables makes it
+		// readable", which Russian words in many orders and forms.
+		matched, detail := stemsInOneSentence(answer, check.Texts, check.With)
+		result.Passed = matched
+		result.Detail = detail
 	case "question_marks":
 		count := strings.Count(answer, "?")
 		result.Passed = count >= check.Min && count <= check.Max
@@ -650,6 +723,37 @@ func evaluateCheck(set *Set, question Question, check Check, observation Observa
 		}
 		result.Passed = containsStandaloneNumber(answer, expected)
 		result.Detail = fmt.Sprintf("expected %d", expected)
+	case "number_equals_peer":
+		peerID := question.ComparesTo
+		peerAnswer := ""
+		if observation.Peer != nil {
+			peerAnswer = observation.Peer.Answer
+			if observation.Peer.QuestionID != "" {
+				peerID = observation.Peer.QuestionID
+			}
+		}
+		own, ownOK := SignificantNumber(answer)
+		peer, peerOK := SignificantNumber(peerAnswer)
+		result.Passed = ownOK && peerOK && own == peer
+		result.Detail = fmt.Sprintf("%s=%s peer %s=%s", question.ID, numberText(own, ownOK), peerID, numberText(peer, peerOK))
+	case "source_equals_peer":
+		peerID := question.ComparesTo
+		peerSource := ""
+		peerLive := false
+		if observation.Peer != nil {
+			if observation.Peer.QuestionID != "" {
+				peerID = observation.Peer.QuestionID
+			}
+			peerSource = observation.Peer.LiveResultSourceID
+			peerLive = observation.Peer.LiveResultKind == "LIVE_TABLE" && observation.Peer.LiveResultReceipt != ""
+		}
+		ownLive := observation.LiveResultKind == "LIVE_TABLE" && observation.LiveResultReceipt != ""
+		result.Passed = ownLive && peerLive && observation.LiveResultSourceID != "" && observation.LiveResultSourceID == peerSource
+		result.Detail = fmt.Sprintf("%s source=%q live=%t; peer %s source=%q live=%t",
+			question.ID, observation.LiveResultSourceID, ownLive, peerID, peerSource, peerLive)
+	case "mcp_transport_recorded":
+		result.Passed = observation.ViaMCP && observation.MCPRecorded
+		result.Detail = fmt.Sprintf("via_mcp=%t product_record=%t", observation.ViaMCP, observation.MCPRecorded)
 	case "time_limit_s":
 		result.Passed = observation.Seconds <= question.TimeLimitS
 		result.Detail = fmt.Sprintf("%.2fs of %.0fs", observation.Seconds, question.TimeLimitS)
@@ -752,6 +856,37 @@ func containsStandaloneNumber(answer string, expected int) bool {
 	return pattern.MatchString(answer)
 }
 
+// citationMarker matches the server-rendered citation markers a live result
+// and an evidence citation add to the prose ("[Результат 1]", "[1]"). A
+// number inside a marker is a reference number, never the answer's own count,
+// so the significant-number reader drops the markers before reading.
+var citationMarker = regexp.MustCompile(`\[[^\]]*\]`)
+
+var standaloneInteger = regexp.MustCompile(`(^|[^0-9])([0-9]+)([^0-9]|$)`)
+
+// SignificantNumber reads the first number the answer itself states outside a
+// citation marker. It is the number the cross-transport parity rule compares
+// (card D-19: Q7's count must equal Q3's in the same run).
+func SignificantNumber(answer string) (int, bool) {
+	prose := citationMarker.ReplaceAllString(answer, " ")
+	match := standaloneInteger.FindStringSubmatchIndex(prose)
+	if match == nil {
+		return 0, false
+	}
+	value, err := strconv.Atoi(prose[match[4]:match[5]])
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func numberText(value int, ok bool) string {
+	if !ok {
+		return "none"
+	}
+	return strconv.Itoa(value)
+}
+
 func nonEmptyLines(answer string) []string {
 	lines := []string{}
 	for _, line := range strings.Split(answer, "\n") {
@@ -763,13 +898,68 @@ func nonEmptyLines(answer string) []string {
 }
 
 func sentenceCount(answer string) int {
-	count := 0
-	for _, part := range regexp.MustCompile(`[.!?…]+`).Split(strings.ReplaceAll(answer, "\n", " "), -1) {
+	return len(sentences(answer))
+}
+
+// sentences splits the answer into non-empty sentences, the same way
+// sentenceCount does, so a rule that looks at one sentence agrees with the
+// sentence limit.
+func sentences(answer string) []string {
+	parts := regexp.MustCompile(`[.!?…]+`).Split(strings.ReplaceAll(answer, "\n", " "), -1)
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
 		if strings.TrimSpace(part) != "" {
-			count++
+			result = append(result, part)
 		}
 	}
-	return count
+	return result
+}
+
+// stemsInOneSentence reports whether one sentence carries a stem from first and
+// a stem from second, in any order. Russian inflects heavily, so the question
+// set gives stems ("чит", "подтвер") rather than whole words; matching folds
+// the case and writes ё as е. In the second group a stem of three letters or
+// fewer is matched as a whole word, so the negation "не" is not found inside
+// "менее"; stems in the first group are always substrings, so "чит" finds
+// "читается".
+func stemsInOneSentence(answer string, first, second []string) (bool, string) {
+	for _, sentence := range sentences(answer) {
+		folded := foldRussian(sentence)
+		left := firstStem(folded, first, false)
+		if left == "" {
+			continue
+		}
+		right := firstStem(folded, second, true)
+		if right == "" {
+			continue
+		}
+		return true, fmt.Sprintf("%q with %q in %q", left, right, strings.TrimSpace(sentence))
+	}
+	return false, "no sentence states it"
+}
+
+func firstStem(folded string, stems []string, shortAsWord bool) string {
+	for _, stem := range stems {
+		needle := foldRussian(stem)
+		if needle == "" {
+			continue
+		}
+		if !shortAsWord || len([]rune(needle)) > 3 {
+			if strings.Contains(folded, needle) {
+				return stem
+			}
+			continue
+		}
+		pattern := `(^|[^\p{L}])` + regexp.QuoteMeta(needle) + `([^\p{L}]|$)`
+		if regexp.MustCompile(pattern).MatchString(folded) {
+			return stem
+		}
+	}
+	return ""
+}
+
+func foldRussian(text string) string {
+	return strings.ReplaceAll(strings.ToLower(text), "ё", "е")
 }
 
 // stripCode removes fenced code blocks and inline code spans so the language

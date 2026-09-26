@@ -1078,6 +1078,7 @@
     "tests/integration/postgres/durable_jobs_test.go": "59492659dfe175485f7ead73a8c78ebd3949d63bb7ef0353280b576b91a63f64",
     "tests/integration/postgres/e1a_questionset_env_test.go": "e9ac0a85460a3f963cc757da082e251f4213ac1bce5209de09fc7521100c436b",
     "tests/integration/postgres/e1a_questionset_h5_test.go": "c581e4c8f57af9fa4c29e579fe26662dc15a7da9e74277caa5edf16cdb96a071",
+    "tests/integration/postgres/e1a_questionset_mcp_test.go": "95e142f5ae4a4b5e79e54e2e16eb781897f61ddbeb08afd70982002240e01def",
     "tests/integration/postgres/e1a_questionset_source_test.go": "814d6d0f75b7819029aa1495d23ca8580cd5307ee1bbaff4e0e7e2e471228b3f",
     "tests/integration/postgres/e1a_questionset_test.go": "dc4b1a719c7677b8ec7921d8e0c54d43008fc07fd565bf5dfd13424f47e531db",
     "tests/integration/postgres/encrypted_artifact_runtime_test.go": "000affb7022402300946f310354e52e1607c6765fd27fb96b8aadae772c3a158",

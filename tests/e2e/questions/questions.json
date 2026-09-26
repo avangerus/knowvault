@@ -293,6 +293,26 @@
       ]
     },
     {
+      "id": "Q7",
+      "text": "Сколько договоров действует?",
+      "language": "ru",
+      "via": "mcp",
+      "compares_to": "Q3",
+      "max_steps": 4,
+      "time_limit_s": 40,
+      "max_chars": 1200,
+      "expectation": "Счётный вопрос Q3, заданный через MCP-сервер продукта так, как его задаёт внешний агент: тот же номер и тот же живой источник, что и у Q3 в том же прогоне.",
+      "value_note": "The answer's number and live source must equal Q3's in the same full run; the run must also have arrived through the product's MCP server, which the product's own question.created record shows by carrying the MCP request id.",
+      "checks": [
+        {"id": "q7_number_present", "type": "contains_number", "hard": true},
+        {"id": "q7_source", "type": "source_equals_peer", "hard": true},
+        {"id": "q7_number", "type": "number_equals_peer", "hard": true},
+        {"id": "q7_mcp", "type": "mcp_transport_recorded", "hard": true},
+        {"id": "q7_value", "type": "value_equals", "hard": false, "group": "value", "value": "A"},
+        {"id": "q7_time", "type": "time_limit_s", "hard": false, "group": "time"}
+      ]
+    },
+    {
       "id": "Q8",
       "text": "какие есть источники?",
       "language": "ru",
@@ -475,12 +495,11 @@
       "checks": [
         {"id": "h5_sentences", "type": "max_sentences", "hard": true, "max": 2},
         {"id": "h5_database", "type": "mentions_literally", "hard": true, "min": 1, "texts": ["Заявки"]},
-        {"id": "h5_unreadable", "type": "contains_phrase", "hard": true,
-         "texts": ["не читается", "недоступн", "нельзя прочитать", "не можем прочитать",
-           "не могу прочитать", "не удаётся прочитать", "не удается прочитать",
-           "нет доступа", "не получится прочитать", "не открывается"]},
-        {"id": "h5_readable", "type": "contains_phrase", "hard": true,
-         "texts": ["подтвердите", "подтвердить", "подтверждени", "подтверждению"]},
+        {"id": "h5_unreadable", "type": "stems_in_same_sentence", "hard": true,
+         "texts": ["чит", "чтен", "доступ", "открыва", "открыт", "получ", "извлеч", "загруж", "просмотр", "запрос", "подключ"],
+         "with": ["не", "нет", "нельзя", "невозможно", "без", "недоступ", "отсутств", "закрыт", "отключ", "неактивн"]},
+        {"id": "h5_readable", "type": "stems_in_same_sentence", "hard": true,
+         "texts": ["подтвер"], "with": ["таблиц"]},
         {"id": "h5_tables", "type": "contains_phrase", "hard": true, "texts": ["таблиц"]},
         {"id": "h5_no_sql", "type": "max_sql_calls", "hard": true, "max": 0},
         {"id": "h5_no_empty_result", "type": "no_empty_result", "hard": true,
