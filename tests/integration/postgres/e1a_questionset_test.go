@@ -139,6 +139,73 @@ func TestQuestionSetSmoke(t *testing.T) {
 	}
 }
 
+// TestQuestionSetH5KeepsTheRestOfTheSet pins result 2 of card E-2
+// deterministically: with the H5 database prepared, every question other than
+// H5 gets exactly the verdicts it got without it, because H5's database is
+// bound only when the run reaches H5. The stub model makes the two runs
+// comparable answer for answer.
+func TestQuestionSetH5KeepsTheRestOfTheSet(t *testing.T) {
+	ctx := context.Background()
+	set := loadE1aSet(t)
+	stub := questions.NewStubModel()
+	server := httptest.NewServer(stub)
+	defer server.Close()
+
+	runSet := func(t *testing.T, opts e1aEnvOptions) []questions.RunReport {
+		t.Helper()
+		adapter, err := modelgateway.NewLabAdapter(modelgateway.LabAdapterConfig{
+			SchemaVersion: modelgateway.LabAdapterSchemaVersion, Endpoint: server.URL, ModelID: "e1a-stub",
+			MaxOutputTokens: 4096, InsecureLabMode: true, ThinkingMode: modelgateway.ThinkingModeDisabled,
+			ToolLoop: &modelgateway.ToolLoopProfile{
+				ID: "steps-2", MaxTurns: 2, MaxToolCalls: 2, MaxInputBytes: 262144,
+				MaxToolResultBytes: 65536, MaxOutputTokens: 4096, TimeoutSeconds: 120,
+			},
+		})
+		if err != nil {
+			t.Fatalf("stub adapter: %v", err)
+		}
+		defer adapter.Close()
+		env := buildE1aEnvironment(t, ctx, resetStage1Database(t), set, opts)
+		env.Questions.EnableGeneration(adapter, nil)
+		return e1aRunQuestionSet(t, ctx, env, func(questions.Question) string { return "" })
+	}
+
+	without := runSet(t, e1aEnvOptions{SourceIdentity: "pgdb-e2-keep-without"})
+	with := runSet(t, e1aEnvOptions{
+		SourceIdentity: "pgdb-e2-keep-with", H5Source: &set.Environment.UnconfirmedDatabase.Source,
+		H5SourceIdentity: "pgdb-e2-keep-with-h5",
+	})
+
+	key := func(run questions.RunReport) string { return fmt.Sprintf("%s/%d", run.QuestionID, run.Run) }
+	byKey := map[string]questions.RunReport{}
+	for _, run := range without {
+		byKey[key(run)] = run
+	}
+	if len(byKey) != len(without) || len(with) != len(without) {
+		t.Fatalf("runs differ: %d without, %d with", len(without), len(with))
+	}
+	for _, run := range with {
+		before, ok := byKey[key(run)]
+		if !ok {
+			t.Fatalf("run %s is missing from the run without the H5 database", key(run))
+		}
+		if run.QuestionID == "H5" {
+			continue
+		}
+		if run.Passed != before.Passed {
+			t.Fatalf("%s green/red changed from %t to %t when H5 was added", key(run), before.Passed, run.Passed)
+		}
+		if len(run.Verdicts) != len(before.Verdicts) {
+			t.Fatalf("%s verdict count changed from %d to %d", key(run), len(before.Verdicts), len(run.Verdicts))
+		}
+		for index, verdict := range run.Verdicts {
+			if verdict.ID != before.Verdicts[index].ID || verdict.Passed != before.Verdicts[index].Passed {
+				t.Fatalf("%s rule %s changed from %+v to %+v", key(run), verdict.ID, before.Verdicts[index], verdict)
+			}
+		}
+	}
+}
+
 // TestQuestionSetRealModel is the card's one command. It requires the DeepSeek
 // key file and Docker; it is skipped, never silently passed, without the key.
 func TestQuestionSetRealModel(t *testing.T) {
