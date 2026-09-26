@@ -458,7 +458,8 @@ func TestRecentToolLoopConversationTurnsRequireEarlierTerminalDisplayableRuns(t 
 		// clarification) and the reauthorized citation addresses it used,
 		// never anything the GetBatch map did not already survive on.
 		"answer = run.Clarification",
-		"toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)}",
+		// Its prior SQL comes from the same surviving run's own trace.
+		"toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations), Queries: toolLoopConversationQueries(run.ToolLoop)}",
 	} {
 		if !strings.Contains(helper, required) {
 			t.Fatalf("surviving-run projection is missing %q", required)
@@ -532,6 +533,50 @@ func TestToolLoopConversationTurnsFromBatchCarryAnswerAndSources(t *testing.T) {
 	}
 	if want := []string{"kv1:src_policy/v3#f_sla"}; !reflect.DeepEqual(answered.Sources, want) {
 		t.Fatalf("answered turn sources = %#v, want deduplicated %#v", answered.Sources, want)
+	}
+}
+
+
+// A follow-up ("а без дополнительных соглашений?") must refine the prior
+// answer's own selection. The prior run's successful SQL is carried as
+// context -- refused, duplicate, and other tools' calls are not -- and it
+// reaches the model inside the marked, untrusted history message.
+func TestToolLoopConversationTurnsCarryPriorSuccessfulSQL(t *testing.T) {
+	sqlCall := func(statement, outcome string) ToolCallRecord {
+		arguments, err := json.Marshal(map[string]string{"source_id": "conn_gm", "sql": statement})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ToolCallRecord{Name: sourceSQLToolName, Arguments: arguments, Outcome: outcome}
+	}
+	const counted = "SELECT count(*) FROM contract WHERE expiration_date >= current_date"
+	const refused = "SELECT count(*) FROM contract JOIN secret ON true"
+	runs := map[string]Run{"run_count": {
+		Question: "Сколько договоров действует?",
+		Answer:   "Действует 5857 договоров.",
+		ToolLoop: &ToolLoopRecord{Calls: []ToolCallRecord{
+			sqlCall(refused, "REFUSED"),
+			{Name: "knowvault_source_schema", Arguments: json.RawMessage(`{"sql":"not a statement"}`), Outcome: "SUCCEEDED"},
+			sqlCall(counted, "SUCCEEDED"),
+			sqlCall(counted, "SUCCEEDED"),
+			sqlCall("SELECT "+strings.Repeat("x,", toolLoopConversationQueryByteLimit)+"1", "SUCCEEDED"),
+		}},
+	}}
+	history := toolLoopConversationTurnsFromBatch([]string{"run_count"}, runs)
+	if want := []string{counted}; len(history) != 1 || !reflect.DeepEqual(history[0].Queries, want) {
+		t.Fatalf("history = %#v, want only the one successful statement %q", history, counted)
+	}
+	messages := toolLoopHistoryMessages(history, 64*1024)
+	if len(messages) != 1 || !strings.HasPrefix(messages[0].Content, toolLoopHistoryMarker) ||
+		!strings.Contains(messages[0].Content, toolLoopHistoryQueriesLabel+counted) {
+		t.Fatalf("history messages = %#v, want the prior SQL inside the marked context", messages)
+	}
+	// The newest turn keeps its SQL even when its answer must be truncated.
+	history[0].Answer = strings.Repeat("д", 8*1024)
+	messages = toolLoopHistoryMessages(history, 64*1024)
+	if len(messages) != 1 || !strings.Contains(messages[0].Content, counted) ||
+		!strings.HasSuffix(messages[0].Content, toolLoopHistoryTruncationMarker) {
+		t.Fatalf("truncated newest turn lost its SQL: %q", messages[0].Content)
 	}
 }
 

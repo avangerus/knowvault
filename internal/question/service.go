@@ -3933,6 +3933,13 @@ type toolLoopConversationTurn struct {
 	// from scratch. An address alone cannot become a citation: it must still
 	// be read again in this run before it can support a new claim.
 	Sources []string
+	// Queries are the SQL statements the prior answer ran successfully
+	// through knowvault_source_sql, in call order. They carry the prior
+	// answer's working definitions (which relations, which filter) so a
+	// follow-up can refine the same selection instead of re-deriving it. Like
+	// Sources they are context only: a statement must be run again in this
+	// run before its result can support a claim.
+	Queries []string
 }
 
 // recentToolLoopConversationTurns loads the most recent readable turns before
@@ -4021,7 +4028,7 @@ func toolLoopConversationTurnsFromBatch(runIDs []string, runs map[string]Run) []
 		if answer == "" {
 			answer = run.Clarification
 		}
-		turns = append(turns, toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations)})
+		turns = append(turns, toolLoopConversationTurn{Question: run.Question, Answer: answer, Sources: toolLoopConversationSources(run.Citations), Queries: toolLoopConversationQueries(run.ToolLoop)})
 	}
 	return turns
 }
@@ -4047,6 +4054,52 @@ func toolLoopConversationSources(citations []Citation) []string {
 		sources = append(sources, citation.Address)
 	}
 	return sources
+}
+
+// toolLoopConversationQueryLimit bounds how many prior statements, and
+// toolLoopConversationQueryByteLimit how long each, one prior turn contributes.
+// The per-run SQL budget is three, so the count bound never drops a statement
+// from a well-formed run.
+const (
+	toolLoopConversationQueryLimit     = 3
+	toolLoopConversationQueryByteLimit = 1024
+)
+
+// toolLoopConversationQueries returns the distinct SQL statements the prior
+// run executed successfully through knowvault_source_sql. A refused statement
+// is left out: it defined nothing the prior answer relied on. A statement
+// longer than toolLoopConversationQueryByteLimit is left out whole rather than
+// cut, so the model never sees a truncated, different selection.
+func toolLoopConversationQueries(record *ToolLoopRecord) []string {
+	if record == nil {
+		return nil
+	}
+	var queries []string
+	seen := map[string]struct{}{}
+	for _, call := range record.Calls {
+		if call.Name != sourceSQLToolName || call.Outcome != "SUCCEEDED" || call.Result.IsError {
+			continue
+		}
+		var arguments struct {
+			SQL string `json:"sql"`
+		}
+		if jsonv2.Unmarshal(call.Arguments, &arguments) != nil {
+			continue
+		}
+		statement := strings.TrimSpace(arguments.SQL)
+		if statement == "" || len(statement) > toolLoopConversationQueryByteLimit {
+			continue
+		}
+		if _, exists := seen[statement]; exists {
+			continue
+		}
+		seen[statement] = struct{}{}
+		queries = append(queries, statement)
+		if len(queries) == toolLoopConversationQueryLimit {
+			break
+		}
+	}
+	return queries
 }
 
 var errPreviousTurnUnreadable = errors.New("question: previous turn not currently readable")
