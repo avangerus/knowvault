@@ -91,18 +91,24 @@ verification status field is the response's `status` with
 whose tables are bound to the workspace but whose confirmation is never minted.
 Its own container is `kv-card-e-2-pg` on 55622 with database `knowvault_test`,
 and the one command starts and removes it like the two card containers. `H5`
-asks a count question about its data; it is green only when the answer is at
-most two sentences, names «Заявки», says the database cannot be read yet, says
-that confirming its tables is what makes it readable, and the run recorded no
-`knowvault_source_sql` call. A bare zero count or a "no records" answer is red.
+asks a count question about its data.
 
-The two statements are judged by `stems_in_same_sentence`: one sentence must
-carry a stem from `texts` and a stem from `with`, in any order and any
-grammatical form, so «не читается» and «прочитать пока нельзя», «таблицы не
-подтверждены» and «как только таблицы подтвердят» are all accepted. The stems
-are data in `questions.json`; the engine only matches them, folded to lower case
-with ё written as е. A stem of three letters or fewer is matched as a whole
-word, so the negation `не` is not found inside `менее`.
+Its automatic checks decide only what a rule can decide: the answer must be at
+most two sentences, name «Заявки», speak of confirming its tables, and the run
+must have recorded no `knowvault_source_sql` call; a bare zero count or a "no
+records" answer is red. What the answer must mean — the database cannot be read
+yet, and confirming its tables is what makes it readable — is the question's
+`value_note`, which acceptance judges by reading the answers. It is deliberately
+not a rule: Russian words that meaning in more ways than a check can enumerate,
+and a rule that tried turned correct answers red (RETURN-1, RETURN-2).
+
+The "speaks of confirming its tables" check is `stems_in_answer`: the answer
+must carry a stem from `texts` and a stem from `with` anywhere, in any order,
+sentence and grammatical form, so «таблицы не подтверждены», «подтвердите
+таблицы» and «как только таблицы подтвердят» are all accepted. The stems are
+data in `questions.json`; the engine only matches them, folded to lower case
+with ё written as е. The database name is matched case-insensitively and across
+its case endings.
 
 The one command reads the product's own source status immediately before asking
 each `H5` run and records it in the report; if the database's tables are

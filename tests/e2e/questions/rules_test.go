@@ -252,9 +252,10 @@ func h5Observation(answer string) Observation {
 }
 
 // TestH5CompliantAnswerPassesAndFailureModesFail pins result 1 of card E-2: a
-// short answer that names the database, says it cannot be read yet, says that
-// confirming its tables makes it readable and makes no SQL call is green; a
-// SQL call, a third sentence and an empty result each make H5 red.
+// short answer that names the database and speaks of confirming its tables is
+// green, and each rule-decidable failure mode makes H5 red: a SQL call, a third
+// sentence, an answer that does not name the database, one silent about
+// confirming its tables, and an empty result.
 func TestH5CompliantAnswerPassesAndFailureModesFail(t *testing.T) {
 	set := testSet(t)
 	question := testQuestion(t, set, "H5")
@@ -280,6 +281,19 @@ func TestH5CompliantAnswerPassesAndFailureModesFail(t *testing.T) {
 		t.Fatalf("h5_sentences = %#v, want FAIL for three sentences", verdict)
 	}
 
+	// An answer that never names the database, however well it words the rest.
+	unnamed := h5Observation("Данные пока нельзя загрузить, её таблицы ждут подтверждения. Подтвердите таблицы.")
+	if verdict, ok := ruleByID(Evaluate(set, question, unnamed), "h5_database"); !ok || verdict.Passed {
+		t.Fatalf("h5_database = %#v, want FAIL without the database name", verdict)
+	}
+
+	// An answer that names the database and the trouble but never speaks of
+	// confirming its tables.
+	silent := h5Observation("База «Заявки» пока не читается: к данным нет доступа.")
+	if verdict, ok := ruleByID(Evaluate(set, question, silent), "h5_confirm_tables"); !ok || verdict.Passed {
+		t.Fatalf("h5_confirm_tables = %#v, want FAIL when the answer is silent about confirming the tables", verdict)
+	}
+
 	// A zero count and an explicit no-records sentence both present an empty
 	// result and are rejected by the rule that exists for exactly that.
 	for _, answer := range []string{
@@ -293,10 +307,12 @@ func TestH5CompliantAnswerPassesAndFailureModesFail(t *testing.T) {
 	}
 }
 
-// TestH5AcceptsAnyCorrectWording pins the second pass of card E-2: H5 must be
-// green for any correct wording and order of the two statements — the database
-// cannot be read yet, and confirming its tables makes it readable — and red for
-// an answer that does not make them.
+// TestH5AcceptsAnyCorrectWording pins the revised result 1 of card E-2: the
+// automatic checks decide only what a rule can decide, so a correct answer
+// passes them however it words or orders the two statements — the database
+// cannot be read yet, and confirming its tables makes it readable. The meaning
+// itself is judged by acceptance against the question's value note, not by a
+// rule, so a wording the check cannot enumerate is never red for wording alone.
 func TestH5AcceptsAnyCorrectWording(t *testing.T) {
 	set := testSet(t)
 	question := testQuestion(t, set, "H5")
@@ -311,6 +327,11 @@ func TestH5AcceptsAnyCorrectWording(t *testing.T) {
 		"Чтение базы «Заявки» пока невозможно. Таблицы нужно подтвердить.",
 		"Нет доступа к базе «Заявки»; чтобы читать её, подтвердите её таблицы.",
 		"База «Заявки» ещё не готова к чтению: её таблицы не подтверждены. Как только таблицы подтвердят, она откроется.",
+		// The wording RETURN-2 reported as wrongly red: the data cannot be
+		// loaded yet because the tables await confirmation.
+		"Данные базы «Заявки» пока нельзя загрузить, потому что её таблицы ждут подтверждения. Подтвердите таблицы, чтобы получить данные.",
+		"Данные из базы «Заявки» не выгружаются, пока её таблицы не подтверждены. Подтвердите таблицы.",
+		"База «Заявки» ждёт подтверждения таблиц. Её данные пока не загружены.",
 	}
 	for _, answer := range correct {
 		for _, verdict := range Evaluate(set, question, h5Observation(answer)) {
@@ -319,29 +340,22 @@ func TestH5AcceptsAnyCorrectWording(t *testing.T) {
 			}
 		}
 	}
+}
 
-	wrong := []string{
-		"В базе «Заявки» 5 заявок, таблицы подтверждены.",
-		"База «Заявки» пока не читается.",
-		"Подтвердите таблицы базы «Заявки», и она откроется.",
-		"Таблицы базы «Заявки» ждут подтверждения.",
-		"База «Заявки» не читается, в ней 0 заявок. Таблицы ждут подтверждения.",
-		"В базе «Заявки» нет записей. Таблицы не подтверждены.",
-		// "менее" contains the letters "не" but is not the negation, so an
-		// answer that says the database can be read must stay red.
-		"Прочитать базу «Заявки» можно, в ней менее 5 заявок, таблицы подтверждены.",
-		"Доступ к базе «Заявки» открыт, таблицы подтверждены.",
+// TestH5CarriesTheValueNote pins result 1 of card E-2: what the answer must
+// mean — the database cannot be read yet, and confirming its tables makes it
+// readable — is the question's value note, which acceptance judges by reading
+// the answers.
+func TestH5CarriesTheValueNote(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "H5")
+	if strings.TrimSpace(question.ValueNote) == "" {
+		t.Fatal("H5 carries no value note")
 	}
-	for _, answer := range wrong {
-		failed := ""
-		for _, verdict := range Evaluate(set, question, h5Observation(answer)) {
-			if !verdict.Passed && verdict.Hard {
-				failed = verdict.ID + ": " + verdict.Detail
-				break
-			}
-		}
-		if failed == "" {
-			t.Fatalf("H5 accepted a wrong answer %q", answer)
+	note := strings.ToLower(question.ValueNote)
+	for _, want := range []string{"cannot be read", "confirm", "table", "заявки"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("H5 value note does not state %q: %q", want, question.ValueNote)
 		}
 	}
 }

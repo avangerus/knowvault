@@ -206,15 +206,15 @@ type Check struct {
 	Group string   `json:"group"`
 	Text  string   `json:"text"`
 	Texts []string `json:"texts"`
-	// With is the second stem group of stems_in_same_sentence: the check passes
-	// when one sentence carries a stem from Texts and a stem from With, in any
-	// order and any grammatical form. H5 uses it so that a correct statement of
-	// "cannot be read yet" or of "confirming the tables makes it readable" is
-	// accepted however the answer words or orders it.
-	With []string `json:"with,omitempty"`
-	Min  int      `json:"min"`
-	Max  int      `json:"max"`
-	Value string  `json:"value"`
+	// With is the second stem group of stems_in_answer: the check passes when the
+	// answer carries a stem from Texts and a stem from With, in any order, any
+	// sentence and any grammatical form. H5 uses it to see that the answer
+	// speaks of confirming the tables, which is all a rule can decide; what the
+	// answer must mean is the question's value note.
+	With  []string `json:"with,omitempty"`
+	Min   int      `json:"min"`
+	Max   int      `json:"max"`
+	Value string   `json:"value"`
 }
 
 // LoadSet reads and validates the data file.
@@ -688,12 +688,13 @@ func evaluateCheck(set *Set, question Question, check Check, observation Observa
 		} else {
 			result.Detail = "no empty result"
 		}
-	case "stems_in_same_sentence":
-		// The answer states one thought in any wording or word order: one
-		// sentence must carry a stem from Texts and a stem from With. H5 uses
-		// it for "cannot be read yet" and for "confirming the tables makes it
-		// readable", which Russian words in many orders and forms.
-		matched, detail := stemsInOneSentence(answer, check.Texts, check.With)
+	case "stems_in_answer":
+		// The answer carries a stem from Texts and a stem from With anywhere,
+		// in any order, sentence and grammatical form. H5 uses it to see that
+		// the answer speaks of confirming the tables; the meaning of the answer
+		// (the database cannot be read yet, confirming tables makes it
+		// readable) is the question's value note, which a rule cannot decide.
+		matched, detail := stemsInAnswer(answer, check.Texts, check.With)
 		result.Passed = matched
 		result.Detail = detail
 	case "question_marks":
@@ -915,43 +916,31 @@ func sentences(answer string) []string {
 	return result
 }
 
-// stemsInOneSentence reports whether one sentence carries a stem from first and
-// a stem from second, in any order. Russian inflects heavily, so the question
-// set gives stems ("чит", "подтвер") rather than whole words; matching folds
-// the case and writes ё as е. In the second group a stem of three letters or
-// fewer is matched as a whole word, so the negation "не" is not found inside
-// "менее"; stems in the first group are always substrings, so "чит" finds
-// "читается".
-func stemsInOneSentence(answer string, first, second []string) (bool, string) {
-	for _, sentence := range sentences(answer) {
-		folded := foldRussian(sentence)
-		left := firstStem(folded, first, false)
-		if left == "" {
-			continue
-		}
-		right := firstStem(folded, second, true)
-		if right == "" {
-			continue
-		}
-		return true, fmt.Sprintf("%q with %q in %q", left, right, strings.TrimSpace(sentence))
+// stemsInAnswer reports whether the answer carries a stem from first and a stem
+// from second, in any order and in any sentence. Russian inflects heavily, so
+// the question set gives stems ("подтвер") rather than whole words; matching
+// folds the case and writes ё as е, so "подтверждение", "подтверждены" and
+// "подтвердят" all carry the stem.
+func stemsInAnswer(answer string, first, second []string) (bool, string) {
+	folded := foldRussian(answer)
+	left := firstStem(folded, first)
+	if left == "" {
+		return false, "no " + strings.Join(first, "/") + " stem"
 	}
-	return false, "no sentence states it"
+	right := firstStem(folded, second)
+	if right == "" {
+		return false, "no " + strings.Join(second, "/") + " stem"
+	}
+	return true, fmt.Sprintf("%q with %q", left, right)
 }
 
-func firstStem(folded string, stems []string, shortAsWord bool) string {
+func firstStem(folded string, stems []string) string {
 	for _, stem := range stems {
 		needle := foldRussian(stem)
 		if needle == "" {
 			continue
 		}
-		if !shortAsWord || len([]rune(needle)) > 3 {
-			if strings.Contains(folded, needle) {
-				return stem
-			}
-			continue
-		}
-		pattern := `(^|[^\p{L}])` + regexp.QuoteMeta(needle) + `([^\p{L}]|$)`
-		if regexp.MustCompile(pattern).MatchString(folded) {
+		if strings.Contains(folded, needle) {
 			return stem
 		}
 	}
