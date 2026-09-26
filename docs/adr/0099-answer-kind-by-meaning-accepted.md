@@ -61,3 +61,38 @@ fix lengthened the lists; the class of defect did not close.
   visible and hidden), not by unit tests.
 - Existing word-list code has to be removed or bypassed, which touches code
   several accepted tasks rely on; the question set guards against regression.
+
+## Amendment 1 (2026-09-26)
+
+**recognition is a separate step, not a paragraph of the answering prompt.**
+
+Context. Two cards implemented decision 1 by adding kind paragraphs to the single answering
+instruction (`toolLoopInstructions`). Each paragraph needed exclusion clauses in other rules, and
+each change moved other questions: D-11 regressed H3, hidden H1, Q12 across three versions; D-13
+did not converge after ~15 wording rounds (Q13 SQL-free 5/9, no fully green full run). Word-based
+classes (greeting, overview, sources, comparison cue) also remained in server code.
+
+Decision.
+4. The kind of a question is recognised by meaning in a dedicated short model call that returns
+   only the kind from a closed list; the answering call does not recognise kinds and its
+   instruction carries no kind paragraphs or cross-kind exclusions. The default kind on doubt or
+   error is the full tool loop.
+5. Each kind has its own deterministic route: a server-rendered answer, or a kind-specific
+   prompt with only the tools that kind needs. A rule of one kind never appears in another
+   kind's prompt. Short kinds are never mounted with SQL or live-data tools.
+6. The recognised kind is recorded in the run record and reported per run by the question set.
+   Recognition is measured in bulk on real-model runs of phrasings (visible, hidden, acceptor's
+   own), three runs each, against a stated threshold; routes and renderers are covered by
+   deterministic tests. Decision 3 stands: a unit test over phrasings does not prove recognition.
+7. The remaining word-based classes in server code (greeting, workspace overview, sources) move
+   to the same recognition step; decision 1 is considered met only when none remain.
+
+Alternatives considered. One growing instruction prompt — rejected on the evidence above:
+each kind added made the others less reliable. Kind-specific answer tools in the single call —
+keeps the competing rules and mounted SQL tools in one context; may be used inside the full
+route later, not as the recognition mechanism.
+
+Consequences. One extra short call per question (≈ +700 input tokens, ≈ +1 s); the answering
+prompt shrinks by the kind paragraphs; a new kind is one definition plus one route, with no edit
+to other routes; misrecognition becomes a single measurable event instead of a diffuse
+regression.

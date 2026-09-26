@@ -12,20 +12,25 @@ import (
 
 // Report is the machine-readable run report.
 type Report struct {
-	SchemaVersion string            `json:"schema_version"`
-	Title         string            `json:"title"`
-	GeneratedAt   time.Time         `json:"generated_at"`
-	Model         string            `json:"model"`
-	Endpoint      string            `json:"endpoint"`
-	Mode          string            `json:"mode"`
-	Command       string            `json:"command"`
-	TotalSeconds  float64           `json:"total_seconds"`
-	InputTokens   int               `json:"input_tokens"`
-	OutputTokens  int               `json:"output_tokens"`
-	Cost          CostReport        `json:"cost"`
-	Runs          []RunReport       `json:"runs"`
-	Questions     []QuestionVerdict `json:"questions"`
-	Failed        bool              `json:"failed"`
+	SchemaVersion string    `json:"schema_version"`
+	Title         string    `json:"title"`
+	GeneratedAt   time.Time `json:"generated_at"`
+	Model         string    `json:"model"`
+	Endpoint      string    `json:"endpoint"`
+	Mode          string    `json:"mode"`
+	Command       string    `json:"command"`
+	TotalSeconds  float64   `json:"total_seconds"`
+	InputTokens   int       `json:"input_tokens"`
+	OutputTokens  int       `json:"output_tokens"`
+	// KindInputTokens and KindOutputTokens are the part of InputTokens and
+	// OutputTokens spent by card D-15's separate recognition step. They are a
+	// subset, reported so recognition's own cost is visible.
+	KindInputTokens  int               `json:"kind_input_tokens"`
+	KindOutputTokens int               `json:"kind_output_tokens"`
+	Cost             CostReport        `json:"cost"`
+	Runs             []RunReport       `json:"runs"`
+	Questions        []QuestionVerdict `json:"questions"`
+	Failed           bool              `json:"failed"`
 }
 
 // CostReport is the DeepSeek token cost of the full run.
@@ -92,11 +97,14 @@ func NewReport(set *Set, mode, command string, runs []RunReport, started time.Ti
 	verdicts := Judge(set, runs)
 	totalSeconds := 0.0
 	inputTokens, outputTokens := 0, 0
+	kindInputTokens, kindOutputTokens := 0, 0
 	failed := false
 	for _, run := range runs {
 		totalSeconds += run.Seconds
 		inputTokens += run.InputTokens
 		outputTokens += run.OutputTokens
+		kindInputTokens += run.KindInputTokens
+		kindOutputTokens += run.KindOutputTokens
 	}
 	for _, verdict := range verdicts {
 		if !verdict.Passed {
@@ -104,20 +112,22 @@ func NewReport(set *Set, mode, command string, runs []RunReport, started time.Ti
 		}
 	}
 	return Report{
-		SchemaVersion: "question-set-report-v1",
-		Title:         set.Title,
-		GeneratedAt:   time.Now().UTC(),
-		Model:         set.Model.ModelID,
-		Endpoint:      set.Model.Endpoint,
-		Mode:          mode,
-		Command:       command,
-		TotalSeconds:  totalSeconds,
-		InputTokens:   inputTokens,
-		OutputTokens:  outputTokens,
-		Cost:          ComputeCost(set.Model.Pricing, started, inputTokens, outputTokens),
-		Runs:          runs,
-		Questions:     verdicts,
-		Failed:        failed,
+		SchemaVersion:    "question-set-report-v1",
+		Title:            set.Title,
+		GeneratedAt:      time.Now().UTC(),
+		Model:            set.Model.ModelID,
+		Endpoint:         set.Model.Endpoint,
+		Mode:             mode,
+		Command:          command,
+		TotalSeconds:     totalSeconds,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		KindInputTokens:  kindInputTokens,
+		KindOutputTokens: kindOutputTokens,
+		Cost:             ComputeCost(set.Model.Pricing, started, inputTokens, outputTokens),
+		Runs:             runs,
+		Questions:        verdicts,
+		Failed:           failed,
 	}
 }
 
@@ -152,6 +162,8 @@ func RenderMarkdown(report Report) string {
 	fmt.Fprintf(&builder, "- Command: `%s`\n", report.Command)
 	fmt.Fprintf(&builder, "- Total time: %.2f s\n", report.TotalSeconds)
 	fmt.Fprintf(&builder, "- DeepSeek tokens: %d input + %d output = %d\n", report.InputTokens, report.OutputTokens, report.InputTokens+report.OutputTokens)
+	fmt.Fprintf(&builder, "- Of which kind recognition (card D-15): %d input + %d output = %d\n",
+		report.KindInputTokens, report.KindOutputTokens, report.KindInputTokens+report.KindOutputTokens)
 	fmt.Fprintf(&builder, "- DeepSeek cost: %.6f %s (%s tier; input at the cache-miss rate %.2f/1M, output %.2f/1M; %s)\n",
 		report.Cost.Total, report.Cost.Currency, report.Cost.Tier, report.Cost.InputCacheMissRate, report.Cost.OutputRate, report.Cost.PricingSource)
 	if report.Failed {
@@ -178,9 +190,17 @@ func RenderMarkdown(report Report) string {
 	}
 	builder.WriteString("\n")
 
+	builder.WriteString("## Recognised kinds\n\n")
+	builder.WriteString("Each question run's kind, recognised by the separate model step of ADR-0099 amendment 1 (card D-15). A run with no kind predates the step or ended before it.\n\n")
+	builder.WriteString("| Kind | Runs | Question runs |\n|---|---|---|\n")
+	for _, group := range kindGroups(report.Runs) {
+		fmt.Fprintf(&builder, "| `%s` | %d | %s |\n", group.Kind, group.Count, strings.Join(group.Runs, ", "))
+	}
+	builder.WriteString("\n")
+
 	builder.WriteString("## Runs\n\n")
-	builder.WriteString("| # | Run | Steps | Seconds | Tool calls (name: main argument) | Rules | Answer |\n")
-	builder.WriteString("|---|---|---|---|---|---|---|\n")
+	builder.WriteString("| # | Run | Kind | Steps | Seconds | Tool calls (name: main argument) | Rules | Answer |\n")
+	builder.WriteString("|---|---|---|---|---|---|---|---|\n")
 	for _, run := range report.Runs {
 		calls := make([]string, 0, len(run.ToolCalls))
 		for _, call := range run.ToolCalls {
@@ -194,8 +214,8 @@ func RenderMarkdown(report Report) string {
 			}
 			rules = append(rules, verdict.ID+"="+mark)
 		}
-		fmt.Fprintf(&builder, "| %s | %d | %d | %.2f | %s | %s | %s |\n",
-			run.QuestionID, run.Run, run.Steps, run.Seconds,
+		fmt.Fprintf(&builder, "| %s | %d | %s | %d | %.2f | %s | %s | %s |\n",
+			run.QuestionID, run.Run, kindCell(run.Kind), run.Steps, run.Seconds,
 			escapeCell(strings.Join(calls, "; ")), escapeCell(strings.Join(rules, ", ")), escapeCell(run.Answer))
 	}
 	builder.WriteString("\n")
@@ -204,6 +224,8 @@ func RenderMarkdown(report Report) string {
 	for _, run := range report.Runs {
 		fmt.Fprintf(&builder, "### %s run %d\n\n", run.QuestionID, run.Run)
 		fmt.Fprintf(&builder, "- Question: %s\n", run.QuestionText)
+		fmt.Fprintf(&builder, "- Kind (card D-15, separate recognition step): `%s`; recognition tokens: %d in / %d out\n",
+			kindCell(run.Kind), run.KindInputTokens, run.KindOutputTokens)
 		fmt.Fprintf(&builder, "- Status: `%s` / stop_reason `%s` / grounding `%s`\n", run.Status, run.StopReason, run.GroundingStatus)
 		fmt.Fprintf(&builder, "- Steps: %d; seconds: %.2f; tokens: %d in / %d out\n", run.Steps, run.Seconds, run.InputTokens, run.OutputTokens)
 		if len(run.SQLTexts) > 0 {
@@ -230,6 +252,49 @@ func verdictsInline(verdicts []RuleVerdict) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ", ")
+}
+
+// kindCell renders a run's recognised kind for a report table. An empty kind
+// (recognition was not enabled, or the run ended before it) is shown as a dash
+// so the report never implies a kind that was not recognised.
+func kindCell(kind string) string {
+	if strings.TrimSpace(kind) == "" {
+		return "—"
+	}
+	return kind
+}
+
+// kindGroup is one recognised kind's runs in the report.
+type kindGroup struct {
+	Kind  string
+	Count int
+	Runs  []string
+}
+
+// kindGroups groups runs by their recognised kind, in the order the runs
+// appear, so the report's kind table is stable for one run.
+func kindGroups(runs []RunReport) []kindGroup {
+	order := []string{}
+	byKind := map[string]*kindGroup{}
+	for _, run := range runs {
+		kind := strings.TrimSpace(run.Kind)
+		if kind == "" {
+			kind = "(not recognised)"
+		}
+		group, ok := byKind[kind]
+		if !ok {
+			group = &kindGroup{Kind: kind}
+			byKind[kind] = group
+			order = append(order, kind)
+		}
+		group.Count++
+		group.Runs = append(group.Runs, fmt.Sprintf("%s/%d", run.QuestionID, run.Run))
+	}
+	groups := make([]kindGroup, 0, len(order))
+	for _, kind := range order {
+		groups = append(groups, *byKind[kind])
+	}
+	return groups
 }
 
 func escapeCell(value string) string {

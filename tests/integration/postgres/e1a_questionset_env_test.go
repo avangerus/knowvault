@@ -400,6 +400,10 @@ var e1aQuestionRunCounter atomic.Int64
 // service.
 func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, profileFor func(questions.Question) string) []questions.RunReport {
 	t.Helper()
+	// Card D-15: this run measures recognition, so the question set asks the
+	// service to recognise every question's kind in a separate short model call
+	// and the runner reports it per run. The answers themselves are unchanged.
+	env.Questions.EnableAnswerKindRecognition()
 	only := map[string]bool{}
 	if value := strings.TrimSpace(os.Getenv("KNOWVAULT_QUESTION_SET_ONLY")); value != "" {
 		for _, id := range strings.Split(value, ",") {
@@ -481,6 +485,16 @@ func e1aObserveRun(item questions.Question, runIndex int, run question.Run, elap
 		report.StopReason = run.ToolLoop.StopReason
 		report.InputTokens = run.ToolLoop.Usage.Input
 		report.OutputTokens = run.ToolLoop.Usage.Output
+		// Card D-15: the kind the separate recognition step returned for this
+		// run, and that step's own token cost. The recognition tokens are part
+		// of the run's honest total while remaining visible on their own.
+		report.Kind = run.ToolLoop.AnswerKind
+		if run.ToolLoop.AnswerKindUsage != nil {
+			report.KindInputTokens = run.ToolLoop.AnswerKindUsage.Input
+			report.KindOutputTokens = run.ToolLoop.AnswerKindUsage.Output
+			report.InputTokens += report.KindInputTokens
+			report.OutputTokens += report.KindOutputTokens
+		}
 		for _, call := range run.ToolLoop.Calls {
 			if call.System || call.Name == "submit_answer" {
 				// Automatic citation reads and the final answer submission are

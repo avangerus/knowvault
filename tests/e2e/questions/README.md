@@ -29,6 +29,32 @@ into the repository, the report or the logs. Every other value here is
 synthetic: the documents, the counts, the contract number and the source
 database contain no customer data.
 
+## Recognition of the question kind (card D-15)
+
+ADR-0099 amendment 1 recognises the kind of each question by meaning in a
+separate short model call, before the answer. The question set records the
+recognised kind for every run and reports it per run (`kind` in `report.json`,
+the Kind column and the `Recognised kinds` section in `report.md`), together
+with the recognition call's own token cost.
+
+One command measures that recognition step on the real model:
+
+```text
+KNOWVAULT_KIND_MEASURE_API_KEY_FILE=/path/to/deepseek/key \
+  bash tests/e2e/questions/run-kind-measure.sh \
+  -file tests/e2e/questions/kind-phrasings.json
+```
+
+The phrasings file is JSON: a bare array or `{"phrasings":[...]}`, each entry
+`{"question": "...", "kind": "full"}`. The kind is one of `full`, `change`,
+`hypothetical`, `plain_overview`, `workspace_overview`, `sources_overview`,
+`greeting`, `off_topic`, `vague`. The command runs every phrasing three times
+by default, prints the per-kind correct counts and every case where a `full`
+question was recognised as another kind, and exits non-zero when the accuracy
+is below 95 % or when a single `full` question was recognised as another kind.
+`kind-phrasings.json` is the executor's own small file; acceptance uses its own
+unseen file with the same shape.
+
 ## The data file
 
 `questions.json` is the one data file: environment (containers, synthetic

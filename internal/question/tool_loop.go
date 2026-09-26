@@ -191,6 +191,14 @@ type ToolLoopRecord struct {
 	// workspace's pinned current context is non-empty. S2-CONTRACT.md "Chat
 	// trace" fixes this exact shape.
 	WorkspaceContext *ToolLoopWorkspaceContext `json:"workspace_context,omitempty"`
+	// AnswerKind is the kind ADR-0099 amendment 1's separate recognition step
+	// (answer_kind.go) recognised for this run's question. AnswerKindUsage is
+	// that step's own token cost, kept apart from Usage so the recognition cost
+	// is visible instead of folded into the answering loop's. Both are absent
+	// when recognition was not enabled, and a record written before the step
+	// existed decodes with both absent.
+	AnswerKind      string                   `json:"answer_kind,omitempty"`
+	AnswerKindUsage *modelgateway.TokenUsage `json:"answer_kind_usage,omitempty"`
 }
 
 // ToolLoopWorkspaceContext is ToolLoopRecord.WorkspaceContext
@@ -1539,6 +1547,16 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	defer researchCancel()
 	scope := workspacetools.Scope{Access: access, WorkspaceID: run.WorkspaceID, Revision: run.WorkspaceRevision}
 	record := &ToolLoopRecord{ModelProfile: copyModelProfile(&generation.profile), Profile: profile, Model: generation.adapter.ProviderName(), Calls: []ToolCallRecord{}, StopReason: "TURN_LIMIT"}
+	// ADR-0099 amendment 1: the question's kind is recognised by meaning in a
+	// separate short model call before the answering loop reads anything. It is
+	// not a loop turn and never spends the loop's tool-call budget or its
+	// research reserve, and a failed or unlisted answer resolves to full
+	// instead of failing the run. Recognition changes no route in this card.
+	if service.answerKindRecognition {
+		kind, kindUsage := service.recogniseAnswerKind(ctx, generation.adapter, run.WorkspaceID, questionText)
+		record.AnswerKind = string(kind)
+		record.AnswerKindUsage = &kindUsage
+	}
 	persistScopeChanged := func() error {
 		finishCtx, finishCancel := modelAttemptPersistenceContext(parent)
 		defer finishCancel()

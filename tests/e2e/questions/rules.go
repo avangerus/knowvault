@@ -294,9 +294,18 @@ type RuleVerdict struct {
 
 // RunReport is one (question, run) row.
 type RunReport struct {
-	QuestionID        string        `json:"question_id"`
-	QuestionText      string        `json:"question"`
-	Run               int           `json:"run"`
+	QuestionID   string `json:"question_id"`
+	QuestionText string `json:"question"`
+	Run          int    `json:"run"`
+	// Kind is the kind the separate recognition step returned for this run
+	// (card D-15, ADR-0099 amendment 1). Empty when recognition was not
+	// enabled or the run ended before it.
+	Kind string `json:"kind,omitempty"`
+	// KindInputTokens and KindOutputTokens are the recognition call's own token
+	// cost, kept apart from the answering loop's tokens so the recognition
+	// cost per question is visible.
+	KindInputTokens   int           `json:"kind_input_tokens,omitempty"`
+	KindOutputTokens  int           `json:"kind_output_tokens,omitempty"`
 	Seconds           float64       `json:"seconds"`
 	Steps             int           `json:"steps"`
 	ToolCalls         []ToolCall    `json:"tool_calls"`
