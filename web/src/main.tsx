@@ -4147,7 +4147,97 @@ export function AnswerBody({ text, citations, turnId, panelTurnId, selectedCitat
 // evidence-verification status, so the same information is never printed a
 // second time as standalone boxes. Closed by default -- a demo reader should
 // not be shown a wall of trace text before reading the answer.
-function ToolCallsDisclosure({ run, showResults = true, footer }: { run: QuestionRun; showResults?: boolean; footer?: ReactNode }) {
+// Shape of one run.tool_loop.calls[] entry, narrowed to the fields the
+// knowvault_source_sql helpers below read. It matches QuestionRun's inline
+// call type structurally, so either the wire type or a test literal works.
+type SourceSQLTraceCall = {
+  name: string;
+  arguments?: unknown;
+  outcome: string;
+  result: { text: string; structured?: unknown; is_error?: boolean };
+};
+
+// F2 (2026-09-26 critique): the exact SQL knowvault_source_sql ran is present
+// in call.arguments.sql, but no render path read it, so the chat surface
+// never showed a person the statement behind a database read. Read exactly
+// the literal field the agent's own tool call carried -- never rebuilt or
+// paraphrased.
+function sourceSQLStatement(call: SourceSQLTraceCall): string | null {
+  if (call.name !== "knowvault_source_sql") return null;
+  const args = call.arguments;
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return null;
+  const sql = (args as Record<string, unknown>).sql;
+  return typeof sql === "string" && sql.trim().length > 0 ? sql : null;
+}
+
+function sourceSQLStructuredResult(call: SourceSQLTraceCall): Record<string, unknown> | null {
+  const raw = call.result.structured ?? call.result.text;
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+// The closed, content-free refusal code (ROW_LIMIT, TIMEOUT, ...) of a failed
+// knowvault_source_sql call -- per ADR-0097 the only thing a refusal ever
+// carries. Null for a call that succeeded.
+export function sourceSQLRefusalCode(call: SourceSQLTraceCall): string | null {
+  if (call.name !== "knowvault_source_sql" || call.outcome === "SUCCEEDED") return null;
+  const code = sourceSQLStructuredResult(call)?.error;
+  return typeof code === "string" && code.length > 0 ? code : null;
+}
+
+// A short, bounded preview of a successful knowvault_source_sql call's own
+// returned table -- at most 5 of the rows the provider already sent to the
+// browser in this same API response. Nothing here is fetched or computed;
+// it only projects what call.result.structured already carries.
+export function sourceSQLResultPreview(call: SourceSQLTraceCall): { columns: string[]; rows: Array<Array<string | null>>; rowCount: number; truncated: boolean } | null {
+  if (call.name !== "knowvault_source_sql" || call.outcome !== "SUCCEEDED") return null;
+  const projection = sourceSQLStructuredResult(call);
+  const columns = projection?.columns;
+  const rows = projection?.rows;
+  const rowCount = projection?.row_count;
+  if (!Array.isArray(columns) || !Array.isArray(rows) || typeof rowCount !== "number" || !Number.isFinite(rowCount)) return null;
+  if (!columns.every((column) => typeof column === "string")) return null;
+  const preview = rows.slice(0, 5) as Array<Array<string | null>>;
+  return { columns: columns as string[], rows: preview, rowCount, truncated: rows.length > preview.length };
+}
+
+// The tool-trace disclosure for one knowvault_source_sql call: its exact SQL
+// (refusal or not, per F2/finding 5), the refusal code when it failed, and a
+// bounded preview of the rows when it succeeded. Renders nothing for any
+// other tool or for a source-SQL call with no readable sql argument.
+function ToolTraceSourceSQL({ call }: { call: SourceSQLTraceCall }) {
+  const sql = sourceSQLStatement(call);
+  if (!sql) return null;
+  const refusalCode = sourceSQLRefusalCode(call);
+  const preview = sourceSQLResultPreview(call);
+  return (
+    <details className="tool-trace-sql">
+      <summary>SQL</summary>
+      <pre>{sql}</pre>
+      {refusalCode && <p className="tool-trace-sql-refusal">Refused: {refusalCode}</p>}
+      {preview && (
+        <>
+          <table className="tool-trace-sql-result">
+            <thead><tr>{preview.columns.map((column, index) => <th key={`${column}-${index}`} scope="col">{column}</th>)}</tr></thead>
+            <tbody>{preview.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.map((cell, columnIndex) => <td key={columnIndex}>{cell === null ? "NULL" : cell}</td>)}</tr>
+            ))}</tbody>
+          </table>
+          <p className="tool-trace-sql-count">{preview.rowCount} {preview.rowCount === 1 ? "row" : "rows"} returned{preview.truncated ? " (showing first 5)" : ""}</p>
+        </>
+      )}
+    </details>
+  );
+}
+
+export function ToolCallsDisclosure({ run, showResults = true, footer }: { run: QuestionRun; showResults?: boolean; footer?: ReactNode }) {
   if (!run.tool_loop || run.tool_loop.calls.length === 0) {
     return footer ? (
       <details className="tool-trace">
@@ -4168,12 +4258,16 @@ function ToolCallsDisclosure({ run, showResults = true, footer }: { run: Questio
                 <details>
                   <summary>{KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s{call.outcome !== "SUCCEEDED" ? " · failed" : ""}</summary>
                   <pre>{call.result.text}</pre>
+                  <ToolTraceSourceSQL call={call} />
                 </details>
               ) : (
-                <span>
-                  {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
-                  <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
-                </span>
+                <>
+                  <span>
+                    {KNOWLEDGE_TOOL_LABELS[call.name] ?? "Source request"} · {(call.duration_ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })} s
+                    <span className="tool-trace-summary">{summary.request && <>Request: {summary.request} · </>}{summary.result}</span>
+                  </span>
+                  <ToolTraceSourceSQL call={call} />
+                </>
               )}
             </li>
           );
@@ -4240,7 +4334,15 @@ export function liveTablePayloadForReceipt(
 ): LiveTablePayload | null {
   const calls = run.tool_loop?.calls ?? [];
   for (const call of calls) {
-    if (call.name !== "knowvault_ask_live_data" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    // F2 (2026-09-26 critique): a LIVE_TABLE citation whose successful read
+    // came from knowvault_source_sql (ADR-0097), not knowvault_ask_live_data,
+    // used to fall through this loop with no match, so the evidence item
+    // always rendered "the table payload is unavailable" even though the
+    // provider's own projection carried the columns and rows. Both tool
+    // names produce the same liveDataProjection shape (source_sql_tool.go's
+    // sourceSQLRetainResult), so both are matched here.
+    if ((call.name !== "knowvault_ask_live_data" && call.name !== "knowvault_source_sql") ||
+      call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
     const raw = call.result.structured ?? call.result.text;
     let value: unknown = raw;
     if (typeof raw === "string") {
@@ -4268,6 +4370,41 @@ export function liveTablePayloadForReceipt(
       rows.some((row) => !Array.isArray(row) || row.length !== columns.length ||
         row.some((cell) => cell !== null && typeof cell !== "string"))) continue;
     return { columns: columns as string[], rows: rows as Array<Array<string | null>>, row_count: rowCount };
+  }
+  return null;
+}
+
+// The exact SQL statement behind one LIVE_TABLE receipt, when that receipt's
+// successful read came from knowvault_source_sql (an agent-authored
+// statement) rather than knowvault_ask_live_data (an administrator-governed
+// query with no agent-written SQL to show). F2/F5 (2026-09-26 critique): a
+// person checking a citation next to "Live result N" could not tell what
+// actually ran; this reads the literal arguments.sql of the one matching call
+// already present in the same API response -- nothing new is fetched.
+export function sourceSQLStatementForReceipt(
+  run: Pick<QuestionRun, "tool_loop">,
+  receipt: LiveTableReceipt,
+): string | null {
+  if (!isLiveTableReceipt(receipt)) return null;
+  for (const call of run.tool_loop?.calls ?? []) {
+    if (call.name !== "knowvault_source_sql" || call.outcome !== "SUCCEEDED" || call.result.is_error) continue;
+    const raw = call.result.structured ?? call.result.text;
+    let value: unknown = raw;
+    if (typeof raw === "string") {
+      try {
+        value = JSON.parse(raw) as unknown;
+      } catch {
+        continue;
+      }
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const projection = value as Record<string, unknown>;
+    if (projection.attempt_id !== receipt.execution_id || projection.complete !== true ||
+      projection.result_digest !== receipt.result_digest || projection.receipt_digest !== receipt.receipt_digest) continue;
+    const args = call.arguments;
+    if (typeof args !== "object" || args === null || Array.isArray(args)) continue;
+    const sql = (args as Record<string, unknown>).sql;
+    return typeof sql === "string" && sql.trim().length > 0 ? sql : null;
   }
   return null;
 }
@@ -4341,6 +4478,10 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
   const [showTable, setShowTable] = useState(false);
   const payload = liveTablePayloadForReceipt(run, receipt);
   const comparison = comparisonEvidenceForReceipt(run, receipt);
+  // F2/F5 (2026-09-26 critique): next to the citation it supports, show the
+  // exact SQL knowvault_source_sql ran -- null for an administrator-governed
+  // knowvault_ask_live_data read, which has no agent-written statement.
+  const sql = sourceSQLStatementForReceipt(run, receipt);
   const tableID = `live-result-table-${run.question_run_id}-${ordinal}`;
   const readStarted = receipt.observation_window?.started_at;
   const readAt = receipt.observation_window?.completed_at;
@@ -4348,6 +4489,12 @@ function LiveTableEvidenceItem({ ordinal, receipt, run }: {
     <details className="live-result-evidence">
       <summary>Live result {ordinal} · {comparison ? `${comparison.first.date}: ${comparison.first.value} → ${comparison.second.date}: ${comparison.second.value}` : `${receipt.row_count.toLocaleString("en-US")} ${receipt.row_count === 1 ? "row" : "rows"}`}{readAt ? ` · read ${formatTime(readAt)}` : ""}</summary>
       <p>Database read: {readStarted && readAt ? `${formatTime(readStarted)} – ${formatTime(readAt)}` : readAt ? formatTime(readAt) : "time unavailable"}</p>
+      {sql && (
+        <details className="live-result-sql">
+          <summary>SQL executed</summary>
+          <pre>{sql}</pre>
+        </details>
+      )}
       {comparison ? (
         <div className="live-comparison-evidence">
           <p>Metric: {comparison.metric_id} · Unit: {comparison.unit === "unknown" ? "unknown" : comparison.unit} · Coverage: observed snapshots only; full population coverage is unknown.</p>

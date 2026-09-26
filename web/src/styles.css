@@ -1116,6 +1116,16 @@ ul.answer-keys li:last-child { border-bottom: none; }
 .tool-trace ol { padding-left: 22px; }
 .tool-trace pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; padding: 10px; background: #f5f7f8; border-radius: 6px; }
 .tool-trace-summary { display: block; max-width: 70ch; color: var(--ink-secondary); overflow-wrap: anywhere; }
+.tool-trace-sql { margin-top: 4px; }
+.tool-trace-sql summary { cursor: pointer; }
+.tool-trace-sql pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; padding: 8px; background: #f5f7f8; border-radius: 6px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.tool-trace-sql-refusal { color: var(--ink-secondary); margin: 4px 0; }
+.tool-trace-sql-result { width: 100%; border-collapse: collapse; margin: 6px 0; }
+.tool-trace-sql-result th, .tool-trace-sql-result td { padding: 4px 6px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.tool-trace-sql-count { margin: 4px 0 0; color: var(--ink-secondary); }
+.live-result-sql { margin: 6px 0; }
+.live-result-sql summary { cursor: pointer; }
+.live-result-sql pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; padding: 8px; background: #f5f7f8; border-radius: 6px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .source-address { margin: 12px 18px; font-size: 12px; }
 .source-address code { display: block; overflow-wrap: anywhere; user-select: all; }
 
