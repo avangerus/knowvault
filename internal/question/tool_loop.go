@@ -427,7 +427,16 @@ func toolLoopHistoryTruncateUTF8(s string, maxBytes int) string {
 // error, or an empty context -- leaves this system message byte-identical to
 // toolLoopInstructions alone.
 func initialToolLoopMessages(question string, history []toolLoopConversationTurn, maxInputBytes int, workspaceContextSuffix string) (outbound, persisted []modelgateway.Message) {
-	system := modelgateway.Message{Role: "system", Content: toolLoopInstructions + workspaceContextSuffix}
+	return initialToolLoopMessagesWith(question, history, maxInputBytes, workspaceContextSuffix, toolLoopInstructions)
+}
+
+// initialToolLoopMessagesWith is initialToolLoopMessages for a run with its own
+// kind-specific instruction (card D-16's plain_overview route). The instruction
+// block is still the only system message and the workspace-context suffix is
+// still appended verbatim to it in the same message, so the pinned block and
+// the persisted trace keep the exact contract initialToolLoopMessages defines.
+func initialToolLoopMessagesWith(question string, history []toolLoopConversationTurn, maxInputBytes int, workspaceContextSuffix, instructions string) (outbound, persisted []modelgateway.Message) {
+	system := modelgateway.Message{Role: "system", Content: instructions + workspaceContextSuffix}
 	current := modelgateway.Message{Role: "user", Content: question}
 	outbound = []modelgateway.Message{system}
 	outbound = append(outbound, toolLoopHistoryMessages(history, maxInputBytes)...)
@@ -1557,6 +1566,11 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		record.AnswerKind = string(kind)
 		record.AnswerKindUsage = &kindUsage
 	}
+	// Card D-16 / ADR-0099 amendment 1 decision 5: a question the separate
+	// recognition step named plain_overview takes its own route -- a
+	// kind-specific instruction with only the read-only knowledge tools
+	// mounted. Every other recognised kind is answered exactly as before.
+	plainOverview := record.AnswerKind == string(AnswerKindPlainOverview)
 	persistScopeChanged := func() error {
 		finishCtx, finishCancel := modelAttemptPersistenceContext(parent)
 		defer finishCancel()
@@ -1574,14 +1588,14 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		return &Error{code: CodeDenied, cause: err}
 	}
 	var scalarCapability analyticScalarCapability
-	if service.liveDataAsk == nil && service.analyticScalarExecutor != nil && service.datasetProfileCatalog.Valid() && service.analyticSourceResolver != nil {
+	if !plainOverview && service.liveDataAsk == nil && service.analyticScalarExecutor != nil && service.datasetProfileCatalog.Valid() && service.analyticSourceResolver != nil {
 		prepared, prepareErr := service.prepareAnalyticScalarCapability(ctx, access, run.WorkspaceID)
 		if prepareErr == nil {
 			scalarCapability = prepared
 		}
 	}
 	var comparisonCatalog []governedask.ComparisonSummary
-	if service.trustedMetricComparison != nil {
+	if !plainOverview && service.trustedMetricComparison != nil {
 		comparisonCatalog, err = service.trustedMetricComparison.ComparisonCatalog(ctx, access, run.WorkspaceID)
 		if err != nil {
 			return &Error{code: CodeDenied, cause: err}
@@ -1593,15 +1607,23 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if tool.Name == submitAnswerToolName || tool.Name == analyticScalarToolName || tool.Name == liveDataToolName || tool.Name == trustedMetricToolName {
 			return &Error{code: CodeUnavailable}
 		}
+		// The plain_overview route mounts only the read-only knowledge tools,
+		// so no SQL-writing or live-data tool can be called even by mistake.
+		if plainOverview && !plainOverviewToolAllowed(tool.Name) {
+			continue
+		}
 		workspaceToolNames[tool.Name] = struct{}{}
 		definitions = append(definitions, modelgateway.ToolDefinition{Type: "function", Function: modelgateway.ToolFunction{Name: tool.Name, Description: tool.Description, Parameters: tool.Schema}})
 	}
-	comparisonQuestion := len(comparisonCatalog) > 0 && recognizedComparison(questionText)
+	comparisonQuestion := !plainOverview && len(comparisonCatalog) > 0 && recognizedComparison(questionText)
 	allowedDates := comparisonDatePair(questionText, history)
 	requestedDates := explicitComparisonDates(questionText)
-	governedDefinitions, err := toolLoopGovernedDefinitions(comparisonCatalog, service.liveDataAsk, comparisonQuestion, allowedDates)
-	if err != nil {
-		return err
+	var governedDefinitions []modelgateway.ToolDefinition
+	if !plainOverview {
+		governedDefinitions, err = toolLoopGovernedDefinitions(comparisonCatalog, service.liveDataAsk, comparisonQuestion, allowedDates)
+		if err != nil {
+			return err
+		}
 	}
 	definitions = append(definitions, governedDefinitions...)
 	if scalarCapability.valid() {
@@ -1637,32 +1659,45 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 	overviewResearchToolCalls := profile.MaxToolCalls
 	scopeChanged := false
 	var overviewMessage *modelgateway.Message
-	if overviewClass := toolLoopOverviewQuestionClass(questionText); overviewClass != toolLoopOverviewClassNone {
-		built, overviewErr := service.buildToolLoopOverview(ctx, scope, record, language, workspaceContextDescription, overviewClass)
-		if overviewErr != nil {
-			if errors.Is(overviewErr, workspacetools.ErrScopeChanged) {
-				record.StopReason = toolScopeChangedStopReason
-				scopeChanged = true
-			} else {
-				return &Error{code: CodeDenied, cause: overviewErr}
-			}
-		} else if built != nil {
-			overviewResearchToolCalls = min(profile.MaxToolCalls, toolLoopOverviewResearchToolCalls)
-			observeToolLoopOverview(record, observed, citationObservations, readPages, pageFragments)
-			// The overview carries untrusted document bytes, so it is delivered
-			// as its own user message, never appended to the system message
-			// (which stays the trusted instruction block plus the untrusted-
-			// framed WORKSPACE_CONTEXT block).
-			message := modelgateway.Message{Role: "user", Content: built.Text}
-			overviewMessage = &message
-		}
+	var builtOverview *toolLoopOverview
+	var overviewErr error
+	if plainOverview {
+		// Card D-16: the plain_overview route orients the model with the
+		// workspace's own description and the human names of its sources. It
+		// never inventories or reads document content itself: the model reads
+		// what the subject needs with the knowledge tools it was given.
+		builtOverview, overviewErr = service.buildPlainOverviewOrientation(ctx, scope, record, language, workspaceContextDescription)
+	} else if overviewClass := toolLoopOverviewQuestionClass(questionText); overviewClass != toolLoopOverviewClassNone {
+		builtOverview, overviewErr = service.buildToolLoopOverview(ctx, scope, record, language, workspaceContextDescription, overviewClass)
 	}
-	if workspaceContextPresent {
+	if overviewErr != nil {
+		if errors.Is(overviewErr, workspacetools.ErrScopeChanged) {
+			record.StopReason = toolScopeChangedStopReason
+			scopeChanged = true
+		} else {
+			return &Error{code: CodeDenied, cause: overviewErr}
+		}
+	} else if builtOverview != nil {
+		overviewResearchToolCalls = min(profile.MaxToolCalls, toolLoopOverviewResearchToolCalls)
+		observeToolLoopOverview(record, observed, citationObservations, readPages, pageFragments)
+		// The overview carries untrusted document bytes, so it is delivered
+		// as its own user message, never appended to the system message
+		// (which stays the trusted instruction block plus the untrusted-
+		// framed WORKSPACE_CONTEXT block).
+		message := modelgateway.Message{Role: "user", Content: builtOverview.Text}
+		overviewMessage = &message
+	}
+	if workspaceContextPresent && !plainOverview {
 		// Card D-5: the pinned block already names each term's source connection
 		// id, so the model must not spend a research step repeating it.
 		workspaceContextSuffix += toolLoopWorkspaceContextRetrievalDirective
 	}
-	messages, persistedMessages := initialToolLoopMessages(questionText, history, profile.MaxInputBytes, workspaceContextSuffix)
+	var messages, persistedMessages []modelgateway.Message
+	if plainOverview {
+		messages, persistedMessages = initialToolLoopMessagesWith(questionText, history, profile.MaxInputBytes, workspaceContextSuffix, plainOverviewInstructions)
+	} else {
+		messages, persistedMessages = initialToolLoopMessages(questionText, history, profile.MaxInputBytes, workspaceContextSuffix)
+	}
 	if overviewMessage != nil {
 		// The overview sits immediately before the current question in both the
 		// outbound and the persisted exchange, so it orients the model before
@@ -1834,6 +1869,11 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		if finalizing {
 			repair.Content = "The response does not match the format. Call only submit_answer with valid no_data/claims/clarification. Attach exact document citations and live_reads refs to every claim that uses those sources; set result_id to attempt_id from the live tool output and copy receipt_digest exactly. Use data already read and state limitations; no further tool calls are available."
 		}
+		if plainOverview {
+			// Card D-16: this route has exactly one submission shape, so its
+			// format repair names it instead of the full loop's claims schema.
+			repair.Content = `The response does not match the format. Call submit_answer alone with exactly {"no_data":false,"claims":[],"clarification":"<the whole answer text, ending with a question mark>"} and put the whole answer inside the clarification string. Do not reply with plain prose outside the tool.`
+		}
 		messages = append(messages, repair)
 		record.Messages = append(record.Messages, repair)
 	}
@@ -1865,6 +1905,21 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		pattern := toolLoopTechnicalNamePattern(toolLoopTechnicalVocabulary(record))
 		if issue := toolLoopAnswerPresentationIssue(text, pattern); issue != "" {
 			return issue, toolLoopPresentationRepairInstruction(language)
+		}
+		// Card D-16: a plain_overview answer must end with a concrete next
+		// question about the same subject, and it is submitted as this route's
+		// citation-free clarification variant so the question is the last text
+		// the user reads. The model is asked to rewrite; the rest of the answer
+		// is kept. A bare no_data is never this kind's answer: even a subject
+		// the workspace holds nothing about is described in that short text.
+		if plainOverview && answer.NoData && len(answer.Claims) == 0 && strings.TrimSpace(answer.Clarification) == "" {
+			return submitAnswerPlainOverviewNeedsTextCode, toolLoopPlainOverviewTextRepairInstruction(language)
+		}
+		if plainOverview && len(answer.Claims) > 0 {
+			return submitAnswerPlainOverviewNeedsClarificationCode, toolLoopPlainOverviewClarificationRepairInstruction(language)
+		}
+		if plainOverview && !toolLoopAnswerHasNextQuestion(text) {
+			return submitAnswerMissingNextQuestionCode, toolLoopNextQuestionRepairInstruction(language)
 		}
 		return "", ""
 	}
@@ -2030,6 +2085,15 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 				if ok {
 					if rejection, hint := rejectAnswer(&answer); rejection != "" {
 						if forcedFinalTurn {
+							// Card D-16: a missing next question is a soft
+							// requirement. On the forced final turn the answer
+							// the model already gathered is shown rather than
+							// replaced by the honest failure text.
+							if rejection == submitAnswerMissingNextQuestionCode || rejection == submitAnswerPlainOverviewNeedsClarificationCode || rejection == submitAnswerPlainOverviewNeedsTextCode {
+								final = &answer
+								record.StopReason = "ANSWER"
+								break
+							}
 							if presented, presentable := toolLoopPresentedFinalAnswer(answer); presentable {
 								final = &presented
 								record.StopReason = "ANSWER"
@@ -2090,8 +2154,15 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		}
 		answer, formatCode := parseToolAnswerDetailed(response.Message.Content)
 		if formatCode == "" {
-			if _, hint := rejectAnswer(&answer); hint != "" {
+			if rejection, hint := rejectAnswer(&answer); hint != "" {
 				if forcedFinalTurn {
+					// Card D-16: as above, a missing next question is soft on
+					// the forced final turn.
+					if rejection == submitAnswerMissingNextQuestionCode || rejection == submitAnswerPlainOverviewNeedsClarificationCode || rejection == submitAnswerPlainOverviewNeedsTextCode {
+						final = &answer
+						record.StopReason = "ANSWER"
+						break
+					}
 					if presented, presentable := toolLoopPresentedFinalAnswer(answer); presentable {
 						final = &presented
 						record.StopReason = "ANSWER"
