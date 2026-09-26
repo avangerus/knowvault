@@ -75,6 +75,27 @@ Hard rules must pass 3 of 3 runs; value and time rules must pass 2 of 3. The
 verification status field is the response's `status` with
 `tool_loop.stop_reason`; `CITATIONS_UNVERIFIED` is the one tolerated failure.
 
+## H5: the database that cannot be read yet (card E-2)
+
+`questions.json` also describes one synthetic PostgreSQL database, «Заявки»,
+whose tables are bound to the workspace but whose confirmation is never minted.
+Its own container is `kv-card-e-2-pg` on 55622 with database `knowvault_test`,
+and the one command starts and removes it like the two card containers. `H5`
+asks a count question about its data; it is green only when the answer is at
+most two sentences, names «Заявки», says the database cannot be read yet, says
+that confirming its tables is what makes it readable, and the run recorded no
+`knowvault_source_sql` call. A bare zero count or a "no records" answer is red.
+
+The one command reads the product's own source status immediately before asking
+each `H5` run and records it in the report; if the database's tables are
+confirmed instead of awaiting confirmation, the harness fails, because the
+question would no longer test the "cannot be read yet" answer.
+
+The database is a separate `environment.unconfirmed_database` block, not a
+fourth entry in `environment.sources`, and the shared environment builder binds
+it only when a caller asks for it, so the interface walkthrough and every other
+test keep the workspace they had.
+
 ## Tests
 
 ```text

@@ -241,6 +241,70 @@ func TestO1Shape(t *testing.T) {
 	}
 }
 
+// h5Observation is one canned H5 run: a completed Russian answer with no tool
+// calls, so the H5 checks see only the answer text.
+func h5Observation(answer string) Observation {
+	return Observation{
+		QuestionID: "H5", QuestionText: "Сколько заявок в базе «Заявки»?", QuestionLang: "ru",
+		Answer: answer, Status: "COMPLETED", StopReason: "ANSWER",
+		GroundingStatus: "CONFIRMED_BY_FRAGMENT", StatusFieldName: "status",
+	}
+}
+
+// TestH5CompliantAnswerPassesAndFailureModesFail pins result 1 of card E-2: a
+// short answer that names the database, says it cannot be read yet, says that
+// confirming its tables makes it readable and makes no SQL call is green; a
+// SQL call, a third sentence and an empty result each make H5 red.
+func TestH5CompliantAnswerPassesAndFailureModesFail(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "H5")
+
+	compliant := h5Observation("База «Заявки» пока не читается, потому что её таблицы ещё не подтверждены. Подтвердите её таблицы, и база станет доступна для чтения.")
+	for _, verdict := range Evaluate(set, question, compliant) {
+		if !verdict.Passed {
+			t.Fatalf("H5 rejected a compliant answer at rule %s: %s", verdict.ID, verdict.Detail)
+		}
+	}
+
+	afterSQL := h5Observation(compliant.Answer)
+	afterSQL.ToolCalls = []ToolCall{{
+		Name: "knowvault_source_sql", Arguments: `{"source_id":"conn_x","sql":"SELECT count(*) FROM public.request"}`,
+		MainArgument: "conn_x",
+	}}
+	if verdict, ok := ruleByID(Evaluate(set, question, afterSQL), "h5_no_sql"); !ok || verdict.Passed {
+		t.Fatalf("h5_no_sql = %#v, want FAIL after a SQL call", verdict)
+	}
+
+	threeSentences := h5Observation("База «Заявки» пока не читается. Её таблицы ещё не подтверждены. Подтвердите таблицы, и база станет доступна.")
+	if verdict, ok := ruleByID(Evaluate(set, question, threeSentences), "h5_sentences"); !ok || verdict.Passed {
+		t.Fatalf("h5_sentences = %#v, want FAIL for three sentences", verdict)
+	}
+
+	// A zero count and an explicit no-records sentence both present an empty
+	// result and are rejected by the rule that exists for exactly that.
+	for _, answer := range []string{
+		"База «Заявки» пока не читается, в ней 0 заявок. Подтвердите её таблицы.",
+		"База «Заявки» пока не читается, записей нет. Подтвердите её таблицы.",
+		"no records in the database",
+	} {
+		if verdict, ok := ruleByID(Evaluate(set, question, h5Observation(answer)), "h5_no_empty_result"); !ok || verdict.Passed {
+			t.Fatalf("h5_no_empty_result = %#v, want FAIL for %q", verdict, answer)
+		}
+	}
+}
+
+// TestReportShowsH5DatabaseAwaitingConfirmation: the report states, per H5 run,
+// what the harness read from the product just before asking.
+func TestReportShowsH5DatabaseAwaitingConfirmation(t *testing.T) {
+	markdown := RenderMarkdown(Report{Title: "h5 report", Runs: []RunReport{{
+		QuestionID: "H5", QuestionText: "Сколько заявок в базе «Заявки»?", Run: 1,
+		Answer: "…", DatabaseName: "Заявки", DatabaseAwaitingConfirmation: true,
+	}}})
+	if !strings.Contains(markdown, "«Заявки» — tables awaiting confirmation") {
+		t.Fatalf("report does not show the H5 database awaiting confirmation:\n%s", markdown)
+	}
+}
+
 // TestCitationDocument: the answer needs a citation whose stored fragment text
 // mentions the contract number.
 func TestCitationDocument(t *testing.T) {

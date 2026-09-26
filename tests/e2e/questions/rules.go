@@ -71,7 +71,27 @@ type Environment struct {
 	Dictionary       Dictionary       `json:"dictionary"`
 	Tables           map[string]Table `json:"tables"`
 	Sources          []SourceSpec     `json:"sources"`
-	Values           Values           `json:"values"`
+	// UnconfirmedDatabase is the synthetic database H5 asks about. It is kept
+	// out of Sources so the shared environment builder keeps every other
+	// question and every other test in the environment it had.
+	UnconfirmedDatabase UnconfirmedDatabase `json:"unconfirmed_database"`
+	Values              Values              `json:"values"`
+}
+
+// UnconfirmedDatabase is one synthetic PostgreSQL database whose tables are
+// bound to the workspace but whose confirmation is never minted. H5 asks a
+// count question about its data, and the product must answer that it cannot be
+// read yet.
+type UnconfirmedDatabase struct {
+	Description string     `json:"description"`
+	Container   string     `json:"container"`
+	Port        int        `json:"port"`
+	Database    string     `json:"database"`
+	AdminUser   string     `json:"admin_user"`
+	AdminPass   string     `json:"admin_password"`
+	RowCount    int        `json:"row_count"`
+	Source      SourceSpec `json:"source"`
+	SQL         []string   `json:"sql"`
 }
 
 // Document is one synthetic workspace document.
@@ -304,23 +324,28 @@ type RunReport struct {
 	// KindInputTokens and KindOutputTokens are the recognition call's own token
 	// cost, kept apart from the answering loop's tokens so the recognition
 	// cost per question is visible.
-	KindInputTokens   int           `json:"kind_input_tokens,omitempty"`
-	KindOutputTokens  int           `json:"kind_output_tokens,omitempty"`
-	Seconds           float64       `json:"seconds"`
-	Steps             int           `json:"steps"`
-	ToolCalls         []ToolCall    `json:"tool_calls"`
-	SQLTexts          []string      `json:"sql_texts,omitempty"`
-	Status            string        `json:"status"`
-	StopReason        string        `json:"stop_reason"`
-	GroundingStatus   string        `json:"grounding_status"`
-	InputTokens       int           `json:"input_tokens"`
-	OutputTokens      int           `json:"output_tokens"`
-	Answer            string        `json:"answer"`
-	Citations         []Citation    `json:"citations,omitempty"`
-	LiveResultKind    string        `json:"live_result_kind,omitempty"`
-	LiveResultReceipt string        `json:"live_result_receipt,omitempty"`
-	Verdicts          []RuleVerdict `json:"verdicts"`
-	Passed            bool          `json:"passed"`
+	KindInputTokens   int        `json:"kind_input_tokens,omitempty"`
+	KindOutputTokens  int        `json:"kind_output_tokens,omitempty"`
+	Seconds           float64    `json:"seconds"`
+	Steps             int        `json:"steps"`
+	ToolCalls         []ToolCall `json:"tool_calls"`
+	SQLTexts          []string   `json:"sql_texts,omitempty"`
+	Status            string     `json:"status"`
+	StopReason        string     `json:"stop_reason"`
+	GroundingStatus   string     `json:"grounding_status"`
+	InputTokens       int        `json:"input_tokens"`
+	OutputTokens      int        `json:"output_tokens"`
+	Answer            string     `json:"answer"`
+	Citations         []Citation `json:"citations,omitempty"`
+	LiveResultKind    string     `json:"live_result_kind,omitempty"`
+	LiveResultReceipt string     `json:"live_result_receipt,omitempty"`
+	// DatabaseName and DatabaseAwaitingConfirmation are read from the product
+	// just before this run's question was asked. They are set for H5, which
+	// asks about a database whose tables await confirmation.
+	DatabaseName                 string        `json:"database_name,omitempty"`
+	DatabaseAwaitingConfirmation bool          `json:"database_awaiting_confirmation,omitempty"`
+	Verdicts                     []RuleVerdict `json:"verdicts"`
+	Passed                       bool          `json:"passed"`
 }
 
 // QuestionVerdict is the 3-of-3 / 2-of-3 aggregate for one question.
@@ -582,6 +607,22 @@ func evaluateCheck(set *Set, question Question, check Check, observation Observa
 		count := sentenceCount(answer)
 		result.Passed = count <= check.Max
 		result.Detail = fmt.Sprintf("%d sentences", count)
+	case "no_empty_result":
+		// An answer that reads the database as empty (a bare zero count or an
+		// explicit no-records sentence) is wrong when the tables cannot be read
+		// yet, so the check rejects it regardless of the answer's shape.
+		matched := ""
+		if regexp.MustCompile(`(^|[^0-9])0([^0-9]|$)`).MatchString(answer) {
+			matched = "0"
+		} else if phrase := firstPhraseFold(answer, check.Texts); phrase != "" {
+			matched = phrase
+		}
+		result.Passed = matched == ""
+		if matched != "" {
+			result.Detail = "empty result presented: " + matched
+		} else {
+			result.Detail = "no empty result"
+		}
 	case "question_marks":
 		count := strings.Count(answer, "?")
 		result.Passed = count >= check.Min && count <= check.Max

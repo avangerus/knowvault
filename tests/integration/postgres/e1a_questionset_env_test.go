@@ -68,6 +68,19 @@ type e1aEnvOptions struct {
 	// the HTTP question routes the web interface uses are served (card U-1).
 	// The question set calls the service directly and leaves this off.
 	WireHTTPQuestions bool
+	// H5Source is the synthetic PostgreSQL database source H5 asks about. It is
+	// bound to the workspace like the other sources, but its table confirmation
+	// is deliberately not minted, so the product must answer that it cannot
+	// read the database yet. A nil source leaves every other user of this
+	// builder in exactly the environment it had before.
+	H5Source *questions.SourceSpec
+	// H5SourceIdentity is the database identity the H5 source registers with;
+	// it is the identity of the H5 database container, not the shared source.
+	H5SourceIdentity string
+	// ConfirmH5Source mints the H5 source's table confirmation instead of
+	// leaving it awaiting confirmation. The harness test uses it to prove the
+	// H5 readiness check fails when the database's tables are confirmed.
+	ConfirmH5Source bool
 }
 
 // e1aEnvironment is the composed proving environment.
@@ -86,6 +99,11 @@ type e1aEnvironment struct {
 	// product connection id.
 	SourceConnectionIDs map[string]string
 	ContractChecksum    func(ctx context.Context) (string, error)
+	// H5SourceID and H5SourceName are the product connection id and human name
+	// of the database H5 asks about; empty when the environment has no H5
+	// source.
+	H5SourceID   string
+	H5SourceName string
 }
 
 // buildE1aEnvironment seeds the synthetic product workspace.
@@ -195,6 +213,37 @@ func buildE1aEnvironment(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		}
 	}
 
+	// 3b. Card E-2: bind the database H5 asks about, but leave its table
+	// confirmation unminted. Registration, trust verification and an ACTIVE
+	// projection are identical to the other sources; only the workspace-local
+	// confirmation is missing, which is what the product must report. The
+	// block is skipped for every caller that did not ask for it, so the other
+	// users of this builder keep the environment they had.
+	h5SourceID, h5SourceName := "", ""
+	if opts.H5Source != nil {
+		source := *opts.H5Source
+		request := registration.RegisterRequest{
+			SourceType: "POSTGRESQL_QUERY", Name: source.Name, Kind: "business-objects",
+			DatabaseIdentity: opts.H5SourceIdentity, LineageID: source.LineageID, ProjectionRevision: 1,
+			ContractHash: sourceContractHash(source), SchemaName: set.Environment.SourceSchema,
+			RelationName: source.Table, RelationKind: "TABLE", EmptySnapshotPolicy: "HELD",
+			Columns: sourceColumns(set, source),
+		}
+		registered, err := registrations.Register(ctx, regOwnerAccess("req_e1a_h5_source"), request)
+		if err != nil {
+			t.Fatalf("register H5 source %s: %v (code=%s)", source.Table, err, registration.CodeOf(err))
+		}
+		h5SourceID, h5SourceName = registered.ConnectionID, source.Name
+		connectionIDs[source.ID] = registered.ConnectionID
+		sourceFixture := seedRegistrationWorkspaceBinding(t, ctx, admin, registered.SourceScopeID,
+			e1aScopeConfigHash(t, ctx, admin, registered.SourceScopeID), mustID(t, "binding"))
+		if opts.ConfirmH5Source {
+			e1aMintConfirmation(t, ctx, sourceFixture)
+		}
+		verifyIsolationTrust(t, ctx, admin, registered.ConnectionID)
+		e1aActivateSource(t, ctx, admin, registered.SourceScopeID)
+	}
+
 	// 4. Seed the workspace model context (dictionary) with the two terms the
 	// card requires.
 	document := workspacecontext.Document{
@@ -273,6 +322,7 @@ func buildE1aEnvironment(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		ContextStore: contextStore, Questions: questionsService, Handler: handler,
 		SourceService: sourceService, FolderConnection: folder.ConnectionID,
 		SourceConnectionIDs: connectionIDs, ContractChecksum: opts.ContractChecksum,
+		H5SourceID: h5SourceID, H5SourceName: h5SourceName,
 	}
 }
 
@@ -424,6 +474,19 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 				}
 				contractBefore = value
 			}
+			// Card E-2: read the product's own source status for the database
+			// H5 asks about immediately before asking. H5 only tests the
+			// product's "cannot be read yet" answer while the tables await
+			// confirmation, so a confirmed database is a harness error, never
+			// an answer failure.
+			h5Confirmation := e1aH5Confirmation{}
+			if item.ID == "H5" && env.H5SourceID != "" {
+				confirmation, confirmErr := e1aReadH5Confirmation(ctx, env)
+				if confirmErr != nil {
+					t.Fatalf("H5 database must await confirmation just before it is asked about: %v", confirmErr)
+				}
+				h5Confirmation = confirmation
+			}
 			key := e1aIdempotencyKey(fmt.Sprintf("%s-run-%d-%d", item.ID, runIndex, e1aQuestionRunCounter.Add(1)))
 			access := database.AccessContext{OrganizationID: regOrg, PrincipalID: regOwner, RequestID: fmt.Sprintf("req_e1a_%s_%d", item.ID, runIndex)}
 			started := time.Now()
@@ -435,6 +498,7 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 			report := questions.RunReport{
 				QuestionID: item.ID, QuestionText: item.Text, Run: runIndex, Seconds: elapsed,
 				Status: "FAILED", StopReason: "RUN_ERROR", Answer: "", ToolCalls: []questions.ToolCall{},
+				DatabaseName: h5Confirmation.SourceName, DatabaseAwaitingConfirmation: h5Confirmation.Awaiting,
 			}
 			if err != nil {
 				report.Answer = "question run failed: " + string(question.CodeOf(err))

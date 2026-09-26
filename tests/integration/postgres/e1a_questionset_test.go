@@ -78,7 +78,13 @@ func TestQuestionSetSmoke(t *testing.T) {
 	}
 	defer adapter.Close()
 
-	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{SourceIdentity: "pgdb-stub-e1a"})
+	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
+		SourceIdentity: "pgdb-stub-e1a",
+		// Card E-2: H5 asks about a database whose tables await confirmation.
+		// The stub run registers that source too, so the whole set including H5
+		// is exercised without a key.
+		H5Source: &set.Environment.UnconfirmedDatabase.Source, H5SourceIdentity: "pgdb-stub-e1a-h5",
+	})
 	env.Questions.EnableGeneration(adapter, nil)
 
 	runs := e1aRunQuestionSet(t, ctx, env, func(questions.Question) string { return "" })
@@ -153,6 +159,17 @@ func TestQuestionSetRealModel(t *testing.T) {
 	e1aEnsureContainer(t, ctx, set.Environment.ProductContainer, set.Environment.ProductPort, set.Environment.ProductDatabase)
 	e1aEnsureContainer(t, ctx, set.Environment.SourceContainer, set.Environment.SourcePort, set.Environment.SourceDatabase)
 
+	// Card E-2: the database H5 asks about. Its synthetic data is seeded, but
+	// its table confirmation is never minted, so the product must answer that
+	// it cannot be read yet. The harness owns and removes this container too.
+	h5 := set.Environment.UnconfirmedDatabase
+	e1aEnsureContainer(t, ctx, h5.Container, h5.Port, h5.Database)
+	h5AdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
+		h5.AdminUser, h5.AdminPass, h5.Port, h5.Database)
+	h5Admin := e1aOpenSourceAdmin(t, ctx, h5AdminDSN)
+	e1aSeedSourceDatabase(t, ctx, h5Admin, h5.SQL)
+	h5Identity := e1aSourceIdentity(t, ctx, h5AdminDSN)
+
 	sourceAdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
 		set.Environment.SourceAdminUser, set.Environment.SourceAdminPass, set.Environment.SourcePort, set.Environment.SourceDatabase)
 	sourceAdmin := e1aOpenSourceAdmin(t, ctx, sourceAdminDSN)
@@ -181,6 +198,7 @@ func TestQuestionSetRealModel(t *testing.T) {
 	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
 		SourceIdentity: identity, Credentials: credentials, Roots: roots, SourceSQL: sqlExecutor,
 		ContractChecksum: contractChecksum,
+		H5Source:         &h5.Source, H5SourceIdentity: h5Identity,
 	})
 
 	registry, err := e1aModelRegistry(set, apiKey)
