@@ -8602,6 +8602,7 @@ func checkStage1DatabaseGate(root string) []string {
 		ownerTuples, ownerProblems := loadEncryptedArtifactOwnerTuples(root)
 		problems = append(problems, ownerProblems...)
 		problems = append(problems, checkArtifactOutboxMigration(string(artifactOutboxMigration))...)
+		problems = append(problems, checkEncryptedArtifactOwnerFunctionDefinitionShape(root)...)
 		problems = append(problems, checkEncryptedArtifactOwnerInventoryAtHead(root, ownerTuples)...)
 		problems = append(problems, checkEncryptedArtifactOwnerParity(root, ownerTuples)...)
 	}
@@ -8820,6 +8821,66 @@ func compareOwnerInventory(source string, schemaSet map[string]bool, other map[s
 // the same to 000090's), never by editing an already-applied file, which the
 // bootstrap checksum ledger (internal/operator/migration_checksum.go) would
 // reject.
+// encryptedArtifactOwnerCanonicalMarker is the only accepted way to define
+// app.encrypted_artifact_owner_is_valid: an exact, single CREATE OR REPLACE
+// per migration file. loadLastEncryptedArtifactOwnerFunctionBody trusts this
+// exact string to find the definition that governs a real deployment; any
+// other definition-shaped statement for this function name -- DROP FUNCTION
+// (which would let a later plain CREATE FUNCTION replace the definition
+// outside this scan's marker search), ALTER FUNCTION, a different case or
+// spelling of the marker, or a second CREATE OR REPLACE in the same file --
+// would let the active definition diverge from what this gate reads, so it
+// is rejected outright rather than silently trusted or silently ignored.
+const encryptedArtifactOwnerCanonicalMarker = "CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid("
+
+// encryptedArtifactOwnerDefinitionShape matches only a definition-shaped
+// mention of the function -- CREATE [OR REPLACE] / DROP / ALTER FUNCTION
+// immediately naming it, case-insensitive and whitespace-tolerant so it also
+// catches an evasion attempt. An ordinary call site (a CHECK constraint, a
+// GRANT/REVOKE ON FUNCTION, a comment) never starts with one of these three
+// keywords immediately before "function", so it never matches and is never
+// flagged.
+var encryptedArtifactOwnerDefinitionShape = regexp.MustCompile(
+	`(?i)\b(create(?:\s+or\s+replace)?|drop|alter)\s+function\s+app\s*\.\s*encrypted_artifact_owner_is_valid\b`)
+
+// checkEncryptedArtifactOwnerFunctionDefinitionShape proves every migration's
+// mention of app.encrypted_artifact_owner_is_valid that looks like a
+// definition is exactly the one accepted marker, and that no file defines it
+// twice. It is independent of, and runs before, the owner-inventory content
+// check: a gate that only reads "the last CREATE OR REPLACE it can find" is
+// only as good as its ability to prove nothing else shaped like a definition
+// -- differently cased, DROP'd and plain-CREATE'd, ALTER'd, or duplicated --
+// could have produced a different active definition than the one it found.
+func checkEncryptedArtifactOwnerFunctionDefinitionShape(root string) []string {
+	var problems []string
+	migrationsDir := filepath.Join(root, "db", "migrations")
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		return []string{"cannot list db/migrations for owner-function definition-shape check: " + err.Error()}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		raw, readErr := os.ReadFile(filepath.Join(migrationsDir, entry.Name()))
+		if readErr != nil {
+			problems = append(problems, "cannot read "+entry.Name()+" for owner-function definition-shape check: "+readErr.Error())
+			continue
+		}
+		content := string(raw)
+		if strings.Count(content, encryptedArtifactOwnerCanonicalMarker) > 1 {
+			problems = append(problems, "encrypted_artifact_owner_is_valid is defined more than once in "+entry.Name())
+		}
+		for _, location := range encryptedArtifactOwnerDefinitionShape.FindAllStringIndex(content, -1) {
+			if !strings.HasPrefix(content[location[0]:], encryptedArtifactOwnerCanonicalMarker) {
+				problems = append(problems, "encrypted_artifact_owner_is_valid has a definition-shaped statement in "+
+					entry.Name()+" that is not the exact accepted marker: "+strings.TrimSpace(content[location[0]:location[1]]))
+			}
+		}
+	}
+	return problems
+}
+
 func loadLastEncryptedArtifactOwnerFunctionBody(root string) (string, []string) {
 	migrationsDir := filepath.Join(root, "db", "migrations")
 	entries, err := os.ReadDir(migrationsDir)
