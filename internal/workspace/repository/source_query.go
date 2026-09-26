@@ -30,9 +30,11 @@ package repository
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"sort"
+	"strconv"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
 )
@@ -188,77 +190,162 @@ func readSourceQueryRelations(ctx context.Context, transaction database.Transact
 		return SourceQuerySource{}, false, queryErr
 	}
 	defer rows.Close()
-	scopeSeen := false
+	var scanned []sourceQueryRow
 	for rows.Next() {
-		var scopeID string
-		var scopeRevision, connectionRevision int64
-		var relation SourceQueryRelation
+		var row sourceQueryRow
 		var columnsRaw []byte
-		var credentialReference *string
-		var credentialRevision *int64
-		var verifiedConnectionRevision, verifiedCredentialRevision *int64
-		var verifiedScopeHash, verifiedRoleDigest *string
-		if scanErr := rows.Scan(&scopeID, &scopeRevision, &connectionRevision,
-			&relation.Schema, &relation.Table, &columnsRaw,
-			&result.DatabaseIdentity, &result.ActivationStatus, &result.TrustVerified,
-			&result.IngestionCredentialReference,
-			&credentialReference, &credentialRevision,
-			&verifiedConnectionRevision, &verifiedCredentialRevision,
-			&verifiedScopeHash, &verifiedRoleDigest, &relation.QueryOnly); scanErr != nil {
+		if scanErr := rows.Scan(&row.scopeID, &row.scopeRevision, &row.connectionRevision,
+			&row.relation.Schema, &row.relation.Table, &columnsRaw,
+			&row.databaseIdentity, &row.activationStatus, &row.trustVerified,
+			&row.ingestionCredentialReference,
+			&row.credentialReference, &row.credentialRevision,
+			&row.verifiedConnectionRevision, &row.verifiedCredentialRevision,
+			&row.verifiedScopeHash, &row.verifiedRoleDigest, &row.relation.QueryOnly); scanErr != nil {
 			return SourceQuerySource{}, false, scanErr
-		}
-		// Every row of one call must share one scope, one revision and one
-		// connection revision; a workspace that bound the same connection more
-		// than once is the same content-free not-found rather than a silent
-		// merge of two scopes.
-		if !scopeSeen {
-			scopeSeen = true
-			result.SourceScopeID = scopeID
-			result.ScopeRevision = scopeRevision
-			result.ConnectionRevision = connectionRevision
-		} else if !sourceQueryScopeMatches(result, scopeID, scopeRevision, connectionRevision) {
-			return SourceQuerySource{}, true, nil
 		}
 		columns, decodeErr := sourceQueryColumns(columnsRaw)
 		if decodeErr != nil {
 			return SourceQuerySource{}, false, decodeErr
 		}
-		relation.Columns = columns
-		result.Relations = append(result.Relations, relation)
-		if credentialReference != nil {
-			result.QueryCredentialReference = *credentialReference
-		}
-		if credentialRevision != nil {
-			result.QueryCredentialRevision = *credentialRevision
-		}
-		if verifiedConnectionRevision != nil && verifiedCredentialRevision != nil &&
-			verifiedScopeHash != nil && verifiedRoleDigest != nil {
-			result.Verification = SourceQueryVerification{
-				ConnectionRevision: *verifiedConnectionRevision,
-				CredentialRevision: *verifiedCredentialRevision,
-				ScopeHash:          *verifiedScopeHash,
-				RoleDigest:         *verifiedRoleDigest,
-			}
-		}
+		row.relation.Columns = columns
+		scanned = append(scanned, row)
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
 		return SourceQuerySource{}, false, rowsErr
 	}
-	if len(result.Relations) == 0 {
+	result, merged := mergeSourceQueryRows(sourceID, scanned)
+	if !merged {
 		return SourceQuerySource{}, true, nil
 	}
 	return result, false, nil
 }
 
-// sourceQueryScopeMatches reports whether one more projection row belongs to the
-// same scope, scope revision and connection revision as the first row of the
-// call. A workspace that bound the same connection through two scopes produces
-// rows that fail this check, and the whole read collapses into the content-free
-// not-found instead of merging two scopes.
-func sourceQueryScopeMatches(source SourceQuerySource, scopeID string, scopeRevision, connectionRevision int64) bool {
-	return source.SourceScopeID == scopeID && source.ScopeRevision == scopeRevision &&
-		source.ConnectionRevision == connectionRevision
+// sourceQueryRow is one registered relation of one enabled scope on the
+// requested connection, as read by readSourceQueryRelations.
+type sourceQueryRow struct {
+	scopeID                      string
+	scopeRevision                int64
+	connectionRevision           int64
+	relation                     SourceQueryRelation
+	databaseIdentity             string
+	activationStatus             string
+	trustVerified                bool
+	ingestionCredentialReference string
+	credentialReference          *string
+	credentialRevision           *int64
+	verifiedConnectionRevision   *int64
+	verifiedCredentialRevision   *int64
+	verifiedScopeHash            *string
+	verifiedRoleDigest           *string
 }
+
+// mergeSourceQueryRows folds the relations of every scope the workspace has
+// enabled on one connection into the one source the agent queries. The
+// registration flow registers each table as its own scope, so a database with
+// several registered tables is several scopes on one connection; the query
+// role is one per connection and its least-privilege proof covers exactly the
+// union of their projections, so the union is the source's scope.
+//
+// The fold is refused (content-free not-found) when the rows do not describe
+// one database at one connection revision, when one scope appears at two
+// revisions, or when two scopes register the same relation. The merged source
+// is READY and trusted only when every one of its scopes is, so SQL never runs
+// while part of the registered set is still pending or revoked. ScopeRevision,
+// the exposed-schema revision the attempt is audited and re-authorized
+// against, is the scope revision itself for a single scope; for several scopes
+// it is sourceQueryScopeSetRevision, a fingerprint of the exact set of
+// (scope, revision) pairs and relations, so adding, removing or revising any
+// scope changes it and an older disclosure no longer re-authorizes.
+func mergeSourceQueryRows(sourceID string, rows []sourceQueryRow) (SourceQuerySource, bool) {
+	if len(rows) == 0 {
+		return SourceQuerySource{}, false
+	}
+	first := rows[0]
+	result := SourceQuerySource{
+		SourceID: sourceID, SourceScopeID: first.scopeID, ConnectionRevision: first.connectionRevision,
+		DatabaseIdentity: first.databaseIdentity, IngestionCredentialReference: first.ingestionCredentialReference,
+		ActivationStatus: sourceActivationReadyState, TrustVerified: true,
+	}
+	scopeRevisions := map[string]int64{}
+	relations := map[[2]string]bool{}
+	for _, row := range rows {
+		if row.connectionRevision != first.connectionRevision || row.databaseIdentity != first.databaseIdentity {
+			return SourceQuerySource{}, false
+		}
+		if revision, seen := scopeRevisions[row.scopeID]; seen && revision != row.scopeRevision {
+			return SourceQuerySource{}, false
+		} else if !seen {
+			scopeRevisions[row.scopeID] = row.scopeRevision
+		}
+		key := [2]string{row.relation.Schema, row.relation.Table}
+		if relations[key] {
+			return SourceQuerySource{}, false
+		}
+		relations[key] = true
+		if row.activationStatus != sourceActivationReadyState && result.ActivationStatus == sourceActivationReadyState {
+			result.ActivationStatus = row.activationStatus
+		}
+		if !row.trustVerified {
+			result.TrustVerified = false
+		}
+		result.Relations = append(result.Relations, row.relation)
+		if row.credentialReference != nil {
+			result.QueryCredentialReference = *row.credentialReference
+		}
+		if row.credentialRevision != nil {
+			result.QueryCredentialRevision = *row.credentialRevision
+		}
+		if row.verifiedConnectionRevision != nil && row.verifiedCredentialRevision != nil &&
+			row.verifiedScopeHash != nil && row.verifiedRoleDigest != nil {
+			result.Verification = SourceQueryVerification{
+				ConnectionRevision: *row.verifiedConnectionRevision,
+				CredentialRevision: *row.verifiedCredentialRevision,
+				ScopeHash:          *row.verifiedScopeHash,
+				RoleDigest:         *row.verifiedRoleDigest,
+			}
+		}
+	}
+	// The read already orders rows this way; sorting here keeps the scope hash
+	// and the revision independent of the row order whatever the caller.
+	sort.SliceStable(result.Relations, func(i, j int) bool {
+		if result.Relations[i].Schema != result.Relations[j].Schema {
+			return result.Relations[i].Schema < result.Relations[j].Schema
+		}
+		return result.Relations[i].Table < result.Relations[j].Table
+	})
+	if len(scopeRevisions) == 1 {
+		result.ScopeRevision = first.scopeRevision
+	} else {
+		result.ScopeRevision = sourceQueryScopeSetRevision(scopeRevisions, result.ScopeHash())
+	}
+	return result, true
+}
+
+// sourceQueryScopeSetRevision is the exposed-schema revision of a source made
+// of several scopes: a positive integer within the audit journal's safe range
+// derived from the sorted (scope, revision) pairs and the merged scope hash.
+// Equality is its only use (audit and re-authorization compare it), and any
+// change of the set yields a different value except with negligible
+// probability.
+func sourceQueryScopeSetRevision(scopeRevisions map[string]int64, scopeHash string) int64 {
+	scopeIDs := make([]string, 0, len(scopeRevisions))
+	for scopeID := range scopeRevisions {
+		scopeIDs = append(scopeIDs, scopeID)
+	}
+	sort.Strings(scopeIDs)
+	digest := sha256.New()
+	for _, scopeID := range scopeIDs {
+		digest.Write([]byte(scopeID + "@" + strconv.FormatInt(scopeRevisions[scopeID], 10) + ";"))
+	}
+	digest.Write([]byte(scopeHash))
+	sum := digest.Sum(nil)
+	const maxSafeRevision = int64(9007199254740991)
+	return int64(binary.BigEndian.Uint64(sum[:8])%uint64(maxSafeRevision)) + 1
+}
+
+// sourceActivationReadyState is the only activation state of a scope on which
+// the merged source counts as READY.
+const sourceActivationReadyState = "READY"
 
 // sourceQueryColumns decodes the projection's own columns_json. The projection
 // is already exclusion-narrowed at registration, so a column the administrator
