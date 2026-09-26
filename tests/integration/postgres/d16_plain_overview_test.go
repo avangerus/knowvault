@@ -213,6 +213,15 @@ func TestD16PlainOverviewRouteMountsKnowledgeToolsOnly(t *testing.T) {
 		t.Fatalf("plain_overview stop reason = %q, want CLARIFICATION", run.ToolLoop.StopReason)
 	}
 	for _, call := range run.ToolLoop.Calls {
+		// Card D-20: the server's own orientation reads each database
+		// source's stored schema (knowvault_source_schema) as a system call,
+		// so a plain_overview answer can name what a database really records.
+		// The tool is still never offered to the model (asserted above), it
+		// runs no SQL and reads no live value, and only a model-reached data
+		// tool is a failure here.
+		if call.System {
+			continue
+		}
 		switch call.Name {
 		case "knowvault_source_sql", "knowvault_source_schema", "knowvault_ask_live_data", "knowvault_compare_metric", "knowvault_analyze":
 			t.Fatalf("plain_overview run reached a data tool: %+v", call)
