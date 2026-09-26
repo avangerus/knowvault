@@ -1614,9 +1614,12 @@ func (service *Service) persistAmbiguousStructuredSourceRefusal(ctx context.Cont
 }
 
 // persistUnresolvedStructuredMetricRefusal is the terminal typed refusal for a
-// caller that carried a sealed validated intent: the intent named the measure,
-// so a snapshot that cannot resolve it has no ordinary fallback to defer to and
-// must fail closed rather than publish a number the reducer refused to prove.
+// snapshot that cannot resolve the question's SUM metric to one of its own
+// declared numeric columns. It fails closed rather than publish a number the
+// reducer refused to prove, and it is never deferred to the ordinary retrieval
+// fallback: that fallback sums whatever numeric cell the retrieval window
+// happened to return, which is a different question's exact answer whenever the
+// source's own text columns carry the words of the question.
 func (service *Service) persistUnresolvedStructuredMetricRefusal(ctx context.Context, access database.AccessContext, runID, workspaceID string, partial bool, language string) error {
 	uncertainties, conflicts, signalErr := normalizeSignals([]Uncertainty{{Code: UncertaintyInsufficientEvidence}}, nil)
 	if signalErr != nil {
@@ -1629,13 +1632,10 @@ func (service *Service) persistUnresolvedStructuredMetricRefusal(ctx context.Con
 
 // answerStructuredAggregate is the whole AGG-1 path for one run: reduce the
 // snapshot, re-read and re-authorize the witness fragments, persist the answer
-// with its citations. A snapshot that cannot resolve the requested metric, and
-// a plan more than one source could resolve, never publish a number the
-// snapshot itself refused to prove. A caller carrying a sealed validated intent
-// gets that typed refusal as its terminal answer; every other caller declines
-// so the ordinary retrieval/evidence path decides (it reduces only over the
-// evidence the question actually retrieved, or fails closed), which is also
-// the one place the named multi-source clarification is published.
+// with its citations. A snapshot that cannot resolve the requested metric is a
+// terminal typed refusal; a plan more than one source could resolve gets the
+// named clarifying refusal. Every other non-answerable plan leaves the caller's
+// ordinary retrieval path untouched.
 func (service *Service) answerStructuredAggregate(ctx context.Context, access database.AccessContext,
 	runID, workspaceID, questionText string, planned planner.Plan, identity ...answerResultIdentity) (bool, error) {
 	if service == nil || service.db == nil || service.evidence == nil || service.retrievalStore == nil {
@@ -1659,12 +1659,13 @@ func (service *Service) answerStructuredAggregate(ctx context.Context, access da
 	if !ok {
 		// A snapshot whose SUM metric cannot be resolved to one of its own
 		// declared numeric columns is not answered by guessing which column the
-		// question meant. A caller that carried a sealed validated intent has no
-		// ordinary fallback, so its typed refusal is terminal here. Every other
-		// caller declines and lets the ordinary evidence path make the decision,
-		// because only that path can reduce against the evidence the question
-		// actually retrieved instead of the whole snapshot.
-		if result.refusal == snapshotAggregateRefusalUnresolvedMetric && len(identity) > 0 && identity[0].Intent != nil {
+		// question meant, and it is not answered by the ordinary retrieval
+		// fallback either: that path sums whatever numeric cell the retrieval
+		// window returned, so a source whose text columns carry the words of the
+		// question would publish a total for a metric the reducer refused to
+		// prove. The typed refusal is terminal, exactly as it is for a caller
+		// that carried a sealed validated intent.
+		if result.refusal == snapshotAggregateRefusalUnresolvedMetric {
 			if err := service.persistUnresolvedStructuredMetricRefusal(ctx, access, runID, workspaceID, structuredPartial, language); err != nil {
 				return false, err
 			}

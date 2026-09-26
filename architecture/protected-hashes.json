@@ -1134,6 +1134,7 @@
     "tests/integration/postgres/session_sliding_renewal_test.go": "256a0f4bb3e0822593160a03854b751fb0dccae61a03c8fbff51c67e73009e88",
     "tests/integration/postgres/session_termination_test.go": "1f25c506c725ddb7bfa24291dae598b2d99d8716cd6931ab413165213e0501fd",
     "tests/integration/postgres/snapshot_aggregate_ambiguity_test.go": "cac7b08bd1703230345c7b02e76ba80e1fd2eb63e8193ba558065b881ec0c179",
+    "tests/integration/postgres/snapshot_aggregate_unnamed_metric_test.go": "28196b3bf61aab4d1813199f159103d25af34bfbb1bb83ea3bf7ad8e51ac81a7",
     "tests/integration/postgres/snapshot_aggregate_workspace_binding_test.go": "b39838608202b9eea96730527cf89996f30b4d482dd6f9b891f7777143bd59b2",
     "tests/integration/postgres/source_activation_single_live_job_test.go": "3ad32400a6672996c106c6be2cec68eed6ea1ac6cfb18036068601677023ecd6",
     "tests/integration/postgres/source_authority_admission_negative_test.go": "f81221621f092ca479b0e5f86d9932c23b460db5af28cdb51c94b0940f4ccae9",
