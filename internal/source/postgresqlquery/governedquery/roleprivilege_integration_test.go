@@ -238,7 +238,9 @@ func seedRolePrivilegeFixtures(t *testing.T, ctx context.Context, admin *pgx.Con
 			`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '` + role + `') THEN CREATE ROLE ` + role + ` LOGIN PASSWORD '` + rolePrivilegePassword + `' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$`,
 			`ALTER ROLE ` + role + ` NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`,
 			`DROP OWNED BY ` + role,
-			`REVOKE pg_read_all_data FROM ` + role,
+			// pg_read_all_data exists from PostgreSQL 14; customer databases
+			// (GM: PostgreSQL 13) predate it, and the proof must run there too.
+			`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'pg_read_all_data') THEN EXECUTE 'REVOKE pg_read_all_data FROM ` + role + `'; END IF; END $$`,
 			`GRANT USAGE ON SCHEMA ` + rolePrivilegeSchema + ` TO ` + role,
 			`GRANT SELECT (id, status, amount) ON ` + rolePrivilegeSchema + `.contracts TO ` + role,
 			`GRANT SELECT ON ` + rolePrivilegeSchema + `.customers TO ` + role,
@@ -1017,9 +1019,10 @@ func TestExecuteScopedReprovesRoleOnEveryCall(t *testing.T) {
 			restore: `REVOKE SELECT (secret) ON ` + rolePrivilegeSchema + `.contracts FROM ` + rolePrivilegeOK,
 		},
 		{
-			name:    "pg_read_all_data membership added",
-			mutate:  `GRANT pg_read_all_data TO ` + rolePrivilegeOK,
-			restore: `REVOKE pg_read_all_data FROM ` + rolePrivilegeOK,
+			// pg_monitor exists on every supported PostgreSQL, including 13.
+			name:    "pg_monitor membership added",
+			mutate:  `GRANT pg_monitor TO ` + rolePrivilegeOK,
+			restore: `REVOKE pg_monitor FROM ` + rolePrivilegeOK,
 		},
 	}
 	for _, scenario := range scenarios {
