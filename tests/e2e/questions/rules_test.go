@@ -257,3 +257,105 @@ func TestCitationDocument(t *testing.T) {
 		t.Fatalf("q5_values = %#v, want PASS", verdict)
 	}
 }
+
+// mcpQ7Observation is the canned Q7 (MCP) run the card's parity rule judges:
+// a live-table count answer with the product's own record of the run and the
+// peer (Q3) answer of the same run.
+func mcpQ7Observation(answer, peerAnswer string) Observation {
+	live := func() (string, string) { return "LIVE_TABLE", "sha256:" + strings.Repeat("a", 64) }
+	ownKind, ownReceipt := live()
+	peerKind, peerReceipt := live()
+	return Observation{
+		QuestionID: "Q7", QuestionText: "Сколько договоров действует?", QuestionLang: "ru",
+		Answer: answer, Status: "COMPLETED", StopReason: "ANSWER", GroundingStatus: "CONFIRMED_BY_FRAGMENT",
+		LiveResultKind: ownKind, LiveResultReceipt: ownReceipt, LiveResultSourceID: "conn_contract",
+		ViaMCP: true, MCPRecorded: true, StatusFieldName: "status",
+		Peer: &PeerObservation{
+			QuestionID: "Q3", Answer: peerAnswer,
+			LiveResultKind: peerKind, LiveResultReceipt: peerReceipt, LiveResultSourceID: "conn_contract",
+		},
+	}
+}
+
+// TestQ7NumberEqualsQ3InSameRun is card D-19 result 2: a stubbed MCP answer
+// carrying Q3's number is green, an answer carrying a different number is red.
+func TestQ7NumberEqualsQ3InSameRun(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "Q7")
+
+	equal := mcpQ7Observation("По данным источника договоров действующих 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	verdicts := Evaluate(set, question, equal)
+	for _, verdict := range verdicts {
+		if !verdict.Passed {
+			t.Fatalf("equal-number MCP answer failed %s: %s", verdict.ID, verdict.Detail)
+		}
+	}
+
+	different := mcpQ7Observation("По данным источника договоров действующих 5. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	verdicts = Evaluate(set, question, different)
+	number, ok := ruleByID(verdicts, "q7_number")
+	if !ok || number.Passed {
+		t.Fatalf("q7_number = %#v, want FAIL when the MCP number differs from Q3's in the same run", number)
+	}
+	if !strings.Contains(number.Detail, "Q7=5") || !strings.Contains(number.Detail, "Q3=3") {
+		t.Fatalf("q7_number detail = %q, want both numbers", number.Detail)
+	}
+	for _, verdict := range verdicts {
+		if verdict.ID == "q7_number" {
+			continue
+		}
+		if !verdict.Passed && verdict.Hard {
+			t.Fatalf("only q7_number should differ, hard rule %s failed: %s", verdict.ID, verdict.Detail)
+		}
+	}
+}
+
+// TestQ7SourceMustMatchQ3 is card D-19 result 1: the MCP answer must cite the
+// same live source as Q3 in the same run.
+func TestQ7SourceMustMatchQ3(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "Q7")
+
+	other := mcpQ7Observation("Действующих договоров 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	other.Peer.LiveResultSourceID = "conn_other"
+	if verdict, ok := ruleByID(Evaluate(set, question, other), "q7_source"); !ok || verdict.Passed {
+		t.Fatalf("q7_source = %#v, want FAIL when the live source differs from Q3's", verdict)
+	}
+
+	missing := mcpQ7Observation("Действующих договоров 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	missing.LiveResultSourceID = ""
+	if verdict, ok := ruleByID(Evaluate(set, question, missing), "q7_source"); !ok || verdict.Passed {
+		t.Fatalf("q7_source = %#v, want FAIL with no live source", verdict)
+	}
+}
+
+// TestQ7TransportMustBeRecorded: a run without the product's own MCP record is
+// not a question asked through MCP, so the hard rule must reject it.
+func TestQ7TransportMustBeRecorded(t *testing.T) {
+	set := testSet(t)
+	question := testQuestion(t, set, "Q7")
+	observation := mcpQ7Observation("Действующих договоров 3. [Результат 1]", "Действующих договоров 3. [Результат 1]")
+	observation.MCPRecorded = false
+	if verdict, ok := ruleByID(Evaluate(set, question, observation), "q7_mcp"); !ok || verdict.Passed {
+		t.Fatalf("q7_mcp = %#v, want FAIL without the product's MCP record", verdict)
+	}
+}
+
+// TestSignificantNumberDropsCitationMarkers: the reference number inside
+// "[Результат 1]" is not the answer's own number.
+func TestSignificantNumberDropsCitationMarkers(t *testing.T) {
+	for _, testCase := range []struct {
+		answer string
+		want   int
+		ok     bool
+	}{
+		{"Действующих договоров 3. [Результат 1]", 3, true},
+		{"[Результат 1] Действующих договоров 5.", 5, true},
+		{"Данных нет. [1]", 0, false},
+	} {
+		got, ok := SignificantNumber(testCase.answer)
+		if ok != testCase.ok || got != testCase.want {
+			t.Fatalf("SignificantNumber(%q) = %d/%t, want %d/%t", testCase.answer, got, ok, testCase.want, testCase.ok)
+		}
+	}
+}

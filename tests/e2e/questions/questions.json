@@ -262,6 +262,26 @@
       ]
     },
     {
+      "id": "Q7",
+      "text": "Сколько договоров действует?",
+      "language": "ru",
+      "via": "mcp",
+      "compares_to": "Q3",
+      "max_steps": 4,
+      "time_limit_s": 40,
+      "max_chars": 1200,
+      "expectation": "Счётный вопрос Q3, заданный через MCP-сервер продукта так, как его задаёт внешний агент: тот же номер и тот же живой источник, что и у Q3 в том же прогоне.",
+      "value_note": "The answer's number and live source must equal Q3's in the same full run; the run must also have arrived through the product's MCP server, which the product's own question.created record shows by carrying the MCP request id.",
+      "checks": [
+        {"id": "q7_number_present", "type": "contains_number", "hard": true},
+        {"id": "q7_source", "type": "source_equals_peer", "hard": true},
+        {"id": "q7_number", "type": "number_equals_peer", "hard": true},
+        {"id": "q7_mcp", "type": "mcp_transport_recorded", "hard": true},
+        {"id": "q7_value", "type": "value_equals", "hard": false, "group": "value", "value": "A"},
+        {"id": "q7_time", "type": "time_limit_s", "hard": false, "group": "time"}
+      ]
+    },
+    {
       "id": "Q8",
       "text": "какие есть источники?",
       "language": "ru",

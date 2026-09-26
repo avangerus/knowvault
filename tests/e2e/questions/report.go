@@ -198,6 +198,20 @@ func RenderMarkdown(report Report) string {
 	}
 	builder.WriteString("\n")
 
+	builder.WriteString("## MCP parity (card D-19)\n\n")
+	builder.WriteString("Runs asked through the product's MCP server, the way an outside agent asks, with the number and live source they got and the number and live source the question they compare to got in the same run. `product record` is true when the product's own question.created audit record for the run carries the MCP request id.\n\n")
+	builder.WriteString("| # | Run | Number | Peer | Peer number | Live source | Peer source | Product record |\n")
+	builder.WriteString("|---|---|---|---|---|---|---|---|\n")
+	for _, run := range report.Runs {
+		if run.Via == "" && run.PeerNumber == nil && run.Number == nil {
+			continue
+		}
+		fmt.Fprintf(&builder, "| %s | %d | %s | %s | %s | %s | %s | %s |\n",
+			run.QuestionID, run.Run, optionalNumber(run.Number), run.PeerQuestionID, optionalNumber(run.PeerNumber),
+			run.LiveResultSourceID, run.PeerLiveResultSourceID, productRecordCell(run))
+	}
+	builder.WriteString("\n")
+
 	builder.WriteString("## Runs\n\n")
 	builder.WriteString("| # | Run | Kind | Steps | Seconds | Tool calls (name: main argument) | Rules | Answer |\n")
 	builder.WriteString("|---|---|---|---|---|---|---|---|\n")
@@ -228,6 +242,20 @@ func RenderMarkdown(report Report) string {
 			kindCell(run.Kind), run.KindInputTokens, run.KindOutputTokens)
 		fmt.Fprintf(&builder, "- Status: `%s` / stop_reason `%s` / grounding `%s`\n", run.Status, run.StopReason, run.GroundingStatus)
 		fmt.Fprintf(&builder, "- Steps: %d; seconds: %.2f; tokens: %d in / %d out\n", run.Steps, run.Seconds, run.InputTokens, run.OutputTokens)
+		via := "chat"
+		if run.Via != "" {
+			via = run.Via
+		}
+		fmt.Fprintf(&builder, "- Via: `%s`", via)
+		if run.Via == "mcp" {
+			fmt.Fprintf(&builder, "; MCP request id `%s`; product record of the run: `%s`", run.MCPRequestID, productRecordCell(run))
+		}
+		builder.WriteString("\n")
+		if run.Number != nil || run.PeerNumber != nil || run.LiveResultSourceID != "" || run.PeerQuestionID != "" {
+			fmt.Fprintf(&builder, "- Number: %s; peer %s number: %s; live source: `%s`; peer live source: `%s`\n",
+				optionalNumber(run.Number), run.PeerQuestionID, optionalNumber(run.PeerNumber),
+				run.LiveResultSourceID, run.PeerLiveResultSourceID)
+		}
 		if len(run.SQLTexts) > 0 {
 			fmt.Fprintf(&builder, "- Executed SQL: %s\n", escapeCell(strings.Join(run.SQLTexts, " | ")))
 		}
@@ -235,6 +263,30 @@ func RenderMarkdown(report Report) string {
 		fmt.Fprintf(&builder, "Answer:\n\n```text\n%s\n```\n\n", run.Answer)
 	}
 	return builder.String()
+}
+
+// optionalNumber renders an optional answer number for the MCP parity table.
+func optionalNumber(value *int) string {
+	if value == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%d", *value)
+}
+
+// productRecordCell renders whether the product's own record of the run ties
+// it to the MCP request id.
+func productRecordCell(run RunReport) string {
+	if run.Via == "" {
+		return "—"
+	}
+	mark := "no"
+	if run.MCPRecorded {
+		mark = "yes"
+	}
+	if run.MCPRequestID == "" {
+		return mark
+	}
+	return mark + " (`" + run.MCPRequestID + "`)"
 }
 
 func verdictsInline(verdicts []RuleVerdict) string {
