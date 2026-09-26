@@ -63,6 +63,16 @@ contract number `N`), the universal rules, and the questions with their own
 checks. The rule engine and the runner read it and contain no second copy of
 the questions or expectations.
 
+A question may name the surface the runner must ask it through (`via: "mcp"`,
+card D-19) and the question it must match in the same full run
+(`compares_to`). The judge's `number_equals_peer` rule is green only when both
+answers state the same number and `source_equals_peer` only when both cite the
+same governed live source; `mcp_transport_recorded` requires the run to have
+arrived through the product's MCP server and the product's own
+`question.created` record to carry the MCP transport's request id. Q7 is Q3's
+count question asked through MCP, so a full run answers it over the MCP
+transport and compares it with the chat's Q3 of the same run index.
+
 Every answer must pass the universal hard rules: non-empty text, no
 `profile limits` / `could not be completed`, no short label followed by a colon
 at the start of a line, no `Evidence 1`-style marker, no prose claiming a

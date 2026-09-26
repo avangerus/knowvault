@@ -137,6 +137,38 @@ func TestQuestionSetSmoke(t *testing.T) {
 	if len(report.Questions) != len(set.Questions) {
 		t.Fatalf("report has %d question verdicts, want %d", len(report.Questions), len(set.Questions))
 	}
+	// Card D-19: Q7 is part of the full run and every one of its runs was asked
+	// through the product's MCP server, judged by the cross-transport rules.
+	q7Runs, q7Rules := 0, map[string]bool{}
+	for _, run := range runs {
+		if run.QuestionID != "Q7" {
+			continue
+		}
+		q7Runs++
+		if run.Via != "mcp" {
+			t.Fatalf("Q7 run %d via=%q, want the MCP surface", run.Run, run.Via)
+		}
+		for _, verdict := range run.Verdicts {
+			q7Rules[verdict.ID] = true
+		}
+	}
+	if q7Runs != 3 {
+		t.Fatalf("Q7 ran %d times, want 3", q7Runs)
+	}
+	for _, id := range []string{"q7_number", "q7_source", "q7_mcp"} {
+		if !q7Rules[id] {
+			t.Fatalf("Q7 runs do not carry the %s rule", id)
+		}
+	}
+	listed := false
+	for _, verdict := range report.Questions {
+		if verdict.QuestionID == "Q7" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatal("the full run report does not list Q7")
+	}
 	dir := t.TempDir()
 	markdownPath, jsonPath, err := questions.WriteReport(dir, report)
 	if err != nil {

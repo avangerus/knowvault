@@ -359,3 +359,29 @@ func TestSignificantNumberDropsCitationMarkers(t *testing.T) {
 		}
 	}
 }
+
+// TestReportShowsMCPParity pins the cross-transport evidence the card's report
+// needs: the question, the run, green/red, the number and the source.
+func TestReportShowsMCPParity(t *testing.T) {
+	number, peerNumber := 3, 3
+	report := Report{
+		Title: "mcp parity test",
+		Runs: []RunReport{{
+			QuestionID: "Q7", Run: 1, Via: "mcp", MCPRequestID: "req_mcp_1", MCPRecorded: true,
+			Answer: "Действующих договоров 3. [Результат 1]", Number: &number,
+			PeerQuestionID: "Q3", PeerNumber: &peerNumber,
+			LiveResultSourceID: "conn_contract", PeerLiveResultSourceID: "conn_contract",
+		}},
+	}
+	markdown := RenderMarkdown(report)
+	for _, want := range []string{
+		"## MCP parity (card D-19)",
+		"| Q7 | 1 | 3 | Q3 | 3 | conn_contract | conn_contract | yes (`req_mcp_1`) |",
+		"- Via: `mcp`; MCP request id `req_mcp_1`",
+		"- Number: 3; peer Q3 number: 3;",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("report does not contain %q:\n%s", want, markdown)
+		}
+	}
+}
