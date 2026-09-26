@@ -1171,6 +1171,11 @@ type endpoint struct {
 	readLimit            int64
 	readExpectedSpanHash string
 	readCursor           *string
+	// readOutline is the strictly parsed outline=true query parameter
+	// (R1.S9.s1.T1): the REST twin of the MCP knowvault_read outline argument.
+	// It is mutually exclusive with cursor and with a nonzero offset, exactly
+	// like the MCP argument.
+	readOutline bool
 	// refreshSourceScopeID, refreshOffset and refreshLimit are the strictly
 	// parsed tools/refresh parameters. An explicit source_scope_id narrows the
 	// refresh to exactly one bound scope; offset/limit page the resolved source
@@ -1304,6 +1309,7 @@ func parseEndpoint(request *http.Request) (endpoint, string) {
 		result.readLimit = read.limit
 		result.readExpectedSpanHash = read.expectedSpanHash
 		result.readCursor = read.cursor
+		result.readOutline = read.outline
 		return result, ""
 	}
 	if result.kind == endpointWorkspaceToolRefresh {
@@ -1892,6 +1898,7 @@ type workspaceToolReadQuery struct {
 	limit            int64
 	expectedSpanHash string
 	cursor           *string
+	outline          bool
 }
 
 // validWorkspaceToolReadQuery strictly validates the tools/read query string,
@@ -1916,7 +1923,7 @@ func validWorkspaceToolReadQuery(requestURL *url.URL) (workspaceToolReadQuery, b
 		return workspaceToolReadQuery{}, false
 	}
 	values, err := url.ParseQuery(requestURL.RawQuery)
-	if err != nil || len(values) == 0 || len(values) > 6 {
+	if err != nil || len(values) == 0 || len(values) > 7 {
 		return workspaceToolReadQuery{}, false
 	}
 	result := workspaceToolReadQuery{}
@@ -1959,6 +1966,15 @@ func validWorkspaceToolReadQuery(requestURL *url.URL) (workspaceToolReadQuery, b
 			}
 			cursor := raw
 			result.cursor = &cursor
+		case "outline":
+			switch raw {
+			case "true":
+				result.outline = true
+			case "false":
+				result.outline = false
+			default:
+				return workspaceToolReadQuery{}, false
+			}
 		default:
 			return workspaceToolReadQuery{}, false
 		}
@@ -1967,6 +1983,9 @@ func validWorkspaceToolReadQuery(requestURL *url.URL) (workspaceToolReadQuery, b
 		return workspaceToolReadQuery{}, false
 	}
 	if result.cursor != nil && result.offset != 0 {
+		return workspaceToolReadQuery{}, false
+	}
+	if result.outline && (result.cursor != nil || result.offset != 0) {
 		return workspaceToolReadQuery{}, false
 	}
 	return result, true

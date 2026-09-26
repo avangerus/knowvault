@@ -319,9 +319,9 @@ func mcpEvidenceReadTextHash(text []byte) string {
 
 // TestMCPEvidenceReadAdvertisesClosedPagedSchema proves tools/list advertises
 // knowvault_read with the closed paged schema: exactly the two
-// required selectors plus the optional offset/limit/expected_span_hash members,
-// and no further member (additionalProperties:false); the compatibility name is
-// not advertised.
+// required selectors plus the optional offset/limit/expected_span_hash/outline
+// members, and no further member (additionalProperties:false); the
+// compatibility name is not advertised.
 func TestMCPEvidenceReadAdvertisesClosedPagedSchema(t *testing.T) {
 	harness := newTestHarness(t)
 	response := httptest.NewRecorder()
@@ -372,10 +372,10 @@ func TestMCPEvidenceReadAdvertisesClosedPagedSchema(t *testing.T) {
 		}
 	}
 	properties, ok := schema["properties"].(map[string]any)
-	if !ok || len(properties) != 8 {
+	if !ok || len(properties) != 9 {
 		t.Fatalf("evidence read inputSchema properties=%#v", schema["properties"])
 	}
-	for _, bound := range []string{"workspace_id", "fragment_id", "address", "cursor", "offset", "limit", "expected_span_hash", "include_text_base64"} {
+	for _, bound := range []string{"workspace_id", "fragment_id", "address", "cursor", "offset", "limit", "expected_span_hash", "include_text_base64", "outline"} {
 		if _, ok := properties[bound].(map[string]any); !ok {
 			t.Fatalf("evidence read inputSchema missing property %q: %#v", bound, properties)
 		}

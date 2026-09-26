@@ -2601,6 +2601,18 @@ paths:
         schema:
           type: string
           pattern: "^v1:[0-9]{1,19}$"
+      - name: outline
+        in: query
+        required: false
+        description: >-
+          R1.S9.s1.T1: "true" returns the addressed document's ordered Markdown ATX heading list
+          (level, text, canonical_address, gist) instead of a text page, for orientation before
+          reading; no fragment text is disclosed. Mutually exclusive with cursor and with a nonzero
+          offset (REQUEST_INVALID). "false", like omission, keeps the existing fragment or
+          whole-object page mode.
+        schema:
+          type: string
+          enum: ["true", "false"]
     get:
       operationId: readWorkspaceToolEvidence
       tags: [Search]
@@ -2614,7 +2626,11 @@ paths:
         length, next_cursor, has_more, complete, effective limit, total_bytes, whole_hash,
         page_hash, address, canonical_address, fragment_count, ordinal_start, and ordinal_end.
         Concatenating decoded text_base64 from all pages reproduces the retained text assembly
-        hashed by whole_hash; a limit never silently truncates it. Dispatches through the same
+        hashed by whole_hash; a limit never silently truncates it. Outline mode (outline=true,
+        mutually exclusive with cursor and a nonzero offset) returns the addressed document's
+        ordered Markdown ATX heading list (headings, truncated) instead of a page: no fragment text,
+        only orientation -- read the addressed fragment before citing or asserting anything.
+        Dispatches through the same
         authorized Evidence.Read and EvidenceWholeObject/address.Read capabilities as MCP,
         preserving admission-before-data, audit, and content-free denial. An unknown workspace or a
         nonmember receives the same 404 NOT_FOUND without text or an echo of the requested
@@ -2725,6 +2741,30 @@ paths:
                     type: integer
                   ordinal_end:
                     type: integer
+                  headings:
+                    type: array
+                    description: >-
+                      Present only in outline mode (outline=true): the addressed document's ordered
+                      Markdown ATX headings, at most 200. No fragment text is disclosed alongside it.
+                    items:
+                      type: object
+                      required: [level, text, canonical_address, gist]
+                      properties:
+                        level:
+                          type: integer
+                          minimum: 1
+                          maximum: 6
+                        text:
+                          type: string
+                        canonical_address:
+                          type: string
+                        gist:
+                          type: string
+                  truncated:
+                    type: boolean
+                    description: >-
+                      Present only in outline mode. true when the document held more than 200
+                      headings, so headings carries only the first 200.
         "400":
           $ref: "#/components/responses/RequestInvalid"
         "401":
@@ -2744,10 +2784,10 @@ paths:
       summary: "Explicit fragment or whole-object pages within a workspace (POST parity)"
       description: >-
         The same REST parity with knowvault_read as GET:
-        fragment_id/address/offset/limit/expected_span_hash/cursor are query parameters; the request
-        body is not a parameter channel, and a nonempty body returns REQUEST_INVALID. POST supports
-        clients that call knowledge tools using POST; projection, authorization, audit, and denial
-        are identical to GET.
+        fragment_id/address/offset/limit/expected_span_hash/cursor/outline are query parameters; the
+        request body is not a parameter channel, and a nonempty body returns REQUEST_INVALID. POST
+        supports clients that call knowledge tools using POST; projection, authorization, audit, and
+        denial are identical to GET.
       x-implementation-status: LIVE
       security:
         - SessionCookie: []

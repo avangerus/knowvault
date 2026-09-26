@@ -123,6 +123,14 @@ type mcpEvidenceReadArguments struct {
 	// the page itself, so the default response no longer duplicates every page
 	// as text plus base64 plus the JSON envelope.
 	IncludeTextBase64 bool `json:"include_text_base64"`
+	// Outline is the additive orientation switch (R1.S9.s1.T1): instead of a
+	// text page it returns the ordered list of the addressed document's
+	// Markdown headings (level, text, canonical_address, gist) plus the
+	// document's fragment_count, so a caller can see the document's structure
+	// and jump straight to a section instead of paging through it. It composes
+	// the same authorized whole-object read as cursor mode and is therefore
+	// mutually exclusive with cursor and with a nonzero offset.
+	Outline bool `json:"outline"`
 }
 
 // The two question tools a V1-C SERVICE principal (agent access code) is
@@ -618,14 +626,15 @@ func mcpToolCatalog(access database.AccessContext) []any {
 			}},
 		},
 		map[string]any{
-			"name": mcpToolEvidenceRead, "description": "Read source text by address: copy canonical_address (kv1:...) from search into the address argument and OMIT cursor to read the addressed fragment. Alternatively use fragment_id. Start with limit=4096 bytes; offset/next_offset paginate the fragment if has_more is true. A complete direct fragment page may also include at most previous/next fragment identifiers, ordinals and exact canonical addresses; read those addresses separately when needed. Only when you need the full parent document, use cursor=\"\" and continue with next_cursor: this can read a much larger document than the search hit. In whole-document mode, canonical_address identifies the entire document. To cite text from a returned page, use its matching fragments[].canonical_address; page_offset and length locate that fragment's bytes in the page. A fragment may cross page boundaries; read its address directly or continue the pages to obtain its full text. Returns exact text, address, version, span hash and explicit has_more; no silent truncation. Copy contiguous quotes exactly, without ellipses. Access checks and audit apply to every page.",
+			"name": mcpToolEvidenceRead, "description": "Read source text by address: copy canonical_address (kv1:...) from search into the address argument and OMIT cursor to read the addressed fragment. Alternatively use fragment_id. Start with limit=4096 bytes; offset/next_offset paginate the fragment if has_more is true. A complete direct fragment page may also include at most previous/next fragment identifiers, ordinals and exact canonical addresses; read those addresses separately when needed. Only when you need the full parent document, use cursor=\"\" and continue with next_cursor: this can read a much larger document than the search hit. In whole-document mode, canonical_address identifies the entire document. To cite text from a returned page, use its matching fragments[].canonical_address; page_offset and length locate that fragment's bytes in the page. A fragment may cross page boundaries; read its address directly or continue the pages to obtain its full text. Returns exact text, address, version, span hash and explicit has_more; no silent truncation. Copy contiguous quotes exactly, without ellipses. Access checks and audit apply to every page. Set outline=true instead of cursor/offset to get the document's heading list (level, text, canonical_address, gist) before reading it; outline is orientation only -- read the addressed fragment to cite or assert anything.",
 			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"workspace_id"}, "anyOf": []any{map[string]any{"required": []string{"address"}}, map[string]any{"required": []string{"fragment_id"}}}, "properties": map[string]any{
 				"workspace_id": map[string]any{"type": "string"}, "fragment_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 				"address": map[string]any{"type": "string", "minLength": 1, "description": "The exact canonical_address kv1:... returned by a knowledge tool."},
-				"cursor":  map[string]any{"type": "string", "description": "Omit this property entirely for the addressed fragment. An empty string is NOT a default placeholder: it deliberately switches to the whole parent document. Pass next_cursor only to continue that document. Do not combine with nonzero offset."},
+				"cursor":  map[string]any{"type": "string", "description": "Omit this property entirely for the addressed fragment. An empty string is NOT a default placeholder: it deliberately switches to the whole parent document. Pass next_cursor only to continue that document. Do not combine with nonzero offset or with outline."},
 				"offset":  map[string]any{"type": "integer", "minimum": 0, "description": "UTF-8 byte offset within the fragment; starts at 0. Copy next_offset for another fragment page."}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": mcpEvidenceReadMaxLimit, "default": mcpEvidenceReadDefaultLimit, "description": "Maximum UTF-8 bytes in this page, not lines or characters. The default 4096 normally reads a complete search fragment."},
 				"expected_span_hash":  map[string]any{"type": "string", "minLength": 1},
 				"include_text_base64": map[string]any{"type": "boolean"},
+				"outline":             map[string]any{"type": "boolean", "description": "Return the addressed document's ordered heading list (level, text, canonical_address, gist) instead of a text page, for orientation before reading. Do not combine with cursor or a nonzero offset."},
 			}},
 		},
 		map[string]any{
@@ -1076,7 +1085,14 @@ func (handler *Handler) mcpEvidenceReadToolCall(writer http.ResponseWriter, requ
 		writeMCPError(writer, envelope.ID, -32602, "invalid evidence read arguments")
 		return
 	}
-	handler.mcpEvidenceReadPage(writer, request, access, envelope, arguments.WorkspaceID, arguments.FragmentID, arguments.Address, arguments.Offset, arguments.Limit, arguments.ExpectedSpanHash, arguments.Cursor, arguments.IncludeTextBase64)
+	// Outline mode is driven by the whole document, not by a cursor or an
+	// explicit offset; a caller that combines it with either is refused before
+	// any read, exactly like the cursor/offset conflict above.
+	if arguments.Outline && (arguments.Cursor != nil || arguments.Offset != 0) {
+		writeMCPError(writer, envelope.ID, -32602, "invalid evidence read arguments")
+		return
+	}
+	handler.mcpEvidenceReadPage(writer, request, access, envelope, arguments.WorkspaceID, arguments.FragmentID, arguments.Address, arguments.Offset, arguments.Limit, arguments.ExpectedSpanHash, arguments.Cursor, arguments.IncludeTextBase64, arguments.Outline)
 }
 
 // mcpEvidenceReadPage is the single read core of knowvault_read. It
@@ -1100,7 +1116,7 @@ func (handler *Handler) mcpEvidenceReadToolCall(writer http.ResponseWriter, requ
 // EvidenceWholeObject capability under the same authorized audit path, and the
 // pointer's value is the stable page cursor (empty for the first page). Absent
 // cursor keeps the single-fragment read byte-for-byte unchanged.
-func (handler *Handler) mcpEvidenceReadPage(writer http.ResponseWriter, request *http.Request, access database.AccessContext, envelope mcpRequest, workspaceID, fragmentID, rawAddress string, offset, limit int64, expectedSpanHash string, cursor *string, includeTextBase64 bool) {
+func (handler *Handler) mcpEvidenceReadPage(writer http.ResponseWriter, request *http.Request, access database.AccessContext, envelope mcpRequest, workspaceID, fragmentID, rawAddress string, offset, limit int64, expectedSpanHash string, cursor *string, includeTextBase64, outline bool) {
 	if handler.evidence == nil {
 		writeMCPError(writer, envelope.ID, -32000, "service unavailable")
 		return
@@ -1148,6 +1164,10 @@ func (handler *Handler) mcpEvidenceReadPage(writer http.ResponseWriter, request 
 	}
 	if cursor != nil {
 		handler.mcpEvidenceReadWholeObjectPage(writer, request, access, envelope, workspaceID, fragmentID, selector, refVersionID, *cursor, limit, expectedSpanHash, includeTextBase64)
+		return
+	}
+	if outline {
+		handler.mcpEvidenceReadOutlinePage(writer, request, access, envelope, workspaceID, fragmentID, selector, refVersionID, expectedSpanHash)
 		return
 	}
 	fragment, err := handler.readEvidenceSelection(request.Context(), access, workspaceID, fragmentID, selector, refVersionID)
