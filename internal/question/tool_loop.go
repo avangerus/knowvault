@@ -1579,6 +1579,23 @@ func (service *Service) executeToolLoop(parent context.Context, access database.
 		service.observeWorkspaceContextRun(finishCtx, access, run, questionText, record, persistErr)
 		return persistErr
 	}
+	// Card D-17 / ADR-0099 amendment 1 decision 5: a question the separate
+	// recognition step named off_topic or vague takes its own deterministic
+	// route -- a server-rendered answer with no tool mounted and no answering
+	// model call at all. It therefore makes no SQL query, no live-data read and
+	// no document search; the answer names the workspace's own registered
+	// subjects. Every other recognised kind is answered exactly as before.
+	if shortKind := AnswerKind(record.AnswerKind); shortKind == AnswerKindOffTopic || shortKind == AnswerKindVague {
+		subjects, subjectsErr := service.shortKindSubjectNames(ctx, scope, record)
+		if subjectsErr != nil {
+			if errors.Is(subjectsErr, workspacetools.ErrScopeChanged) {
+				record.StopReason = toolScopeChangedStopReason
+				return persistScopeChanged()
+			}
+			return &Error{code: CodeDenied, cause: subjectsErr}
+		}
+		return service.completeShortKindRun(parent, access, run, questionText, record, shortKind, subjects)
+	}
 	catalog, err := service.tools.Catalog(ctx, scope)
 	if err != nil {
 		if errors.Is(err, workspacetools.ErrScopeChanged) {
