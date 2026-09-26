@@ -205,6 +205,22 @@ func toolLoopOverviewQuestion(question string) bool {
 	return toolLoopOverviewQuestionClass(question) != toolLoopOverviewClassNone
 }
 
+// toolLoopOverviewClassForRun picks the orientation shape a question receives
+// before its first model turn. When the separate recognition step (ADR-0099
+// amendment 1) named the question full, the deterministic overview classes are
+// off: a full question has no compact answer shape, and in particular a count
+// question that merely says "база" is not handed the business-words database
+// overview (a rule of another kind) instead of being answered by the full
+// loop. Every other recognised kind keeps the deterministic classifier's
+// choice, so the existing orientation of a greeting, a workspace overview, a
+// sources overview and the legacy path with recognition off are unchanged.
+func toolLoopOverviewClassForRun(recognitionOn bool, kind AnswerKind, question string) toolLoopOverviewClass {
+	if recognitionOn && kind == AnswerKindFull {
+		return toolLoopOverviewClassNone
+	}
+	return toolLoopOverviewQuestionClass(question)
+}
+
 // buildToolLoopOverview reads the compact workspace overview. Every read goes
 // through the same authorized workspace tools runtime the loop itself uses, so
 // admission, audit and the read-only guarantee are exactly the existing ones;
@@ -434,6 +450,12 @@ type toolLoopOverviewSource struct {
 	FreshnessState   string
 	ObjectsSeen      *int64
 	ObjectsIngested  *int64
+	// Confirmed, TrustVerified and SQLAvailable are card D-18's readability
+	// facts. They are pointers so an inventory shape that does not carry them
+	// reads as "no information" rather than as a failure.
+	Confirmed     *bool
+	TrustVerified *bool
+	SQLAvailable  *bool
 }
 
 // toolLoopOverviewSourcesFromResult decodes the same structured source
@@ -452,6 +474,9 @@ func toolLoopOverviewSourcesFromResult(raw json.RawMessage) []toolLoopOverviewSo
 			PostgreSQLRelationName string `json:"postgresql_relation_name"`
 			Enabled                bool   `json:"enabled"`
 			ActivationStatus       string `json:"activation_status"`
+			TrustVerified          *bool  `json:"trust_verified"`
+			Confirmed              *bool  `json:"confirmed"`
+			SQLAvailable           *bool  `json:"sql_available"`
 			SyncStatus             string `json:"sync_status"`
 			FreshnessState         string `json:"freshness_state"`
 			ObjectsSeen            *int64 `json:"objects_seen"`
@@ -476,6 +501,7 @@ func toolLoopOverviewSourcesFromResult(raw json.RawMessage) []toolLoopOverviewSo
 			Enabled: source.Enabled, ActivationStatus: source.ActivationStatus,
 			SyncStatus: source.SyncStatus, FreshnessState: source.FreshnessState,
 			ObjectsSeen: source.ObjectsSeen, ObjectsIngested: source.ObjectsIngested,
+			Confirmed: source.Confirmed, TrustVerified: source.TrustVerified, SQLAvailable: source.SQLAvailable,
 		})
 	}
 	return sources

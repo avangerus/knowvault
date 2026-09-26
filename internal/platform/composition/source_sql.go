@@ -225,6 +225,43 @@ func (executor sourceSQLExecutor) SourceSQL(ctx context.Context, access database
 	}, nil
 }
 
+// SourceReadable is card D-18's live readability check for one workspace
+// source: the source's connection answers and its least-privilege query role
+// still works. It opens the source with the source's own query credential and
+// runs one server-authored constant statement through the same governed
+// execution path the tool uses, so a closed port, a repointed credential or a
+// revoked role is reported before the answering model runs. It discloses no
+// row and writes no governed-query attempt: it is a readiness check, never an
+// agent-authored read.
+func (executor sourceSQLExecutor) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	if executor.workspaces == nil || executor.resolver == nil || executor.roots == nil || ctx == nil || ctx.Err() != nil {
+		return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+	}
+	target, err := executor.workspaces.SourceQuery(ctx, access, workspaceID, connectionID)
+	if err != nil {
+		return err
+	}
+	if target.ActivationStatus != sourceActivationReady || !target.TrustVerified || target.QueryCredentialReference == "" {
+		return errors.New("SOURCE_READABILITY_NOT_READY")
+	}
+	dsn, resolveErr := executor.resolver.ResolveReference(ctx, target.QueryCredentialReference)
+	if resolveErr != nil || dsn == "" {
+		return errors.New("SOURCE_READABILITY_UNRESOLVED")
+	}
+	roots, rootsErr := executor.roots.NewCertPool()
+	if rootsErr != nil || roots == nil || len(roots.Subjects()) == 0 {
+		return errors.New("SOURCE_READABILITY_UNRESOLVED")
+	}
+	_, _, execErr := governedquery.ExecuteScoped(ctx, governedquery.Config{
+		ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
+		DSN: dsn, TrustRoots: roots, Limits: executor.limits,
+	}, governedquery.ScopedParams{
+		SQLText: "SELECT 1", Purpose: "readiness",
+		Schema: governedquery.ScopedSchema{Relations: sourceSQLRelations(target)},
+	})
+	return execErr
+}
+
 // refuseAudited renders one closed load-limit refusal after appending its
 // content-free audit event, so an over-limit call is still provable. An
 // unauditable refusal becomes the plain service-unavailable error.

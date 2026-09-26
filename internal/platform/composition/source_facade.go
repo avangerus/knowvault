@@ -92,6 +92,14 @@ type sourceServiceFacadeWithSQL struct {
 var _ workspaceapi.SourceSQLProvider = sourceServiceFacadeWithSQL{}
 var _ workspaceapi.SourceQueryCredential = sourceServiceFacadeWithSQL{}
 var _ workspaceapi.SourceSQLAttemptReauthority = sourceServiceFacadeWithSQL{}
+var _ workspaceapi.SourceReadabilityProvider = sourceServiceFacadeWithSQL{}
+
+// SourceReadable is card D-18's live readability check for one source. It is a
+// pure delegation to the SQL executor, which owns the source-access read, the
+// credential resolution and the one governed execution path.
+func (facade sourceServiceFacadeWithSQL) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	return facade.sourceSQL.SourceReadable(ctx, access, workspaceID, connectionID)
+}
 
 // ReauthorizeSourceSQLAttempt is the read-time reauthorization of one stored
 // agent-authored SQL receipt. It is a pure delegation to the executor, which

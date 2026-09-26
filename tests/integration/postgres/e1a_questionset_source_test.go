@@ -36,6 +36,7 @@ import (
 	"knowvault.local/verified-workspace/internal/source/postgresqlquery/governedquery"
 	"knowvault.local/verified-workspace/internal/source/registration"
 	workspacerepository "knowvault.local/verified-workspace/internal/workspace/repository"
+	"knowvault.local/verified-workspace/internal/workspacetools"
 )
 
 // e1aDocker runs one docker CLI command and fails the test on a non-zero exit.
@@ -292,6 +293,17 @@ func (service e1aSourceService) ReauthorizeSourceSQLAttempt(ctx context.Context,
 	return service.sql.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, disclosure)
 }
 
+// SourceReadable is card D-18's live readability check, mirroring the
+// production delegation. A harness without an SQL executor cannot check a
+// source, so it reports the capability unavailable instead of claiming the
+// source cannot be read.
+func (service e1aSourceService) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	if service.sql == nil {
+		return workspacetools.ErrUnavailable
+	}
+	return service.sql.SourceReadable(ctx, access, workspaceID, connectionID)
+}
+
 // e1aSourceSQL is the harness's mirror of the production source SQL executor:
 // authorization through the workspace repository, a reference-to-DSN map in
 // place of the mounted secret provider, the one governedquery execution path
@@ -347,6 +359,35 @@ func (executor *e1aSourceSQL) SourceSQL(ctx context.Context, access database.Acc
 		DatabaseIdentity:   target.DatabaseIdentity,
 		ExecutionStartedAt: result.ExecutionStartedAt, ExecutionCompletedAt: result.ExecutionCompletedAt,
 	}, nil
+}
+
+// SourceReadable mirrors the production readiness check: it authorizes the
+// source through the workspace repository, refuses a non-READY or untrusted
+// source, resolves the harness's credential map and runs one server-authored
+// constant statement through the same governed execution path.
+func (executor *e1aSourceSQL) SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	if executor == nil || executor.workspaces == nil {
+		return errors.New("SOURCE_READABILITY_UNAVAILABLE")
+	}
+	target, err := executor.workspaces.SourceQuery(ctx, access, workspaceID, connectionID)
+	if err != nil {
+		return err
+	}
+	if target.ActivationStatus != "READY" || !target.TrustVerified || target.QueryCredentialReference == "" {
+		return errors.New("SOURCE_READABILITY_NOT_READY")
+	}
+	dsn, ok := executor.credentials[target.QueryCredentialReference]
+	if !ok || dsn == "" {
+		return errors.New("SOURCE_READABILITY_UNRESOLVED")
+	}
+	_, _, execErr := governedquery.ExecuteScoped(ctx, governedquery.Config{
+		ConnectionID: target.SourceID, DatabaseIdentity: target.DatabaseIdentity, WorkspaceID: workspaceID,
+		DSN: dsn, TrustRoots: executor.roots, Limits: e1aSourceSQLLimits(),
+	}, governedquery.ScopedParams{
+		SQLText: "SELECT 1", Purpose: "readiness",
+		Schema: governedquery.ScopedSchema{Relations: e1aScopedRelations(target)},
+	})
+	return execErr
 }
 
 func (executor *e1aSourceSQL) ReauthorizeSourceSQLAttempt(ctx context.Context, access database.AccessContext, workspaceID string, disclosure question.SourceSQLAttemptDisclosure) error {

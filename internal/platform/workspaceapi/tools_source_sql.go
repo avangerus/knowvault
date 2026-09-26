@@ -221,6 +221,34 @@ func (handler *Handler) ReauthorizeSourceSQLAttempt(ctx context.Context, access 
 	return reauthority.ReauthorizeSourceSQLAttempt(ctx, access, workspaceID, disclosure)
 }
 
+// SourceReadabilityProvider is card D-18's optional source capability behind
+// the chat runtime's pre-answer readability check: whether one PostgreSQL
+// source of the caller's workspace can actually be read right now. The
+// production implementation opens the source once with its own query
+// credential and runs one server-authored constant statement; it discloses no
+// row and is not an agent-authored read. A composition that mounts no such
+// capability leaves the check unknown instead of claiming the source is
+// unreadable.
+type SourceReadabilityProvider interface {
+	SourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error
+}
+
+// ProbeSourceReadable is the chat runtime's live readability check for one
+// source. It is discovered on the injected source service exactly like the
+// other optional source capabilities, so no new composition install path
+// exists; a source service that does not carry it reports the capability
+// unavailable, which the caller reads as "unknown", never as "cannot be read".
+func (handler *Handler) ProbeSourceReadable(ctx context.Context, access database.AccessContext, workspaceID, connectionID string) error {
+	if handler == nil || handler.sources == nil || connectionID == "" {
+		return workspacetools.ErrUnavailable
+	}
+	provider, ok := handler.sources.(SourceReadabilityProvider)
+	if !ok {
+		return workspacetools.ErrUnavailable
+	}
+	return provider.SourceReadable(ctx, access, workspaceID, connectionID)
+}
+
 // workspaceToolSourceSQL is the REST parity of the MCP knowvault_source_sql
 // tool (POST /api/v1/workspaces/{workspace_id}/tools/source-sql). The closed
 // argument body carries source_id, sql and purpose. A closed refusal is a 200
