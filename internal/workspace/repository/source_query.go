@@ -30,9 +30,11 @@ package repository
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"sort"
+	"strconv"
 
 	"knowvault.local/verified-workspace/internal/platform/database"
 )
@@ -250,8 +252,10 @@ type sourceQueryRow struct {
 // is READY and trusted only when every one of its scopes is, so SQL never runs
 // while part of the registered set is still pending or revoked. ScopeRevision,
 // the exposed-schema revision the attempt is audited and re-authorized
-// against, is the sum of the scope revisions: it equals the scope revision for
-// a single scope and changes whenever a scope is added, removed or revised.
+// against, is the scope revision itself for a single scope; for several scopes
+// it is sourceQueryScopeSetRevision, a fingerprint of the exact set of
+// (scope, revision) pairs and relations, so adding, removing or revising any
+// scope changes it and an older disclosure no longer re-authorizes.
 func mergeSourceQueryRows(sourceID string, rows []sourceQueryRow) (SourceQuerySource, bool) {
 	if len(rows) == 0 {
 		return SourceQuerySource{}, false
@@ -272,7 +276,6 @@ func mergeSourceQueryRows(sourceID string, rows []sourceQueryRow) (SourceQuerySo
 			return SourceQuerySource{}, false
 		} else if !seen {
 			scopeRevisions[row.scopeID] = row.scopeRevision
-			result.ScopeRevision += row.scopeRevision
 		}
 		key := [2]string{row.relation.Schema, row.relation.Table}
 		if relations[key] {
@@ -302,7 +305,42 @@ func mergeSourceQueryRows(sourceID string, rows []sourceQueryRow) (SourceQuerySo
 			}
 		}
 	}
+	// The read already orders rows this way; sorting here keeps the scope hash
+	// and the revision independent of the row order whatever the caller.
+	sort.SliceStable(result.Relations, func(i, j int) bool {
+		if result.Relations[i].Schema != result.Relations[j].Schema {
+			return result.Relations[i].Schema < result.Relations[j].Schema
+		}
+		return result.Relations[i].Table < result.Relations[j].Table
+	})
+	if len(scopeRevisions) == 1 {
+		result.ScopeRevision = first.scopeRevision
+	} else {
+		result.ScopeRevision = sourceQueryScopeSetRevision(scopeRevisions, result.ScopeHash())
+	}
 	return result, true
+}
+
+// sourceQueryScopeSetRevision is the exposed-schema revision of a source made
+// of several scopes: a positive integer within the audit journal's safe range
+// derived from the sorted (scope, revision) pairs and the merged scope hash.
+// Equality is its only use (audit and re-authorization compare it), and any
+// change of the set yields a different value except with negligible
+// probability.
+func sourceQueryScopeSetRevision(scopeRevisions map[string]int64, scopeHash string) int64 {
+	scopeIDs := make([]string, 0, len(scopeRevisions))
+	for scopeID := range scopeRevisions {
+		scopeIDs = append(scopeIDs, scopeID)
+	}
+	sort.Strings(scopeIDs)
+	digest := sha256.New()
+	for _, scopeID := range scopeIDs {
+		digest.Write([]byte(scopeID + "@" + strconv.FormatInt(scopeRevisions[scopeID], 10) + ";"))
+	}
+	digest.Write([]byte(scopeHash))
+	sum := digest.Sum(nil)
+	const maxSafeRevision = int64(9007199254740991)
+	return int64(binary.BigEndian.Uint64(sum[:8])%uint64(maxSafeRevision)) + 1
 }
 
 // sourceActivationReadyState is the only activation state of a scope on which

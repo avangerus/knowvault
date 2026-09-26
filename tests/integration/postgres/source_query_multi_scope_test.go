@@ -13,8 +13,8 @@ package postgres_test
 // bootstrap -> discovery -> registration path, binds both to the workspace and
 // drives workspacerepository.Store against real PostgreSQL:
 //
-//   - the source carries both tables, and its exposed-schema revision is the
-//     sum of the two scope revisions;
+//   - the source carries both tables under one exposed-schema revision that
+//     activation does not change;
 //   - it is READY only when both scopes are READY; and
 //   - the owner's credential control sees both tables and can set the
 //     credential, which the Sources card then reports as sql_available.
@@ -206,8 +206,8 @@ func TestSourceQueryTablesRegisteredOneByOneAreOneSource(t *testing.T) {
 	if got := strings.Join(multiScopeTables(pending), ","); got != "contract,stand" {
 		t.Fatalf("source tables = %s, want contract,stand", got)
 	}
-	if pending.ScopeRevision != 2 {
-		t.Fatalf("exposed-schema revision = %d, want 2 (the sum of two scope revisions 1)", pending.ScopeRevision)
+	if pending.ScopeRevision < 1 {
+		t.Fatalf("exposed-schema revision = %d, want a positive revision", pending.ScopeRevision)
 	}
 	if pending.ActivationStatus == "READY" {
 		t.Fatalf("a source with no READY scope reports READY: %+v", pending)
@@ -224,7 +224,8 @@ func TestSourceQueryTablesRegisteredOneByOneAreOneSource(t *testing.T) {
 
 	advanceMultiScopeActivation(t, ctx, admin, scopes[1])
 	ready, err := repository.SourceQuery(ctx, owner, regWorkspace, connectionID)
-	if err != nil || ready.ActivationStatus != "READY" || !ready.TrustVerified || len(ready.Relations) != 2 {
+	if err != nil || ready.ActivationStatus != "READY" || !ready.TrustVerified || len(ready.Relations) != 2 ||
+		ready.ScopeRevision != pending.ScopeRevision {
 		t.Fatalf("both scopes READY = %+v err=%v, want a READY trusted source of 2 tables", ready, err)
 	}
 

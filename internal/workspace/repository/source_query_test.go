@@ -48,12 +48,41 @@ func TestSourceQueryScopesOfOneConnectionAreOneSource(t *testing.T) {
 		sourceQueryTestRow("scope_b", 1, "contract_container_group"),
 		sourceQueryTestRow("scope_c", 2, "stand"),
 	})
-	if !ok || merged.SourceID != "conn_a" || len(merged.Relations) != 3 || merged.ScopeRevision != 7 ||
+	if !ok || merged.SourceID != "conn_a" || len(merged.Relations) != 3 || merged.ScopeRevision < 1 ||
 		merged.ActivationStatus != "READY" || !merged.TrustVerified {
-		t.Fatalf("three scopes on one connection = %+v ok=%v, want one READY source of 3 tables at revision 7", merged, ok)
+		t.Fatalf("three scopes on one connection = %+v ok=%v, want one READY source of 3 tables", merged, ok)
 	}
 	if merged.ScopeHash() == single.ScopeHash() {
 		t.Fatal("the merged source kept the single-table scope hash, so a role proof of one table would pass for three")
+	}
+}
+
+// The exposed-schema revision of a merged source is what audit and
+// re-authorization compare: it must not depend on row order, and it must
+// change when a table is swapped for another at the same revision or a scope
+// is revised, so a disclosure from a removed table never re-authorizes.
+func TestSourceQueryMergedRevisionChangesWithTheScopeSet(t *testing.T) {
+	revision := func(rows ...sourceQueryRow) int64 {
+		t.Helper()
+		merged, ok := mergeSourceQueryRows("conn_a", rows)
+		if !ok {
+			t.Fatalf("rows refused: %+v", rows)
+		}
+		return merged.ScopeRevision
+	}
+	base := revision(sourceQueryTestRow("scope_a", 1, "contract"), sourceQueryTestRow("scope_b", 1, "stand"))
+	if again := revision(sourceQueryTestRow("scope_b", 1, "stand"), sourceQueryTestRow("scope_a", 1, "contract")); again != base {
+		t.Fatalf("row order changed the revision: %d vs %d", again, base)
+	}
+	for name, changed := range map[string]int64{
+		"stand swapped for another table at revision 1": revision(sourceQueryTestRow("scope_a", 1, "contract"), sourceQueryTestRow("scope_c", 1, "client")),
+		"stand revised":       revision(sourceQueryTestRow("scope_a", 1, "contract"), sourceQueryTestRow("scope_b", 2, "stand")),
+		"a third table added": revision(sourceQueryTestRow("scope_a", 1, "contract"), sourceQueryTestRow("scope_b", 1, "stand"), sourceQueryTestRow("scope_c", 1, "client")),
+		"stand removed":       revision(sourceQueryTestRow("scope_a", 1, "contract")),
+	} {
+		if changed == base {
+			t.Fatalf("%s kept the exposed-schema revision %d", name, base)
+		}
 	}
 }
 
