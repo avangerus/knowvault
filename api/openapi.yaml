@@ -1340,6 +1340,107 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /workspaces/{workspace_id}/questions/{question_run_id}:feedback:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/QuestionRunID"
+    get:
+      operationId: getQuestionFeedback
+      tags: [Search]
+      summary: "Read the caller's own current mark on one answer"
+      description: >-
+        Returns marked=false when the caller has not marked this answer. Access mirrors the
+        answer's own current readability; the comment text itself is never returned here.
+      x-implementation-status: LIVE_EXTRACTIVE
+      security:
+        - SessionCookie: []
+        - BearerSession: []
+      responses:
+        "200":
+          description: The caller's own current feedback state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionFeedback"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    post:
+      operationId: submitQuestionFeedback
+      tags: [Search]
+      summary: "Mark one answer CORRECT or INCORRECT, or change the caller's existing mark"
+      description: >-
+        One member holds exactly one current mark per answer; a resubmission changes that same
+        mark rather than adding another. INCORRECT requires a non-empty comment describing what is
+        wrong; CORRECT discards any previously stored comment. Only a member who can currently
+        read the answer (the same rule that gates the answer itself) may mark or see it.
+      x-implementation-status: LIVE_EXTRACTIVE
+      security:
+        - SessionCookie: []
+        - BearerSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFHeader"
+        - $ref: "#/components/parameters/OriginHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuestionFeedbackInput"
+      responses:
+        "200":
+          description: The caller's current feedback state after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionFeedback"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/CSRFRejected"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /workspaces/{workspace_id}/questions:feedback-report:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      operationId: getQuestionFeedbackReport
+      tags: [Search]
+      summary: "Error-review report: every member's current answer feedback"
+      description: >-
+        Reserved to the workspace OWNER/MANAGER (workspace.manage). A member without that role
+        receives the same content-free NOT_FOUND as an unknown workspace. Question, answer and
+        comment text are decrypted only for this authorized read.
+      x-implementation-status: LIVE_EXTRACTIVE
+      security:
+        - SessionCookie: []
+        - BearerSession: []
+      responses:
+        "200":
+          description: Every current feedback row in the workspace, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionFeedbackReport"
+        "400":
+          $ref: "#/components/responses/RequestInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /workspaces/{workspace_id}/conversations:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -5772,6 +5873,72 @@ components:
             request without that mount is rejected with QUESTION_MODE_UNSUPPORTED before any run is
             created.
           enum: [EXTRACTIVE, GENERATIVE, TOOL_LOOP]
+    QuestionFeedbackInput:
+      type: object
+      additionalProperties: false
+      required: [verdict]
+      properties:
+        verdict:
+          type: string
+          enum: [CORRECT, INCORRECT]
+        comment:
+          description: >-
+            Required and non-empty when verdict is INCORRECT; ignored (any stored comment is
+            cleared) when verdict is CORRECT. Stored envelope-encrypted, never as plain text; never
+            echoed back by any endpoint except the OWNER/MANAGER feedback report.
+          type: string
+          maxLength: 4096
+    QuestionFeedback:
+      type: object
+      additionalProperties: false
+      required: [marked]
+      properties:
+        marked:
+          description: false when the caller has not marked this answer.
+          type: boolean
+        verdict:
+          type: string
+          enum: [CORRECT, INCORRECT]
+        has_comment:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+    QuestionFeedbackReportEntry:
+      type: object
+      additionalProperties: false
+      required: [question_run_id, question, answer, verdict, author_principal_id, created_at, updated_at]
+      properties:
+        question_run_id:
+          $ref: "#/components/schemas/OpaqueID"
+        question:
+          type: string
+        answer:
+          type: string
+        verdict:
+          type: string
+          enum: [CORRECT, INCORRECT]
+        comment:
+          type: string
+        author_principal_id:
+          $ref: "#/components/schemas/OpaqueID"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    QuestionFeedbackReport:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, entries]
+      properties:
+        workspace_id:
+          $ref: "#/components/schemas/OpaqueID"
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuestionFeedbackReportEntry"
     ConversationTurn:
       type: object
       additionalProperties: false

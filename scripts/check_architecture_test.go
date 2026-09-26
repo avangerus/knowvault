@@ -142,21 +142,11 @@ func TestArtifactOutboxGuardRejectsOwnerPrivilegeAndTriggerDepthMutations(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerTuples, ownerProblems := loadEncryptedArtifactOwnerTuples("..")
-	if len(ownerProblems) != 0 {
-		t.Fatal(ownerProblems)
-	}
 	baseline := string(raw)
-	if problems := checkArtifactOutboxMigration(baseline, ownerTuples); len(problems) != 0 {
+	if problems := checkArtifactOutboxMigration(baseline); len(problems) != 0 {
 		t.Fatalf("accepted migration fails its guard: %v", problems)
 	}
 	mutations := map[string]string{
-		"duplicate owner": strings.Replace(baseline,
-			"('external_identity', 'external_subject_artifact_id', 'EXTERNAL_IDENTITY', 'SUBJECT'),",
-			"('external_identity', 'external_subject_artifact_id', 'EXTERNAL_IDENTITY', 'SUBJECT'),\n        ('external_identity', 'external_subject_artifact_id', 'EXTERNAL_IDENTITY', 'SUBJECT'),", 1),
-		"owner moved to comment": strings.Replace(baseline,
-			"        ('external_identity', 'external_subject_artifact_id', 'EXTERNAL_IDENTITY', 'SUBJECT'),\n", "", 1) +
-			"\n-- ('external_identity', 'external_subject_artifact_id', 'EXTERNAL_IDENTITY', 'SUBJECT')\n",
 		"grant all event":     baseline + "\nGRANT ALL PRIVILEGES ON TABLE public.outbox_event TO knowvault_app;\n",
 		"grant truncate head": baseline + "\nGRANT TRUNCATE ON public.outbox_sequence_head TO knowvault_app;\n",
 		"grant references":    baseline + "\nGRANT REFERENCES ON public.outbox_event TO knowvault_app;\n",
@@ -171,11 +161,175 @@ func TestArtifactOutboxGuardRejectsOwnerPrivilegeAndTriggerDepthMutations(t *tes
 	}
 	for name, mutated := range mutations {
 		t.Run(name, func(t *testing.T) {
-			if problems := checkArtifactOutboxMigration(mutated, ownerTuples); len(problems) == 0 {
+			if problems := checkArtifactOutboxMigration(mutated); len(problems) == 0 {
 				t.Fatal("unsafe migration mutation was accepted")
 			}
 		})
 	}
+}
+
+// TestEncryptedArtifactOwnerInventoryAtHeadGuardRejectsDriftAcrossMigrations
+// proves checkEncryptedArtifactOwnerInventoryAtHead reads the LAST
+// CREATE OR REPLACE across the whole migration directory (by filename
+// order) -- the definition a real deployment actually resolves to -- rather
+// than assuming any one numbered file is authoritative. It never edits a
+// real migration file: every case runs against a synthetic temp directory.
+func TestEncryptedArtifactOwnerInventoryAtHeadGuardRejectsDriftAcrossMigrations(t *testing.T) {
+	ownerTuples, ownerProblems := loadEncryptedArtifactOwnerTuples("..")
+	if len(ownerProblems) != 0 {
+		t.Fatal(ownerProblems)
+	}
+	writeMigrations := func(t *testing.T, bodies map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		migrationsDir := filepath.Join(dir, "db", "migrations")
+		if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range bodies {
+			if err := os.WriteFile(filepath.Join(migrationsDir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	functionBody := func(tuples []string) string {
+		var body strings.Builder
+		body.WriteString("CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid(a text, b text, c text, d text)\n")
+		body.WriteString("RETURNS boolean LANGUAGE sql AS $$\n    SELECT (a, b, c, d) IN (\n")
+		for index, tuple := range tuples {
+			body.WriteString("        " + tuple)
+			if index != len(tuples)-1 {
+				body.WriteString(",")
+			}
+			body.WriteString("\n")
+		}
+		body.WriteString("    );\n$$;\n")
+		return body.String()
+	}
+
+	if problems := checkEncryptedArtifactOwnerInventoryAtHead(
+		writeMigrations(t, map[string]string{"000001_base.sql": functionBody(ownerTuples)}), ownerTuples,
+	); len(problems) != 0 {
+		t.Fatalf("accepted head definition fails its guard: %v", problems)
+	}
+
+	// An earlier migration with a smaller list is fine as long as a LATER
+	// one (by filename order) forward-preserves the full closed set --
+	// exactly how 000090 amended 000005's own original, smaller list.
+	if problems := checkEncryptedArtifactOwnerInventoryAtHead(writeMigrations(t, map[string]string{
+		"000001_base.sql":  functionBody(ownerTuples[:len(ownerTuples)-1]),
+		"000002_widen.sql": functionBody(ownerTuples),
+	}), ownerTuples); len(problems) != 0 {
+		t.Fatalf("a later widening migration should satisfy the guard: %v", problems)
+	}
+
+	t.Run("last migration drops a branch", func(t *testing.T) {
+		if problems := checkEncryptedArtifactOwnerInventoryAtHead(writeMigrations(t, map[string]string{
+			"000001_base.sql":  functionBody(ownerTuples),
+			"000002_drift.sql": functionBody(ownerTuples[:len(ownerTuples)-1]),
+		}), ownerTuples); len(problems) == 0 {
+			t.Fatal("a later migration dropping a branch was accepted")
+		}
+	})
+	t.Run("last migration duplicates a branch", func(t *testing.T) {
+		duplicated := append(append([]string{}, ownerTuples...), ownerTuples[0])
+		if problems := checkEncryptedArtifactOwnerInventoryAtHead(
+			writeMigrations(t, map[string]string{"000001_base.sql": functionBody(duplicated)}), ownerTuples,
+		); len(problems) == 0 {
+			t.Fatal("a duplicated owner branch was accepted")
+		}
+	})
+	t.Run("branch hidden in a comment does not count", func(t *testing.T) {
+		commented := strings.Replace(functionBody(ownerTuples), ownerTuples[0], "-- "+ownerTuples[0], 1)
+		if problems := checkEncryptedArtifactOwnerInventoryAtHead(
+			writeMigrations(t, map[string]string{"000001_base.sql": commented}), ownerTuples,
+		); len(problems) == 0 {
+			t.Fatal("an owner branch hidden in a SQL comment was accepted")
+		}
+	})
+	t.Run("no migration defines the function", func(t *testing.T) {
+		if problems := checkEncryptedArtifactOwnerInventoryAtHead(
+			writeMigrations(t, map[string]string{"000001_unrelated.sql": "BEGIN;\nCOMMIT;\n"}), ownerTuples,
+		); len(problems) == 0 {
+			t.Fatal("a migration set with no owner-validator definition was accepted")
+		}
+	})
+}
+
+// TestEncryptedArtifactOwnerFunctionDefinitionShapeGuardRejectsEvasions proves
+// checkEncryptedArtifactOwnerFunctionDefinitionShape catches every way a
+// migration could make the active definition of
+// app.encrypted_artifact_owner_is_valid diverge from what
+// loadLastEncryptedArtifactOwnerFunctionBody actually finds: a DROP followed
+// by a plain (non-REPLACE) CREATE, an ALTER, a differently cased or spaced
+// marker, and a second definition in the same file. It also proves ordinary
+// call sites -- a CHECK constraint, GRANT/REVOKE ON FUNCTION -- are never
+// flagged, and that the accepted single-marker-per-file baseline passes.
+func TestEncryptedArtifactOwnerFunctionDefinitionShapeGuardRejectsEvasions(t *testing.T) {
+	writeMigration := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		migrationsDir := filepath.Join(dir, "db", "migrations")
+		if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(migrationsDir, "000001_base.sql"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	const canonical = "CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid(a text, b text, c text, d text)\n" +
+		"RETURNS boolean LANGUAGE sql AS $$\n    SELECT (a, b, c, d) IN (\n        ('t', 'c', 'R', 'F')\n    );\n$$;\n"
+
+	if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, canonical)); len(problems) != 0 {
+		t.Fatalf("the accepted single canonical definition fails its guard: %v", problems)
+	}
+
+	t.Run("ordinary call sites are never flagged", func(t *testing.T) {
+		body := canonical +
+			"\nALTER TABLE public.encrypted_artifact ADD CONSTRAINT x CHECK (app.encrypted_artifact_owner_is_valid(owner_table, owner_column, resource_type, field_name));\n" +
+			"GRANT EXECUTE ON FUNCTION app.encrypted_artifact_owner_is_valid(text, text, text, text) TO knowvault_app;\n" +
+			"REVOKE ALL ON FUNCTION app.encrypted_artifact_owner_is_valid(text, text, text, text) FROM PUBLIC;\n" +
+			"-- see app.encrypted_artifact_owner_is_valid for the closed inventory\n"
+		if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, body)); len(problems) != 0 {
+			t.Fatalf("an ordinary call/grant/comment site was flagged as a definition: %v", problems)
+		}
+	})
+	t.Run("DROP then plain CREATE evades the CREATE OR REPLACE marker search", func(t *testing.T) {
+		body := "DROP FUNCTION app.encrypted_artifact_owner_is_valid(text, text, text, text);\n" +
+			"CREATE FUNCTION app.encrypted_artifact_owner_is_valid(a text, b text, c text, d text)\n" +
+			"RETURNS boolean LANGUAGE sql AS $$ SELECT (a, b, c, d) IN (('t', 'c', 'R', 'F')); $$;\n"
+		if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, body)); len(problems) == 0 {
+			t.Fatal("DROP FUNCTION followed by a plain CREATE FUNCTION was accepted")
+		}
+	})
+	t.Run("ALTER FUNCTION is rejected", func(t *testing.T) {
+		body := canonical + "\nALTER FUNCTION app.encrypted_artifact_owner_is_valid(text, text, text, text) OWNER TO someone_else;\n"
+		if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, body)); len(problems) == 0 {
+			t.Fatal("ALTER FUNCTION on the owner validator was accepted")
+		}
+	})
+	t.Run("different case evades the exact marker", func(t *testing.T) {
+		body := "create or replace function app.encrypted_artifact_owner_is_valid(a text, b text, c text, d text)\n" +
+			"RETURNS boolean LANGUAGE sql AS $$ SELECT (a, b, c, d) IN (('t', 'c', 'R', 'F')); $$;\n"
+		if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, body)); len(problems) == 0 {
+			t.Fatal("a lowercase CREATE OR REPLACE FUNCTION was accepted")
+		}
+	})
+	t.Run("extra whitespace evades the exact marker", func(t *testing.T) {
+		body := "CREATE OR REPLACE FUNCTION  app.encrypted_artifact_owner_is_valid(a text, b text, c text, d text)\n" +
+			"RETURNS boolean LANGUAGE sql AS $$ SELECT (a, b, c, d) IN (('t', 'c', 'R', 'F')); $$;\n"
+		if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, body)); len(problems) == 0 {
+			t.Fatal("a double-spaced CREATE OR REPLACE FUNCTION was accepted")
+		}
+	})
+	t.Run("a second definition in the same file is rejected", func(t *testing.T) {
+		body := canonical + "\n" + canonical
+		if problems := checkEncryptedArtifactOwnerFunctionDefinitionShape(writeMigration(t, body)); len(problems) == 0 {
+			t.Fatal("two CREATE OR REPLACE definitions in one file were accepted")
+		}
+	})
 }
 
 func TestArtifactContainmentGuardRejectsRuntimeAccessAndLeakyPreflight(t *testing.T) {
@@ -373,8 +527,8 @@ func TestEncryptedArtifactOwnerParityGuardRejectsRegistryAndDocDrift(t *testing.
 	if len(ownerProblems) != 0 {
 		t.Fatal(ownerProblems)
 	}
-	if len(ownerTuples) != 27 {
-		t.Fatalf("accepted owner inventory is %d branches, expected 27", len(ownerTuples))
+	if len(ownerTuples) != 28 {
+		t.Fatalf("accepted owner inventory is %d branches, expected 28", len(ownerTuples))
 	}
 	// Baseline: schema, SQL function, Go registry and documentation all agree.
 	if problems := checkEncryptedArtifactOwnerParity("..", ownerTuples); len(problems) != 0 {

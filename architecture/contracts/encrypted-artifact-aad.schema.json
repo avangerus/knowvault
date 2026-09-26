@@ -39,7 +39,8 @@
         "question_claim",
         "claim_deterministic_validation_artifact",
         "question_citation",
-        "model_run_artifact"
+        "model_run_artifact",
+        "question_feedback"
       ]
     },
     "owner_column": {
@@ -66,7 +67,8 @@
         "output_artifact_id",
         "cited_excerpt_artifact_id",
         "deep_link_artifact_id",
-        "input_artifact_id"
+        "input_artifact_id",
+        "comment_artifact_id"
       ]
     },
     "resource_type": {
@@ -94,7 +96,8 @@
         "CITATION_ANCHOR",
         "SOURCE_DEEPLINK",
         "MODEL_ARTIFACT",
-        "SOURCE_DISCOVERY_RESULT"
+        "SOURCE_DISCOVERY_RESULT",
+        "QUESTION_FEEDBACK"
       ]
     },
     "resource_id": {
@@ -127,7 +130,8 @@
         "DEEPLINK",
         "CANONICAL_INPUT",
         "CANONICAL_OUTPUT",
-        "DISCOVERY_METADATA"
+        "DISCOVERY_METADATA",
+        "COMMENT_TEXT"
       ]
     }
   },
@@ -402,6 +406,16 @@
             "owner_column": { "const": "output_artifact_id" },
             "resource_type": { "const": "MODEL_ARTIFACT" },
             "field": { "const": "CANONICAL_OUTPUT" }
+          }
+        },
+        {
+          "title": "question_feedback.comment_artifact_id",
+          "$comment": "question_feedback.id",
+          "properties": {
+            "owner_table": { "const": "question_feedback" },
+            "owner_column": { "const": "comment_artifact_id" },
+            "resource_type": { "const": "QUESTION_FEEDBACK" },
+            "field": { "const": "COMMENT_TEXT" }
           }
         }
       ]

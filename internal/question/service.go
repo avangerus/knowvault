@@ -781,7 +781,8 @@ func (service *Service) EnableGeneration(adapter *modelgateway.LabAdapter, verif
 }
 
 // New constructs the authority and activates only the seven Question Run and
-// citation owner branches installed by migration 000024.
+// citation owner branches installed by migration 000024, plus the answer
+// feedback comment branch installed by migration 000122.
 func New(db *database.Store, auditStore *audit.Store, codec *artifactcrypto.Codec, viewer *evidence.Viewer) (*Service, error) {
 	return NewWithRetrieval(db, auditStore, codec, viewer, nil)
 }
@@ -849,6 +850,7 @@ func NewWithRetrieval(db *database.Store, auditStore *audit.Store, codec *artifa
 		{artifactcrypto.CitationCitedExcerpt, "app.question_citation_bind_cited_excerpt", "app.question_citation_read_cited_excerpt", citationAuthorize},
 		{artifactcrypto.CitationAnchor, "app.question_citation_bind_anchor", "app.question_citation_read_anchor", citationAuthorize},
 		{artifactcrypto.CitationDeepLink, "app.question_citation_bind_deep_link", "app.question_citation_read_deep_link", citationAuthorize},
+		{artifactcrypto.QuestionFeedbackComment, "app.question_feedback_bind_comment", "app.question_feedback_read_comment", feedbackAuthorize},
 	}
 	bindings := make([]artifactrepository.Binding, 0, len(branches))
 	for _, branch := range branches {

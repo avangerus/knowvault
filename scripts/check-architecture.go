@@ -8601,7 +8601,9 @@ func checkStage1DatabaseGate(root string) []string {
 	if err == nil {
 		ownerTuples, ownerProblems := loadEncryptedArtifactOwnerTuples(root)
 		problems = append(problems, ownerProblems...)
-		problems = append(problems, checkArtifactOutboxMigration(string(artifactOutboxMigration), ownerTuples)...)
+		problems = append(problems, checkArtifactOutboxMigration(string(artifactOutboxMigration))...)
+		problems = append(problems, checkEncryptedArtifactOwnerFunctionDefinitionShape(root)...)
+		problems = append(problems, checkEncryptedArtifactOwnerInventoryAtHead(root, ownerTuples)...)
 		problems = append(problems, checkEncryptedArtifactOwnerParity(root, ownerTuples)...)
 	}
 	artifactContainmentMigration, err := os.ReadFile(filepath.Join(root, "db", "migrations", "000012_stage2_encrypted_artifact_containment.sql"))
@@ -8738,7 +8740,7 @@ func loadEncryptedArtifactOwnerTuples(root string) ([]string, []string) {
 	return result, nil
 }
 
-// checkEncryptedArtifactOwnerParity proves the closed 26-branch owner inventory
+// checkEncryptedArtifactOwnerParity proves the closed 28-branch owner inventory
 // is set-equal across all four sources of truth: the AAD schema (already
 // reduced to ownerTuples), the SQL owner-validation function (checked by
 // checkArtifactOutboxMigration), the typed Go runtime registry and the
@@ -8803,38 +8805,160 @@ func compareOwnerInventory(source string, schemaSet map[string]bool, other map[s
 		}
 	}
 	if len(other) != len(schemaSet) {
-		problems = append(problems, "encrypted artifact "+source+" owner inventory count does not equal the accepted 26-branch schema")
+		problems = append(problems, "encrypted artifact "+source+" owner inventory count does not equal the accepted 28-branch schema")
 	}
 	return problems
 }
 
-func checkArtifactOutboxMigration(content string, ownerTuples []string) []string {
+// loadLastEncryptedArtifactOwnerFunctionBody scans every migration file in
+// filename order and returns the body of the LAST
+// "CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid" it
+// finds. That is the definition PostgreSQL itself resolves to after every
+// migration has run -- exactly what a real deployment enforces -- not
+// whatever migration happened to introduce the function first. Each new
+// owner branch is added by a brand-new migration re-declaring the whole
+// function (000090 did this to 000005's original list; a later branch does
+// the same to 000090's), never by editing an already-applied file, which the
+// bootstrap checksum ledger (internal/operator/migration_checksum.go) would
+// reject.
+// encryptedArtifactOwnerCanonicalMarker is the only accepted way to define
+// app.encrypted_artifact_owner_is_valid: an exact, single CREATE OR REPLACE
+// per migration file. loadLastEncryptedArtifactOwnerFunctionBody trusts this
+// exact string to find the definition that governs a real deployment; any
+// other definition-shaped statement for this function name -- DROP FUNCTION
+// (which would let a later plain CREATE FUNCTION replace the definition
+// outside this scan's marker search), ALTER FUNCTION, a different case or
+// spelling of the marker, or a second CREATE OR REPLACE in the same file --
+// would let the active definition diverge from what this gate reads, so it
+// is rejected outright rather than silently trusted or silently ignored.
+const encryptedArtifactOwnerCanonicalMarker = "CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid("
+
+// encryptedArtifactOwnerDefinitionShape matches only a definition-shaped
+// mention of the function -- CREATE [OR REPLACE] / DROP / ALTER FUNCTION
+// immediately naming it, case-insensitive and whitespace-tolerant so it also
+// catches an evasion attempt. An ordinary call site (a CHECK constraint, a
+// GRANT/REVOKE ON FUNCTION, a comment) never starts with one of these three
+// keywords immediately before "function", so it never matches and is never
+// flagged.
+var encryptedArtifactOwnerDefinitionShape = regexp.MustCompile(
+	`(?i)\b(create(?:\s+or\s+replace)?|drop|alter)\s+function\s+app\s*\.\s*encrypted_artifact_owner_is_valid\b`)
+
+// checkEncryptedArtifactOwnerFunctionDefinitionShape proves every migration's
+// mention of app.encrypted_artifact_owner_is_valid that looks like a
+// definition is exactly the one accepted marker, and that no file defines it
+// twice. It is independent of, and runs before, the owner-inventory content
+// check: a gate that only reads "the last CREATE OR REPLACE it can find" is
+// only as good as its ability to prove nothing else shaped like a definition
+// -- differently cased, DROP'd and plain-CREATE'd, ALTER'd, or duplicated --
+// could have produced a different active definition than the one it found.
+func checkEncryptedArtifactOwnerFunctionDefinitionShape(root string) []string {
 	var problems []string
-	legacyOwnerTuples := make([]string, 0, len(ownerTuples))
-	for _, tuple := range ownerTuples {
-		if tuple != "('source_discovery_result', 'metadata_artifact_id', 'SOURCE_DISCOVERY_RESULT', 'DISCOVERY_METADATA')" {
-			legacyOwnerTuples = append(legacyOwnerTuples, tuple)
+	migrationsDir := filepath.Join(root, "db", "migrations")
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		return []string{"cannot list db/migrations for owner-function definition-shape check: " + err.Error()}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		raw, readErr := os.ReadFile(filepath.Join(migrationsDir, entry.Name()))
+		if readErr != nil {
+			problems = append(problems, "cannot read "+entry.Name()+" for owner-function definition-shape check: "+readErr.Error())
+			continue
+		}
+		content := string(raw)
+		if strings.Count(content, encryptedArtifactOwnerCanonicalMarker) > 1 {
+			problems = append(problems, "encrypted_artifact_owner_is_valid is defined more than once in "+entry.Name())
+		}
+		for _, location := range encryptedArtifactOwnerDefinitionShape.FindAllStringIndex(content, -1) {
+			if !strings.HasPrefix(content[location[0]:], encryptedArtifactOwnerCanonicalMarker) {
+				problems = append(problems, "encrypted_artifact_owner_is_valid has a definition-shaped statement in "+
+					entry.Name()+" that is not the exact accepted marker: "+strings.TrimSpace(content[location[0]:location[1]]))
+			}
 		}
 	}
+	return problems
+}
+
+func loadLastEncryptedArtifactOwnerFunctionBody(root string) (string, []string) {
+	migrationsDir := filepath.Join(root, "db", "migrations")
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		return "", []string{"cannot list db/migrations: " + err.Error()}
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	const marker = "CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid("
+	const endMarker = "\n$$;"
+	var lastBody string
+	for _, name := range names {
+		raw, readErr := os.ReadFile(filepath.Join(migrationsDir, name))
+		if readErr != nil {
+			continue
+		}
+		content := string(raw)
+		start := strings.Index(content, marker)
+		if start < 0 {
+			continue
+		}
+		end := strings.Index(content[start:], endMarker)
+		if end < 0 {
+			continue
+		}
+		lastBody = content[start : start+end]
+	}
+	if lastBody == "" {
+		return "", []string{"no migration defines app.encrypted_artifact_owner_is_valid"}
+	}
+	return lastBody, nil
+}
+
+// checkEncryptedArtifactOwnerInventoryAtHead proves the owner-branch
+// inventory that actually governs a real deployment (the LAST CREATE OR
+// REPLACE across the whole migration directory, per
+// loadLastEncryptedArtifactOwnerFunctionBody) is exactly set-equal to the AAD
+// schema's closed inventory -- no fewer, no more, no duplicate.
+func checkEncryptedArtifactOwnerInventoryAtHead(root string, ownerTuples []string) []string {
+	if len(ownerTuples) == 0 {
+		return []string{"encrypted artifact owner inventory is unavailable for the head-definition check"}
+	}
+	body, problems := loadLastEncryptedArtifactOwnerFunctionBody(root)
+	if body == "" {
+		return problems
+	}
+	body = regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(body, "")
+	body = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(body, "")
+	for _, tuple := range ownerTuples {
+		if strings.Count(body, tuple) != 1 {
+			problems = append(problems, "encrypted artifact SQL owner inventory (head definition) missing or duplicates exact branch: "+tuple)
+		}
+	}
+	if strings.Count(body, "_artifact_id'") != len(ownerTuples) {
+		problems = append(problems, "encrypted artifact SQL owner inventory (head definition) has an unaccepted extra or missing branch")
+	}
+	return problems
+}
+
+// checkArtifactOutboxMigration proves the Stage 2 structural invariants of
+// the foundation migration: RLS, the nonce fence and the closed runtime grant
+// set. It deliberately does NOT check the owner-branch inventory against this
+// one file's text: this migration is already applied in every deployed
+// environment, and ApplyMigrations (internal/operator/bootstrap.go,
+// migration_checksum.go) rejects any deployment whose recorded checksum for
+// an applied migration no longer matches its bytes. A later owner branch is
+// added the way 000090 added its own (a NEW migration's CREATE OR REPLACE),
+// never by editing this file; checkEncryptedArtifactOwnerInventoryAtHead
+// checks the inventory that actually governs a real deployment.
+func checkArtifactOutboxMigration(content string) []string {
+	var problems []string
 	if strings.Count(content, "FORCE ROW LEVEL SECURITY") < 3 {
 		problems = append(problems, "encrypted artifact/outbox gate does not force RLS on all three tenant relations")
-	}
-	start := strings.Index(content, "CREATE OR REPLACE FUNCTION app.encrypted_artifact_owner_is_valid(")
-	endMarker := "\n$$;\n\nCREATE TABLE public.encrypted_artifact"
-	end := strings.Index(content, endMarker)
-	if start < 0 || end <= start || len(ownerTuples) == 0 {
-		return append(problems, "encrypted artifact SQL owner function or schema inventory is unavailable")
-	}
-	ownerBody := content[start:end]
-	ownerBody = regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(ownerBody, "")
-	ownerBody = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(ownerBody, "")
-	for _, tuple := range legacyOwnerTuples {
-		if strings.Count(ownerBody, tuple) != 1 {
-			problems = append(problems, "encrypted artifact SQL owner inventory missing or duplicates exact branch: "+tuple)
-		}
-	}
-	if strings.Count(ownerBody, "_artifact_id'") != len(legacyOwnerTuples) {
-		problems = append(problems, "encrypted artifact SQL owner inventory has an unaccepted extra or missing branch")
 	}
 	if strings.Count(content, "UNIQUE (organization_id, kek_reference, kek_version, nonce)") != 1 ||
 		strings.Contains(content, "UNIQUE (organization_id, kek_reference, kek_version, wrapped_dek_hash, nonce)") {
