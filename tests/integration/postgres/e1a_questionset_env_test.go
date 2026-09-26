@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -397,7 +398,10 @@ var e1aQuestionRunCounter atomic.Int64
 
 // e1aRunQuestionSet executes every question of the set three times and judges
 // each answer. The model channel is whatever the caller enabled on the
-// service.
+// service. A question whose set entry names the MCP surface is asked through
+// the product's MCP server on a real socket by a real MCP client session; the
+// question it compares to is read from the same run index, so the parity rule
+// compares answers from one full run.
 func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, profileFor func(questions.Question) string) []questions.RunReport {
 	t.Helper()
 	// Card D-15: this run measures recognition, so the question set asks the
@@ -410,7 +414,12 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 			only[strings.TrimSpace(id)] = true
 		}
 	}
+	var mcp *e1aMCPClient
+	if e1aSetNeedsMCP(env.Set) {
+		mcp = e1aNewMCPClient(t, env)
+	}
 	runs := []questions.RunReport{}
+	ranByKey := map[string]questions.RunReport{}
 	for _, item := range env.Set.Questions {
 		if len(only) > 0 && !only[item.ID] {
 			continue
@@ -427,20 +436,36 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 			key := e1aIdempotencyKey(fmt.Sprintf("%s-run-%d-%d", item.ID, runIndex, e1aQuestionRunCounter.Add(1)))
 			access := database.AccessContext{OrganizationID: regOrg, PrincipalID: regOwner, RequestID: fmt.Sprintf("req_e1a_%s_%d", item.ID, runIndex)}
 			started := time.Now()
-			run, err := env.Questions.Create(ctx, access, question.CreateRequest{
-				WorkspaceID: regWorkspace, Question: item.Text,
-				ModelProfileID: profileFor(item), IdempotencyKey: key,
-			})
+			viaMCP := item.Via == "mcp"
+			var run question.Run
+			var err error
+			mcpRequestID := ""
+			mcpRecorded := false
+			if viaMCP {
+				if mcp == nil {
+					t.Fatalf("question %s requires an MCP client session", item.ID)
+				}
+				run, mcpRequestID, mcpRecorded, err = mcp.askQuestion(t, ctx, regWorkspace, item.Text, key)
+			} else {
+				run, err = env.Questions.Create(ctx, access, question.CreateRequest{
+					WorkspaceID: regWorkspace, Question: item.Text,
+					ModelProfileID: profileFor(item), IdempotencyKey: key,
+				})
+			}
 			elapsed := time.Since(started).Seconds()
 			report := questions.RunReport{
 				QuestionID: item.ID, QuestionText: item.Text, Run: runIndex, Seconds: elapsed,
 				Status: "FAILED", StopReason: "RUN_ERROR", Answer: "", ToolCalls: []questions.ToolCall{},
+				Via: item.Via, MCPRequestID: mcpRequestID, MCPRecorded: mcpRecorded,
 			}
 			if err != nil {
-				report.Answer = "question run failed: " + string(question.CodeOf(err))
+				report.Answer = "question run failed: " + e1aRunFailureText(err)
 				report.StopReason = "RUN_ERROR"
 			} else {
 				report = e1aObserveRun(item, runIndex, run, elapsed)
+				report.Via = item.Via
+				report.MCPRequestID = mcpRequestID
+				report.MCPRecorded = mcpRecorded
 			}
 			contractUnchanged := true
 			if item.ID == "H4" && env.ContractChecksum != nil {
@@ -457,7 +482,22 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 				InputTokens: report.InputTokens, OutputTokens: report.OutputTokens,
 				Citations: report.Citations, ToolCalls: report.ToolCalls, SQLTexts: report.SQLTexts,
 				LiveResultKind: report.LiveResultKind, LiveResultReceipt: report.LiveResultReceipt,
+				LiveResultSourceID: report.LiveResultSourceID, ViaMCP: viaMCP, MCPRecorded: mcpRecorded,
 				ContractUnchanged: contractUnchanged, StatusFieldName: "status",
+			}
+			if item.ComparesTo != "" {
+				if peer, ok := ranByKey[item.ComparesTo+"/"+strconv.Itoa(runIndex)]; ok {
+					observation.Peer = &questions.PeerObservation{
+						QuestionID: item.ComparesTo, Answer: peer.Answer,
+						LiveResultKind: peer.LiveResultKind, LiveResultSourceID: peer.LiveResultSourceID,
+						LiveResultReceipt: peer.LiveResultReceipt,
+					}
+					report.PeerQuestionID = item.ComparesTo
+					report.PeerLiveResultSourceID = peer.LiveResultSourceID
+					if number, ok := questions.SignificantNumber(peer.Answer); ok {
+						report.PeerNumber = &number
+					}
+				}
 			}
 			report.Verdicts = questions.Evaluate(env.Set, item, observation)
 			report.Passed = true
@@ -466,12 +506,43 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 					report.Passed = false
 				}
 			}
+			if item.Via != "" || item.ComparesTo != "" {
+				if number, ok := questions.SignificantNumber(report.Answer); ok {
+					report.Number = &number
+				}
+			}
+			ranByKey[item.ID+"/"+strconv.Itoa(runIndex)] = report
 			runs = append(runs, report)
-			fmt.Printf("E1A RUN %s run=%d steps=%d seconds=%.2f tokens_in=%d tokens_out=%d\n",
-				item.ID, runIndex, report.Steps, report.Seconds, report.InputTokens, report.OutputTokens)
+			fmt.Printf("E1A RUN %s run=%d via=%s steps=%d seconds=%.2f tokens_in=%d tokens_out=%d number=%s peer_number=%s source=%s mcp_recorded=%t\n",
+				item.ID, runIndex, e1aRunVia(item.Via), report.Steps, report.Seconds, report.InputTokens, report.OutputTokens,
+				e1aNumberText(report.Number), e1aNumberText(report.PeerNumber), report.LiveResultSourceID, report.MCPRecorded)
 		}
 	}
 	return runs
+}
+
+// e1aRunVia names the surface a run used for the harness log.
+func e1aRunVia(via string) string {
+	if via == "" {
+		return "chat"
+	}
+	return via
+}
+
+func e1aNumberText(value *int) string {
+	if value == nil {
+		return "none"
+	}
+	return strconv.Itoa(*value)
+}
+
+// e1aRunFailureText renders one failed question run's cause: an MCP JSON-RPC
+// refusal's content-free message, or the question service's closed error code.
+func e1aRunFailureText(err error) string {
+	if refusal, ok := err.(*e1aMCPRefusal); ok {
+		return refusal.Message
+	}
+	return string(question.CodeOf(err))
 }
 
 // e1aObserveRun projects one product Question Run into a judgeable report row.
@@ -519,6 +590,7 @@ func e1aObserveRun(item questions.Question, runIndex int, run question.Run, elap
 		if report.LiveResultReceipt == "" {
 			report.LiveResultReceipt = run.AnswerResult.ResultDigest
 		}
+		report.LiveResultSourceID = run.AnswerResult.SourceID
 	}
 	for _, citation := range run.Citations {
 		report.Citations = append(report.Citations, questions.Citation{
