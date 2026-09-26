@@ -90,8 +90,16 @@ verification status field is the response's `status` with
 `questions.json` also describes one synthetic PostgreSQL database, «Заявки»,
 whose tables are bound to the workspace but whose confirmation is never minted.
 Its own container is `kv-card-e-2-pg` on 55622 with database `knowvault_test`,
-and the one command starts and removes it like the two card containers. `H5`
-asks a count question about its data.
+its own named data volume is `kv-card-e-2-pg-data`, and the one command starts
+and removes it like the two card containers. `H5` asks a count question about
+its data.
+
+Every resource the run creates for `H5` — container, host port and volume — is
+distinct per `KNOWVAULT_QUESTION_SET_INSTANCE` value (card E-3): with instance
+`N` (1..9) the container and volume names take the `-N` suffix and the host port
+moves by `10*N`, exactly like the two containers the set already used. A run
+with the default instance keeps `kv-card-e-2-pg` on 55622; two runs with
+different instances never share, reuse or remove each other's database.
 
 Its automatic checks decide only what a rule can decide: the answer must be at
 most two sentences, name «Заявки», speak of confirming its tables, and the run

@@ -84,15 +84,19 @@ type Environment struct {
 // count question about its data, and the product must answer that it cannot be
 // read yet.
 type UnconfirmedDatabase struct {
-	Description string     `json:"description"`
-	Container   string     `json:"container"`
-	Port        int        `json:"port"`
-	Database    string     `json:"database"`
-	AdminUser   string     `json:"admin_user"`
-	AdminPass   string     `json:"admin_password"`
-	RowCount    int        `json:"row_count"`
-	Source      SourceSpec `json:"source"`
-	SQL         []string   `json:"sql"`
+	Description string `json:"description"`
+	Container   string `json:"container"`
+	Port        int    `json:"port"`
+	// Volume is the named data volume the harness mounts into the container.
+	// A named, per-instance volume keeps two runs from sharing the database's
+	// data even if a stale container of the same name is reused.
+	Volume    string     `json:"volume"`
+	Database  string     `json:"database"`
+	AdminUser string     `json:"admin_user"`
+	AdminPass string     `json:"admin_password"`
+	RowCount  int        `json:"row_count"`
+	Source    SourceSpec `json:"source"`
+	SQL       []string   `json:"sql"`
 }
 
 // Document is one synthetic workspace document.
