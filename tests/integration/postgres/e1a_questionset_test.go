@@ -80,7 +80,13 @@ func TestQuestionSetSmoke(t *testing.T) {
 	}
 	defer adapter.Close()
 
-	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{SourceIdentity: "pgdb-stub-e1a", WireHTTPQuestions: true})
+	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
+		SourceIdentity: "pgdb-stub-e1a", WireHTTPQuestions: true,
+		// Card E-2: H5 asks about a database whose tables await confirmation.
+		// The stub run registers that source too, so the whole set including H5
+		// is exercised without a key.
+		H5Source: &set.Environment.UnconfirmedDatabase.Source, H5SourceIdentity: "pgdb-stub-e1a-h5",
+	})
 	env.Questions.EnableGeneration(adapter, nil)
 
 	// Card D-19 result 1: a user without access to the workspace asking through
@@ -134,6 +140,16 @@ func TestQuestionSetSmoke(t *testing.T) {
 	if toolCalls == 0 {
 		t.Fatal("the stub run recorded no tool call, so the tool runtime was never exercised")
 	}
+	// Card E-2: every H5 run carries the product's own read, taken just before
+	// the question is asked, that the database's tables await confirmation.
+	for _, run := range runs {
+		if run.QuestionID != "H5" {
+			continue
+		}
+		if run.DatabaseName == "" || !run.DatabaseAwaitingConfirmation {
+			t.Fatalf("H5 run %d does not record the database awaiting confirmation: %+v", run.Run, run)
+		}
+	}
 	if len(report.Questions) != len(set.Questions) {
 		t.Fatalf("report has %d question verdicts, want %d", len(report.Questions), len(set.Questions))
 	}
@@ -182,6 +198,73 @@ func TestQuestionSetSmoke(t *testing.T) {
 	}
 }
 
+// TestQuestionSetH5KeepsTheRestOfTheSet pins result 2 of card E-2
+// deterministically: with the H5 database prepared, every question other than
+// H5 gets exactly the verdicts it got without it, because H5's database is
+// bound only when the run reaches H5. The stub model makes the two runs
+// comparable answer for answer.
+func TestQuestionSetH5KeepsTheRestOfTheSet(t *testing.T) {
+	ctx := context.Background()
+	set := loadE1aSet(t)
+	stub := questions.NewStubModel()
+	server := httptest.NewServer(stub)
+	defer server.Close()
+
+	runSet := func(t *testing.T, opts e1aEnvOptions) []questions.RunReport {
+		t.Helper()
+		adapter, err := modelgateway.NewLabAdapter(modelgateway.LabAdapterConfig{
+			SchemaVersion: modelgateway.LabAdapterSchemaVersion, Endpoint: server.URL, ModelID: "e1a-stub",
+			MaxOutputTokens: 4096, InsecureLabMode: true, ThinkingMode: modelgateway.ThinkingModeDisabled,
+			ToolLoop: &modelgateway.ToolLoopProfile{
+				ID: "steps-2", MaxTurns: 2, MaxToolCalls: 2, MaxInputBytes: 262144,
+				MaxToolResultBytes: 65536, MaxOutputTokens: 4096, TimeoutSeconds: 120,
+			},
+		})
+		if err != nil {
+			t.Fatalf("stub adapter: %v", err)
+		}
+		defer adapter.Close()
+		env := buildE1aEnvironment(t, ctx, resetStage1Database(t), set, opts)
+		env.Questions.EnableGeneration(adapter, nil)
+		return e1aRunQuestionSet(t, ctx, env, func(questions.Question) string { return "" })
+	}
+
+	without := runSet(t, e1aEnvOptions{SourceIdentity: "pgdb-e2-keep-without"})
+	with := runSet(t, e1aEnvOptions{
+		SourceIdentity: "pgdb-e2-keep-with", H5Source: &set.Environment.UnconfirmedDatabase.Source,
+		H5SourceIdentity: "pgdb-e2-keep-with-h5",
+	})
+
+	key := func(run questions.RunReport) string { return fmt.Sprintf("%s/%d", run.QuestionID, run.Run) }
+	byKey := map[string]questions.RunReport{}
+	for _, run := range without {
+		byKey[key(run)] = run
+	}
+	if len(byKey) != len(without) || len(with) != len(without) {
+		t.Fatalf("runs differ: %d without, %d with", len(without), len(with))
+	}
+	for _, run := range with {
+		before, ok := byKey[key(run)]
+		if !ok {
+			t.Fatalf("run %s is missing from the run without the H5 database", key(run))
+		}
+		if run.QuestionID == "H5" {
+			continue
+		}
+		if run.Passed != before.Passed {
+			t.Fatalf("%s green/red changed from %t to %t when H5 was added", key(run), before.Passed, run.Passed)
+		}
+		if len(run.Verdicts) != len(before.Verdicts) {
+			t.Fatalf("%s verdict count changed from %d to %d", key(run), len(before.Verdicts), len(run.Verdicts))
+		}
+		for index, verdict := range run.Verdicts {
+			if verdict.ID != before.Verdicts[index].ID || verdict.Passed != before.Verdicts[index].Passed {
+				t.Fatalf("%s rule %s changed from %+v to %+v", key(run), verdict.ID, before.Verdicts[index], verdict)
+			}
+		}
+	}
+}
+
 // TestQuestionSetRealModel is the card's one command. It requires the DeepSeek
 // key file and Docker; it is skipped, never silently passed, without the key.
 func TestQuestionSetRealModel(t *testing.T) {
@@ -212,6 +295,17 @@ func TestQuestionSetRealModel(t *testing.T) {
 	e1aEnsureContainer(t, ctx, set.Environment.ProductContainer, set.Environment.ProductPort, set.Environment.ProductDatabase)
 	e1aEnsureContainer(t, ctx, set.Environment.SourceContainer, set.Environment.SourcePort, set.Environment.SourceDatabase)
 
+	// Card E-2: the database H5 asks about. Its synthetic data is seeded, but
+	// its table confirmation is never minted, so the product must answer that
+	// it cannot be read yet. The harness owns and removes this container too.
+	h5 := set.Environment.UnconfirmedDatabase
+	e1aEnsureContainer(t, ctx, h5.Container, h5.Port, h5.Database)
+	h5AdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
+		h5.AdminUser, h5.AdminPass, h5.Port, h5.Database)
+	h5Admin := e1aOpenSourceAdmin(t, ctx, h5AdminDSN)
+	e1aSeedSourceDatabase(t, ctx, h5Admin, h5.SQL)
+	h5Identity := e1aSourceIdentity(t, ctx, h5AdminDSN)
+
 	sourceAdminDSN := fmt.Sprintf("postgres://%s:%s@localhost:%d/%s?sslmode=disable",
 		set.Environment.SourceAdminUser, set.Environment.SourceAdminPass, set.Environment.SourcePort, set.Environment.SourceDatabase)
 	sourceAdmin := e1aOpenSourceAdmin(t, ctx, sourceAdminDSN)
@@ -240,6 +334,7 @@ func TestQuestionSetRealModel(t *testing.T) {
 	env := buildE1aEnvironment(t, ctx, admin, set, e1aEnvOptions{
 		SourceIdentity: identity, Credentials: credentials, Roots: roots, SourceSQL: sqlExecutor,
 		ContractChecksum: contractChecksum, WireHTTPQuestions: true,
+		H5Source: &h5.Source, H5SourceIdentity: h5Identity,
 	})
 
 	registry, err := e1aModelRegistry(set, apiKey)

@@ -72,7 +72,27 @@ type Environment struct {
 	Dictionary       Dictionary       `json:"dictionary"`
 	Tables           map[string]Table `json:"tables"`
 	Sources          []SourceSpec     `json:"sources"`
-	Values           Values           `json:"values"`
+	// UnconfirmedDatabase is the synthetic database H5 asks about. It is kept
+	// out of Sources so the shared environment builder keeps every other
+	// question and every other test in the environment it had.
+	UnconfirmedDatabase UnconfirmedDatabase `json:"unconfirmed_database"`
+	Values              Values              `json:"values"`
+}
+
+// UnconfirmedDatabase is one synthetic PostgreSQL database whose tables are
+// bound to the workspace but whose confirmation is never minted. H5 asks a
+// count question about its data, and the product must answer that it cannot be
+// read yet.
+type UnconfirmedDatabase struct {
+	Description string     `json:"description"`
+	Container   string     `json:"container"`
+	Port        int        `json:"port"`
+	Database    string     `json:"database"`
+	AdminUser   string     `json:"admin_user"`
+	AdminPass   string     `json:"admin_password"`
+	RowCount    int        `json:"row_count"`
+	Source      SourceSpec `json:"source"`
+	SQL         []string   `json:"sql"`
 }
 
 // Document is one synthetic workspace document.
@@ -186,6 +206,12 @@ type Check struct {
 	Group string   `json:"group"`
 	Text  string   `json:"text"`
 	Texts []string `json:"texts"`
+	// With is the second stem group of stems_in_answer: the check passes when the
+	// answer carries a stem from Texts and a stem from With, in any order, any
+	// sentence and any grammatical form. H5 uses it to see that the answer
+	// speaks of confirming the tables, which is all a rule can decide; what the
+	// answer must mean is the question's value note.
+	With  []string `json:"with,omitempty"`
 	Min   int      `json:"min"`
 	Max   int      `json:"max"`
 	Value string   `json:"value"`
@@ -362,6 +388,11 @@ type RunReport struct {
 	Citations         []Citation `json:"citations,omitempty"`
 	LiveResultKind    string     `json:"live_result_kind,omitempty"`
 	LiveResultReceipt string     `json:"live_result_receipt,omitempty"`
+	// DatabaseName and DatabaseAwaitingConfirmation are read from the product
+	// just before this run's question was asked. They are set for H5, which
+	// asks about a database whose tables await confirmation.
+	DatabaseName                 string `json:"database_name,omitempty"`
+	DatabaseAwaitingConfirmation bool   `json:"database_awaiting_confirmation,omitempty"`
 	// Via names the surface this run was asked through: empty for the
 	// chat/service path, "mcp" for the product's MCP server (card D-19).
 	Via string `json:"via,omitempty"`
@@ -641,6 +672,31 @@ func evaluateCheck(set *Set, question Question, check Check, observation Observa
 		count := sentenceCount(answer)
 		result.Passed = count <= check.Max
 		result.Detail = fmt.Sprintf("%d sentences", count)
+	case "no_empty_result":
+		// An answer that reads the database as empty (a bare zero count or an
+		// explicit no-records sentence) is wrong when the tables cannot be read
+		// yet, so the check rejects it regardless of the answer's shape.
+		matched := ""
+		if regexp.MustCompile(`(^|[^0-9])0([^0-9]|$)`).MatchString(answer) {
+			matched = "0"
+		} else if phrase := firstPhraseFold(answer, check.Texts); phrase != "" {
+			matched = phrase
+		}
+		result.Passed = matched == ""
+		if matched != "" {
+			result.Detail = "empty result presented: " + matched
+		} else {
+			result.Detail = "no empty result"
+		}
+	case "stems_in_answer":
+		// The answer carries a stem from Texts and a stem from With anywhere,
+		// in any order, sentence and grammatical form. H5 uses it to see that
+		// the answer speaks of confirming the tables; the meaning of the answer
+		// (the database cannot be read yet, confirming tables makes it
+		// readable) is the question's value note, which a rule cannot decide.
+		matched, detail := stemsInAnswer(answer, check.Texts, check.With)
+		result.Passed = matched
+		result.Detail = detail
 	case "question_marks":
 		count := strings.Count(answer, "?")
 		result.Passed = count >= check.Min && count <= check.Max
@@ -843,13 +899,56 @@ func nonEmptyLines(answer string) []string {
 }
 
 func sentenceCount(answer string) int {
-	count := 0
-	for _, part := range regexp.MustCompile(`[.!?…]+`).Split(strings.ReplaceAll(answer, "\n", " "), -1) {
+	return len(sentences(answer))
+}
+
+// sentences splits the answer into non-empty sentences, the same way
+// sentenceCount does, so a rule that looks at one sentence agrees with the
+// sentence limit.
+func sentences(answer string) []string {
+	parts := regexp.MustCompile(`[.!?…]+`).Split(strings.ReplaceAll(answer, "\n", " "), -1)
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
 		if strings.TrimSpace(part) != "" {
-			count++
+			result = append(result, part)
 		}
 	}
-	return count
+	return result
+}
+
+// stemsInAnswer reports whether the answer carries a stem from first and a stem
+// from second, in any order and in any sentence. Russian inflects heavily, so
+// the question set gives stems ("подтвер") rather than whole words; matching
+// folds the case and writes ё as е, so "подтверждение", "подтверждены" and
+// "подтвердят" all carry the stem.
+func stemsInAnswer(answer string, first, second []string) (bool, string) {
+	folded := foldRussian(answer)
+	left := firstStem(folded, first)
+	if left == "" {
+		return false, "no " + strings.Join(first, "/") + " stem"
+	}
+	right := firstStem(folded, second)
+	if right == "" {
+		return false, "no " + strings.Join(second, "/") + " stem"
+	}
+	return true, fmt.Sprintf("%q with %q", left, right)
+}
+
+func firstStem(folded string, stems []string) string {
+	for _, stem := range stems {
+		needle := foldRussian(stem)
+		if needle == "" {
+			continue
+		}
+		if strings.Contains(folded, needle) {
+			return stem
+		}
+	}
+	return ""
+}
+
+func foldRussian(text string) string {
+	return strings.ReplaceAll(strings.ToLower(text), "ё", "е")
 }
 
 // stripCode removes fenced code blocks and inline code spans so the language

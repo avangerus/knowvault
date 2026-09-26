@@ -85,6 +85,42 @@ Hard rules must pass 3 of 3 runs; value and time rules must pass 2 of 3. The
 verification status field is the response's `status` with
 `tool_loop.stop_reason`; `CITATIONS_UNVERIFIED` is the one tolerated failure.
 
+## H5: the database that cannot be read yet (card E-2)
+
+`questions.json` also describes one synthetic PostgreSQL database, «Заявки»,
+whose tables are bound to the workspace but whose confirmation is never minted.
+Its own container is `kv-card-e-2-pg` on 55622 with database `knowvault_test`,
+and the one command starts and removes it like the two card containers. `H5`
+asks a count question about its data.
+
+Its automatic checks decide only what a rule can decide: the answer must be at
+most two sentences, name «Заявки», speak of confirming its tables, and the run
+must have recorded no `knowvault_source_sql` call; a bare zero count or a "no
+records" answer is red. What the answer must mean — the database cannot be read
+yet, and confirming its tables is what makes it readable — is the question's
+`value_note`, which acceptance judges by reading the answers. It is deliberately
+not a rule: Russian words that meaning in more ways than a check can enumerate,
+and a rule that tried turned correct answers red (RETURN-1, RETURN-2).
+
+The "speaks of confirming its tables" check is `stems_in_answer`: the answer
+must carry a stem from `texts` and a stem from `with` anywhere, in any order,
+sentence and grammatical form, so «таблицы не подтверждены», «подтвердите
+таблицы» and «как только таблицы подтвердят» are all accepted. The stems are
+data in `questions.json`; the engine only matches them, folded to lower case
+with ё written as е. The database name is matched case-insensitively and across
+its case endings.
+
+The one command reads the product's own source status immediately before asking
+each `H5` run and records it in the report; if the database's tables are
+confirmed instead of awaiting confirmation, the harness fails, because the
+question would no longer test the "cannot be read yet" answer.
+
+The database is a separate `environment.unconfirmed_database` block, not a
+fourth entry in `environment.sources`, and the run binds it only when it reaches
+`H5` (`H5` stays the last question): every other question is asked in exactly
+the workspace it had before, and the interface walkthrough and every other test
+keep the workspace they had.
+
 ## Tests
 
 ```text

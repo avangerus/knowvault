@@ -242,6 +242,13 @@ func RenderMarkdown(report Report) string {
 			kindCell(run.Kind), run.KindInputTokens, run.KindOutputTokens)
 		fmt.Fprintf(&builder, "- Status: `%s` / stop_reason `%s` / grounding `%s`\n", run.Status, run.StopReason, run.GroundingStatus)
 		fmt.Fprintf(&builder, "- Steps: %d; seconds: %.2f; tokens: %d in / %d out\n", run.Steps, run.Seconds, run.InputTokens, run.OutputTokens)
+		if run.DatabaseName != "" {
+			state := "tables awaiting confirmation"
+			if !run.DatabaseAwaitingConfirmation {
+				state = "tables confirmed"
+			}
+			fmt.Fprintf(&builder, "- Database read from the product just before asking: «%s» — %s\n", run.DatabaseName, state)
+		}
 		via := "chat"
 		if run.Via != "" {
 			via = run.Via

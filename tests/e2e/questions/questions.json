@@ -120,6 +120,10 @@
         "columns": ["id", "contract_id", "code", "address"],
         "identity_column": "id",
         "active_count": 5
+      },
+      "request": {
+        "columns": ["id", "number", "status", "created_on", "amount"],
+        "identity_column": "id"
       }
     },
     "sources": [
@@ -151,6 +155,33 @@
         "query_password": "kv_e1a_q_container_group_pw"
       }
     ],
+    "unconfirmed_database": {
+      "description": "Синтетическая база «Заявки»: привязывается к рабочей области, когда набор доходит до H5, но подтверждение её таблиц намеренно не выдано, поэтому продукт обязан ответить, что читать её пока нельзя. Она отделена от sources, чтобы остальные вопросы и остальные пользователи общего сборщика среды не менялись.",
+      "container": "kv-card-e-2-pg",
+      "port": 55622,
+      "database": "knowvault_test",
+      "admin_user": "postgres",
+      "admin_password": "postgres",
+      "row_count": 4,
+      "source": {
+        "id": "request",
+        "name": "Заявки",
+        "lineage_id": "e2-request",
+        "table": "request",
+        "columns": ["id", "number", "status", "created_on", "amount"],
+        "query_role": "kv_e2_q_request",
+        "query_password": "kv_e2_q_request_pw"
+      },
+      "sql": [
+        "CREATE TABLE public.request (id integer PRIMARY KEY, number text NOT NULL, status text NOT NULL, created_on date NOT NULL, amount numeric(14,2) NOT NULL)",
+        "INSERT INTO public.request (id, number, status, created_on, amount) VALUES (1, '101', 'new', '2026-01-12', 15000.00), (2, '102', 'in_progress', '2026-01-18', 42000.00), (3, '103', 'closed', '2026-02-03', 7800.00), (4, '104', 'new', '2026-02-11', 31000.00)",
+        "CREATE ROLE kv_e2_q_request LOGIN PASSWORD 'kv_e2_q_request_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS",
+        "GRANT USAGE ON SCHEMA public TO kv_e2_q_request",
+        "GRANT SELECT ON public.request TO kv_e2_q_request",
+        "ALTER ROLE kv_e2_q_request SET temp_file_limit = '512MB'",
+        "ALTER ROLE kv_e2_q_request SET work_mem = '16MB'"
+      ]
+    },
     "values": {
       "A": 3,
       "M": 5,
@@ -451,6 +482,26 @@
         {"id": "h4_sentences", "type": "max_sentences", "hard": true, "max": 2},
         {"id": "h4_no_sql", "type": "max_sql_calls", "hard": true, "max": 0},
         {"id": "h4_unchanged", "type": "contract_table_unchanged", "hard": true}
+      ]
+    },
+    {
+      "id": "H5",
+      "text": "Сколько заявок в базе «Заявки»?",
+      "language": "ru",
+      "max_steps": 3,
+      "time_limit_s": 30,
+      "max_chars": 700,
+      "expectation": "Не более двух фраз: база «Заявки» пока не читается, её таблицы ждут подтверждения; чтобы её читать, нужно подтвердить таблицы. Ни числа, ни обращения к SQL.",
+      "value_note": "The answer must mean that the database «Заявки» cannot be read yet and that confirming its tables is what makes it readable. It must not give a count, ask the database with SQL, or present an empty result.",
+      "checks": [
+        {"id": "h5_sentences", "type": "max_sentences", "hard": true, "max": 2},
+        {"id": "h5_database", "type": "mentions_terms", "hard": true, "min": 1,
+         "texts": ["Заявки", "Заявок", "Заявкам", "Заявками", "Заявках"]},
+        {"id": "h5_confirm_tables", "type": "stems_in_answer", "hard": true,
+         "texts": ["подтвер"], "with": ["таблиц"]},
+        {"id": "h5_no_sql", "type": "max_sql_calls", "hard": true, "max": 0},
+        {"id": "h5_no_empty_result", "type": "no_empty_result", "hard": true,
+         "texts": ["нет данных", "нет записей", "записей нет", "ничего не найдено", "no records"]}
       ]
     }
   ]

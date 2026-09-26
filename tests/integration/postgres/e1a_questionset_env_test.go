@@ -69,6 +69,21 @@ type e1aEnvOptions struct {
 	// the HTTP question routes the web interface uses are served (card U-1).
 	// The question set calls the service directly and leaves this off.
 	WireHTTPQuestions bool
+	// H5Source is the synthetic PostgreSQL database source H5 asks about. It is
+	// not bound by this builder: the run binds it through e1aH5Deferred when it
+	// reaches H5, and leaves its table confirmation unminted, so the product
+	// must answer that it cannot read the database yet. A nil source leaves
+	// every other user of this builder in exactly the environment it had
+	// before, and while it is nil the other questions also see exactly the
+	// workspace they had before the card.
+	H5Source *questions.SourceSpec
+	// H5SourceIdentity is the database identity the H5 source registers with;
+	// it is the identity of the H5 database container, not the shared source.
+	H5SourceIdentity string
+	// ConfirmH5Source mints the H5 source's table confirmation instead of
+	// leaving it awaiting confirmation. The harness test uses it to prove the
+	// H5 readiness check fails when the database's tables are confirmed.
+	ConfirmH5Source bool
 }
 
 // e1aEnvironment is the composed proving environment.
@@ -87,6 +102,14 @@ type e1aEnvironment struct {
 	// product connection id.
 	SourceConnectionIDs map[string]string
 	ContractChecksum    func(ctx context.Context) (string, error)
+	// H5SourceID and H5SourceName are the product connection id and human name
+	// of the database H5 asks about. They are empty until the run reaches H5
+	// and binds it through e1aH5Deferred.
+	H5SourceID   string
+	H5SourceName string
+	// h5 is what deferred H5 binding needs; nil when the environment has no H5
+	// source.
+	h5 *e1aH5Deferred
 }
 
 // buildE1aEnvironment seeds the synthetic product workspace.
@@ -196,6 +219,22 @@ func buildE1aEnvironment(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		}
 	}
 
+	// 3b. Card E-2: the database H5 asks about is only prepared here. Binding
+	// it changes the workspace's source list, so the run binds it when it
+	// reaches H5; every other question is then asked in exactly the workspace
+	// it had before the card. The block is skipped for every caller that did
+	// not ask for the source, so the other users of this builder keep the
+	// environment they had.
+	var h5 *e1aH5Deferred
+	if opts.H5Source != nil {
+		h5 = &e1aH5Deferred{
+			registrations: registrations,
+			source:        *opts.H5Source,
+			identity:      opts.H5SourceIdentity,
+			confirm:       opts.ConfirmH5Source,
+		}
+	}
+
 	// 4. Seed the workspace model context (dictionary) with the two terms the
 	// card requires.
 	document := workspacecontext.Document{
@@ -274,6 +313,7 @@ func buildE1aEnvironment(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		ContextStore: contextStore, Questions: questionsService, Handler: handler,
 		SourceService: sourceService, FolderConnection: folder.ConnectionID,
 		SourceConnectionIDs: connectionIDs, ContractChecksum: opts.ContractChecksum,
+		h5: h5,
 	}
 }
 
@@ -419,10 +459,18 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 		mcp = e1aNewMCPClient(t, env)
 	}
 	runs := []questions.RunReport{}
+	// Card E-2: H5's database is bound when the run reaches H5, so every
+	// question before it is asked in exactly the workspace it had before the
+	// card. A question after H5 would see a workspace the earlier questions
+	// never had.
+	h5Bound := false
 	ranByKey := map[string]questions.RunReport{}
 	for _, item := range env.Set.Questions {
 		if len(only) > 0 && !only[item.ID] {
 			continue
+		}
+		if h5Bound && item.ID != "H5" {
+			t.Fatalf("question %s runs after H5 and would see the H5 database; keep H5 last", item.ID)
 		}
 		for runIndex := 1; runIndex <= 3; runIndex++ {
 			contractBefore := ""
@@ -432,6 +480,21 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 					t.Fatalf("checksum synthetic contract table: %v", err)
 				}
 				contractBefore = value
+			}
+			// Card E-2: bind the database H5 asks about now, and read the
+			// product's own source status for it immediately before asking. H5
+			// only tests the product's "cannot be read yet" answer while the
+			// tables await confirmation, so a confirmed database is a harness
+			// error, never an answer failure.
+			h5Confirmation := e1aH5Confirmation{}
+			if item.ID == "H5" && env.h5 != nil {
+				env.e1aBindH5Source(t, ctx)
+				h5Bound = true
+				confirmation, confirmErr := e1aReadH5Confirmation(ctx, env)
+				if confirmErr != nil {
+					t.Fatalf("H5 database must await confirmation just before it is asked about: %v", confirmErr)
+				}
+				h5Confirmation = confirmation
 			}
 			key := e1aIdempotencyKey(fmt.Sprintf("%s-run-%d-%d", item.ID, runIndex, e1aQuestionRunCounter.Add(1)))
 			access := database.AccessContext{OrganizationID: regOrg, PrincipalID: regOwner, RequestID: fmt.Sprintf("req_e1a_%s_%d", item.ID, runIndex)}
@@ -467,6 +530,11 @@ func e1aRunQuestionSet(t *testing.T, ctx context.Context, env *e1aEnvironment, p
 				report.MCPRequestID = mcpRequestID
 				report.MCPRecorded = mcpRecorded
 			}
+			// The confirmation read belongs to this run even when the run
+			// itself failed, so it is set after the observed run replaces the
+			// report.
+			report.DatabaseName = h5Confirmation.SourceName
+			report.DatabaseAwaitingConfirmation = h5Confirmation.Awaiting
 			contractUnchanged := true
 			if item.ID == "H4" && env.ContractChecksum != nil {
 				after, checksumErr := env.ContractChecksum(ctx)
