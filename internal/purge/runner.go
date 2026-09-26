@@ -65,7 +65,18 @@ type RunOutcome struct {
 	Processed       bool
 	SourceReclaimed int
 	SourceProcessed bool
+	// FeedbackCommentsPurged is R1.S10.s1.T4's superseded answer-feedback
+	// comment drain: it has no lease/reclaim phase (the queue is a plain,
+	// idempotent "erase this artifact" list, not a claimed job), so a tick
+	// either purges a bounded batch or finds none.
+	FeedbackCommentsPurged int64
 }
+
+// feedbackCommentPurgeBatch bounds one tick's drain of the superseded answer-
+// feedback comment queue. It is deliberately small and fixed: this queue has
+// no backlog SLA of its own, and a huge batch would let one slow tick starve
+// the conversation/source-version queues' own bounded work in the same tick.
+const feedbackCommentPurgeBatch = 50
 
 // Runner is bound to the real conversation queue, optional source-version
 // queue, Purger and authenticated access context. Both queues retain separate
@@ -128,6 +139,14 @@ func (runner *Runner) RunOnce(ctx context.Context) (RunOutcome, error) {
 		return RunOutcome{Reclaimed: reclaimed, Processed: processed}, &RunnerError{code: RunnerCodeFailed, cause: err}
 	}
 	outcome := RunOutcome{Reclaimed: reclaimed, Processed: processed}
+	feedbackPurged, err := runner.purger.ProcessFeedbackCommentPurgeQueue(ctx, runner.access, feedbackCommentPurgeBatch)
+	outcome.FeedbackCommentsPurged = feedbackPurged
+	if err != nil {
+		if ctx.Err() != nil {
+			return outcome, &RunnerError{code: RunnerCodeStopped, cause: ctx.Err()}
+		}
+		return outcome, &RunnerError{code: RunnerCodeFailed, cause: err}
+	}
 	if runner.sourceQueue == nil {
 		return outcome, nil
 	}

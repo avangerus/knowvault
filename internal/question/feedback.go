@@ -2,6 +2,9 @@ package question
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -80,11 +83,15 @@ func feedbackAuthorize(ctx context.Context, tx database.Transaction, _ database.
 }
 
 // SubmitFeedback records or changes the caller's current mark on one Question
-// Run. A CORRECT verdict discards any previously stored comment; an
-// INCORRECT verdict requires a non-empty comment and (re)encrypts it under a
-// fresh artifact bound, in place, to the same feedback row. Access mirrors
-// the answer's own visibility: only a member who can currently read the
-// run's content (workspace.read_content, which excludes AUDITOR) may mark it.
+// Run. A comment is mandatory for INCORRECT (so the author can say exactly
+// what is wrong) and optional but stored when given for CORRECT. Access
+// mirrors the answer's own visibility: only a member who can currently read
+// the run's content (workspace.read_content, which excludes AUDITOR) may
+// mark it. Resubmitting the exact same verdict and comment is a no-op: it
+// touches no row and creates no artifact (idempotent). Any real change
+// atomically tombstones the previous comment's ciphertext in the same
+// transaction as the new one is bound, so the old text is never left
+// decryptable after an edit.
 func (service *Service) SubmitFeedback(ctx context.Context, access database.AccessContext, workspaceID, runID string, verdict FeedbackVerdict, comment string) (Feedback, error) {
 	if service == nil || service.db == nil || service.audit == nil || service.artifacts == nil || service.codec == nil ||
 		access.Validate() != nil || !validOpaque(workspaceID) || !validOpaque(runID) || !validFeedbackVerdict(verdict) {
@@ -96,6 +103,12 @@ func (service *Service) SubmitFeedback(ctx context.Context, access database.Acce
 	}
 	if len([]rune(trimmedComment)) > feedbackCommentMaxRunes {
 		return Feedback{}, &Error{code: CodeInvalid}
+	}
+	desiredHasComment := verdict == FeedbackIncorrect || trimmedComment != ""
+	var desiredCommentHash string
+	if desiredHasComment {
+		sum := sha256.Sum256([]byte(trimmedComment))
+		desiredCommentHash = "sha256:" + hex.EncodeToString(sum[:])
 	}
 
 	var result Feedback
@@ -146,6 +159,56 @@ func (service *Service) SubmitFeedback(ctx context.Context, access database.Acce
 			return &Error{code: CodeNotFound}
 		}
 
+		// Resolve any existing mark BEFORE writing anything, so a resubmission
+		// of the exact same state can be recognized and turned into a true
+		// no-op: no row touch, no audit event, no artifact. This never names
+		// the envelope-encryption table directly (POKA_YOKE: architecture
+		// guard); the previous comment's content-free hash comes from a
+		// narrow SQL function scoped to the row's own author.
+		var (
+			existingRowID, existingVerdict, existingCommentArtifactID sql.NullString
+			existingFound                                             bool
+		)
+		scanErr := tx.QueryRow(txCtx, `
+			SELECT feedback.id, feedback.verdict, feedback.comment_artifact_id
+			FROM public.question_feedback feedback
+			WHERE feedback.organization_id = $1 AND feedback.question_run_id = $2 AND feedback.workspace_id = $3 AND feedback.created_by = $4
+		`, access.OrganizationID, runID, workspaceID, access.PrincipalID).Scan(
+			&existingRowID, &existingVerdict, &existingCommentArtifactID,
+		)
+		switch {
+		case database.IsNotFound(scanErr):
+			existingFound = false
+		case scanErr != nil:
+			return scanErr
+		default:
+			existingFound = true
+		}
+		var existingCommentHash sql.NullString
+		if existingFound && existingCommentArtifactID.Valid {
+			if err := tx.QueryRow(txCtx, `SELECT app.question_feedback_previous_comment_hash($1)`,
+				existingRowID.String).Scan(&existingCommentHash); err != nil {
+				return err
+			}
+		}
+
+		if existingFound && existingVerdict.String == string(verdict) &&
+			existingCommentArtifactID.Valid == desiredHasComment &&
+			(!desiredHasComment || existingCommentHash.String == desiredCommentHash) {
+			// Idempotent resubmission: same verdict, same comment (or lack of
+			// one). Report the current state back without touching anything.
+			var createdAt, updatedAt time.Time
+			if err := tx.QueryRow(txCtx, `
+				SELECT created_at, updated_at FROM public.question_feedback
+				WHERE organization_id = $1 AND id = $2
+			`, access.OrganizationID, existingRowID.String).Scan(&createdAt, &updatedAt); err != nil {
+				return err
+			}
+			result = Feedback{QuestionRunID: runID, Verdict: verdict, HasComment: desiredHasComment,
+				CreatedBy: access.PrincipalID, CreatedAt: createdAt.UTC(), UpdatedAt: updatedAt.UTC()}
+			return nil
+		}
+
 		newRowID, mintErr := service.newID("qfb")
 		if mintErr != nil {
 			return mintErr
@@ -167,15 +230,7 @@ func (service *Service) SubmitFeedback(ctx context.Context, access database.Acce
 			return err
 		}
 
-		hasComment := verdict == FeedbackIncorrect
-		if !hasComment {
-			if _, err := tx.Exec(txCtx, `
-				UPDATE public.question_feedback SET comment_artifact_id = NULL
-				WHERE organization_id = $1 AND id = $2
-			`, access.OrganizationID, feedbackRowID); err != nil {
-				return err
-			}
-		} else {
+		if desiredHasComment {
 			owner, ownerErr := artifactcrypto.NewOwnerIdentity(artifactcrypto.QuestionFeedbackComment, access.OrganizationID, feedbackRowID)
 			if ownerErr != nil {
 				return ownerErr
@@ -191,6 +246,28 @@ func (service *Service) SubmitFeedback(ctx context.Context, access database.Acce
 			if err := service.artifacts.Store(txCtx, tx, access, artifactcrypto.QuestionFeedbackComment, feedbackRowID, artifactID, envelope); err != nil {
 				return err
 			}
+		} else {
+			if _, err := tx.Exec(txCtx, `
+				UPDATE public.question_feedback SET comment_artifact_id = NULL
+				WHERE organization_id = $1 AND id = $2
+			`, access.OrganizationID, feedbackRowID); err != nil {
+				return err
+			}
+		}
+
+		// The bind above (or the NULL clear) already moved comment_artifact_id
+		// off the previous artifact, if there was one. The runtime role can
+		// never mutate the envelope-encryption table itself (000019's state guard rejects
+		// any such mutation by session_user = 'knowvault_app'; only the
+		// privileged purger process may), so this enqueues that previous
+		// artifact for the purger's next drain, atomically with this edit: the
+		// decision to erase commits in the same transaction, and the erasure
+		// itself follows within one purger poll interval.
+		if existingCommentArtifactID.Valid {
+			if _, err := tx.Exec(txCtx, `SELECT app.question_feedback_enqueue_comment_purge($1, $2)`,
+				access.OrganizationID, existingCommentArtifactID.String); err != nil {
+				return err
+			}
 		}
 
 		eventID, eventIDErr := service.newID("aud")
@@ -204,13 +281,13 @@ func (service *Service) SubmitFeedback(ctx context.Context, access database.Acce
 			ActorPrincipalID: &access.PrincipalID, Action: audit.ActionQuestionFeedbackSubmitted,
 			ResourceType: audit.ResourceQuestionFeedback, ResourceID: feedbackRowID, RequestID: access.RequestID,
 			Outcome: audit.OutcomeSuccess, ReferencedEvidenceIDs: []string{},
-			Metadata:   audit.Metadata{QuestionRunID: &qrunID, FeedbackVerdict: &verdictValue, FeedbackHasComment: &hasComment},
+			Metadata:   audit.Metadata{QuestionRunID: &qrunID, FeedbackVerdict: &verdictValue, FeedbackHasComment: &desiredHasComment},
 			OccurredAt: service.now().UTC(),
 		}); err != nil {
 			return err
 		}
 
-		result = Feedback{QuestionRunID: runID, Verdict: verdict, HasComment: hasComment,
+		result = Feedback{QuestionRunID: runID, Verdict: verdict, HasComment: desiredHasComment,
 			CreatedBy: access.PrincipalID, CreatedAt: createdAt.UTC(), UpdatedAt: updatedAt.UTC()}
 		return nil
 	})
@@ -235,6 +312,23 @@ func (service *Service) OwnFeedback(ctx context.Context, access database.AccessC
 		found  bool
 	)
 	err := service.db.Read(ctx, access, func(txCtx context.Context, tx database.Transaction) error {
+		// The mark is shown only while its answer is still readable: a purged
+		// or disclosure-revoked run must not surface even the caller's own
+		// past mark (the same rule the report applies to every row it lists).
+		var runReadable bool
+		if err := tx.QueryRow(txCtx, `
+			SELECT app.question_run_readable(id, workspace_id)
+			FROM public.question_run
+			WHERE organization_id = $1 AND id = $2 AND workspace_id = $3
+		`, access.OrganizationID, runID, workspaceID).Scan(&runReadable); err != nil {
+			if database.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		if !runReadable {
+			return nil
+		}
 		var (
 			feedbackRowID, verdictValue string
 			hasComment                  bool

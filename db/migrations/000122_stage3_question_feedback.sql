@@ -48,7 +48,7 @@ CREATE TABLE public.question_feedback (
 );
 
 COMMENT ON TABLE public.question_feedback IS
-    'One current CORRECT/INCORRECT mark per (question_run, created_by); comment_artifact_id is the encrypted free-text comment, mandatory only when verdict is INCORRECT';
+    'One current CORRECT/INCORRECT mark per (question_run, created_by); comment_artifact_id is the encrypted free-text comment -- mandatory when verdict is INCORRECT, optional but stored when given for CORRECT';
 COMMENT ON COLUMN public.question_feedback.comment_artifact_id IS
     'encrypted_artifact owner branch (question_feedback, comment_artifact_id, QUESTION_FEEDBACK, COMMENT_TEXT); replaceable, unlike the write-once question_run/question_citation branches, because the mark and its comment can change';
 
@@ -158,6 +158,10 @@ BEGIN
 END;
 $$;
 
+-- The Go authorize closure re-checks this too (defense in depth), but a
+-- SECURITY DEFINER read function bypasses RLS entirely, so the actual
+-- boundary has to live here: only the feedback's own author or a current
+-- OWNER/MANAGER of its workspace may decrypt the comment.
 CREATE FUNCTION app.question_feedback_read_comment(p_owning_row_id text)
 RETURNS TABLE(resource_id text, ciphertext bytea, size_bytes integer, nonce bytea, wrapped_dek bytea,
     wrapped_dek_hash text, kek_reference text, kek_version bigint, aad_hash text, plaintext_hash text)
@@ -168,13 +172,146 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
     JOIN public.encrypted_artifact a
       ON a.organization_id = owner_row.organization_id AND a.id = owner_row.comment_artifact_id
     WHERE owner_row.organization_id = app.current_organization_id()
-      AND owner_row.id = p_owning_row_id AND a.purged_at IS NULL;
+      AND owner_row.id = p_owning_row_id AND a.purged_at IS NULL
+      AND (
+          owner_row.created_by = app.current_principal_id()
+          OR EXISTS (
+              SELECT 1 FROM public.workspace_member manager
+              WHERE manager.organization_id = owner_row.organization_id
+                AND manager.workspace_id = owner_row.workspace_id
+                AND manager.principal_id = app.current_principal_id()
+                AND manager.removed_at IS NULL
+                AND manager.role IN ('OWNER', 'MANAGER')
+          )
+      );
+$$;
+
+-- Idempotency support: the caller must compare a candidate comment's hash
+-- against whatever is currently stored before deciding whether a resubmission
+-- is a true no-op, but application Go code must never name
+-- public.encrypted_artifact directly (POKA_YOKE: architecture guard scans
+-- cmd/ and internal/ for that literal token). This narrow read exposes only
+-- the content-free plaintext_hash, restricted to the feedback's own author.
+CREATE FUNCTION app.question_feedback_previous_comment_hash(p_owning_row_id text)
+RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+    SELECT a.plaintext_hash
+    FROM public.question_feedback owner_row
+    JOIN public.encrypted_artifact a
+      ON a.organization_id = owner_row.organization_id AND a.id = owner_row.comment_artifact_id
+    WHERE owner_row.organization_id = app.current_organization_id()
+      AND owner_row.id = p_owning_row_id
+      AND owner_row.created_by = app.current_principal_id();
 $$;
 
 REVOKE ALL ON FUNCTION app.question_feedback_bind_comment(text, text, text, text, bytea, integer, bytea, bytea, text, text, bigint, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.question_feedback_bind_comment(text, text, text, text, bytea, integer, bytea, bytea, text, text, bigint, text, text) TO knowvault_app;
 REVOKE ALL ON FUNCTION app.question_feedback_read_comment(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.question_feedback_read_comment(text) TO knowvault_app;
+REVOKE ALL ON FUNCTION app.question_feedback_previous_comment_hash(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.question_feedback_previous_comment_hash(text) TO knowvault_app;
+
+-- ---------------------------------------------------------------------------
+-- 2b. Replacing or clearing a comment (a changed mark, or a changed comment
+--     under the same verdict) must not leave the previous ciphertext
+--     decryptable. It cannot be erased synchronously by this same INSERT/
+--     UPDATE, though: migration 000019's encrypted_artifact state-guard
+--     trigger unconditionally rejects ANY mutation of that table by
+--     session_user = 'knowvault_app' (the runtime role every ordinary web
+--     request runs as) -- by design, so a compromised or buggy request
+--     handler can never scrub evidence. Only the privileged knowvault_purger
+--     role, which the web-facing server process never holds (only cmd/purger
+--     does), may perform that tombstone UPDATE.
+--
+--     The caller therefore enqueues the previous artifact id in the SAME
+--     transaction as the rebind/clear (a plain, RLS-scoped table INSERT,
+--     exactly like every other content the app role writes); the already-
+--     running purger process (internal/purge.Runner, cmd/purger) drains this
+--     queue every tick and performs the actual tombstone UPDATE under its own
+--     role, the same shape migration 000123's widened conversation_purge_
+--     cleanup and the source/conversation retention purges already use. This
+--     is the closest compliant equivalent to "erased in the same
+--     transaction" available under the existing role boundary: the decision
+--     to erase is atomic with the edit, and the erasure itself follows within
+--     one purger poll interval, never left to an unbounded background sweep.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.question_feedback_comment_purge_queue (
+    organization_id text NOT NULL
+        REFERENCES public.organization(id) ON DELETE RESTRICT,
+    artifact_id text NOT NULL CHECK (app.stage2_opaque_id_is_valid(artifact_id)),
+    enqueued_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    PRIMARY KEY (organization_id, artifact_id)
+);
+
+COMMENT ON TABLE public.question_feedback_comment_purge_queue IS
+    'Superseded question_feedback comment artifacts awaiting the privileged tombstone the knowvault_app role cannot perform itself; drained by the purger process';
+
+ALTER TABLE public.question_feedback_comment_purge_queue ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.question_feedback_comment_purge_queue FORCE ROW LEVEL SECURITY;
+CREATE POLICY question_feedback_comment_purge_queue_tenant ON public.question_feedback_comment_purge_queue
+    USING (organization_id = app.current_organization_id())
+    WITH CHECK (organization_id = app.current_organization_id());
+
+REVOKE ALL ON TABLE public.question_feedback_comment_purge_queue FROM PUBLIC;
+GRANT SELECT, INSERT ON TABLE public.question_feedback_comment_purge_queue TO knowvault_app;
+GRANT SELECT, DELETE ON TABLE public.question_feedback_comment_purge_queue TO knowvault_purger;
+
+-- Enqueue: app-role only, plain INSERT -- never touches encrypted_artifact.
+CREATE FUNCTION app.question_feedback_enqueue_comment_purge(p_org text, p_artifact_id text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+BEGIN
+    IF session_user <> 'knowvault_app' OR p_org IS DISTINCT FROM app.current_organization_id() THEN
+        RAISE EXCEPTION 'feedback comment purge enqueue is restricted to the application role for its own tenant' USING ERRCODE = '42501';
+    END IF;
+    INSERT INTO public.question_feedback_comment_purge_queue (organization_id, artifact_id)
+    VALUES (p_org, p_artifact_id)
+    ON CONFLICT (organization_id, artifact_id) DO NOTHING;
+END;
+$$;
+
+-- Drain: purger-role only. One call tombstones up to p_limit queued
+-- artifacts across every tenant -- the purger process is already the sole
+-- trusted tenant-wide operator for this kind of reconciliation sweep, exactly
+-- like the existing conversation/source-version purge queues it drains in
+-- the same poll tick (internal/purge.Runner).
+CREATE FUNCTION app.question_feedback_process_comment_purge_queue(p_limit integer)
+RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+    purged_count bigint := 0;
+    item record;
+BEGIN
+    IF session_user <> 'knowvault_purger' THEN
+        RAISE EXCEPTION 'feedback comment purge processing is restricted to the purger role' USING ERRCODE = '42501';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'feedback comment purge limit is out of range' USING ERRCODE = '22023';
+    END IF;
+
+    FOR item IN
+        SELECT organization_id, artifact_id
+        FROM public.question_feedback_comment_purge_queue
+        ORDER BY enqueued_at
+        LIMIT p_limit
+        FOR UPDATE SKIP LOCKED
+    LOOP
+        UPDATE public.encrypted_artifact
+           SET ciphertext = NULL, wrapped_dek = NULL, purged_at = clock_timestamp()
+         WHERE organization_id = item.organization_id AND id = item.artifact_id AND purged_at IS NULL;
+        IF FOUND THEN
+            purged_count := purged_count + 1;
+        END IF;
+        DELETE FROM public.question_feedback_comment_purge_queue
+         WHERE organization_id = item.organization_id AND artifact_id = item.artifact_id;
+    END LOOP;
+
+    RETURN purged_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION app.question_feedback_enqueue_comment_purge(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.question_feedback_enqueue_comment_purge(text, text) TO knowvault_app;
+REVOKE ALL ON FUNCTION app.question_feedback_process_comment_purge_queue(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.question_feedback_process_comment_purge_queue(integer) TO knowvault_purger;
 
 -- ---------------------------------------------------------------------------
 -- 3. Row security. SELECT is readable by the row's own author (while still

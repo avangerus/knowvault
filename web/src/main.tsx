@@ -4707,11 +4707,11 @@ export function AnswerFeedback({ questionRunID, workspaceID }: { questionRunID: 
     return () => { cancelled = true; };
   }, [questionRunID, workspaceID]);
 
-  async function submit(verdict: "CORRECT" | "INCORRECT", commentText: string) {
+  async function submit(verdict: "CORRECT" | "INCORRECT") {
     setBusy(true);
     setError(null);
     const result = await apiPostWithoutIdempotency<QuestionFeedbackState>(
-      questionFeedbackPath(workspaceID, questionRunID), { verdict, comment: commentText },
+      questionFeedbackPath(workspaceID, questionRunID), { verdict, comment },
     );
     setBusy(false);
     if (result.kind === "ok") {
@@ -4723,48 +4723,45 @@ export function AnswerFeedback({ questionRunID, workspaceID }: { questionRunID: 
     }
   }
 
-  if (state === null) return null;
-
-  if (!editing) {
-    return (
-      <div className="answer-feedback">
-        {state.marked ? (
-          <p className="msg-note">
-            {feedbackStatusLabel(state)}{" "}
-            <button className="link-button" onClick={() => setEditing(true)} type="button">Изменить</button>
-          </p>
-        ) : (
-          <div className="answer-feedback-controls">
-            <button disabled={busy} onClick={() => submit("CORRECT", "")} type="button">Верно</button>
-            <button disabled={busy} onClick={() => setEditing(true)} type="button">Неверно</button>
-          </div>
-        )}
-        {error && <p className="msg-warning">{error}</p>}
-      </div>
-    );
+  // Cancels an in-progress edit and clears whatever comment was typed --
+  // including right after choosing "Неверно", before it is sent.
+  function cancelInput() {
+    setComment("");
+    setEditing(false);
+    setError(null);
   }
 
+  if (state === null) return null;
+
+  // A fresh (unmarked) answer always shows the form; a marked one shows a
+  // compact status line until "Изменить" is pressed.
+  const showForm = editing || !state.marked;
+
   return (
-    <div className="answer-feedback answer-feedback-editing">
-      <div className="answer-feedback-controls">
-        <button disabled={busy} onClick={() => submit("CORRECT", "")} type="button">Верно</button>
-        <button
-          disabled={busy || comment.trim() === ""}
-          onClick={() => submit("INCORRECT", comment)}
-          type="button"
-        >
-          Отправить: неверно
-        </button>
-        {state.marked && (
-          <button disabled={busy} onClick={() => setEditing(false)} type="button">Отмена</button>
-        )}
-      </div>
-      <textarea
-        className="answer-feedback-comment"
-        onChange={(event) => setComment(event.target.value)}
-        placeholder="Что именно не так? (обязательно для «неверно»)"
-        value={comment}
-      />
+    <div className="answer-feedback">
+      {state.marked && !editing && (
+        <p className="msg-note">
+          {feedbackStatusLabel(state)}{" "}
+          <button className="link-button" onClick={() => setEditing(true)} type="button">Изменить</button>
+        </p>
+      )}
+      {showForm && (
+        <div className="answer-feedback-editing">
+          <textarea
+            className="answer-feedback-comment"
+            onChange={(event) => setComment(event.target.value)}
+            placeholder="Комментарий: обязателен для «неверно», по желанию для «верно»"
+            value={comment}
+          />
+          <div className="answer-feedback-controls">
+            <button disabled={busy} onClick={() => submit("CORRECT")} type="button">Верно</button>
+            <button disabled={busy || comment.trim() === ""} onClick={() => submit("INCORRECT")} type="button">Неверно</button>
+            {(state.marked || comment !== "") && (
+              <button disabled={busy} onClick={cancelInput} type="button">Отмена</button>
+            )}
+          </div>
+        </div>
+      )}
       {error && <p className="msg-warning">{error}</p>}
     </div>
   );
